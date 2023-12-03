@@ -7,9 +7,9 @@ Meshing of the spherical layered model
 import os
 import sys
 import pymesh
-meshingPath='/Users/boyanivanov/sandbox/tTIS-FEM-and-Optimization/Code/Core/Meshing/'
+meshingPath='/Users/boyanivanov/sandbox/TI_Pipeline/tTIS/Code/Core/'
 sys.path.append(os.path.realpath(meshingPath))
-import Meshing.MeshOperations as MeshOps
+from Meshing import MeshOperations as MeshOps
 import inspect
 
 def InspectMethods(object):

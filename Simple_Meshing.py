@@ -18,7 +18,8 @@ def InspectMethods(object):
         if inspect.ismethod(attribute) or inspect.isfunction(attribute):
             print(attribute_name)
 
-base_path = 'Sphere_CAD/Sphere'
+base_path = 'tTIS/Sphere_CAD/Sphere'
+
 # Change the angles to your desired configuration
 elec_attributes = {
         'electrodes': {

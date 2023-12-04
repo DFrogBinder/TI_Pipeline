@@ -7,7 +7,7 @@ LibPath='/Users/boyanivanov/sandbox/TI_Pipeline/tTIS/Code/Core/'
 sys.path.append(os.path.realpath(LibPath))
 from FEM import Solver as slv
 
-with open(os.path.realpath('tTIS/sim_settings.yml')) as stream:
+with open(os.path.realpath('tTIS/Code/sim_settings.yml')) as stream:
     settings = yaml.safe_load(stream)
 
 sys.path.append(os.path.realpath(settings['SfePy']['lib_path']))

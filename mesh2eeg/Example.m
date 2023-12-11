@@ -44,30 +44,57 @@ Fiducials = [Nz;Iz;M1;M2];
 %         segment M1-M2 in the negative x-direction.
 % Outputs: [x,y,z] coordinates of each EEG position
 %          Labels for each position 
-[EEGPts1,EEGLab1] = ComputeEEGPos(Fiducials,Sphere.Faces,Sphere.Vertices,1,0);
-[EEGPts2,EEGLab2] = ComputeEEGPos(Fiducials,Sphere.Faces,Sphere.Vertices,2,0);
-[EEGPts3,EEGLab3] = ComputeEEGPos(Fiducials,Sphere.Faces,Sphere.Vertices,3,0);
+[EEGPts1,EEGLab1,Vertices1] = ComputeEEGPos(Fiducials,Sphere.Faces,Sphere.Vertices,1,0);
+[EEGPts2,EEGLab2,Vertices2] = ComputeEEGPos(Fiducials,Sphere.Faces,Sphere.Vertices,2,0);
+[EEGPts3,EEGLab3,Vertices3] = ComputeEEGPos(Fiducials,Sphere.Faces,Sphere.Vertices,3,0);
+
+%% Save the coordinates and names for each of the 3 systems
+
+% Create the structs
+electrodeStruct1 = struct();
+electrodeStruct2 = struct();
+electrodeStruct3 = struct();
+
+% Assign variables to struct fields
+electrodeStruct1.ElectrodePts = EEGPts1;
+electrodeStruct1.ElectrodeNames = EEGLab1;
+electrodeStruct1.Vertices = Vertices1;
+
+electrodeStruct2.ElectrodePts = EEGPts2;
+electrodeStruct2.ElectrodeNames = EEGLab2;
+electrodeStruct2.Vertices = Vertices2;
+
+electrodeStruct3.ElectrodePts = EEGPts3;
+electrodeStruct3.ElectrodeNames = EEGLab3;
+electrodeStruct3.Vertices = Vertices3;
+
+% Saving the structs
+save('10-5_elec_Sphere.mat', 'electrodeStruct1');
+save('10-10_elec_Sphere.mat', 'electrodeStruct2');
+save('10-20_elec_Sphere.mat', 'electrodeStruct3');
 
 
-figure
-patch(Sphere,'FaceColor',       [0.8 0.8 1.0], ...
-         'EdgeColor',       'none',        ...
-         'FaceLighting',    'gouraud',     ...
-         'AmbientStrength', 0.15);
 
-% Lights, axis, and view
-camlight('headlight');
-material('dull');
-% light('Position',[0 -.75 -0.5],'Style','infinite'); % add extra lights
-axis('image');
-view([-135 35]);
-
-
-% Visualize points
-hold on
-plot3(EEGPts1(:,1),EEGPts1(:,2),EEGPts1(:,3),'.','MarkerSize',15)
-plot3(EEGPts2(:,1),EEGPts2(:,2),EEGPts2(:,3),'ro','MarkerSize',10,'LineWidth',2)
-plot3(EEGPts3(:,1),EEGPts3(:,2),EEGPts3(:,3),'yh','MarkerSize',10,'LineWidth',2)
-
-% Create legend
-legend('Mesh','EEG 10-5 positions','EEG 10-10 positions','EEG 10-20 positions')
+%% Visualizaiton of the results
+% figure
+% patch(Sphere,'FaceColor',       [0.8 0.8 1.0], ...
+%          'EdgeColor',       'none',        ...
+%          'FaceLighting',    'gouraud',     ...
+%          'AmbientStrength', 0.15);
+% 
+% % Lights, axis, and view
+% camlight('headlight');
+% material('dull');
+% % light('Position',[0 -.75 -0.5],'Style','infinite'); % add extra lights
+% axis('image');
+% view([-135 35]);
+% 
+% 
+% % Visualize points
+% hold on
+% plot3(EEGPts1(:,1),EEGPts1(:,2),EEGPts1(:,3),'.','MarkerSize',15)
+% plot3(EEGPts2(:,1),EEGPts2(:,2),EEGPts2(:,3),'ro','MarkerSize',10,'LineWidth',2)
+% plot3(EEGPts3(:,1),EEGPts3(:,2),EEGPts3(:,3),'yh','MarkerSize',10,'LineWidth',2)
+% 
+% % Create legend
+% legend('Mesh','EEG 10-5 positions','EEG 10-10 positions','EEG 10-20 positions')

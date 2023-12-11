@@ -1,0 +1,3 @@
+[submodule "MeshFix-V2.1"]
+	path = MeshFix-V2.1
+	url = https://github.com/MarcoAttene/MeshFix-V2.1.git

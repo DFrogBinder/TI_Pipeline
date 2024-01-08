@@ -100,7 +100,7 @@ class MeshOperations(ElecOps.ElectrodeOperations, FileOps.FileOperations):
             max_z_point_unit_vector = vertices[max_z_point_id]/np.linalg.norm(vertices[max_z_point_id])
 
             points[str(index + 1)] = {
-                'coordinates': np.round(vertices[max_z_point_id] - np.absolute(np.multiply(max_z_point_unit_vector, [0, 0, shift])), 6),
+                'coordinates': np.round(vertices[max_z_point_id] - np.abs(np.multiply(max_z_point_unit_vector, [0, 0, shift])), 6),
                 'max_volume': max_volume,
             }
 

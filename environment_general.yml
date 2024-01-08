@@ -1,0 +1,51 @@
+name: pymesh
+channels:
+  - defaults
+dependencies:
+  - _libgcc_mutex=0.1
+  - _openmp_mutex=5.1
+  - astroid=2.6.6
+  - blas=1.0
+  - ca-certificates=2023.12.12
+  - certifi=2021.5.30
+  - intel-openmp=2022.1.0
+  - isort=5.9.3
+  - lazy-object-proxy=1.6.0
+  - ld_impl_linux-64=2.38
+  - libffi=3.3
+  - libgcc-ng=11.2.0
+  - libgfortran-ng=7.5.0
+  - libgfortran4=7.5.0
+  - libgomp=11.2.0
+  - libstdcxx-ng=11.2.0
+  - mccabe=0.6.1
+  - mkl=2020.2
+  - mkl-service=2.3.0
+  - mkl_fft=1.0.15
+  - mkl_random=1.1.1
+  - ncurses=6.4
+  - openssl=1.1.1w
+  - pip=21.2.2
+  - pylint=2.9.6
+  - python=3.6.13
+  - pyyaml=5.4.1
+  - readline=8.2
+  - scipy=1.3.2
+  - setuptools=58.0.4
+  - six=1.16.0
+  - sqlite=3.41.2
+  - tk=8.6.12
+  - toml=0.10.2
+  - typed-ast=1.4.3
+  - typing-extensions=4.1.1
+  - typing_extensions=4.1.1
+  - wheel=0.37.1
+  - wrapt=1.12.1
+  - xz=5.4.5
+  - yaml=0.2.5
+  - zlib=1.2.13
+  - pip:
+      - nose==1.3.7
+      - numpy==1.10.4
+      - pymesh2==0.3
+prefix: /home/cogitatorprime/sandbox/utils/conda/envs/pymesh

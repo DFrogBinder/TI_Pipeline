@@ -2,9 +2,15 @@ import os
 import yaml
 import pymesh
 import sys
-meshingPath='/Users/boyanivanov/sandbox/TI_Pipeline/tTIS/Code/Core/'
+
+meshingPath = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/Core'
+print("Real Path:", os.path.realpath(meshingPath))
+print("Is Path Exist:", os.path.exists(os.path.realpath(meshingPath)))
+
 sys.path.append(os.path.realpath(meshingPath))
-from Meshing import MeshOperations as MeshOps
+print("Sys Path:", sys.path)
+import Meshing.MeshOperations as MeshOps
+
 
 import scipy.io as sio
 import numpy as np

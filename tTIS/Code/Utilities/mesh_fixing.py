@@ -3,8 +3,8 @@ import gc
 import multiprocessing
 import meshio
 
-base_path = "full path of the model's directory"
-mesh_fix_path = "full path of meshfix executable"
+base_path = "/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Sphere_CAD"
+mesh_fix_path = "meshfix"
 folders = next(os.walk(base_path))[1]
 
 def fixing(folder):
@@ -20,5 +20,5 @@ def fixing(folder):
     return 0
 
 if __name__ == '__main__':
-    pool = multiprocessing.Pool(processes=8)
+    pool = multiprocessing.Pool(processes=1)
     pool.map_async(fixing, folders)

@@ -1,1 +1,2 @@
-__all__ = ["MeshingOperations", "electrodeOperations"]
+__all__ = ["MeshOperations", "ElectrodeOperations"]
+

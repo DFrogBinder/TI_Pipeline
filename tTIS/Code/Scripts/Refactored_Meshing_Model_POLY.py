@@ -46,8 +46,8 @@ def main_function(settings_file, stl_models_path, electrode_attributes_path,save
         meshing.phm_model_meshing(os.path.join(save_dir, 'meshed_model_10-10_' + folder + '.poly'), electrodes_to_omit=electrodes_to_omit)
 
     
-stl_models_path = '/Users/boyanivanov/sandbox/TI_Pipeline/tTIS/Sphere_CAD/'
-setting_yml_path = '/Users/boyanivanov/sandbox/TI_Pipeline/tTIS/Code/sim_settings.yml'
-el_attributes_dir = '/Users/boyanivanov/sandbox/TI_Pipeline/mesh2EEG'
-save_dir = '/Users/boyanivanov/sandbox/TI_Pipeline'
+stl_models_path = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Sphere_CAD'
+setting_yml_path = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/sim_settings.yml'
+el_attributes_dir = '/home/cogitatorprime/sandbox/TI_Pipeline/mesh2eeg'
+save_dir = '/home/cogitatorprime/sandbox/TI_Pipeline'
 main_function(setting_yml_path, stl_models_path, el_attributes_dir, save_dir)

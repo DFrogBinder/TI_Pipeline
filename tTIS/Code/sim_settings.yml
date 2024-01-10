@@ -1,6 +1,6 @@
 SfePy:
-  lib_path: 'full path of the python code root directory on linux'
-  lib_path_windows: 'full path of the python code root directory on windows'
+  lib_path: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/'
+  lib_path_windows: 'none'
   electrodes:
     conductivity: 1.4
     10-20:

@@ -5,11 +5,13 @@ import pymesh
 import sys
 import scipy.io as sio
 import numpy as np
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
-meshingPath='/Users/boyanivanov/sandbox/TI_Pipeline/tTIS/Code/Core/'
-sys.path.append(os.path.realpath(meshingPath))
-from Meshing import MeshOperations as MeshOps
+meshingPath = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/Core'
+print("Real Path:", os.path.realpath(meshingPath))
+print("Is Path Exist:", os.path.exists(os.path.realpath(meshingPath)))
 
+sys.path.append(os.path.realpath(meshingPath))
+print("Sys Path:", sys.path)
+import Meshing.MeshOperations as MeshOps
 
 
 def main_function(settings_file, stl_models_path, electrode_attributes_path,save_dir):

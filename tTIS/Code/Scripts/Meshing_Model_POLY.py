@@ -3,13 +3,7 @@ import yaml
 import pymesh
 import sys
 
-meshingPath = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/Core'
-print("Real Path:", os.path.realpath(meshingPath))
-print("Is Path Exist:", os.path.exists(os.path.realpath(meshingPath)))
 
-sys.path.append(os.path.realpath(meshingPath))
-print("Sys Path:", sys.path)
-import Meshing.MeshOperations as MeshOps
 
 
 import scipy.io as sio

@@ -12,6 +12,8 @@
 *.obj
 *.elf
 *.poly
+*.stl
+*.off
 
 # Linker output
 *.ilk

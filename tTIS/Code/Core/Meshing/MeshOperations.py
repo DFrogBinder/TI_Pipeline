@@ -30,6 +30,8 @@ class MeshOperations(ElecOps.ElectrodeOperations, FileOps.FileOperations):
         # self.electrode_meshing(electrodes_to_omit=electrodes_to_omit)
 
         # self.merged_meshes = pymesh.merge_meshes((self.skin_with_electrodes, *self.surface_meshes[1:]))
+        
+        '''Merge All Loaded Meshes'''
         self.merged_meshes = pymesh.merge_meshes((*self.surface_meshes,))
         regions = self.region_points(self.surface_meshes, 0.1, electrode_mesh=None)
 

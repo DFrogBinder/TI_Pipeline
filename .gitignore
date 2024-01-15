@@ -390,4 +390,7 @@ cmake-build-*/
 !.vscode/extensions.json
 *.code-workspace
 
+# Export Directory
+Export_Save_Dir/
+
 # End of https://www.gitignore.io/api/c,c++,macos,matlab,python,pycharm,jupyternotebooks,jabref

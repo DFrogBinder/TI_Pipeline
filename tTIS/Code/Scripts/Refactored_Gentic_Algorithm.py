@@ -114,6 +114,6 @@ def main(settings_file, npz_fiel, save_dir):
         df.to_csv(os.path.join(save_dir, 'optimized_electrodes_' + model_id + '.csv'))
 
 npz_file = ''
-save_dir = ''
-settings_file = ''
+save_dir = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir'
+settings_file = '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/sim_settings.yml'
 main(settings_file, npz_file, save_dir)

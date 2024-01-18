@@ -1,5 +1,5 @@
 SfePy:
-  lib_path: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/'
+  lib_path: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/Core/'
   lib_path_windows: 'none'
   electrodes:
     conductivity: 1.4

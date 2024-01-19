@@ -340,10 +340,10 @@ SfePy:
       D_GND: 
         id: 11
   real_brain:
-    mesh_file: 'full path of the mesh file on linux'
-    output_dir: 'full path of the output directory on linux'
-    mesh_file_windows: 'full path of the mesh file on windows'
-    output_dir_windows: 'full path of the mesh file on windows'
+    mesh_file: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_10-10_Fixed.1.vtk'
+    output_dir: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/'
+    mesh_file_windows: ''
+    output_dir_windows: ''
     regions:
       Skin:
         id: 1
@@ -365,4 +365,25 @@ SfePy:
         conductivity: 1
       Ventricles:
         id: 7
+        conductivity: 1
+  simple_brain:
+    mesh_file: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_10-10_Fixed.1.vtk'
+    output_dir: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/'
+    mesh_file_windows: ''
+    output_dir_windows: ''
+    regions:
+      Skin:
+        id: 1
+        conductivity: 1 # Conductivity values in S/m
+      Skull:
+        id: 2
+        conductivity: 1
+      CSF:
+        id: 3
+        conductivity: 1
+      Brain:
+        id: 4
+        conductivity: 1
+      Outer:
+        id: 5
         conductivity: 1

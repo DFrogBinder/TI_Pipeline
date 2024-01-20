@@ -6,7 +6,7 @@ import yaml
 import numpy as np
 import pyvista as pv
 
-def main(settings_file, meshf, model, csv_save_dir,job_id):
+def main(settings_file, meshf, model, csv_save_dir):
     with open(os.path.realpath(settings_file)) as stream:
         settings = yaml.safe_load(stream)
 
@@ -74,8 +74,7 @@ def main(settings_file, meshf, model, csv_save_dir,job_id):
     np.savez_compressed(os.path.join(csv_save_dir, model_id + '_fields_brain'), e_field=e_field_values_brain.reshape((61, -1, 3)), cell_ids=cell_ids_brain, aal_regions=aal_regions, volumes=region_volumes_brain)
 
 settings_file='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/sim_settings.yml'
-meshf=''
-model=''
-csv_save_dir=''
-job_id=''
-main(settings_file, meshf, model, csv_save_dir,job_id)
+meshf='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_10-10_Fixed.1.vtk'
+model='simple_brain'
+csv_save_dir='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/'
+main(settings_file, meshf, model, csv_save_dir)

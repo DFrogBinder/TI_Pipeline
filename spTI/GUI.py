@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QSlider, QLabel
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QSlider, QLabel, QGridLayout
 from PyQt5.QtCore import Qt
 from matplotlib.animation import FuncAnimation
 
@@ -18,14 +18,18 @@ class SignalVisualizer(QMainWindow):
         self.figure, self.ax = plt.subplots()
         self.canvas = FigureCanvas(self.figure)
 
-        # Set up the layout
-        layout = QVBoxLayout()
+        # Set up the main layout
+        main_layout = QVBoxLayout()
         widget = QWidget()
-        widget.setLayout(layout)
+        widget.setLayout(main_layout)
         self.setCentralWidget(widget)
 
-        # Add canvas (plot) to the layout
-        layout.addWidget(self.canvas)
+        # Add canvas (plot) to the main layout
+        main_layout.addWidget(self.canvas)
+
+        # Grid layout for sliders and labels
+        grid_layout = QGridLayout()
+        main_layout.addLayout(grid_layout)
 
         # Signal Parameters with default values
         self.frequency = 1000
@@ -35,26 +39,26 @@ class SignalVisualizer(QMainWindow):
         self.sampling_rate = 10000
 
         # Adding sliders for signal parameters
-        self.create_slider('Frequency', self.frequency, 500, 2000, 100, self.update_frequency)
-        self.create_slider('Modulation Frequency', self.mod_frequency, 500, 2000, 100, self.update_mod_frequency)
-        self.create_slider('Phase Inversion Frequency', self.modulation_frequency, 10, 100, 5, self.update_modulation_frequency)
-        self.create_slider('Duration', int(self.duration * 1000), 100, 1000, 100, self.update_duration)
-        self.create_slider('Sampling Rate', self.sampling_rate, 5000, 20000, 1000, self.update_sampling_rate)
+        self.create_slider(grid_layout, 0, 'Frequency', self.frequency, 500, 2000, 100, self.update_frequency)
+        self.create_slider(grid_layout, 1, 'Modulation Frequency', self.mod_frequency, 500, 2000, 100, self.update_mod_frequency)
+        self.create_slider(grid_layout, 2, 'Phase Inversion Frequency', self.modulation_frequency, 10, 100, 5, self.update_modulation_frequency)
+        self.create_slider(grid_layout, 3, 'Duration', int(self.duration * 1000), 100, 1000, 100, self.update_duration)
+        self.create_slider(grid_layout, 4, 'Sampling Rate', self.sampling_rate, 5000, 20000, 1000, self.update_sampling_rate)
 
         # Initialize plot
         self.plot()
 
-    def create_slider(self, label, value, min_value, max_value, step, callback):
-        slider_label = QLabel(f'{label}: {value}')
+    def create_slider(self, layout, row, label_text, value, min_value, max_value, step, callback):
+        slider_label = QLabel(f'{label_text}: {value}')
         slider = QSlider(Qt.Horizontal)
         slider.setMinimum(min_value)
         slider.setMaximum(max_value)
         slider.setValue(value)
         slider.setTickInterval(step)
         slider.setTickPosition(QSlider.TicksBelow)
-        slider.valueChanged.connect(lambda: self.slider_changed(slider, slider_label, label, callback))
-        self.layout().addWidget(slider_label)
-        self.layout().addWidget(slider)
+        slider.valueChanged.connect(lambda: self.slider_changed(slider, slider_label, label_text, callback))
+        layout.addWidget(slider_label, row, 0)
+        layout.addWidget(slider, row, 1)
 
     def slider_changed(self, slider, label, name, callback):
         value = slider.value()
@@ -106,4 +110,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

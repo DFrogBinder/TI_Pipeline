@@ -73,6 +73,7 @@ class MeshOperations(ElecOps.ElectrodeOperations, FileOps.FileOperations):
         regions = self.region_points(self.surface_meshes, 0.1, electrode_mesh=self.electrode_mesh)
 
         self.poly_write(mesh_filename, self.merged_meshes.vertices, self.merged_meshes.faces, regions)
+        print(f'File is written to - {mesh_filename}')
 
     def load_surface_meshes(self, base_path: str, file_names: list) -> None:
         # TODO: Order matters

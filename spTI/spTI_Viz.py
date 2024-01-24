@@ -1,8 +1,10 @@
 import numpy as np
+import Inversion_Library as inversion
 import matplotlib.pyplot as plt
 
 # Parameters for the simulation
 frequency = 1000  # Hz, frequency of the carrier wave
+mod_frequency = 1010
 modulation_frequency = 50  # Hz, frequency of the phase inversion
 duration = 0.1  # seconds, duration of the signal
 sampling_rate = 10000  # Hz, sampling rate for the simulation
@@ -15,10 +17,8 @@ carrier_signal = np.sin(2 * np.pi * frequency * t)
 
 # Phase-shift keying (PSK) modulated signal
 # Modulation happens at the modulation_frequency
-# Sawtooth Phase Shift
-# Gradual Phase Shift
 phi = np.pi * (t * modulation_frequency % 1)
-modulated_signal = np.sin(2 * np.pi * frequency * t + phi)
+modulated_signal = np.sin(2 * np.pi * mod_frequency * t + phi)
 # modulated_signal = np.sin(2 * np.pi * frequency * t + np.pi * (t * modulation_frequency % 1 < 0.5))
 
 # Resulting spTI signal (interference of carrier and modulated signals)

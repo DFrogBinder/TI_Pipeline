@@ -45,8 +45,9 @@ def main_function(settings_file, stl_models_path, electrode_attributes_path,save
 
         geometry_list = [
                         'skin_fixed.stl', 
-                         'skull_fixed.stl', 
-                         'csf_fixed.stl', 
+                        'skull_fixed.stl', 
+                        'csf_fixed.stl',
+                        'brain_fixed.stl' 
                         # 'gm_fixed.stl', 
                         # 'wm_fixed.stl', 
                         # 'cerebellum_fixed.stl', 

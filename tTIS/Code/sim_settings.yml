@@ -340,7 +340,7 @@ SfePy:
       D_GND: 
         id: 11
   real_brain:
-    mesh_file: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_10-10_Fixed.1.vtk'
+    mesh_file: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_sphere.1.vtk'
     output_dir: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/'
     mesh_file_windows: ''
     output_dir_windows: ''
@@ -367,7 +367,7 @@ SfePy:
         id: 7
         conductivity: 1
   simple_brain:
-    mesh_file: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_10-10_Fixed.1.vtk'
+    mesh_file: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_sphere.1.vtk'
     output_dir: '/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/'
     mesh_file_windows: ''
     output_dir_windows: ''
@@ -384,6 +384,4 @@ SfePy:
       Brain:
         id: 4
         conductivity: 1
-      Outer:
-        id: 5
-        conductivity: 1
+

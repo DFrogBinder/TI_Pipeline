@@ -52,6 +52,7 @@ class Solver:
         if model is None:
             raise AttributeError('No model was selected.')
         mesh = pv.UnstructuredGrid(self.__settings[self.__settings_header][model]['mesh_file' + self.__extra_path])
+        print('Mesh has been loaded!')
         self.__selected_model = model
 
         vertices = mesh.points

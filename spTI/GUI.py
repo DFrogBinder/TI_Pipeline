@@ -89,7 +89,7 @@ class SignalVisualizer(QMainWindow):
         # Update the signal based on current parameters
         t = np.linspace(0, self.duration, int(self.sampling_rate * self.duration), endpoint=False)
         carrier_signal = np.sin(2 * np.pi * self.frequency * t)
-        phi = np.pi * (t * self.modulation_frequency % 1)
+        phi = np.pi * np.sin(2 * np.pi * self.modulation_frequency * t) + np.pi/2 * np.sin(4 * np.pi * self.modulation_frequency * t)
         modulated_signal = np.sin(2 * np.pi * self.mod_frequency * t + phi)
         spti_signal = carrier_signal + modulated_signal
 

@@ -33,19 +33,23 @@ elec_attributes = {
         'electrodes': {
         'B_VCC': {
         'theta': 258.5217,
-        'phi': 0
+        'phi': 0,
+        'id': 12
     },
         'B_GND': {
         'theta': 326.2893,
-        'phi': 0
+        'phi': 0,
+        'id': 13
     },
         'D_VCC': {
         'theta': 101.4783,
-        'phi': 0
+        'phi': 0,
+        'id': 10
     },
         'D_GND': {
         'theta': 33.7107,
         'phi': 0,
+        'id':11
     },
  },
     'ids': settings['SfePy']['electrodes']['sphere'],
@@ -62,4 +66,4 @@ meshing = MeshOps.MeshOperations(skin_stl, elec_attributes)
 meshing.load_surface_meshes(base_path, ['skin_fixed.stl', 'skull_fixed.stl', 'csf_fixed.stl', 'brain_fixed.stl'])
 meshing.sphere_model_meshing(os.path.join(base_path, 'meshed_model_sphere.poly'))
 
-print('All models are have been loaded...')
+print('Meshing completed!')

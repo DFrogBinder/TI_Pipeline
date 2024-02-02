@@ -3,7 +3,7 @@ import gc
 import multiprocessing
 import meshio
 
-base_path = "/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Sphere_CAD"
+base_path = "/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Sphere_CAD/Raw"
 mesh_fix_path = "meshfix"
 folders = next(os.walk(base_path))[1]
 

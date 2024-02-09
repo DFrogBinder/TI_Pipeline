@@ -347,13 +347,13 @@ SfePy:
     regions:
       Skin:
         id: 1
-        conductivity: 1 # Conductivity values in S/m
+        conductivity: 0.17 # Conductivity values in S/m
       Skull:
         id: 2
-        conductivity: 1
+        conductivity: 0.003504
       CSF:
         id: 3
-        conductivity: 1
+        conductivity: 1.776
       GM:
         id: 4
         conductivity: 1
@@ -374,14 +374,14 @@ SfePy:
     regions:
       Skin:
         id: 1
-        conductivity: 1 # Conductivity values in S/m
+        conductivity: 0.17 # Conductivity values in S/m
       Skull:
         id: 2
-        conductivity: 1
+        conductivity: 0.003504
       CSF:
         id: 3
-        conductivity: 1
+        conductivity: 1.776
       Brain:
         id: 4
-        conductivity: 1
+        conductivity: 0.234
 

@@ -111,7 +111,7 @@ class Solver:
         })
 
         self.__non_linear_solver = Newton({
-            'i_max': 1,
+            'i_max': 100,
             'eps_a': absolute_tol,
         }, lin_solver=self.__linear_solver)
 
@@ -257,12 +257,12 @@ class Solver:
 
             if 'E' in np.char.upper(self.__fields_to_calculate):
                 output_var_name = 'e_field_(' + field_variable_name + ')'
-                # current_multiplier = 1000
+                current_multiplier = 1
                 e_field = distance_unit_multiplier * current_multiplier * problem.evaluate('-ev_grad.2.Omega(' + field_variable_name + ')', mode='qp')
                 out[output_var_name] = Struct(name=output_var_name, mode='cell', data=e_field, dofs=None)
             if 'J' in np.char.upper(self.__fields_to_calculate):
                 output_var_name = 'j_field_(' + field_variable_name + ')'
-                # current_multiplier = 1000
+                current_multiplier = 1
                 j_field = distance_unit_multiplier * current_multiplier * problem.evaluate('ev_diffusion_velocity.2.Omega(conductivity.mat_vec, ' + field_variable_name + ')', mode='qp', copy_materials=False)
                 out[output_var_name] = Struct(name=output_var_name, mode='cell', data=j_field, dofs=None)
 

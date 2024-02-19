@@ -141,4 +141,4 @@ dependencies:
       - vectormath==0.2.2
       - vtk==8.1.0
       - xmltodict==0.13.0
-prefix: /home/cogitatorprime/sandbox/utils/conda/envs/pymesh
+prefix: /home/cogitatorprime/Software_bin/anaconda3/envs/pymesh

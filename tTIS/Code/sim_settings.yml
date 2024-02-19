@@ -374,7 +374,7 @@ SfePy:
     regions:
       Skin:
         id: 1
-        conductivity: 0.17 # Conductivity values in S/m
+        conductivity: 0.17  # Conductivity values in S/m
       Skull:
         id: 2
         conductivity: 0.003504

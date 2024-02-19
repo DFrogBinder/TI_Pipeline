@@ -56,7 +56,7 @@ elec_attributes = {
     'cylinder_radius': 4,
     'cylinder_width': 3,
     'skin_radius': 0,
-    'elements': 200,
+    'elements': 300,
 }
 skin_stl = pymesh.load_mesh(os.path.join(base_path, 'skin_fixed.stl'))
 

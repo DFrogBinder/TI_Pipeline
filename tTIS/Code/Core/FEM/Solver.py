@@ -71,6 +71,10 @@ class Solver:
         del mesh
 
     def define_field_variable(self, field_var_name: str, field_name: str, out_of_range_assign_region: str = None, out_of_range_group_threshold: int = None) -> None:
+        # Log file output
+        self.logger.debug(f'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n'
+                          f'define_field_variable  ->  Var_Name:{field_var_name} Field_Name:{field_name}\n'
+                          f'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n')
         self.__out_of_range_assign_region = out_of_range_assign_region
         self.__out_of_range_group_threshold = out_of_range_group_threshold
 
@@ -84,8 +88,13 @@ class Solver:
             'unknown': FieldVariable(field_var_name, 'unknown', field=self.fields[field_name]),
             'test': FieldVariable(field_var_name + '_test', 'test', field=self.fields[field_name], primary_var_name=field_var_name),
         }
-
+        self.logger.debug(f'Defined Field Variable is {self.field_variables[field_var_name]}')
+        
     def define_essential_boundary(self, region_name: str, group_id: int, field_variable: str, potential: float = None, current: float = None) -> None:
+        # Log file output
+        self.logger.debug(f'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n'
+                          f'define_essential_boundary  ->  Region_Name:{region_name} Group_ID:{group_id} Field_Variable:{field_variable} Potential:{potential} Current:{current}\n'
+                          f'+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\n')
         assert field_variable in self.field_variables.keys(), 'The field variable {} is not defined'.format(field_variable)
         assert (potential is not None) ^ (current is not None), 'Only potential or current value shall be provided.'
 
@@ -189,6 +198,7 @@ class Solver:
                     additions += 'cells of group {} +c '.format(group)
                 additions = ' +c c' + additions.strip('+c ')
 
+        # Assign Regions from the mesh
         for region in self.__settings[self.__settings_header][self.__selected_model]['regions'].items():
             if (region[0] == out_of_range_assign_region) and (out_of_range_groups.size > 0):
                 self.domain.create_region(region[0], 'cells of group ' + str(region[1]['id']) + additions)
@@ -196,7 +206,11 @@ class Solver:
                 self.domain.create_region(region[0], 'cells of group ' + str(region[1]['id']))
             self.domain.create_region(region[0] + '_Gamma', 'vertices of group ' + str(region[1]['id']), 'facet')
             self.conductivities[region[0]] = region[1]['conductivity']
-
+            
+            # Output info to the log file
+            self.logger.debug(f'{region[0]} processed in __assign_regions() with values {region[1]}')
+        
+        # Assign Electrodes
         for electrode in self.__settings[self.__settings_header]['electrodes'][self.electrode_system].items():
             self.domain.create_region(electrode[0], 'cells of group ' + str(electrode[1]['id']))
             self.domain.create_region(electrode[0] + '_Gamma', 'vertices of group ' + str(electrode[1]['id']), 'facet')
@@ -204,6 +218,13 @@ class Solver:
             self.conductivities[electrode[0]] = self.__settings[self.__settings_header]['electrodes']['conductivity']
             self._electrode_names[int(electrode[1]['id'])] = electrode[0]
 
+            # Output info to the log file
+            self.logger.debug(f'{electrode[0]} processed in __assign_regions() with values {electrode[1]}')
+        
+        # Output info to the log file
+        self.logger.debug(f'Domain regions after region assignment is completed {self.domain.regions} \n'
+                          f'Total number of assigned regions {len(self.domain.regions)}\n')
+    
     def __get_conductivity(self, ts, coors, mode=None, equations=None, term=None, problem=None, conductivities=None):
         # Execute only once at the initialization
         if mode == 'qp':

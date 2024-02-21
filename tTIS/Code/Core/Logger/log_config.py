@@ -3,7 +3,7 @@ import logging
 In this configuration, all messages of level DEBUG and above are logged to a file named app.log, 
 while messages of level INFO and above are also printed to the console. 
 Adjust the level and format as needed for your application.
-''''
+'''
 def setup_logging():
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

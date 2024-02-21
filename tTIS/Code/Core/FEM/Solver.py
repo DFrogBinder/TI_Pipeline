@@ -18,7 +18,7 @@ from sfepy.solvers.nls import Newton
 #### SfePy libraries
 
 class Solver:
-    def __init__(self, settings_file: dict, settings_header: str, electrode_system: str, units: str = 'mm'):
+    def __init__(self, settings_file: dict, settings_header: str, electrode_system: str, units: str = 'mm', logger = None):
         self.__settings: dict = settings_file
         self.__settings_header: str = settings_header
         if os.name == 'nt':
@@ -47,6 +47,7 @@ class Solver:
         self.essential_boundaries: list = []
         self.field_variables: dict = {}
         self.fields: dict = {}
+        self.logger = logger
 
     def load_mesh(self, model: str=None, connectivity: str='3_4', id_array_name: str='cell_scalars') -> None:
         if model is None:
@@ -93,6 +94,7 @@ class Solver:
                 self.__electrode_currents[field_variable][region_name] = current
             except KeyError:
                 self.__electrode_currents[field_variable] = {region_name: current}
+                self.logger.debug('Except KeyError triggered in define_essential_boundary()')
             potential = 1 if (current > 0) else -1
 
         temporary_domain = self.domain.create_region(region_name, 'r.{} *v r.Skin'.format(region_name), 'facet', add_to_regions=False)
@@ -111,7 +113,7 @@ class Solver:
         })
 
         self.__non_linear_solver = Newton({
-            'i_max': 100,
+            'i_max': 20, # Was set to 1 for some reason
             'eps_a': absolute_tol,
         }, lin_solver=self.__linear_solver)
 

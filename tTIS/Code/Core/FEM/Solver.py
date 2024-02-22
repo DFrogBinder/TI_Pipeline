@@ -122,11 +122,11 @@ class Solver:
         })
 
         self.__non_linear_solver = Newton({
-            'i_max': 20, # Was set to 1 for some reason
+            'i_max': 10, # Was set to 1 for some reason
             'eps_a': absolute_tol,
         }, lin_solver=self.__linear_solver)
 
-    def run_solver(self, save_results: bool, post_process_calculation: bool, field_calculation: list = ['E'], output_dir: str=None, output_file_name: str=None):
+    def run_solver(self, save_results: bool, post_process_calculation: bool, field_calculation: list = ['E','J'], output_dir: str=None, output_file_name: str=None):
         if not self.__non_linear_solver:
             raise AttributeError('The solver is not setup. Please set it up before calling run.')
         self.__material_definition()
@@ -165,7 +165,10 @@ class Solver:
         gc.collect()
 
     def __generate_equations(self) -> sfepy.discrete.Equations:
-        # TODO: Add a check for the existence of the fields
+        if not self.fields:
+            raise AttributeError('''Electric Fields do not exist.\n
+                                 Please initialize them before generating equaitons''')
+
         integral = Integral('i1', order=2)
 
         equations_list = []
@@ -241,6 +244,10 @@ class Solver:
             tmp_fun = lambda x, dim: x*np.eye(dim) # Required for the diffusion velocity in the current density calculation
 
             values = np.repeat(values, 4) # Account for the tetrahedral edges
+            
+            '''
+            The if statemtnt below is never triggered!
+            '''
             if 'J' in np.char.upper(self.__fields_to_calculate):
                 mat_vec = np.array(list(map(tmp_fun, values, np.repeat(dim, num_nodes))))
                 material_dict['mat_vec'] = mat_vec

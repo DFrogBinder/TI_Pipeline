@@ -36,7 +36,7 @@ for electrode in tqdm(electrodes):
     solve.define_essential_boundary('B_GND', electrode[1], 'potential_base', current = -150.0)
     solve.define_essential_boundary('D_VCC', electrode[2], 'potential_df', current = 150.0)
     solve.define_essential_boundary('D_GND', electrode[3], 'potential_df', current = -150.0)
-    solve.solver_setup(800, 1e-20, 1e-14, verbose=True)
+    solve.solver_setup(800, 1e-15, 1e-10, verbose=True)
     state = solve.run_solver(save_results=True, output_dir=output_dir_path,
     output_file_name='fem_model-name_' + "{}-{}-{}-{}".format(*electrode),post_process_calculation=True)
     del state

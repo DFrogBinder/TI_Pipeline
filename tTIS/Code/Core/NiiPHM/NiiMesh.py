@@ -7,7 +7,8 @@ import pyvista as pv
 import nibabel as nib
 
 class NiiMesh:
-    def __init__(self, mesh_path: str=None, index_array_name: str='cell_scalars', roi_ids: list=[1, 8]) -> None:
+    def __init__(self, mesh_path: str=None, index_array_name: str='cell_scalars', roi_ids: list=[1, 8],logger=None) -> None:
+        self.logger = logger
         self._mesh_pts: pv.UnstructuredGrid = None
         self.__index_array_name: str = index_array_name
         self.__intial_bounds: dict = {}
@@ -16,9 +17,16 @@ class NiiMesh:
         self.intensities: np.array = None
         self._mesh: pv.UnstructuredGrid = self.load_mesh(os.path.realpath(mesh_path), index_array_name, roi_ids) if mesh_path else None
 
-    def load_mesh(self, mesh_path: str, index_array_name: str='cell_scalars', roi_ids: list=[1, 8]) -> None:
+    def load_mesh(self, mesh_path: str, index_array_name: str='cell_scalars', roi_ids: list=[1, 4]) -> None:
         self.__index_array_name = index_array_name
         self._mesh = pv.UnstructuredGrid(os.path.realpath(mesh_path))
+        
+        self.logger.info(f'\n {self._mesh}')    
+        point_data_arrays = self._mesh.cell_arrays
+        # tmp = self._mesh.cell_scalars
+        for array in point_data_arrays:
+            self.logger.info(f'\n{array}')
+
         self._mesh_pts = self._mesh.threshold(value=roi_ids, scalars=self.__index_array_name, preference='cell').cell_centers()
 
         return self._mesh

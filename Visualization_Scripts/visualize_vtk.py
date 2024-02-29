@@ -1,37 +1,34 @@
-import vtk
-from vtk.util.numpy_support import vtk_to_numpy
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import argparse
+import pyvista as pv
 
-def visualize_vtk_file(vtk_file_path):
-    """
-    Visualize the given .vtk file using Matplotlib.
-    
-    :param vtk_file_path: Path to the .vtk file.
-    """
-    # Read the .vtk file
-    reader = vtk.vtkUnstructuredGridReader()
-    reader.SetFileName(vtk_file_path)
-    reader.Update()
+# Load the .vtk file and slice it
+mesh = pv.read('/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Simple_Export_Save_Dir/fem_model-name_12-13-10-11.vtk').slice(normal=[0, 0, 1], origin=[0, 0, 0])
 
-    # Extract the points from the .vtk file
-    points = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
-    
-    # Create a 3D plot
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+# Assuming 'field1', 'field2', 'field3', and 'field4' are the names of your fields
+# fields = ['e_field_(potential_base)', 'e_field_(potential_df)']
+fields = ['potential_df','potential_base']
 
-    # Scatter plot for points
-    ax.scatter(points[:, 0], points[:, 1], points[:, 2])
+# Define fields and colormaps
+colormaps = ['viridis', 'plasma', 'inferno', 'magma']
 
-    # Show the plot
-    plt.show()
+# Adjust opacities here if needed
+opacities = [0.5, 0.5, 0.5, 0.5]  # Example opacities, adjust based on visualization needs
 
-if __name__ == "__main__":
-    # Create argument parser
-    parser = argparse.ArgumentParser(description="Visualize a .vtk file with Matplotlib")
-    parser.add_argument("vtk_file_path", type=str, help="Path to the .vtk file")
-    args = parser.parse_args()
-    visualize_vtk_file(args.vtk_file_path)
+plotter = pv.Plotter()
+
+for i, field in enumerate(fields):
+    if field in mesh.array_names:
+        # Adjust the offset and transformation as necessary
+        offset = 1e-6
+        field_data = np.log10(mesh[field] + offset)
+        
+        # Check for valid data (not all NaN)
+        if not np.all(np.isnan(field_data)):
+            plotter.add_mesh(mesh, scalars=field_data, cmap=colormaps[i % len(colormaps)], opacity=opacities[i % len(opacities)])
+            plotter.add_scalar_bar(title=f'Log10({field})', title_font_size=22, label_font_size=20, n_labels=3, shadow=True, font_family='arial')
+        else:
+            print(f"Warning: Field '{field}' contains only NaN values after transformation.")
+    else:
+        print(f"Field '{field}' not found in the mesh.")
+
+plotter.show()

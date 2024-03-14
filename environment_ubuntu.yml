@@ -1,4 +1,4 @@
-name: pymesh
+name: pymesh2
 channels:
   - conda-forge
   - defaults
@@ -133,4 +133,4 @@ dependencies:
       - pyvista==0.25.3
       - scooby==0.5.6
       - vtk==9.3.0
-prefix: /home/cogitatorprime/Software_bin/anaconda3/envs/pymesh
+prefix: /home/cogitatorprime/Software_bin/anaconda3/envs/pymesh2

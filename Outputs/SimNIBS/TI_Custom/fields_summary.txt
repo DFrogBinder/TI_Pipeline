@@ -1,0 +1,46 @@
+Cannot locate subjects m2m folder
+some postprocessing options might fail
+
+sphere_TDCS_1
+=============
+Gray Matter
+
+Field Percentiles
+-----------------
+Top percentiles of the field (or field magnitude for vector fields)
+|Field |99.9%        |99.0%        |95.0%        |
+|------|-------------|-------------|-------------|
+|E     |2.92e+00 V/m |1.80e+00 V/m |7.94e-01 V/m |
+|magnE |2.92e+00 V/m |1.80e+00 V/m |7.94e-01 V/m |
+
+Field Focality
+---------------
+Mesh volume or area with a field >= X% of the 99.9th percentile
+|Field |75.0%        |50.0%        |
+|------|-------------|-------------|
+|E     |2.36e+03 mm³ |1.20e+04 mm³ |
+|magnE |2.36e+03 mm³ |1.20e+04 mm³ |
+
+
+sphere_TDCS_2
+=============
+Gray Matter
+
+Field Percentiles
+-----------------
+Top percentiles of the field (or field magnitude for vector fields)
+|Field |99.9%        |99.0%        |95.0%        |
+|------|-------------|-------------|-------------|
+|E     |3.09e+00 V/m |2.14e+00 V/m |1.13e+00 V/m |
+|magnE |3.09e+00 V/m |2.14e+00 V/m |1.13e+00 V/m |
+
+Field Focality
+---------------
+Mesh volume or area with a field >= X% of the 99.9th percentile
+|Field |75.0%        |50.0%        |
+|------|-------------|-------------|
+|E     |3.85e+03 mm³ |1.82e+04 mm³ |
+|magnE |3.85e+03 mm³ |1.82e+04 mm³ |
+
+Uncaught exception
+OSError: Cannot run postprocessing: subpath not set

@@ -363,6 +363,7 @@ Sim4Life/
 
 # File/folder exclusion zone
 Dump/
+Outputs/
 SimNIBS/simnibs4_examples
 SimNIBS/Outputs/
 *.msh

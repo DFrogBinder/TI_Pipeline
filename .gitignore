@@ -366,6 +366,7 @@ Dump/
 SimNIBS/simnibs4_examples
 SimNIBS/Outputs/
 *.msh
+*.hdf5
 *.vtk
 *.mesh
 *.ply

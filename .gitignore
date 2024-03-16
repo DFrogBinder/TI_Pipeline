@@ -363,8 +363,8 @@ Sim4Life/
 
 # File/folder exclusion zone
 Dump/
-/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples
-/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Outputs/
+SimNIBS/simnibs4_examples
+SimNIBS/Outputs/
 *.msh
 *.vtk
 *.mesh

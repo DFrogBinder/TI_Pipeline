@@ -370,6 +370,7 @@ SimNIBS/Outputs/
 *.vtk
 *.mesh
 *.ply
+*.mat
 
 # User-specific stuff
 .idea/**/workspace.xml

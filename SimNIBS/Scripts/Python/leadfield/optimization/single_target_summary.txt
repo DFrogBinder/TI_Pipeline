@@ -1,0 +1,42 @@
+Optimization set-up
+===========================
+Leadfield file: leadfield_output/ernie_leadfield_EEG10-10_UI_Jurak_2007.hdf5
+Max. total current: 0.002 (A)
+Max. individual current: 0.001 (A)
+Max. active electrodes: 8
+Name: optimization/single_target
+----------------------
+N targets: 1
+Target 1:
+positions: [-50.7, 5.1, 55.5]
+indexes: None
+directions: normal
+radius: 2
+intensity: 0.2
+max_angle: None
+tissues: None
+----------------------
+N avoid: 0
+
+
+Optimization Summary
+=============================
+Total current: 2.00e-03 (A)
+Maximum current: 1.00e-03 (A)
+Active electrodes: 8
+Field Summary
+----------------------------
+Peak Value (99.9 percentile): 0.28 (V/m)
+Mean field magnitude: 3.38e-02 (V/m)
+Focality: 50%: 7.83e+03 70%: 1.86e+03 (mm2)
+Target 1
+    Intensity specified:0.20 achieved: 0.20 (V/m)
+    Average angle across target: 17.8 (degrees)
+
+
+=====================================
+SimNIBS finished running optimization
+Mesh file: optimization/single_target.msh
+CSV file: optimization/single_target.csv
+Summary file: optimization/single_target_summary.txt
+=====================================

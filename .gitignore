@@ -367,11 +367,15 @@ Outputs/
 SimNIBS/simnibs4_examples
 SimNIBS/Outputs/
 *.msh
+*.msh.opt
+*.msh.ini
 *.hdf5
 *.vtk
 *.mesh
 *.ply
 *.mat
+*.csv 
+*.nii.gz
 
 # User-specific stuff
 .idea/**/workspace.xml

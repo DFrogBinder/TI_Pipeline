@@ -377,11 +377,11 @@ SfePy:
         conductivity: 0.17  # Conductivity values in S/m
       Skull:
         id: 2
-        conductivity: 0.000043 #0.003504
+        conductivity: 0.003504
       CSF:
         id: 3
-        conductivity: 0.000043 #1.776
+        conductivity: 1.776
       Brain:
         id: 4
-        conductivity: 0.000043 #0.234
+        conductivity: 0.234
 

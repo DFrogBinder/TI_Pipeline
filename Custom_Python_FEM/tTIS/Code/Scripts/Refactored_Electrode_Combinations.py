@@ -24,7 +24,7 @@ def main(settings_file, meshf, model, csv_save_dir):
 
     ## Read the mesh with pyvista to get the area ids and AAL regions
     msh = pv.UnstructuredGrid(meshf)
-    brain_regions_mask = np.isin(msh['cell_scalars'], [4, 5, 6])
+    brain_regions_mask = np.isin(msh['cell_scalars'], [4]) # Refers to region ID in the setting.yml file
 
     cell_ids_brain = msh['cell_scalars'][brain_regions_mask]
     aal_regions = msh['AAL_regions'][brain_regions_mask]
@@ -36,12 +36,11 @@ def main(settings_file, meshf, model, csv_save_dir):
         region_volumes_brain[int(region)] = np.sum(cell_volumes_brain[roi])
     del msh
     region_volumes_brain = np.array(region_volumes_brain)
-    ## Read the mesh with pyvista to get the area ids and AAL regions
 
     electrodes = settings['SfePy']['electrodes']['10-10-mod']
     e_field_values_brain = []
 
-    solve = slv.Solver(settings, 'SfePy', '10-10-mod')
+    solve = slv.Solver(settings, 'SfePy', 'sphere')
     solve.load_mesh(model)
 
     for electrode in electrodes.items():
@@ -74,7 +73,7 @@ def main(settings_file, meshf, model, csv_save_dir):
     np.savez_compressed(os.path.join(csv_save_dir, model_id + '_fields_brain'), e_field=e_field_values_brain.reshape((61, -1, 3)), cell_ids=cell_ids_brain, aal_regions=aal_regions, volumes=region_volumes_brain)
 
 settings_file='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Code/sim_settings.yml'
-meshf='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_10-10_Fixed.1.vtk'
+meshf='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/meshed_model_sphere.1.vtk'
 model='simple_brain'
 csv_save_dir='/home/cogitatorprime/sandbox/TI_Pipeline/tTIS/Export_Save_Dir/'
 main(settings_file, meshf, model, csv_save_dir)

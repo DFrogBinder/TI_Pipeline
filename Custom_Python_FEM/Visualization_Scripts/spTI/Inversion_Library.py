@@ -7,18 +7,18 @@ def SimpleInversion(t, frequency, modulation_frequency):
     return 'Simple Inversion',signal
 
 
-'''Gradual Phase Shift'''
-def GradualInversion(t, frequency, modulation_frequency):
+'''SawtoothInversion Phase Shift'''
+def SawtoothInversion(t, frequency, modulation_frequency):
     phi = np.pi * (t * modulation_frequency % 1)
     signal = np.sin(2 * np.pi * frequency * t + phi)
-    return 'Gradual Inversion', signal
+    return 'SawtoothInversion Inversion', signal
 
 
-'''Sawtooth Phase Shift'''
-def SawtoothInversion(t, frequency, modulation_frequency):
+'''Gradual Phase Shift'''
+def GradualInversion(t, frequency, modulation_frequency):
     phi = 2 * np.pi * (t * modulation_frequency % 1)
     signal = np.sin(2 * np.pi * frequency * t + phi)
-    return 'Sawtooth Inversion',signal
+    return 'Gradual Inversion',signal
 
 '''Customized Phase Shift'''
 def CustomInversion(t, frequency, modulation_frequency):

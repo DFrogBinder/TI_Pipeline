@@ -9,11 +9,11 @@ def Generate_PWM(t, frequency, duty_cycle):
     return 1 if tc < duty_cycle else 0
 
 # Parameters for the two PWM signals
-frequency1 = 2  # Frequency of first signal in Hz
-frequency2 = 5  # Frequency of second signal in Hz
+frequency1 = 2000  # Frequency of first signal in Hz
+frequency2 = 2010  # Frequency of second signal in Hz
 duty_cycle = 0.5  # Duty cycle as a fraction for both signals
-time_end = 2  # Time period to generate the signal over, in seconds
-sampling_rate = 1000  # Sampling rate in samples per second
+time_end = 0.5  # Time period to generate the signal over, in seconds
+sampling_rate = 5000  # Sampling rate in samples per second
 
 # Generating the time array
 t = np.linspace(0, time_end, int(time_end * sampling_rate))

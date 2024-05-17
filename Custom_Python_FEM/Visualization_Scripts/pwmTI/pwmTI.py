@@ -12,7 +12,7 @@ def Generate_PWM(t, frequency, duty_cycle):
 frequency1 = 2000  # Frequency of first signal in Hz
 frequency2 = 2010  # Frequency of second signal in Hz
 duty_cycle = 0.5  # Duty cycle as a fraction for both signals
-time_end = 0.5  # Time period to generate the signal over, in seconds
+time_end = 0.03  # Time period to generate the signal over, in seconds
 sampling_rate = 5000  # Sampling rate in samples per second
 
 # Generating the time array

@@ -18,12 +18,12 @@ carrier_signal = np.sin(2 * np.pi * frequency * t)
 # Phase-shift keying (PSK) modulated signal
 # Modulation happens at the modulation_frequency
 
-Inversion_Name, modulated_signal = inversion.CustomInversion(t,frequency,modulation_frequency)
+Inversion_Name, modulated_signal = inversion.GradualInversion(t,frequency,modulation_frequency)
 
 # Resulting spTI signal (interference of carrier and modulated signals)
 spti_signal = carrier_signal + modulated_signal
 
-Plotting
+# Plotting
 plt.figure(figsize=(12, 6))
 
 # Carrier signal plot
@@ -42,7 +42,7 @@ plt.ylabel('Amplitude')
 plt.legend()
 plt.grid(True)
 
-spTI signal plot
+# spTI signal plot
 plt.subplot(3, 1, 3)
 plt.plot(t, spti_signal)
 plt.title(f'{Inversion_Name} spTI Signal')

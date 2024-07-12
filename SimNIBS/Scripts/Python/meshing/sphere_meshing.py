@@ -18,4 +18,4 @@ label_img[r<=15] = 17 # 17 is an arbitrary custom tissue label
 # save
 affine = np.eye(4)
 img = nib.Nifti1Image(label_img, affine)
-nib.save(img,'myspheres.nii.gz')
+nib.save(img,'myspheres_2.nii.gz')

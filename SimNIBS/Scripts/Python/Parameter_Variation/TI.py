@@ -22,9 +22,13 @@ from simnibs.utils import TI_utils as TI
 
 # specify general parameters
 S = sim_struct.SESSION()
-S.fnamehead = '/home/cogitatorprime/sandbox/SimNIBS/Scripts/Python/neshted_sphere/sphere.msh'
+S.fnamehead = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/MNI152.msh'
 # S.subpath = '/home/cogitatorprime/sandbox/SimNIBS/simnibs4_examples/m2m_ernie'  # m2m-folder of the subject
-S.pathfem = '/home/cogitatorprime/sandbox/Simnibs/Scripts/Python/Parameter_Variation/Outputs'  # Directory for the simulation
+S.pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/Scripts/Python/Parameter_Variation/Outputs'  # Directory for the simulation
+
+if not os.path.exists(S.pathfem):
+        os.makedirs(S.pathfem)
+        print(f"Directory created: {S.pathfem}")
 
 # Allows for volumetric mesh generation
 S.map_to_vol = True
@@ -36,22 +40,22 @@ tdcs.currents = [0.001, -0.001]  # Current flow though each channel (A)
 
 electrode = tdcs.add_electrode()
 electrode.channelnr = 1
-electrode.centre = 'F5'  
+electrode.centre = 'FC4'  
 electrode.shape = 'ellipse' 
 electrode.dimensions = [30, 30]  # diameter in [mm]
 electrode.thickness = 2  # 2 mm thickness
 
 electrode = tdcs.add_electrode()
 electrode.channelnr = 2
-electrode.centre = 'P5'
+electrode.centre = 'P4'
 electrode.shape = 'ellipse'
 electrode.dimensions = [30, 30]
 electrode.thickness = 2
 
 # specify second electrode pair
 tdcs = S.add_tdcslist(deepcopy(tdcs))
-tdcs.electrode[0].centre = 'F6' 
-tdcs.electrode[1].centre = 'P6' 
+tdcs.electrode[0].centre = 'FC3' 
+tdcs.electrode[1].centre = 'P3' 
 
 run_simnibs(S)
 
@@ -59,8 +63,8 @@ run_simnibs(S)
 """
     generate the TI field from the simulation results
 """
-m1 = mesh_io.read_msh(os.path.join(S.pathfem, 'ernie_TDCS_1_scalar.msh'))
-m2 = mesh_io.read_msh(os.path.join(S.pathfem, 'ernie_TDCS_2_scalar.msh'))
+m1 = mesh_io.read_msh(os.path.join(S.pathfem, 'MNI152_TDCS_1_scalar.msh'))
+m2 = mesh_io.read_msh(os.path.join(S.pathfem, 'MNI152_TDCS_2_scalar.msh'))
 
 # remove all tetrahedra and triangles belonging to the electrodes so that
 # the two meshes have same number of elements

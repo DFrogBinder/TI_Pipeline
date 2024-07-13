@@ -2,6 +2,9 @@ import numpy as np
 import cv2
 import os
 import nibabel as nib
+from tqdm import tqdm
+from scipy.ndimage import label
+
 
 # Step 0: Load and slice NIfTI data
 def load_and_slice_nifti(file_path, output_folder):
@@ -53,9 +56,9 @@ def main(nifti_path, output_folder, threshold_value, voxel_size):
     return volume
 
 # Example usage
-nifti_path = 'path/to/your/data.nii.gz'
-output_folder = 'path/to/your/image_slices'
-threshold_value = 128  # Example threshold value
+nifti_path = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/1cm_1mA_FC4-P4_FC3-P3/MNI152_TDCS_TI_TImax.nii.gz'
+output_folder = './'
+threshold_value = 1 # Example threshold value
 voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 volume = main(nifti_path, output_folder, threshold_value, voxel_size)
 print(f"Calculated volume of the region: {volume} cubic units")

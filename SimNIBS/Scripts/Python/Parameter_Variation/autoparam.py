@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-from copy import deepcopy
 import os
 import numpy as np
 import simnibs as sim
-from datetime import datetime
 import itertools
+import subprocess
+
+from copy import deepcopy
+from datetime import datetime
+from simnibs import sim_struct, run_simnibs, mesh_io
+from simnibs.utils import TI_utils as TI
 
 def format_output_dir(directory_path: str) -> None:
     if not os.path.isdir(directory_path):
@@ -27,23 +31,25 @@ def format_output_dir(directory_path: str) -> None:
 
 # Parameters to be tested
 electrode_sizes = [1, 1.5, 2]  # cm
+electrode_thickness = [1,1.5, 2]
 current_intensities = [1, 1.5, 2]  # mA
 positions = [
-    ('F7', 'T5', 'F8', 'T6'),
-    ('F3', 'P3', 'F4', 'P4'),
-    ('Fz', 'Pz', 'F8', 'T6')
+    ('FC4', 'P4', 'FC3', 'P3')
+    # ('F3', 'P3', 'F4', 'P4'),
+    # ('Fz', 'Pz', 'F8', 'T6')
 ]
 
 # Define general parameters
 fnamehead = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/MNI152.msh'
-base_pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/'
+base_pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs'  # Directory for the simulation
+
 
 # Iterate over all combinations of parameters
 for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_sizes, current_intensities, positions):
     # Create session
     S = sim.sim_struct.SESSION()
     S.fnamehead = fnamehead
-    S.pathfem = os.path.join(base_pathfem, f'tmp_{size}cm_{current}mA_{pos1a}-{pos1b}_{pos2a}-{pos2b}_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
+    S.pathfem = os.path.join(base_pathfem, f'{size}cm_{current}mA_{pos1a}-{pos1b}_{pos2a}-{pos2b}')
     os.makedirs(S.pathfem, exist_ok=True)
     
     format_output_dir(S.pathfem)
@@ -78,8 +84,8 @@ for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_s
     sim.run_simnibs(S)
     
     # Post-process results
-    m1 = sim.read_msh(os.path.join(S.pathfem, 'mysphere_TDCS_1_scalar.msh'))
-    m2 = sim.read_msh(os.path.join(S.pathfem, 'mysphere_TDCS_2_scalar.msh'))
+    m1 = sim.read_msh(os.path.join(S.pathfem, 'MNI152_TDCS_1_scalar.msh'))
+    m2 = sim.read_msh(os.path.join(S.pathfem, 'MNI152_TDCS_2_scalar.msh'))
 
     tags_keep = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
     m1 = m1.crop_mesh(tags=tags_keep)
@@ -99,7 +105,10 @@ for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_s
         visible_tags=[1002, 1006],
         visible_fields='TImax',
     )
-    v.write_opt(os.path.join(S.pathfem, 'TI.msh'))
+    ti_export_path = os.path.join(S.pathfem, 'TI.msh')
+    v.write_opt(ti_export_path)
+    subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(S.pathfem, "MNI152_TDCS_TI")])
+
 
     print(f"Simulation completed for size {size} cm, current {current} mA, positions {pos1a}-{pos1b}, {pos2a}-{pos2b}. Results saved in {S.pathfem}")
 

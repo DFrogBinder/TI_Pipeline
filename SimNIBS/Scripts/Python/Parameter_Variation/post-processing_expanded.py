@@ -5,7 +5,29 @@ import nibabel as nib
 from tqdm import tqdm
 from scipy.ndimage import label
 
+def save_images(images, destination_path):
+    """
+    Save a list of images to a specified directory using OpenCV.
 
+    Args:
+    images (list): List of images where each image is a numpy array.
+    destination_path (str): The path where images should be saved.
+
+    Returns:
+    None
+    """
+    # Ensure the destination path exists, if not create it
+    if not os.path.exists(destination_path):
+        os.makedirs(destination_path)
+
+    # Iterate over the list of images
+    for idx, img in enumerate(images):
+        # Define the path for each image
+        image_path = os.path.join(destination_path, f'image_{idx+1}.png')
+        # Save the image using OpenCV
+        cv2.imwrite(image_path, img)
+        print(f"Saved: {image_path}")
+        
 # Step 0: Load and slice NIfTI data
 def load_and_slice_nifti(file_path, output_folder):
     # Load the NIfTI file
@@ -30,6 +52,7 @@ def load_images_from_folder(folder):
         img = cv2.imread(os.path.join(folder, filename), cv2.IMREAD_GRAYSCALE)
         if img is not None:
             images.append(img)
+            
     return images
 
 def apply_threshold(image, threshold_value):

@@ -10,6 +10,16 @@ from datetime import datetime
 from simnibs import sim_struct, run_simnibs, mesh_io
 from simnibs.utils import TI_utils as TI
 
+def close_gmsh_windows():
+    stop_flag = True
+    while stop_flag:
+        try:
+            # Command to search and close all windows containing 'SimNIBS' in their title
+            subprocess.run(['bash', '-c', 'xdotool search --name "Gmsh" windowkill'])
+        except Exception as e:
+            stop_flag = False
+            print(f"Error closing SimNIBS windows: {e}")
+
 def format_output_dir(directory_path: str) -> None:
     if not os.path.isdir(directory_path):
         print(f"The provided path {directory_path} is not a directory.")
@@ -107,8 +117,15 @@ for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_s
     )
     ti_export_path = os.path.join(S.pathfem, 'TI.msh')
     v.write_opt(ti_export_path)
-    subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(S.pathfem, "MNI152_TDCS_TI")])
-
+    
+    # Create the volumetric TI mesh with labels
+    try:
+        # Command to search and close all windows containing 'SimNIBS' in their title
+        subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(S.pathfem, "MNI152_TI"),"--create_label"])
+    except Exception as e:
+        print(f"Error creating volumetric mesh: {e}")
+    
+    close_gmsh_windows() 
 
     print(f"Simulation completed for size {size} cm, current {current} mA, positions {pos1a}-{pos1b}, {pos2a}-{pos2b}. Results saved in {S.pathfem}")
 

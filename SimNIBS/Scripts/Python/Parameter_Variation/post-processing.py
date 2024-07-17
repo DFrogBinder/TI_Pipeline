@@ -10,18 +10,22 @@ from tqdm import tqdm
 from scipy.ndimage import label
 
 def GenerateHeatmap(data):
-    df = pd.DataFrame(data, index=['Small Electrode', 'Medium Electrode', 'Large Electrode'])
+    # Create a DataFrame
+    df = pd.DataFrame(data)
+
+    # Create a pivot table
+    pivot_table = df.pivot_table(values='Total_Volume', index='Electrode_Size', columns='Input_current', aggfunc=np.sum)
 
     # Set a style and context for better visual appeal
     sns.set(style="whitegrid", context='talk')
 
     # Create a more professional looking heatmap
     plt.figure(figsize=(10, 8))  # Adjust the size as needed
-    heatmap = sns.heatmap(df, annot=True, cmap='viridis', fmt='g', linewidths=.5, linecolor='grey', cbar_kws={'label': 'Field Intensity'})
+    professional_heatmap = sns.heatmap(pivot_table, annot=True, cmap='viridis', fmt='g', linewidths=.5, linecolor='grey', cbar_kws={'label': 'Total Volume'})
 
     # Adding more descriptive titles and labels
-    plt.title('Heatmap of Electric Field Intensity by Electrode Size and Current Intensity', pad=20)
-    plt.xlabel('Electric Current Intensity')
+    plt.title('Heatmap of Total Volume by Electrode Size and Input Current', pad=20)
+    plt.xlabel('Input Current')
     plt.ylabel('Electrode Size')
 
     # Improve readability by configuring tick labels
@@ -192,6 +196,14 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder, threshold_v
     volume = calculate_volume(binary_volume, voxel_size)
     return volume
 
+
+
+'''
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+++++++++++++++++++++++++++++++++++++Execution Starts Here++++++++++++++++++++++++++++++++++++
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+'''
+
 stat_data = {
     'Electrode_Size': [],
     'Pair_1_Pos':[],
@@ -258,5 +270,4 @@ for simulation in tqdm(simulations):
     stat_data['Minimum_Value'].append(min_intensity)
     
     # print(f"Calculated volume of the region: {volume} cubic units")
-
-
+GenerateHeatmap(stat_data)

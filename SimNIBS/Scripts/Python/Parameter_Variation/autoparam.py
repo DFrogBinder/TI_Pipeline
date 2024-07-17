@@ -15,7 +15,9 @@ def close_gmsh_windows():
     while stop_flag:
         try:
             # Command to search and close all windows containing 'SimNIBS' in their title
-            subprocess.run(['bash', '-c', 'xdotool search --name "Gmsh" windowkill'])
+            result = subprocess.run(['bash', '-c', 'xdotool search --name "Gmsh" windowkill'])
+            if result.returncode == 1:
+                stop_flag = False
         except Exception as e:
             stop_flag = False
             print(f"Error closing SimNIBS windows: {e}")
@@ -118,10 +120,24 @@ for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_s
     ti_export_path = os.path.join(S.pathfem, 'TI.msh')
     v.write_opt(ti_export_path)
     
+    volume_masks_path = os.path.join(S.pathfem,'Volume_Maks')
+    if not os.path.isdir(volume_masks_path):
+        os.mkdir(volume_masks_path)
+        
+    volume_base_path = os.path.join(S.pathfem,'Volume_Base')
+    if not os.path.isdir(volume_base_path):
+        os.mkdir(volume_base_path)
+        
+    volume_labels_path = os.path.join(S.pathfem,'Volume_Labels')
+    if not os.path.isdir(volume_labels_path):
+        os.mkdir(volume_labels_path)
+    
     # Create the volumetric TI mesh with labels
     try:
         # Command to search and close all windows containing 'SimNIBS' in their title
-        subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(S.pathfem, "MNI152_TI"),"--create_label"])
+        subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(volume_labels_path, "TI_Volumetric_Labels"),"--create_label"])
+        subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(volume_masks_path, "TI_Volumetric_Masks"),"--create_masks"])
+        subprocess.run(["msh2nii", ti_export_path, "/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/T1.nii.gz", os.path.join(volume_base_path, "TI_Volumetric_Base")])
     except Exception as e:
         print(f"Error creating volumetric mesh: {e}")
     

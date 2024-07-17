@@ -4,7 +4,26 @@ import os
 import matplotlib.pyplot as plt
 import nibabel as nib
 import tifffile as tiff
+import pandas as pd
+from tqdm import tqdm
 from scipy.ndimage import label
+
+def Stats2CSV(volume, max_intensity, min_intensity, path):
+    # Create a dictionary with the data
+    data = {
+        'Total Volume': [volume],
+        'Minimum Value': [min_intensity],
+        'Maximum Value': [max_intensity]
+    }
+
+    # Create a DataFrame
+    df = pd.DataFrame(data)
+
+    # Save the DataFrame to a CSV file
+    csv_file_path =os.path.join(path,'Stats.csv')  
+    df.to_csv(csv_file_path, index=False)
+    
+    return True
 
 def SetupDirPath(path):
     if os.path.isdir(path):
@@ -20,7 +39,7 @@ def SetupDirPath(path):
         
 
 # Step 0: Load and slice NIfTI data
-def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=True):
+def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=False):
     # Load the NIfTI file
     nifti = nib.load(file_path)
     data = nifti.get_fdata()
@@ -149,7 +168,7 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder, threshold_v
 OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
 simulations = os.listdir(OutputDir)
 
-for simulation in simulations:
+for simulation in tqdm(simulations):
     
     # Inputs
     base_nifti_path = os.path.join(OutputDir, simulation,'Volume_Base','TI_Volumetric_Base_TImax.nii.gz')
@@ -172,4 +191,7 @@ for simulation in simulations:
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
     volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, output_folder, binary_output, threshold_value, voxel_size)
+    
+    Stats2CSV(volume, max_intensity, min_intensity, os.path.join(OutputDir,simulation))
+    
     print(f"Calculated volume of the region: {volume} cubic units")

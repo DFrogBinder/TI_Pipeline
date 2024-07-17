@@ -5,15 +5,42 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import tifffile as tiff
 import pandas as pd
+import seaborn as sns
 from tqdm import tqdm
 from scipy.ndimage import label
 
-def Stats2CSV(volume, max_intensity, min_intensity, path):
+def GenerateHeatmap(data):
+    df = pd.DataFrame(data, index=['Small Electrode', 'Medium Electrode', 'Large Electrode'])
+
+    # Set a style and context for better visual appeal
+    sns.set(style="whitegrid", context='talk')
+
+    # Create a more professional looking heatmap
+    plt.figure(figsize=(10, 8))  # Adjust the size as needed
+    heatmap = sns.heatmap(df, annot=True, cmap='viridis', fmt='g', linewidths=.5, linecolor='grey', cbar_kws={'label': 'Field Intensity'})
+
+    # Adding more descriptive titles and labels
+    plt.title('Heatmap of Electric Field Intensity by Electrode Size and Current Intensity', pad=20)
+    plt.xlabel('Electric Current Intensity')
+    plt.ylabel('Electrode Size')
+
+    # Improve readability by configuring tick labels
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
+
+    plt.show()
+
+def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,input_current,
+              pair_1_pos,pair_2_pos,path):
     # Create a dictionary with the data
     data = {
         'Total Volume': [volume],
         'Minimum Value': [min_intensity],
-        'Maximum Value': [max_intensity]
+        'Maximum Value': [max_intensity],
+        'Electrode Size': [electrode_size],
+        'Input Current': [input_current],
+        'Pair 1 Position': [pair_1_pos],
+        'Pair 2 Position': [pair_2_pos]
     }
 
     # Create a DataFrame
@@ -23,7 +50,7 @@ def Stats2CSV(volume, max_intensity, min_intensity, path):
     csv_file_path =os.path.join(path,'Stats.csv')  
     df.to_csv(csv_file_path, index=False)
     
-    return True
+    return data
 
 def SetupDirPath(path):
     if os.path.isdir(path):
@@ -165,10 +192,28 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder, threshold_v
     volume = calculate_volume(binary_volume, voxel_size)
     return volume
 
+stat_data = {
+    'Electrode_Size': [],
+    'Pair_1_Pos':[],
+    'Pair_2_Pos':[],
+    'Input_current':[],
+    'Total_Volume': [],
+    'Minimum_Value': [],
+    'Maximum_Value': []
+    }
+
+
 OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
 simulations = os.listdir(OutputDir)
 
 for simulation in tqdm(simulations):
+
+    # Extract Parameters from folder name
+    sim_paramters = simulation.split('_')
+    electrode_size = sim_paramters[0]
+    intensity = sim_paramters[1]
+    pair_1_pos = sim_paramters[2]
+    pair_2_pos = sim_paramters[3]
     
     # Inputs
     base_nifti_path = os.path.join(OutputDir, simulation,'Volume_Base','TI_Volumetric_Base_TImax.nii.gz')
@@ -191,7 +236,27 @@ for simulation in tqdm(simulations):
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
     volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, output_folder, binary_output, threshold_value, voxel_size)
+    Stats2CSV(volume, 
+              max_intensity, 
+              min_intensity,
+              electrode_size,
+              intensity,
+              pair_1_pos,
+              pair_2_pos,
+              os.path.join(OutputDir,simulation)
+              )
     
-    Stats2CSV(volume, max_intensity, min_intensity, os.path.join(OutputDir,simulation))
     
-    print(f"Calculated volume of the region: {volume} cubic units")
+    
+    # Update Stats Dict For Plotting later
+    stat_data['Electrode_Size'].append(electrode_size)
+    stat_data['Input_current'].append(intensity)
+    stat_data['Pair_1_Pos'].append(pair_1_pos)
+    stat_data['Pair_2_Pos'].append(pair_2_pos)
+    stat_data['Maximum_Value'].append(max_intensity)
+    stat_data['Total_Volume'].append(volume)
+    stat_data['Minimum_Value'].append(min_intensity)
+    
+    # print(f"Calculated volume of the region: {volume} cubic units")
+
+

@@ -6,9 +6,71 @@ import nibabel as nib
 import tifffile as tiff
 import pandas as pd
 import seaborn as sns
+import SimpleITK as sitk
+import pyvista as pv
 from tqdm import tqdm
 from scipy.ndimage import label
+from nilearn import datasets, image
+from nilearn.image import resample_to_img
 
+
+def Get_ALL_Atlas(base_path):
+    # Load the AAL atlas
+    aal_dataset = datasets.fetch_atlas_aal(version='SPM12', data_dir='./aal_SPM12')
+    atlas_filename = aal_dataset.maps
+    labels = aal_dataset.labels
+
+    # Load the atlas image
+    atlas_img = nib.load(atlas_filename)
+
+    # Find indices for the left and right thalamus
+    thalamus_left_idx = labels.index('Thalamus_L')
+    thalamus_right_idx = labels.index('Thalamus_R')
+
+    # Create masks for the left and right thalamus
+    thalamus_left_mask = image.math_img(f"img == {thalamus_left_idx}", img=atlas_img)
+    thalamus_right_mask = image.math_img(f"img == {thalamus_right_idx}", img=atlas_img)
+
+    nifti = nib.load(base_path)
+    # Resample simulation data to match the atlas space
+    resampled_sim_data = resample_to_img(source_img=nifti, target_img=atlas_img, interpolation='nearest')
+
+    
+    # Apply the masks to the simulation data
+    thalamic_left_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_left_mask)
+    thalamic_right_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_right_mask)
+
+    # Save the masked data or proceed with analysis
+    nib.save(thalamic_left_data, 'thalamic_left_data.nii')
+    nib.save(thalamic_right_data, 'thalamic_right_data.nii')
+    
+    
+    return thalamus_left_mask, thalamus_right_mask
+
+def nifti_to_mesh(nifti_file_path, output_mesh_path):
+    # Load the NIfTI file
+    img = nib.load(nifti_file_path)
+    data = img.get_fdata()
+    # Convert the float data to int (assuming binary, you can use 0 and 1)
+    data_int = (data > 0).astype(np.int16)
+    sitk_img = sitk.GetImageFromArray(data_int)
+    
+    # Get the contour of the segmentation
+    contour_img = sitk.LabelContour(sitk_img, fullyConnected=True, backgroundValue=0)
+
+    # Convert SimpleITK image to a numpy array and prepare for PyVista
+    vtk_img = sitk.GetArrayFromImage(contour_img)
+    # Create structured grid with correct dimensions and spacing
+    grid = pv.StructuredGrid(*vtk_img.shape[::-1])  # PyVista expects dimensions in x, y, z order
+    grid.points = np.stack(np.mgrid[0:vtk_img.shape[2], 0:vtk_img.shape[1], 0:vtk_img.shape[0]], axis=-1).reshape(-1, 3) * img.header.get_zooms() + img.affine[:3, 3]
+    grid.point_data['values'] = vtk_img.T.ravel()  # Transpose to match VTK indexing
+
+    # Extract the surface
+    surface = grid.extract_surface()
+
+    # Save the mesh
+    surface.save(output_mesh_path)
+    
 def GenerateHeatmap(data):
     # Create a DataFrame
     df = pd.DataFrame(data)
@@ -70,7 +132,7 @@ def SetupDirPath(path):
         
 
 # Step 0: Load and slice NIfTI data
-def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=False):
+def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=True):
     # Load the NIfTI file
     nifti = nib.load(file_path)
     data = nifti.get_fdata()
@@ -186,13 +248,13 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder, threshold_v
     # Load processed images, apply threshold, and save binary images
     brain_only_images = load_images_and_threshold(brain_only_images, output_folder, threshold_value, binary_output_folder)
     binary_volume = stack_images(brain_only_images)
-    
+    Get_ALL_Atlas(nifti_path)
     # Create an identity affine matrix (this is a simple placeholder)
     affine = np.eye(4)
 
     # Create the NIfTI image
     img = nib.Nifti1Image(binary_volume, affine)
-    nib.save(img,'thresholded_volume.nii.gz')
+    nib.save(img,os.path.join(output_folder,'thresholded_volume.nii.gz'))
     volume = calculate_volume(binary_volume, voxel_size)
     return volume
 
@@ -244,7 +306,7 @@ for simulation in tqdm(simulations):
         continue
 
     # Parameter Values
-    threshold_value = 0.15
+    threshold_value = 0.19
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
     volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, output_folder, binary_output, threshold_value, voxel_size)

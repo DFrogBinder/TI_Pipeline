@@ -30,7 +30,9 @@ def Extract_Thalamus(base_path,output_path):
     # Create masks for the left and right thalamus
     thalamus_left_mask = image.math_img(f"img == {thalamus_left_idx}", img=atlas_img)
     thalamus_right_mask = image.math_img(f"img == {thalamus_right_idx}", img=atlas_img)
+    combined_thalamus_mask = image.math_img("img1 + img2", img1=thalamus_left_mask, img2=thalamus_right_mask)
 
+    
     nifti = nib.load(base_path)
     # Resample simulation data to match the atlas space
     resampled_sim_data = resample_to_img(source_img=nifti, target_img=atlas_img, interpolation='nearest')
@@ -39,13 +41,17 @@ def Extract_Thalamus(base_path,output_path):
     # Apply the masks to the simulation data
     thalamic_left_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_left_mask)
     thalamic_right_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_right_mask)
+    combined_thalamic_data = image.math_img("a * b", a=resampled_sim_data, b=combined_thalamus_mask)
+
 
     # Save the masked data or proceed with analysis
     nib.save(thalamic_left_data, os.path.join(output_path, 'thalamic_left_data.nii'))
     nib.save(thalamic_right_data, os.path.join(output_path, 'thalamic_right_data.nii'))
+    nib.save(combined_thalamic_data, os.path.join(output_path, 'combined_thalamus_data.nii'))
+
     
     
-    return thalamus_left_mask, thalamus_right_mask
+    return thalamus_left_mask, thalamus_right_mask, combined_thalamus_mask
 
 def nifti_to_mesh(nifti_file_path, output_mesh_path):
     # Load the NIfTI file
@@ -132,7 +138,7 @@ def SetupDirPath(path):
         
 
 # Step 0: Load and slice NIfTI data
-def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=False):
+def prepare_base_nifti(file_path, masks_dir, output_folder, nifti_output, plot_flag=False):
     # Load the NIfTI file
     nifti = nib.load(file_path)
     data = nifti.get_fdata()
@@ -191,7 +197,7 @@ def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=False):
     
     # Create a new NIfTI image from the mask
     label_img = nib.Nifti1Image(brain, nifti.affine, nifti.header)
-    label_img_path = os.path.join(output_folder, 'white_gray_matter.nii.gz')
+    label_img_path = os.path.join(nifti_output, 'white_gray_matter.nii.gz')
     nib.save(label_img, label_img_path)
 
     
@@ -244,19 +250,19 @@ def calculate_volume(binary_volume, voxel_size):
     return total_volume, max_intensity, min_intensity
 
 # Main function to process images and calculate volume
-def main(nifti_path, masks_dir, output_folder, binary_output_folder, voxel_size):
-    brain_only_images = prepare_base_nifti(nifti_path, masks_dir, output_folder)
+def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output, voxel_size):
+    brain_only_images = prepare_base_nifti(nifti_path, masks_dir, output_folder, nifti_output)
     
     # Load processed images, apply threshold, and save binary images
     brain_only_images = load_images_and_threshold(brain_only_images, output_folder, binary_output_folder)
     binary_volume = stack_images(brain_only_images)
-    Extract_Thalamus(nifti_path,output_path)
+    _,_,_ = Extract_Thalamus(nifti_path,nifti_output)
     # Create an identity affine matrix (this is a simple placeholder)
     affine = np.eye(4)
 
     # Create the NIfTI image
     img = nib.Nifti1Image(binary_volume, affine)
-    nib.save(img,os.path.join(output_folder,'thresholded_volume.nii.gz'))
+    nib.save(img,os.path.join(nifti_output,'thresholded_volume.nii.gz'))
     volume = calculate_volume(binary_volume, voxel_size)
     return volume
 
@@ -306,12 +312,19 @@ for simulation in tqdm(simulations):
     if not SetupDirPath(binary_output):
         print(f'Failed to create pathing for {simulation}! Continuing to next study...')
         continue
+    
+    nifti_output = os.path.join(OutputDir, simulation,'nifti')
+    if not SetupDirPath(nifti_output):
+        print(f'Failed to create pathing for {simulation}! Continuing to next study...')
+        continue
 
     # Parameter Values
     # threshold_value = 0.19
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
-    volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, output_folder, binary_output, voxel_size)
+    volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, 
+                                                output_folder, binary_output, nifti_output, 
+                                                voxel_size)
     
     Stats2CSV(volume, 
               max_intensity, 

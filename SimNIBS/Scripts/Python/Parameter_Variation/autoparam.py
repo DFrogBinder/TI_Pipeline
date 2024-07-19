@@ -43,12 +43,16 @@ def format_output_dir(directory_path: str) -> None:
 
 # Parameters to be tested
 electrode_sizes = [1, 1.5, 2]  # cm
-electrode_thickness = [1,1.5, 2]
+electrode_thickness = [1,1.5, 2] # mm
 current_intensities = [1, 1.5, 2]  # mA
+electrode_shape = ['ellipse','rect']
 positions = [
-    ('FC4', 'P4', 'FC3', 'P3')
-    # ('F3', 'P3', 'F4', 'P4'),
-    # ('Fz', 'Pz', 'F8', 'T6')
+    ('F4', 'P4', 'F3', 'P3'),
+    ('FC4', 'CP4', 'FC3', 'CP3'),
+    ('AF4', 'P04', 'AF3', 'PO3'),
+    ('F6', 'P6', 'F5', 'P5'),
+    ('FC6', 'CP6', 'FC5', 'CP5'),
+    ('AF8', 'P08', 'AF7', 'PO7')
 ]
 
 # Define general parameters
@@ -57,11 +61,11 @@ base_pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/
 
 
 # Iterate over all combinations of parameters
-for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_sizes, current_intensities, positions):
+for size, current, (pos1a, pos1b, pos2a, pos2b),el_shape in itertools.product(electrode_sizes, current_intensities, positions, electrode_shape):
     # Create session
     S = sim.sim_struct.SESSION()
     S.fnamehead = fnamehead
-    S.pathfem = os.path.join(base_pathfem, f'{size}cm_{current}mA_{pos1a}-{pos1b}_{pos2a}-{pos2b}')
+    S.pathfem = os.path.join(base_pathfem, f'{size}cm_{current}mA_{pos1a}-{pos1b}_{pos2a}-{pos2b}_{el_shape}')
     os.makedirs(S.pathfem, exist_ok=True)
     
     format_output_dir(S.pathfem)
@@ -76,14 +80,14 @@ for size, current, (pos1a, pos1b, pos2a, pos2b) in itertools.product(electrode_s
     electrode1 = tdcs.add_electrode()
     electrode1.channelnr = 1
     electrode1.centre = pos1a
-    electrode1.shape = 'ellipse'
+    electrode1.shape = el_shape
     electrode1.dimensions = [size * 10, size * 10]  # Convert cm to mm
     electrode1.thickness = 2
 
     electrode2 = tdcs.add_electrode()
     electrode2.channelnr = 2
     electrode2.centre = pos1b
-    electrode2.shape = 'ellipse'
+    electrode2.shape = el_shape
     electrode2.dimensions = [size * 10, size * 10]  # Convert cm to mm
     electrode2.thickness = 2
     

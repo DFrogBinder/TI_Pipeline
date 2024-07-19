@@ -14,7 +14,7 @@ from nilearn import datasets, image
 from nilearn.image import resample_to_img
 
 
-def Get_ALL_Atlas(base_path):
+def Extract_Thalamus(base_path,output_path):
     # Load the AAL atlas
     aal_dataset = datasets.fetch_atlas_aal(version='SPM12', data_dir='./aal_SPM12')
     atlas_filename = aal_dataset.maps
@@ -22,10 +22,10 @@ def Get_ALL_Atlas(base_path):
 
     # Load the atlas image
     atlas_img = nib.load(atlas_filename)
-
+ 
     # Find indices for the left and right thalamus
-    thalamus_left_idx = labels.index('Thalamus_L')
-    thalamus_right_idx = labels.index('Thalamus_R')
+    thalamus_left_idx = aal_dataset.indices[labels.index('Thalamus_L')]
+    thalamus_right_idx = aal_dataset.indices[labels.index('Thalamus_R')]
 
     # Create masks for the left and right thalamus
     thalamus_left_mask = image.math_img(f"img == {thalamus_left_idx}", img=atlas_img)
@@ -41,8 +41,8 @@ def Get_ALL_Atlas(base_path):
     thalamic_right_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_right_mask)
 
     # Save the masked data or proceed with analysis
-    nib.save(thalamic_left_data, 'thalamic_left_data.nii')
-    nib.save(thalamic_right_data, 'thalamic_right_data.nii')
+    nib.save(thalamic_left_data, os.path.join(output_path, 'thalamic_left_data.nii'))
+    nib.save(thalamic_right_data, os.path.join(output_path, 'thalamic_right_data.nii'))
     
     
     return thalamus_left_mask, thalamus_right_mask
@@ -132,7 +132,7 @@ def SetupDirPath(path):
         
 
 # Step 0: Load and slice NIfTI data
-def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=True):
+def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=False):
     # Load the NIfTI file
     nifti = nib.load(file_path)
     data = nifti.get_fdata()
@@ -210,8 +210,10 @@ def prepare_base_nifti(file_path, masks_dir, output_folder, plot_flag=True):
     return brain
 
 # Step 1: Load images, apply threshold, and ensure orientation
-def load_images_and_threshold(image_data, folder, threshold_value, binary_output_folder):
+def load_images_and_threshold(image_data, folder, binary_output_folder):
     binary_images = []
+    threshold_value = np.max(image_data)*0.8 # Sets threshold value as 90% of max e-field
+    
     for slice, counter in zip(image_data, range(len(image_data))):
         if slice is not None:
             # Create a mask where every pixel above the threshold is True; others are False
@@ -242,13 +244,13 @@ def calculate_volume(binary_volume, voxel_size):
     return total_volume, max_intensity, min_intensity
 
 # Main function to process images and calculate volume
-def main(nifti_path, masks_dir, output_folder, binary_output_folder, threshold_value, voxel_size):
+def main(nifti_path, masks_dir, output_folder, binary_output_folder, voxel_size):
     brain_only_images = prepare_base_nifti(nifti_path, masks_dir, output_folder)
     
     # Load processed images, apply threshold, and save binary images
-    brain_only_images = load_images_and_threshold(brain_only_images, output_folder, threshold_value, binary_output_folder)
+    brain_only_images = load_images_and_threshold(brain_only_images, output_folder, binary_output_folder)
     binary_volume = stack_images(brain_only_images)
-    Get_ALL_Atlas(nifti_path)
+    Extract_Thalamus(nifti_path,output_path)
     # Create an identity affine matrix (this is a simple placeholder)
     affine = np.eye(4)
 
@@ -306,10 +308,11 @@ for simulation in tqdm(simulations):
         continue
 
     # Parameter Values
-    threshold_value = 0.19
+    # threshold_value = 0.19
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
-    volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, output_folder, binary_output, threshold_value, voxel_size)
+    volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, output_folder, binary_output, voxel_size)
+    
     Stats2CSV(volume, 
               max_intensity, 
               min_intensity,

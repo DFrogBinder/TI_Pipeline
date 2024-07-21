@@ -15,7 +15,7 @@ from scipy.ndimage import label
 from nilearn import datasets, image
 from nilearn.image import resample_to_img
 
-def Extract_stats_csv(OutputDirContents):
+def Extract_stats_csv(OutputDirContents, save_data=False):
     
     # Init empty dataframe for stats storage
     pd_columns = ['Total Volume', 'Minimum Value',
@@ -38,8 +38,13 @@ def Extract_stats_csv(OutputDirContents):
     if len(StatDF) != len(studies):
         print(f'{len(studies) - len(StatDF)} failed to load!',file=sys.stderr)
     
-    StatDF.to_csv(os.path.join(OutputDirContents,'All_Stats.csv'))
-       
+    if save_data:
+        try:
+            StatDF.to_csv(os.path.join(OutputDirContents,'All_Stats.csv'))
+            print(f'All statistical data has been saved.',file=sys.stderr)
+        except:
+            print(f'There was problem saving colated statistical data!',file=sys.stderr)
+            
     return StatDF
 
 def Extract_Thalamus(base_path,output_path):
@@ -79,7 +84,7 @@ def Extract_Thalamus(base_path,output_path):
 
     
     
-    return thalamic_left_data, thalamic_right_data, combined_thalamic_data
+    return thalamic_left_data.get_fdata(), thalamic_right_data.get_fdata(), combined_thalamic_data.get_fdata()
 
 def nifti_to_mesh(nifti_file_path, output_mesh_path):
     # Load the NIfTI file
@@ -325,7 +330,6 @@ stat_data = {
 
 OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
 simulations = os.listdir(OutputDir)
-# stat_data = Extract_stats_csv(OutputDir)
 for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
 
     # Extract Parameters from folder name
@@ -394,4 +398,5 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     
     # print(f"Calculated volume of the region: {volume} cubic units")
 
+stat_data = Extract_stats_csv(OutputDir, save_data=True)
 # GenerateHeatmap(stat_data)

@@ -13,6 +13,30 @@ from scipy.ndimage import label
 from nilearn import datasets, image
 from nilearn.image import resample_to_img
 
+def Extract_stats_csv(OutputDirContents):
+    
+    # Init empty dataframe for stats storage
+    pd_columns = ['Total Volume', 'Minimum Value',
+        'Maximum Value','Electrode Size',
+        'Input Current','Pair 1 Position',
+        'Pair 2 Position']
+    StatDF = pd.DataFrame(columns=pd_columns)
+    
+    studies = os.listdir(OutputDirContents)
+    
+    for study in studies:
+        csv_path = os.path.join(OutputDirContents,study,'Stats.csv')
+        try:
+            stats = pd.read_csv(csv_path)
+            StatDF = pd.concat([StatDF,stats],ignore_index=True) # Append stats to the empty dataframe
+        except:
+            print(f'Failed to load file {csv_path}')
+    
+    # Checks how many stat reports failed to load (if any)
+    if len(StatDF) != len(studies):
+        print(f'{len(studies) - len(StatDF)} failed to load!')
+       
+    return StatDF
 
 def Extract_Thalamus(base_path,output_path):
     # Load the AAL atlas
@@ -287,7 +311,7 @@ stat_data = {
 
 OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
 simulations = os.listdir(OutputDir)
-
+stat_data = Extract_stats_csv(OutputDir)
 for simulation in tqdm(simulations):
 
     # Extract Parameters from folder name
@@ -348,4 +372,5 @@ for simulation in tqdm(simulations):
     stat_data['Minimum_Value'].append(min_intensity)
     
     # print(f"Calculated volume of the region: {volume} cubic units")
-GenerateHeatmap(stat_data)
+
+# GenerateHeatmap(stat_data)

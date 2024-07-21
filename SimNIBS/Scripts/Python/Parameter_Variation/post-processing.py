@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import os
+import sys
 import matplotlib.pyplot as plt
 import nibabel as nib
 import tifffile as tiff
@@ -8,6 +9,7 @@ import pandas as pd
 import seaborn as sns
 import SimpleITK as sitk
 import pyvista as pv
+
 from tqdm import tqdm
 from scipy.ndimage import label
 from nilearn import datasets, image
@@ -30,11 +32,13 @@ def Extract_stats_csv(OutputDirContents):
             stats = pd.read_csv(csv_path)
             StatDF = pd.concat([StatDF,stats],ignore_index=True) # Append stats to the empty dataframe
         except:
-            print(f'Failed to load file {csv_path}')
+            print(f'Failed to load file {csv_path}',file=sys.stderr)
     
     # Checks how many stat reports failed to load (if any)
     if len(StatDF) != len(studies):
-        print(f'{len(studies) - len(StatDF)} failed to load!')
+        print(f'{len(studies) - len(StatDF)} failed to load!',file=sys.stderr)
+    
+    StatDF.to_csv(os.path.join(OutputDirContents,'All_Stats.csv'))
        
     return StatDF
 
@@ -75,7 +79,7 @@ def Extract_Thalamus(base_path,output_path):
 
     
     
-    return thalamus_left_mask, thalamus_right_mask, combined_thalamus_mask
+    return thalamic_left_data, thalamic_right_data, combined_thalamic_data
 
 def nifti_to_mesh(nifti_file_path, output_mesh_path):
     # Load the NIfTI file
@@ -127,7 +131,7 @@ def GenerateHeatmap(data):
     plt.show()
 
 def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,input_current,
-              pair_1_pos,pair_2_pos,path):
+              pair_1_pos,pair_2_pos,thal_L, thal_R, thal_ALL,path):
     # Create a dictionary with the data
     data = {
         'Total Volume': [volume],
@@ -136,7 +140,10 @@ def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,input_current,
         'Electrode Size': [electrode_size],
         'Input Current': [input_current],
         'Pair 1 Position': [pair_1_pos],
-        'Pair 2 Position': [pair_2_pos]
+        'Pair 2 Position': [pair_2_pos],
+        'Max_Thalamus_R': [thal_R],
+        'Max_Thalamus_L': [thal_L],
+        'Max_Thalamus': [thal_ALL]
     }
 
     # Create a DataFrame
@@ -154,10 +161,10 @@ def SetupDirPath(path):
     else:
         try:
             os.mkdir(path)
-            print(f'Folder {path} created!')    
+            print(f'Folder {path} created!',file=sys.stderr)    
             return True 
         except:
-            print(f'Failed to create folder {path}!')
+            print(f'Failed to create folder {path}!',file=sys.stderr)
             return False
         
 
@@ -242,7 +249,7 @@ def prepare_base_nifti(file_path, masks_dir, output_folder, nifti_output, plot_f
 # Step 1: Load images, apply threshold, and ensure orientation
 def load_images_and_threshold(image_data, folder, binary_output_folder):
     binary_images = []
-    threshold_value = np.max(image_data)*0.8 # Sets threshold value as 90% of max e-field
+    threshold_value = np.max(image_data)*0.8 # Sets threshold value as 80% of max e-field
     
     for slice, counter in zip(image_data, range(len(image_data))):
         if slice is not None:
@@ -280,15 +287,19 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
     # Load processed images, apply threshold, and save binary images
     brain_only_images = load_images_and_threshold(brain_only_images, output_folder, binary_output_folder)
     binary_volume = stack_images(brain_only_images)
-    _,_,_ = Extract_Thalamus(nifti_path,nifti_output)
+    
+    # Extracts left and rigth thalamus regions via the aal brain atlas
+    thalamic_left_data, thalamic_right_data, combined_thalamic_data = Extract_Thalamus(nifti_path,nifti_output)
+    
     # Create an identity affine matrix (this is a simple placeholder)
     affine = np.eye(4)
 
     # Create the NIfTI image
     img = nib.Nifti1Image(binary_volume, affine)
     nib.save(img,os.path.join(nifti_output,'thresholded_volume.nii.gz'))
-    volume = calculate_volume(binary_volume, voxel_size)
-    return volume
+    volume, max_intensity, min_intensity = calculate_volume(binary_volume, voxel_size)
+    
+    return volume,max_intensity, min_intensity,thalamic_left_data, thalamic_right_data, combined_thalamic_data
 
 
 
@@ -305,14 +316,17 @@ stat_data = {
     'Input_current':[],
     'Total_Volume': [],
     'Minimum_Value': [],
-    'Maximum_Value': []
+    'Maximum_Value': [],
+    'Max_Thalamus_R': [],
+    'Max_Thalamus_L': [],
+    'Max_Thalamus': []
     }
 
 
 OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
 simulations = os.listdir(OutputDir)
-stat_data = Extract_stats_csv(OutputDir)
-for simulation in tqdm(simulations):
+# stat_data = Extract_stats_csv(OutputDir)
+for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
 
     # Extract Parameters from folder name
     sim_paramters = simulation.split('_')
@@ -328,25 +342,25 @@ for simulation in tqdm(simulations):
     # Output Destinations
     output_folder = os.path.join(OutputDir, simulation, 'Slices')
     if not SetupDirPath(output_folder):
-        print(f'Failed to create pathing for {simulation}! Continuing to next study...')
+        print(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
         continue
         
     
     binary_output = os.path.join(OutputDir, simulation,'Binary_Volumes')
     if not SetupDirPath(binary_output):
-        print(f'Failed to create pathing for {simulation}! Continuing to next study...')
+        print(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
         continue
     
     nifti_output = os.path.join(OutputDir, simulation,'nifti')
     if not SetupDirPath(nifti_output):
-        print(f'Failed to create pathing for {simulation}! Continuing to next study...')
+        print(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
         continue
 
     # Parameter Values
     # threshold_value = 0.19
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
-    volume, max_intensity, min_intensity = main(base_nifti_path, masks_nifti_dir, 
+    volume, max_intensity, min_intensity, thal_L,thal_R, thal_ALL = main(base_nifti_path, masks_nifti_dir, 
                                                 output_folder, binary_output, nifti_output, 
                                                 voxel_size)
     
@@ -357,6 +371,9 @@ for simulation in tqdm(simulations):
               intensity,
               pair_1_pos,
               pair_2_pos,
+              thal_L,
+              thal_R,
+              thal_ALL,
               os.path.join(OutputDir,simulation)
               )
     
@@ -370,6 +387,10 @@ for simulation in tqdm(simulations):
     stat_data['Maximum_Value'].append(max_intensity)
     stat_data['Total_Volume'].append(volume)
     stat_data['Minimum_Value'].append(min_intensity)
+    stat_data['Max_Thalamus_R'].append(thal_R)
+    stat_data['Max_Thalamus_L'].append(thal_L)
+    stat_data['Max_Thalamus'].append(thal_ALL)
+    
     
     # print(f"Calculated volume of the region: {volume} cubic units")
 

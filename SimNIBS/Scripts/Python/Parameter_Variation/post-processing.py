@@ -27,6 +27,11 @@ def Extract_stats_csv(OutputDirContents, save_data=False):
     studies = os.listdir(OutputDirContents)
     
     for study in studies:
+        
+        # Skips stats file
+        if 'csv' in simulation:
+            continue
+        
         csv_path = os.path.join(OutputDirContents,study,'Stats.csv')
         try:
             stats = pd.read_csv(csv_path)
@@ -84,7 +89,7 @@ def Extract_Thalamus(base_path,output_path):
 
     
     
-    return thalamic_left_data.get_fdata(), thalamic_right_data.get_fdata(), combined_thalamic_data.get_fdata()
+    return np.max(thalamic_left_data.get_fdata()), np.max(thalamic_right_data.get_fdata()), np.max(combined_thalamic_data.get_fdata())
 
 def nifti_to_mesh(nifti_file_path, output_mesh_path):
     # Load the NIfTI file
@@ -331,7 +336,11 @@ stat_data = {
 OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
 simulations = os.listdir(OutputDir)
 for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
-
+    
+    # Skips stats file
+    if 'csv' in simulation:
+        continue
+    
     # Extract Parameters from folder name
     sim_paramters = simulation.split('_')
     electrode_size = sim_paramters[0]

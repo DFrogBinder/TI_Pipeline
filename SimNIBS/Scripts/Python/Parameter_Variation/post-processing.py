@@ -140,14 +140,15 @@ def GenerateHeatmap(data):
 
     plt.show()
 
-def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,input_current,
-              pair_1_pos,pair_2_pos,thal_L, thal_R, thal_ALL,path):
+def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,electrode_shape,
+              input_current, pair_1_pos,pair_2_pos,thal_L, thal_R, thal_ALL,path):
     # Create a dictionary with the data
     data = {
         'Total Volume': [volume],
         'Minimum Value': [min_intensity],
         'Maximum Value': [max_intensity],
         'Electrode Size': [electrode_size],
+        'Electrode Shape': [electrode_shape],
         'Input Current': [input_current],
         'Pair 1 Position': [pair_1_pos],
         'Pair 2 Position': [pair_2_pos],
@@ -321,6 +322,7 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
 
 stat_data = {
     'Electrode_Size': [],
+    'Electrode_Shape': [],
     'Pair_1_Pos':[],
     'Pair_2_Pos':[],
     'Input_current':[],
@@ -344,6 +346,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     # Extract Parameters from folder name
     sim_paramters = simulation.split('_')
     electrode_size = sim_paramters[0]
+    electrode_shape = sim_paramters[-1]
     intensity = sim_paramters[1]
     pair_1_pos = sim_paramters[2]
     pair_2_pos = sim_paramters[3]
@@ -381,6 +384,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
               max_intensity, 
               min_intensity,
               electrode_size,
+              electrode_shape,
               intensity,
               pair_1_pos,
               pair_2_pos,
@@ -394,6 +398,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     
     # Update Stats Dict For Plotting later
     stat_data['Electrode_Size'].append(electrode_size)
+    stat_data['Electrode_Shape'].append(electrode_shape)
     stat_data['Input_current'].append(intensity)
     stat_data['Pair_1_Pos'].append(pair_1_pos)
     stat_data['Pair_2_Pos'].append(pair_2_pos)

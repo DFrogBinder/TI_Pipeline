@@ -402,7 +402,9 @@ cmake-build-*/
 !.vscode/extensions.json
 *.code-workspace
 
-# Export Directory
+# Custom Directories
 Export_Save_Dir/
+aal_SPM12/
+Outputs/
 
 # End of https://www.gitignore.io/api/c,c++,macos,matlab,python,pycharm,jupyternotebooks,jabref

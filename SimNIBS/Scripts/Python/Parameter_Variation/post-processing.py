@@ -18,8 +18,8 @@ from nilearn.image import resample_to_img
 def Extract_stats_csv(OutputDirContents, save_data=False):
     
     # Init empty dataframe for stats storage
-    pd_columns = ['Total Volume', 'Minimum Value',
-        'Maximum Value','Electrode Size',
+    pd_columns = ['Total Volume', '80_Percent_Cutoff',
+        'Maximum Value','Electrode Size', 'Electrode Shape',
         'Input Current','Pair 1 Position',
         'Pair 2 Position']
     StatDF = pd.DataFrame(columns=pd_columns)
@@ -29,7 +29,7 @@ def Extract_stats_csv(OutputDirContents, save_data=False):
     for study in studies:
         
         # Skips stats file
-        if 'csv' in simulation:
+        if 'csv' in study:
             continue
         
         csv_path = os.path.join(OutputDirContents,study,'Stats.csv')
@@ -45,7 +45,7 @@ def Extract_stats_csv(OutputDirContents, save_data=False):
     
     if save_data:
         try:
-            StatDF.to_csv(os.path.join(OutputDirContents,'All_Stats.csv'))
+            StatDF.to_csv(os.path.join(OutputDirContents,'All_Stats.csv'), sep=',', index=False)
             print(f'All statistical data has been saved.',file=sys.stderr)
         except:
             print(f'There was problem saving colated statistical data!',file=sys.stderr)
@@ -145,7 +145,7 @@ def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,electrode_shap
     # Create a dictionary with the data
     data = {
         'Total Volume': [volume],
-        'Minimum Value': [min_intensity],
+        '80_Percent_Cutoff': [min_intensity],
         'Maximum Value': [max_intensity],
         'Electrode Size': [electrode_size],
         'Electrode Shape': [electrode_shape],
@@ -257,39 +257,67 @@ def prepare_base_nifti(file_path, masks_dir, output_folder, nifti_output, plot_f
         
     return brain
 
-# Step 1: Load images, apply threshold, and ensure orientation
-def load_images_and_threshold(image_data, folder, binary_output_folder):
-    binary_images = []
-    threshold_value = np.max(image_data)*0.8 # Sets threshold value as 80% of max e-field
-    
-    for slice, counter in zip(image_data, range(len(image_data))):
-        if slice is not None:
-            # Create a mask where every pixel above the threshold is True; others are False
-            mask = slice > threshold_value
-            # Use the mask to keep only the pixels above the threshold; set others to 0
-            thresholded_image = np.where(mask, slice, np.nan)
 
-            # _, binary_image = cv2.threshold(img, threshold_value, 255, cv2.THRESH_BINARY)
-            binary_images.append(thresholded_image)
-            # Save the thresholded binary image for inspection, ensuring no change in orientation
-            tiff.imwrite(os.path.join(binary_output_folder, f'binary_{counter}.tiff'), thresholded_image)
+def load_images_and_threshold(image_data, folder, binary_output_folder):
+    
+    binary_images = {'80p_cutoff':[], 
+                      '60p_cutoff':[], 
+                      '40p_cutoff':[]
+                      }
+    
+    threshold_list = {'80p_cutoff':np.max(image_data)*0.8, 
+                      '60p_cutoff':np.max(image_data)*0.6, 
+                      '40p_cutoff':np.max(image_data)*0.4
+                      }
+    
+    # Check and create folders named after dictionary keys
+    for key in threshold_list:
+        path = os.path.join(binary_output_folder, key)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        else:
+            continue
+            
+    
+    for name, threshold in threshold_list.items():
+        for slice, counter in zip(image_data, range(len(image_data))):
+            if slice is not None:
+                # Create a mask where every pixel above the threshold is True; others are False
+                mask = slice > threshold
+                # Use the mask to keep only the pixels above the threshold; set others to 0
+                thresholded_image = np.where(mask, slice, np.nan)
+                binary_images[name].append(thresholded_image)
+                # Save the thresholded binary image for inspection, ensuring no change in orientation
+                tiff.imwrite(os.path.join(binary_output_folder,name, f'binary_{name}_{counter}.tiff'), thresholded_image)
 
     return binary_images
 
-# Step 2: Stack images to form a volume
 def stack_images(images):
-    return np.stack(images, axis=-1)
+    image_stacks = {'80p_cutoff':[], 
+                    '60p_cutoff':[], 
+                    '40p_cutoff':[]
+                    }
+    for key in images:
+        image_stacks[key].append(np.stack(images[key], axis=-1))
+        # return np.stack(images, axis=-1)
+    return image_stacks
 
 # Step 3: Calculate volume
 def calculate_volume(binary_volume, voxel_size):
     
+    stats = {
+        'total_volume':None,
+        'max_intensity':None,
+        'min_intensity':None
+    }
+    
     # Count the non-NaN values
     non_nan_count = np.sum(~np.isnan(binary_volume))
 
-    total_volume = non_nan_count * voxel_size
-    max_intensity = np.max(binary_volume[~np.isnan(binary_volume)])
-    min_intensity = np.min(binary_volume[~np.isnan(binary_volume)])
-    return total_volume, max_intensity, min_intensity
+    stats['total_volume'] = non_nan_count * voxel_size
+    stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
+    stats['min_intensity'] = np.min(binary_volume[~np.isnan(binary_volume)])
+    return stats
 
 # Main function to process images and calculate volume
 def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output, voxel_size):
@@ -305,12 +333,18 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
     # Create an identity affine matrix (this is a simple placeholder)
     affine = np.eye(4)
 
+    metrics = {'80p_cutoff':None, 
+                '60p_cutoff':None, 
+                '40p_cutoff':None
+                }
     # Create the NIfTI image
-    img = nib.Nifti1Image(binary_volume, affine)
-    nib.save(img,os.path.join(nifti_output,'thresholded_volume.nii.gz'))
-    volume, max_intensity, min_intensity = calculate_volume(binary_volume, voxel_size)
+    for cutoff in binary_volume:
+        img = nib.Nifti1Image(binary_volume[cutoff][0], affine)
+        nib.save(img,os.path.join(nifti_output,f'{cutoff}_thresholded_volume.nii.gz'))
+        metrics[cutoff] = calculate_volume(binary_volume[cutoff][0], voxel_size)
+        
     
-    return volume,max_intensity, min_intensity,thalamic_left_data, thalamic_right_data, combined_thalamic_data
+    return metrics,thalamic_left_data, thalamic_right_data, combined_thalamic_data
 
 
 
@@ -327,7 +361,7 @@ stat_data = {
     'Pair_2_Pos':[],
     'Input_current':[],
     'Total_Volume': [],
-    'Minimum_Value': [],
+    '80_Percent_Cutoff': [],
     'Maximum_Value': [],
     'Max_Thalamus_R': [],
     'Max_Thalamus_L': [],
@@ -335,7 +369,7 @@ stat_data = {
     }
 
 
-OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/'
+OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/cuttof'
 simulations = os.listdir(OutputDir)
 for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     
@@ -376,7 +410,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     # threshold_value = 0.19
     voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
 
-    volume, max_intensity, min_intensity, thal_L,thal_R, thal_ALL = main(base_nifti_path, masks_nifti_dir, 
+    volumes, thal_L,thal_R, thal_ALL = main(base_nifti_path, masks_nifti_dir, 
                                                 output_folder, binary_output, nifti_output, 
                                                 voxel_size)
     
@@ -402,7 +436,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     stat_data['Input_current'].append(intensity)
     stat_data['Pair_1_Pos'].append(pair_1_pos)
     stat_data['Pair_2_Pos'].append(pair_2_pos)
-    stat_data['Maximum_Value'].append(max_intensity)
+    stat_data['80_Percent_Cutoff'].append(max_intensity)
     stat_data['Total_Volume'].append(volume)
     stat_data['Minimum_Value'].append(min_intensity)
     stat_data['Max_Thalamus_R'].append(thal_R)

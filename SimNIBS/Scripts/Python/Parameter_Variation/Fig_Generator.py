@@ -210,7 +210,15 @@ def ElectrodePossition(data):
 
 # Load the CSV file
 data = pd.read_csv('/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/All_Stats.csv')
-# cm = Max_vs_Current(data)
-# anova_stats = ElectrodePossition(data)
-# t,p = Electrode_Shape(data)
+
+# Set font sizes for all figures via rcParams
+plt.rcParams['axes.labelsize'] = 15  # Sets the default axes labels size
+plt.rcParams['xtick.labelsize'] = 10  # Sets the x-axis tick labels size
+plt.rcParams['ytick.labelsize'] = 10  # Sets the y-axis tick labels size
+plt.rcParams['axes.titlesize'] = 18  # Sets the default title size
+
+
+cm = Max_vs_Current(data)
+anova_stats = ElectrodePossition(data)
+t,p = Electrode_Shape(data)
 Electrode_Size(data)

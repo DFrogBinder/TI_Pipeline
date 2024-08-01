@@ -66,17 +66,17 @@ def Electrode_Shape_Size(data):
     # Interaction plot for Max_Thalamus
     interaction_plot(data['Electrode_Size'], data['Electrode_Shape'], data['Max_Thalamus'],
                     ax=axs[0], colors=['red', 'blue'], markers=['D', '^'], ms=10)
-    axs[0].set_title('Max Intensity in Thalamus')
+    axs[0].set_title('Peak E-field Intesity in Thalamus')
     axs[0].set_xlabel('Electrode Size')
-    axs[0].set_ylabel('Max Intensity')
+    axs[0].set_ylabel('Peak E-field Intesity ')
     axs[0].legend(title='Electrode Shape')
 
     # Interaction plot for Maximum Value in the overall brain
     interaction_plot(data['Electrode_Size'], data['Electrode_Shape'], data['Maximum_Value'],
                     ax=axs[1], colors=['red', 'blue'], markers=['D', '^'], ms=10)
-    axs[1].set_title('Max Intensity in Overall Brain')
+    axs[1].set_title('Peak E-field Intesity  in Overall Brain')
     axs[1].set_xlabel('Electrode Size')
-    axs[1].set_ylabel('Max Intensity')
+    axs[1].set_ylabel('Peak E-field Intesity ')
     axs[1].legend(title='Electrode Shape')
 
     # Interaction plot for Total Stimulation Volume
@@ -103,7 +103,7 @@ def Electrode_Shape(data):
     sns.boxplot(x='Electrode Shape', y='Max_Thalamus', data=data, palette="muted")
     plt.title('Distribution of Maximum Intensity in the Thalamus by Electrode Shape')
     plt.xlabel('Electrode Shape')
-    plt.ylabel('Maximum Intensity')
+    plt.ylabel('Peak E-field Intesity')
     plt.show()
 
     # Extracting the groups based on electrode shape
@@ -127,14 +127,28 @@ def perform_linear_regression(x, y):
         return x_values, y_pred, model.coef_[0], model.intercept_
 
 def Max_vs_Current(data):
-    # Convert Input Current from string to numeric (e.g., "2mA" to 2)
+     # Convert Input Current from string to numeric (e.g., "2mA" to 2)
     data['Input Current Numeric'] = data['Input Current'].str.extract('(\d+\.?\d*)').astype(float)
+    
+    # Generate 'Pair Position' column from 'pair 1 position' and 'pair 2 position'
+    data['Pair Position'] = data['Pair 1 Position'].astype(str) + "-" + data['Pair 2 Position'].astype(str)
 
+    # Getting unique pair positions and setting up a color palette
+    unique_pairs = data['Pair Position'].unique()
+    palette = sns.color_palette("hsv", len(unique_pairs))
+    pair_color_mapping = dict(zip(unique_pairs, palette))
+    
     # Create correlation matrix for 'Input Current Numeric', 'Maximum Value', and 'Max_Thalamus'
     correlation_matrix = data[['Input Current Numeric', 'Maximum Value', 'Max_Thalamus']].corr()
 
-    # Function to perform linear regression and return necessary values for plotting
-    
+    # Function to perform linear regression
+    def perform_linear_regression(x, y):
+        from sklearn.linear_model import LinearRegression
+        model = LinearRegression()
+        x = x.values.reshape(-1, 1)  # Reshaping for sklearn
+        model.fit(x, y)
+        y_pred = model.predict(x)
+        return x, y_pred, model.coef_[0], model.intercept_
 
     # Data for regression
     x_values_max_value, y_pred_max_value, coef_max_value, intercept_max_value = perform_linear_regression(data['Input Current Numeric'], data['Maximum Value'])
@@ -143,18 +157,23 @@ def Max_vs_Current(data):
     # Plotting
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
 
-    sns.scatterplot(x=data['Input Current Numeric'], y=data['Maximum Value'], ax=ax[0], color='blue', label='Actual Data')
+    # Scatter plots colored by 'Pair Position'
+    for pair in unique_pairs:
+        subset = data[data['Pair Position'] == pair]
+        sns.scatterplot(x=subset['Input Current Numeric'], y=subset['Maximum Value'], ax=ax[0], label=f'Pair {pair}', color=pair_color_mapping[pair])
     ax[0].plot(x_values_max_value.flatten(), y_pred_max_value, color='red', label=f'Linear Fit: y={coef_max_value:.2f}x+{intercept_max_value:.2f}')
     ax[0].set_title('Max. Intensity (Brain) vs. Input Current')
     ax[0].set_xlabel('Input Current (mA)')
-    ax[0].set_ylabel('Maximum Intensity')
-    ax[0].legend()
+    ax[0].set_ylabel('Peak E-field Intesity')
+    ax[0].legend(fontsize='large') 
 
-    sns.scatterplot(x=data['Input Current Numeric'], y=data['Max_Thalamus'], ax=ax[1], color='green', label='Actual Data')
+    for pair in unique_pairs:
+        subset = data[data['Pair Position'] == pair]
+        sns.scatterplot(x=subset['Input Current Numeric'], y=subset['Max_Thalamus'], ax=ax[1], label=f'Pair {pair}', color=pair_color_mapping[pair])
     ax[1].plot(x_values_max_thalamus.flatten(), y_pred_max_thalamus, color='red', label=f'Linear Fit: y={coef_max_thalamus:.2f}x+{intercept_max_thalamus:.2f}')
     ax[1].set_title('Max. Intensity (Thalamus) vs. Input Current')
     ax[1].set_xlabel('Input Current (mA)')
-    ax[1].set_ylabel('Max. Intensity')
+    ax[1].set_ylabel('Peak E-field Intesity')
     ax[1].legend()
 
     plt.tight_layout()
@@ -201,7 +220,7 @@ def ElectrodePossition(data):
                 palette="muted")  # Uses a matte color palette
     plt.title('Distribution of Max Thalamus Intensity Across Electrode Positions')
     plt.xlabel('Electrode Positions')
-    plt.ylabel('Max Intensity')
+    plt.ylabel('Peak E-field Intesity')
     plt.xticks(rotation=45, ha='right')  # Slanting the x-axis text for better readability
     plt.tight_layout()
     plt.show()
@@ -212,10 +231,10 @@ def ElectrodePossition(data):
 data = pd.read_csv('/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/All_Stats.csv')
 
 # Set font sizes for all figures via rcParams
-plt.rcParams['axes.labelsize'] = 15  # Sets the default axes labels size
-plt.rcParams['xtick.labelsize'] = 10  # Sets the x-axis tick labels size
-plt.rcParams['ytick.labelsize'] = 10  # Sets the y-axis tick labels size
-plt.rcParams['axes.titlesize'] = 18  # Sets the default title size
+plt.rcParams['axes.labelsize'] = 28  # Sets the default axes labels size
+plt.rcParams['xtick.labelsize'] = 14  # Sets the x-axis tick labels size
+plt.rcParams['ytick.labelsize'] = 14  # Sets the y-axis tick labels size
+plt.rcParams['axes.titlesize'] = 30  # Sets the default title size
 
 
 cm = Max_vs_Current(data)

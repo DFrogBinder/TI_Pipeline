@@ -17,11 +17,10 @@ from nilearn.image import resample_to_img
 from skimage import measure
 from stl import mesh
 
-def nii2msh(data):
+def nii2msh(data,export_path):
     # Load the NIfTI file
-    nifti_path = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/1.5cm_1.5mA_AF4-PO4_AF3-PO3_ellipse/nifti/combined_thalamus_data.nii'
-    img = nib.load(nifti_path)
-    data = img.get_fdata()
+    # img = nib.load(nifti_path)
+    # data = img.get_fdata()
 
     # Convert data to binary (assuming the binary threshold is clear, i.e., 0 is background and others are foreground)
     binary_data = np.where(data > 0, 1, 0)
@@ -36,7 +35,8 @@ def nii2msh(data):
             your_mesh.vectors[i][j] = verts[f[j], :]
 
     # Write the mesh to file
-    your_mesh.save('your_mesh.stl')
+    your_mesh.save(export_path)
+    
     return 1
 
 def Extract_stats_csv(OutputDirContents, save_data=False):
@@ -374,6 +374,9 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
     for cutoff in binary_volume:
         img = nib.Nifti1Image(binary_volume[cutoff][0], affine)
         nib.save(img,os.path.join(nifti_output,f'{cutoff}_thresholded_volume.nii.gz'))
+        
+        # Generate a 3d model of the stimulated area
+        nii2msh(binary_volume[cutoff][0],os.path.join(nifti_output,f'{cutoff}_thresholded_volume.stl'))
         metrics[cutoff] = calculate_volume(binary_volume[cutoff][0], voxel_size)
         
     

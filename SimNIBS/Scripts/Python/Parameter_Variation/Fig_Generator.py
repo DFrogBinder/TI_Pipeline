@@ -5,9 +5,45 @@ import numpy as np
 import statsmodels.api as sm
 
 from scipy.stats import ttest_ind
+from scipy.stats import f_oneway
 from statsmodels.formula.api import ols
 from sklearn.linear_model import LinearRegression
 from statsmodels.graphics.factorplots import interaction_plot
+
+def Electrode_Size(data):
+
+    # Grouping the data by electrode size for analysis
+    groups_volume = data.groupby('Electrode Size')['Total Volume'].apply(list)
+    groups_max_thalamus = data.groupby('Electrode Size')['Max_Thalamus'].apply(list)
+    groups_max_value = data.groupby('Electrode Size')['Maximum Value'].apply(list)
+
+    # Performing ANOVA to test the hypothesis for different parameters
+    anova_volume = f_oneway(*groups_volume)
+    anova_max_thalamus = f_oneway(*groups_max_thalamus)
+    anova_max_value = f_oneway(*groups_max_value)
+
+    # Output ANOVA results
+    print("ANOVA results for Total Volume:", anova_volume)
+    print("ANOVA results for Max Thalamus Intensity:", anova_max_thalamus)
+    print("ANOVA results for Max Overall Brain Intensity:", anova_max_value)
+
+    # Visualization with boxplots
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    sns.boxplot(x='Electrode Size', y='Total Volume',palette="muted", data=data, ax=axes[0])
+    axes[0].set_title('Total Volume by Electrode Size')
+    axes[0].set_yscale('log')
+
+    sns.boxplot(x='Electrode Size', y='Max_Thalamus',palette="muted", data=data, ax=axes[1])
+    axes[1].set_title('Max Thalamus Intensity by Electrode Size')
+
+    sns.boxplot(x='Electrode Size', y='Maximum Value',palette="muted", data=data, ax=axes[2])
+    axes[2].set_title('Max Overall Brain Intensity by Electrode Size')
+
+    plt.tight_layout()
+    plt.show()
+
+    return anova_volume, anova_max_thalamus, anova_max_value
 
 def Electrode_Shape_Size(data):
     data.columns = [col.replace(' ', '_') for col in data.columns]
@@ -177,4 +213,4 @@ data = pd.read_csv('/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Pyt
 # cm = Max_vs_Current(data)
 # anova_stats = ElectrodePossition(data)
 # t,p = Electrode_Shape(data)
-Electrode_Shape_Size(data)
+Electrode_Size(data)

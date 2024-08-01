@@ -18,10 +18,18 @@ from nilearn.image import resample_to_img
 def Extract_stats_csv(OutputDirContents, save_data=False):
     
     # Init empty dataframe for stats storage
-    pd_columns = ['Total Volume', '80_Percent_Cutoff',
-        'Maximum Value','Electrode Size', 'Electrode Shape',
-        'Input Current','Pair 1 Position',
-        'Pair 2 Position']
+    pd_columns = [ '80_Percent_Cutoff_Volume',
+        '60_Percent_Cutoff_Volume',
+        '40_Percent_Cutoff_Volume',
+        'Maximum Value',
+        'Electrode Size',
+        'Electrode Shape',
+        'Input Current',
+        'Pair 1 Position',
+        'Pair 2 Position',
+        'Max_Thalamus_R',
+        'Max_Thalamus_L',
+        'Max_Thalamus']
     StatDF = pd.DataFrame(columns=pd_columns)
     
     studies = os.listdir(OutputDirContents)
@@ -140,12 +148,13 @@ def GenerateHeatmap(data):
 
     plt.show()
 
-def Stats2CSV(volume, max_intensity, min_intensity,electrode_size,electrode_shape,
+def Stats2CSV(volume_80,volume_60,volume_40, max_intensity,electrode_size,electrode_shape,
               input_current, pair_1_pos,pair_2_pos,thal_L, thal_R, thal_ALL,path):
     # Create a dictionary with the data
     data = {
-        'Total Volume': [volume],
-        '80_Percent_Cutoff': [min_intensity],
+        '80_Percent_Cutoff_Volume': [volume_80],
+        '60_Percent_Cutoff_Volume': [volume_60],
+        '40_Percent_Cutoff_Volume': [volume_40],
         'Maximum Value': [max_intensity],
         'Electrode Size': [electrode_size],
         'Electrode Shape': [electrode_shape],
@@ -360,8 +369,9 @@ stat_data = {
     'Pair_1_Pos':[],
     'Pair_2_Pos':[],
     'Input_current':[],
-    'Total_Volume': [],
-    '80_Percent_Cutoff': [],
+    '80_Percent_Cutoff_Volume': [],
+    '60_Percent_Cutoff_Volume': [],
+    '40_Percent_Cutoff_Volume': [],
     'Maximum_Value': [],
     'Max_Thalamus_R': [],
     'Max_Thalamus_L': [],
@@ -414,9 +424,18 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
                                                 output_folder, binary_output, nifti_output, 
                                                 voxel_size)
     
-    Stats2CSV(volume, 
+    # Extract stats from volume dict
+    volume_80p = volumes.get('80p_cutoff', {}).get('total_volume')
+    volume_60p = volumes.get('60p_cutoff', {}).get('total_volume')
+    volume_40p = volumes.get('40p_cutoff', {}).get('total_volume')
+    
+    # This is the same for all cutoffs 
+    max_intensity = volumes.get('80p_cutoff', {}).get('max_intensity')
+    
+    Stats2CSV(volume_80p,
+              volume_60p, 
+              volume_40p,  
               max_intensity, 
-              min_intensity,
               electrode_size,
               electrode_shape,
               intensity,
@@ -436,12 +455,12 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     stat_data['Input_current'].append(intensity)
     stat_data['Pair_1_Pos'].append(pair_1_pos)
     stat_data['Pair_2_Pos'].append(pair_2_pos)
-    stat_data['80_Percent_Cutoff'].append(max_intensity)
-    stat_data['Total_Volume'].append(volume)
-    stat_data['Minimum_Value'].append(min_intensity)
     stat_data['Max_Thalamus_R'].append(thal_R)
     stat_data['Max_Thalamus_L'].append(thal_L)
     stat_data['Max_Thalamus'].append(thal_ALL)
+    stat_data['80_Percent_Cutoff_Volume'].append(volume_80p)
+    stat_data['60_Percent_Cutoff_Volume'].append(volume_60p)
+    stat_data['40_Percent_Cutoff_Volume'].append(volume_40p)
     
     
     # print(f"Calculated volume of the region: {volume} cubic units")

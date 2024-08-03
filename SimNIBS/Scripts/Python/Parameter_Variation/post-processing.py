@@ -355,10 +355,12 @@ def calculate_volume(binary_volume, voxel_size, nifti_path, binary_volume_path):
     # Apply the non-thalamus mask to the binary volume
     masked_binary_data = image.math_img("a * b", a=binary_img, b=non_thalamus_mask)
     
-    max_intensity = np.nanmax(masked_binary_data.get_fdata())
+    # Count the non-NaN values
+    non_nan_count = np.sum(~np.isnan(binary_volume))
+
     stats['total_volume'] = non_nan_count * voxel_size
     # stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
-    stats['max_intensity'] = np.sum(~np.isnan(binary_volume))
+    stats['max_intensity'] = np.nanmax(masked_binary_data.get_fdata())
     stats['min_intensity'] = np.min(binary_volume[~np.isnan(binary_volume)])
     return stats
 

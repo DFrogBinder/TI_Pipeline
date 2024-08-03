@@ -335,8 +335,7 @@ def stack_images(images):
         # return np.stack(images, axis=-1)
     return image_stacks
 
-# Step 3: Calculate volume
-def calculate_volume(binary_volume, voxel_size):
+def calculate_volume(binary_volume, voxel_size, nifti_path, binary_volume_path):
     
     stats = {
         'total_volume':None,
@@ -344,11 +343,22 @@ def calculate_volume(binary_volume, voxel_size):
         'min_intensity':None
     }
     
-    # Count the non-NaN values
-    non_nan_count = np.sum(~np.isnan(binary_volume))
-
+    # Load the thalamus and volume images
+    thalamus_img = nib.load(os.path.join(nifti_path,'combined_thalamus_data.nii'))
+    binary_img = nib.load(binary_volume_path)
+    
+    resampled_thalamus = resample_to_img(source_img=thalamus_img, target_img=binary_img, interpolation='nearest')
+    
+    # Invert the thalamus mask to exclude thalamus region
+    non_thalamus_mask = image.math_img("img == 0", img=resampled_thalamus)
+    
+    # Apply the non-thalamus mask to the binary volume
+    masked_binary_data = image.math_img("a * b", a=binary_img, b=non_thalamus_mask)
+    
+    max_intensity = np.nanmax(masked_binary_data.get_fdata())
     stats['total_volume'] = non_nan_count * voxel_size
-    stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
+    # stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
+    stats['max_intensity'] = np.sum(~np.isnan(binary_volume))
     stats['min_intensity'] = np.min(binary_volume[~np.isnan(binary_volume)])
     return stats
 
@@ -356,12 +366,12 @@ def calculate_volume(binary_volume, voxel_size):
 def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output, voxel_size):
     brain_only_images = prepare_base_nifti(nifti_path, masks_dir, output_folder, nifti_output)
     
+    # Extracts left and rigth thalamus regions via the aal brain atlas
+    thalamic_left_data, thalamic_right_data, combined_thalamic_data = Extract_Thalamus(nifti_path,nifti_output)
+    
     # Load processed images, apply threshold, and save binary images
     brain_only_images = load_images_and_threshold(brain_only_images, output_folder, binary_output_folder)
     binary_volume = stack_images(brain_only_images)
-    
-    # Extracts left and rigth thalamus regions via the aal brain atlas
-    thalamic_left_data, thalamic_right_data, combined_thalamic_data = Extract_Thalamus(nifti_path,nifti_output)
     
     # Create an identity affine matrix (this is a simple placeholder)
     affine = np.eye(4)
@@ -373,11 +383,12 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
     # Create the NIfTI image
     for cutoff in binary_volume:
         img = nib.Nifti1Image(binary_volume[cutoff][0], affine)
-        nib.save(img,os.path.join(nifti_output,f'{cutoff}_thresholded_volume.nii.gz'))
+        bin_volume_name = os.path.join(nifti_output,f'{cutoff}_thresholded_volume.nii.gz')
+        nib.save(img,bin_volume_name)
         
         # Generate a 3d model of the stimulated area
         nii2msh(binary_volume[cutoff][0],os.path.join(nifti_output,f'{cutoff}_thresholded_volume.stl'))
-        metrics[cutoff] = calculate_volume(binary_volume[cutoff][0], voxel_size)
+        metrics[cutoff] = calculate_volume(binary_volume[cutoff][0], voxel_size, nifti_output, bin_volume_name)
         
     
     return metrics,thalamic_left_data, thalamic_right_data, combined_thalamic_data
@@ -389,6 +400,11 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
 ++++++++++++++++++++++++++++++++++++Execution Starts Here++++++++++++++++++++++++++++++++++++
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 '''
+# Set font sizes for all figures via rcParams
+plt.rcParams['axes.labelsize'] = 28  # Sets the default axes labels size
+plt.rcParams['xtick.labelsize'] = 14  # Sets the x-axis tick labels size
+plt.rcParams['ytick.labelsize'] = 14  # Sets the y-axis tick labels size
+plt.rcParams['axes.titlesize'] = 30  # Sets the default title size
 
 stat_data = {
     'Electrode_Size': [],
@@ -406,7 +422,7 @@ stat_data = {
     }
 
 
-OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/cuttof'
+OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs'
 simulations = os.listdir(OutputDir)
 for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     

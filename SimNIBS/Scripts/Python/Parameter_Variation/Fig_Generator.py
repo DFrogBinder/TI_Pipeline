@@ -11,9 +11,11 @@ from sklearn.linear_model import LinearRegression
 from statsmodels.graphics.factorplots import interaction_plot
 
 def Electrode_Size(data):
-
+    # Filter the data where 'Pair 1 Position' equals 'AF4-PO4'
+    data = data[data['Pair 1 Position'] == 'AF4-PO4']
+    
     # Grouping the data by electrode size for analysis
-    groups_volume = data.groupby('Electrode Size')['Total Volume'].apply(list)
+    groups_volume = data.groupby('Electrode Size')['80_Percent_Cutoff_Volume'].apply(list)
     groups_max_thalamus = data.groupby('Electrode Size')['Max_Thalamus'].apply(list)
     groups_max_value = data.groupby('Electrode Size')['Maximum Value'].apply(list)
 
@@ -27,18 +29,20 @@ def Electrode_Size(data):
     print("ANOVA results for Max Thalamus Intensity:", anova_max_thalamus)
     print("ANOVA results for Max Overall Brain Intensity:", anova_max_value)
 
+    # Determine the order for 'Electrode Size' (assuming they are strings like '1mm', '2mm')
+    # Convert to numeric if necessary, or sort based on your specific rules
+    electrode_sizes = sorted(data['Electrode Size'].unique(), key=lambda x: float(x.rstrip('cm')))
+
     # Visualization with boxplots
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
 
-    sns.boxplot(x='Electrode Size', y='Total Volume',palette="muted", data=data, ax=axes[0])
-    axes[0].set_title('Total Volume by Electrode Size')
-    axes[0].set_yscale('log')
+    sns.boxplot(x='Electrode Size', y='Max_Thalamus', palette="muted", data=data, ax=axes[0], order=electrode_sizes)
+    axes[0].set_title('Peak E-field (Thalamus) by Electrode Size')
+    axes[0].set_ylabel('Peak E-field (V/m)')
 
-    sns.boxplot(x='Electrode Size', y='Max_Thalamus',palette="muted", data=data, ax=axes[1])
-    axes[1].set_title('Max Thalamus Intensity by Electrode Size')
-
-    sns.boxplot(x='Electrode Size', y='Maximum Value',palette="muted", data=data, ax=axes[2])
-    axes[2].set_title('Max Overall Brain Intensity by Electrode Size')
+    sns.boxplot(x='Electrode Size', y='Maximum Value', palette="muted", data=data, ax=axes[1], order=electrode_sizes)
+    axes[1].set_title('Peak E-field (Overall) Brain by Electrode Size')
+    axes[1].set_ylabel('Peak E-field (V/m)')
 
     plt.tight_layout()
     plt.show()
@@ -68,7 +72,7 @@ def Electrode_Shape_Size(data):
                     ax=axs[0], colors=['red', 'blue'], markers=['D', '^'], ms=10)
     axs[0].set_title('Peak E-field Intesity in Thalamus')
     axs[0].set_xlabel('Electrode Size')
-    axs[0].set_ylabel('Peak E-field Intesity ')
+    axs[0].set_ylabel('Peak E-field Intesity (V/m)')
     axs[0].legend(title='Electrode Shape')
 
     # Interaction plot for Maximum Value in the overall brain
@@ -95,15 +99,25 @@ def Electrode_Shape_Size(data):
     
     
 def Electrode_Shape(data):
+    
+    # Filter the data where 'Pair 1 Position' equals 'AF4-PO4'
+    data = data[data['Pair 1 Position'] == 'AF4-PO4']
+    
     # Set up the visualizations
     sns.set(style="whitegrid")
 
+    # Set font sizes for all figures via rcParams
+    plt.rcParams['axes.labelsize'] = 28  # Sets the default axes labels size
+    plt.rcParams['xtick.labelsize'] = 20  # Sets the x-axis tick labels size
+    plt.rcParams['ytick.labelsize'] = 20  # Sets the y-axis tick labels size
+    plt.rcParams['axes.titlesize'] = 30  # Sets the default title size
+    
     # Plotting the distribution of maximum intensity in the thalamus for each electrode shape
     plt.figure(figsize=(10, 6))
     sns.boxplot(x='Electrode Shape', y='Max_Thalamus', data=data, palette="muted")
     plt.title('Distribution of Maximum Intensity in the Thalamus by Electrode Shape')
     plt.xlabel('Electrode Shape')
-    plt.ylabel('Peak E-field Intesity')
+    plt.ylabel('Peak E-field Intesity (V/m)')
     plt.show()
 
     # Extracting the groups based on electrode shape
@@ -164,7 +178,7 @@ def Max_vs_Current(data):
     ax[0].plot(x_values_max_value.flatten(), y_pred_max_value, color='red', label=f'Linear Fit: y={coef_max_value:.2f}x+{intercept_max_value:.2f}')
     ax[0].set_title('Max. Intensity (Brain) vs. Input Current')
     ax[0].set_xlabel('Input Current (mA)')
-    ax[0].set_ylabel('Peak E-field Intesity')
+    ax[0].set_ylabel('Peak E-field Intesity (V/m)')
     ax[0].legend(fontsize='large') 
 
     for pair in unique_pairs:
@@ -173,7 +187,7 @@ def Max_vs_Current(data):
     ax[1].plot(x_values_max_thalamus.flatten(), y_pred_max_thalamus, color='red', label=f'Linear Fit: y={coef_max_thalamus:.2f}x+{intercept_max_thalamus:.2f}')
     ax[1].set_title('Max. Intensity (Thalamus) vs. Input Current')
     ax[1].set_xlabel('Input Current (mA)')
-    ax[1].set_ylabel('Peak E-field Intesity')
+    ax[1].set_ylabel('Peak E-field Intesity (V/m)')
     ax[1].legend()
 
     plt.tight_layout()
@@ -220,7 +234,7 @@ def ElectrodePossition(data):
                 palette="muted")  # Uses a matte color palette
     plt.title('Distribution of Max Thalamus Intensity Across Electrode Positions')
     plt.xlabel('Electrode Positions')
-    plt.ylabel('Peak E-field Intesity')
+    plt.ylabel('Peak E-field Intesity (V/m)')
     plt.xticks(rotation=45, ha='right')  # Slanting the x-axis text for better readability
     plt.tight_layout()
     plt.show()
@@ -234,10 +248,10 @@ data = pd.read_csv('/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Pyt
 plt.rcParams['axes.labelsize'] = 28  # Sets the default axes labels size
 plt.rcParams['xtick.labelsize'] = 14  # Sets the x-axis tick labels size
 plt.rcParams['ytick.labelsize'] = 14  # Sets the y-axis tick labels size
-plt.rcParams['axes.titlesize'] = 30  # Sets the default title size
+plt.rcParams['axes.titlesize'] = 29  # Sets the default title size
 
 
-cm = Max_vs_Current(data)
-anova_stats = ElectrodePossition(data)
-t,p = Electrode_Shape(data)
+# cm = Max_vs_Current(data)
+# anova_stats = ElectrodePossition(data)
+# t,p = Electrode_Shape(data)
 Electrode_Size(data)

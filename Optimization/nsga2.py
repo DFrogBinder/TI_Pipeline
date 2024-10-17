@@ -51,7 +51,7 @@ algorithm = NSGA2(
 )
 
 # Define the termination criterion
-termination = get_termination("n_gen", 100)
+termination = get_termination("n_gen", 5000)
 
 # Perform the optimization
 result = minimize(

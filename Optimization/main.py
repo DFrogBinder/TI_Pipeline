@@ -3,7 +3,9 @@ from pymoo.core.problem import Problem
 from pymoo.optimize import minimize
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.termination import get_termination
-from pymoo.factory import get_sampling, get_crossover, get_mutation
+from pymoo.operators.sampling.rnd import IntegerRandomSampling  # Updated import
+from pymoo.operators.crossover.sbx import SBX  # Updated import
+from pymoo.operators.mutation.pm import PM  # Updated import
 from pymoo.visualization.scatter import Scatter
 
 # Define the TI optimization problem
@@ -39,12 +41,12 @@ class TemporalInterferenceOptimization(Problem):
 # Instantiate the optimization problem
 problem = TemporalInterferenceOptimization()
 
-# Set up the algorithm (e.g., NSGA-II) for multi-objective optimization
+# Set up the NSGA-II algorithm for multi-objective optimization
 algorithm = NSGA2(
     pop_size=100,
-    sampling=get_sampling("real_random"),
-    crossover=get_crossover("real_sbx", prob=0.9, eta=15),
-    mutation=get_mutation("real_pm", eta=20),
+    sampling=IntegerRandomSampling(),  # Updated sampling method
+    crossover=SBX(prob=0.9, eta=15),  # Updated crossover method
+    mutation=PM(eta=20),  # Updated mutation method
     eliminate_duplicates=True
 )
 
@@ -69,4 +71,3 @@ plot.show()
 # Print the optimal solutions
 print("Optimal solutions (Pareto Front):")
 print(result.X)
-

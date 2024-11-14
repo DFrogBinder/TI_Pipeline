@@ -2,15 +2,11 @@ import gmsh
 import pandas as pd
 from tqdm import tqdm
 import os
-import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
+import time
 
-def create_plots(dataframe):
-    print(dataframe)
-    return 1
-
-def process_case(case, path):
+def process_case(case, path, progress_list, lock, core_index):
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
     
@@ -26,7 +22,8 @@ def process_case(case, path):
         return None, f"Error reading mesh file {filepath}: {e}"
     
     entities = gmsh.model.getEntities()
-    for entity in entities:
+    total_steps = len(entities) if entities else 1  # For estimating progress
+    for i, entity in enumerate(entities):
         entity_dim, entity_tag = entity
         if entity_dim == 2:  # Surface elements are 2D
             try:
@@ -35,25 +32,24 @@ def process_case(case, path):
                     if etype == 2:  # 2 represents triangular elements (commonly used for surfaces)
                         physical_tags = gmsh.model.getPhysicalGroupsForEntity(entity_dim, entity_tag)
                         for tag in physical_tags:
-                            # if tag > 1000:  # Adjust based on your electrode tagging
-                                # if tag not in electrode_elements:
-                                #     electrode_elements[tag] = []
-                                # electrode_elements[tag].extend(etags)
-                            if tag == 1501 or tag == 1502 or tag == 2102 or tag == 2102:  # Adjust based on your electrode tagging
+                            if tag == 1501 or tag == 1502:  # Adjust based on your electrode tagging
                                 if tag not in electrode_elements:
                                     electrode_elements[tag] = []
                                 electrode_elements[tag].extend(etags)
             except Exception as e:
                 return None, f"Error processing entity {entity_tag} in file {filepath}: {e}"
 
+        # Update individual core's progress in the custom progress bar
+        with lock:
+            progress_list[core_index] = (i + 1) / total_steps  # Track percent progress
+            display_progress(progress_list)
+
     # Prepare the data dictionary
     try:
         data = {
             'Name': case,
             'El_1-1': len(electrode_elements.get(1502, [])),
-            'El_1-2': len(electrode_elements.get(1501, [])),
-            'El_2-1': len(electrode_elements.get(2101, [])),
-            'El_2-2': len(electrode_elements.get(2102, []))
+            'El_1-2': len(electrode_elements.get(1501, []))
         }
     except KeyError as e:
         return None, f"Missing electrode tag data in file {filepath}: {e}"
@@ -66,19 +62,39 @@ def process_case(case, path):
 
     return dataframe, None
 
-def get_resolution(path,save=True):
+def display_progress(progress_list):
+    # Move cursor up to the starting point of custom progress bars
+    print("\033[F" * len(progress_list), end="")  # Move up by the number of progress bars
+    
+    # Display each core's progress without resetting to 0%
+    for i, progress in enumerate(progress_list):
+        if progress > 0:  # Only display if progress has started
+            bar_length = int(progress * 50)  # 50-character long bar
+            progress_bar = f"Core {i+1}: [{'#' * bar_length}{'.' * (50 - bar_length)}] {progress * 100:.1f}%"
+            print(f"\033[K{progress_bar}")  # Clear the line before printing
+
+def get_resolution(path, core_fraction=1.0):
     output_dir = os.listdir(path)
     datalist = pd.DataFrame()
+    num_cases = len(output_dir)
     
-    # Create the progress bar with dynamic updates
-    progress_bar = tqdm(total=len(output_dir), dynamic_ncols=True, position=0, leave=True, desc='Processing Cases...')
+    # Define the maximum number of cores to use based on fraction
+    max_cores = max(1, int(multiprocessing.cpu_count() * core_fraction))
     
-    # Calculate 30% of available cores
-    num_cores = max(1, int(multiprocessing.cpu_count() * 0.5))
+    # Initialize a list to track progress for each core (or process)
+    manager = multiprocessing.Manager()
+    progress_list = manager.list([0] * max_cores)  # Each core starts at 0% progress
+    lock = manager.Lock()
+
+    # Create the main progress bar
+    progress_bar = tqdm(total=num_cases, dynamic_ncols=True, position=0, leave=True, desc='Processing Cases...')
     
-    # Use ProcessPoolExecutor with a limited number of workers
-    with ProcessPoolExecutor(max_workers=num_cores) as executor:
-        future_to_case = {executor.submit(process_case, case, path): case for case in output_dir}
+    # Use ProcessPoolExecutor with limited cores
+    with ProcessPoolExecutor(max_workers=max_cores) as executor:
+        future_to_case = {
+            executor.submit(process_case, case, path, progress_list, lock, core_index % max_cores): case 
+            for core_index, case in enumerate(output_dir)
+        }
 
         for future in as_completed(future_to_case):
             case = future_to_case[future]
@@ -93,12 +109,11 @@ def get_resolution(path,save=True):
             finally:
                 progress_bar.update(1)
 
-    # Close the progress bar once done
+    # Close the main progress bar once done
     progress_bar.close()
     
     # Save the combined DataFrame if needed
-    tqdm.write(f'Combined Electrode Geometry is saved to: {path}')
     datalist.to_csv(os.path.join(path, 'Combined_Electrode_Geometry.csv'), index=False)
 
 # Usage example:
-get_resolution('/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Output')
+get_resolution('/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Output', core_fraction=0.3)

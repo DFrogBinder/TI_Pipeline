@@ -1,11 +1,51 @@
+import os
 import gmsh
 import pandas as pd
-from tqdm import tqdm
-import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import seaborn as sns
 import multiprocessing
-import time
+import matplotlib.pyplot as plt
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
+
+def plot_data(df):
+    # Define the sizes and shapes we are interested in
+    sizes = ['1cm', '1.5cm', '2cm']
+    shapes = ['rect', 'ellipse']
+    
+    # Extract size and shape from 'entry_name' and add them as columns
+    df['size'] = df['Name'].str.extract(r'(\d+\.?\d*cm)')
+    df['shape'] = df['Name'].str.extract(r'(rect|ellipse)')
+    
+    # Now you can filter based on each combination
+    for size in sizes:
+        for shape in shapes:
+            subset = df[(df['size'] == size) & (df['shape'] == shape)]
+            if not subset.empty:
+                print(f"Subset for size {size} and shape {shape}:")
+ 
+                # Group by 'size' and 'shape' and plot both swarm and box plots within each group for El_1-1 and El_1-2
+                for (size, shape), group in subset.groupby(['size', 'shape']):
+                    plt.figure(figsize=(12, 6))
+                    
+                    # Set the main title for both plots
+                    plt.suptitle(f'Plots for size {size} and shape {shape}', fontsize=16)
+                    
+                    # Swarm Plot
+                    plt.subplot(1, 2, 1)
+                    sns.swarmplot(data=group[['El_1-1', 'El_1-2']])
+                    plt.title(f'Swarm Plot')
+                    plt.ylabel('Value')
+                    
+                    # Box Plot
+                    plt.subplot(1, 2, 2)
+                    sns.boxplot(data=group[['El_1-1', 'El_1-2']])
+                    plt.title(f'Box Plot')
+                    plt.ylabel('Value')
+                    
+                    plt.tight_layout()
+                    plt.show()
+    return
 def process_case(case, path, progress_list, lock, core_index):
     gmsh.initialize()
     gmsh.option.setNumber("General.Terminal", 0)
@@ -32,7 +72,7 @@ def process_case(case, path, progress_list, lock, core_index):
                     if etype == 2:  # 2 represents triangular elements (commonly used for surfaces)
                         physical_tags = gmsh.model.getPhysicalGroupsForEntity(entity_dim, entity_tag)
                         for tag in physical_tags:
-                            if tag == 1501 or tag == 1502 or tag == 2101 or tag == 2102:  # Adjust based on your electrode tagging
+                            if tag == 1501 or tag == 1502 or tag == 2101 or tag == 2102:  # Extract the 
                                 if tag not in electrode_elements:
                                     electrode_elements[tag] = []
                                 electrode_elements[tag].extend(etags)
@@ -75,8 +115,12 @@ def display_progress(progress_list):
             progress_bar = f"Core {i+1}: [{'#' * bar_length}{'.' * (50 - bar_length)}] {progress * 100:.1f}%"
             print(f"\033[K{progress_bar}")  # Clear the line before printing
 
-def get_resolution(path, core_fraction=1.0):
+def get_resolution(path, core_fraction=6.0):
     output_dir = os.listdir(path)
+    if os.path.exists(os.path.join(path,'Combined_Electrode_Geometry.csv')):
+        cdf = pd.read_csv(os.path.join(path,'Combined_Electrode_Geometry.csv'))
+        plot_data(cdf)
+        return cdf
     datalist = pd.DataFrame()
     num_cases = len(output_dir)
     
@@ -92,7 +136,7 @@ def get_resolution(path, core_fraction=1.0):
     progress_bar = tqdm(total=num_cases, dynamic_ncols=True, position=0, leave=True, desc='Processing Cases...')
     
     # Use ProcessPoolExecutor with limited cores
-    with ProcessPoolExecutor(max_workers=max_cores) as executor:
+    with ProcessPoolExecutor(max_workers=1) as executor:
         future_to_case = {
             executor.submit(process_case, case, path, progress_list, lock, core_index % max_cores): case 
             for core_index, case in enumerate(output_dir)
@@ -116,6 +160,8 @@ def get_resolution(path, core_fraction=1.0):
     
     # Save the combined DataFrame if needed
     datalist.to_csv(os.path.join(path, 'Combined_Electrode_Geometry.csv'), index=False)
-
+    plot_data(datalist)
 # Usage example:
-get_resolution('/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Output', core_fraction=0.3)
+path = '/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Output'
+
+get_resolution(path, core_fraction=0.3)

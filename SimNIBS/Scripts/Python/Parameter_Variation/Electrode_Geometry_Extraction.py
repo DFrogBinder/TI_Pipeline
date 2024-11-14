@@ -32,7 +32,7 @@ def process_case(case, path, progress_list, lock, core_index):
                     if etype == 2:  # 2 represents triangular elements (commonly used for surfaces)
                         physical_tags = gmsh.model.getPhysicalGroupsForEntity(entity_dim, entity_tag)
                         for tag in physical_tags:
-                            if tag == 1501 or tag == 1502:  # Adjust based on your electrode tagging
+                            if tag == 1501 or tag == 1502 or tag == 2101 or tag == 2102:  # Adjust based on your electrode tagging
                                 if tag not in electrode_elements:
                                     electrode_elements[tag] = []
                                 electrode_elements[tag].extend(etags)
@@ -49,7 +49,9 @@ def process_case(case, path, progress_list, lock, core_index):
         data = {
             'Name': case,
             'El_1-1': len(electrode_elements.get(1502, [])),
-            'El_1-2': len(electrode_elements.get(1501, []))
+            'El_1-2': len(electrode_elements.get(1501, [])),
+            'El_2-1': len(electrode_elements.get(2101, [])),
+            'El_2-2': len(electrode_elements.get(2102, []))
         }
     except KeyError as e:
         return None, f"Missing electrode tag data in file {filepath}: {e}"

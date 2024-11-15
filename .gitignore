@@ -15,6 +15,16 @@
 *.stl
 *.off
 
+# Gmsh Output Files
+*.msh
+*.geo
+*.opt
+
+# Project-Specific Directories
+Output/
+Outputs/
+simnibs4_examples/
+
 # Linker output
 *.ilk
 *.map

@@ -24,6 +24,7 @@
 Output/
 Outputs/
 simnibs4_examples/
+*/simnibs4_examples/
 
 # Linker output
 *.ilk

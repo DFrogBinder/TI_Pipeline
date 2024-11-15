@@ -57,7 +57,7 @@ positions = [
 
 # Define general parameters
 fnamehead = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/MNI152.msh'
-base_pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs'  # Directory for the simulation
+base_pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs_High-Rez'  # Directory for the simulation
 
 
 # Iterate over all combinations of parameters
@@ -83,7 +83,12 @@ for size, current, (pos1a, pos1b, pos2a, pos2b),el_shape in itertools.product(el
     electrode1.shape = el_shape
     electrode1.dimensions = [size * 10, size * 10]  # Convert cm to mm
     electrode1.thickness = 2
-
+    
+    # Set up custom mesh refinement settings
+    electrode1.electrode[0].mesh_element_size = 0.1  # Desired element size in cm
+    electrode1.electrode[0].mesh_element_size = 0.1  # Desired element size in cm
+    
+    
     electrode2 = tdcs.add_electrode()
     electrode2.channelnr = 2
     electrode2.centre = pos1b
@@ -96,6 +101,9 @@ for size, current, (pos1a, pos1b, pos2a, pos2b),el_shape in itertools.product(el
     tdcs2.electrode[0].centre = pos2a
     tdcs2.electrode[1].centre = pos2b
     
+    # Set up custom mesh refinement settings
+    tdcs2.electrode[0].mesh_element_size = 0.1  # Desired element size in cm
+    tdcs2.electrode[1].mesh_element_size = 0.1  # Desired element size in cm
     # Run simulation
     sim.run_simnibs(S)
     

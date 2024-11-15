@@ -24,7 +24,7 @@ from simnibs.utils import TI_utils as TI
 S = sim_struct.SESSION()
 S.fnamehead = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/simnibs4_examples/m2m_MNI152/MNI152.msh'
 # S.subpath = '/home/cogitatorprime/sandbox/SimNIBS/simnibs4_examples/m2m_ernie'  # m2m-folder of the subject
-S.pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs'  # Directory for the simulation
+S.pathfem = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/'  # Directory for the simulation
 
 if not os.path.exists(S.pathfem):
         os.makedirs(S.pathfem)

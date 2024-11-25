@@ -69,18 +69,18 @@ def Extract_stats_csv(OutputDirContents, save_data=False):
             stats = pd.read_csv(csv_path)
             StatDF = pd.concat([StatDF,stats],ignore_index=True) # Append stats to the empty dataframe
         except:
-            print(f'Failed to load file {csv_path}',file=sys.stderr)
+            tqdm.write(f'Failed to load file {csv_path}',file=sys.stderr)
     
     # Checks how many stat reports failed to load (if any)
     if len(StatDF) != len(studies):
-        print(f'{len(studies) - len(StatDF)} failed to load!',file=sys.stderr)
+        tqdm.write(f'{len(studies) - len(StatDF)} failed to load!',file=sys.stderr)
     
     if save_data:
         try:
             StatDF.to_csv(os.path.join(OutputDirContents,'All_Stats.csv'), sep=',', index=False)
-            print(f'All statistical data has been saved.',file=sys.stderr)
+            tqdm.write(f'All statistical data has been saved.',file=sys.stderr)
         except:
-            print(f'There was problem saving colated statistical data!',file=sys.stderr)
+            tqdm.write(f'There was problem saving colated statistical data!',file=sys.stderr)
             
     return StatDF
 
@@ -206,10 +206,10 @@ def SetupDirPath(path):
     else:
         try:
             os.mkdir(path)
-            print(f'Folder {path} created!',file=sys.stderr)    
+            tqdm.write(f'Folder {path} created!',file=sys.stderr)    
             return True 
         except:
-            print(f'Failed to create folder {path}!',file=sys.stderr)
+            tqdm.write(f'Failed to create folder {path}!',file=sys.stderr)
             return False
         
 
@@ -453,18 +453,18 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     # Output Destinations
     output_folder = os.path.join(OutputDir, simulation, 'Slices')
     if not SetupDirPath(output_folder):
-        print(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
+        tqdm.write(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
         continue
         
     
     binary_output = os.path.join(OutputDir, simulation,'Binary_Volumes')
     if not SetupDirPath(binary_output):
-        print(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
+        tqdm.write(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
         continue
     
     nifti_output = os.path.join(OutputDir, simulation,'nifti')
     if not SetupDirPath(nifti_output):
-        print(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
+        tqdm.write(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
         continue
 
     # Parameter Values
@@ -517,7 +517,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     stat_data['0.2v_Cutoff_Volume'].append(volume_0p2)
     
     
-    # print(f"Calculated volume of the region: {volume} cubic units")
+    # tqdm.write(f"Calculated volume of the region: {volume} cubic units")
 
 stat_data = Extract_stats_csv(OutputDir, save_data=True)
 # GenerateHeatmap(stat_data)

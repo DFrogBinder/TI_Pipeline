@@ -172,13 +172,14 @@ def GenerateHeatmap(data):
 
     plt.show()
 
-def Stats2CSV(volume_80,volume_60,volume_40, max_intensity,electrode_size,electrode_shape,
+def Stats2CSV(volume_80,volume_60,volume_40, volume_0p2, max_intensity,electrode_size,electrode_shape,
               input_current, pair_1_pos,pair_2_pos,thal_L, thal_R, thal_ALL,path):
     # Create a dictionary with the data
     data = {
         '80_Percent_Cutoff_Volume': [volume_80],
         '60_Percent_Cutoff_Volume': [volume_60],
         '40_Percent_Cutoff_Volume': [volume_40],
+        '0.2v_Cutoff_Volume': [volume_0p2],
         'Maximum Value': [max_intensity],
         'Electrode Size': [electrode_size],
         'Electrode Shape': [electrode_shape],
@@ -295,12 +296,14 @@ def load_images_and_threshold(image_data, folder, binary_output_folder):
     
     binary_images = {'80p_cutoff':[], 
                       '60p_cutoff':[], 
-                      '40p_cutoff':[]
+                      '40p_cutoff':[],
+                      '0p2v_cutoff':[]
                       }
     
     threshold_list = {'80p_cutoff':np.max(image_data)*0.8, 
                       '60p_cutoff':np.max(image_data)*0.6, 
-                      '40p_cutoff':np.max(image_data)*0.4
+                      '40p_cutoff':np.max(image_data)*0.4,
+                      '0p2v_cutoff': 0.2
                       }
     
     # Check and create folders named after dictionary keys
@@ -328,7 +331,8 @@ def load_images_and_threshold(image_data, folder, binary_output_folder):
 def stack_images(images):
     image_stacks = {'80p_cutoff':[], 
                     '60p_cutoff':[], 
-                    '40p_cutoff':[]
+                    '40p_cutoff':[],
+                    '0p2v_cutoff':[]
                     }
     for key in images:
         image_stacks[key].append(np.stack(images[key], axis=-1))
@@ -380,7 +384,8 @@ def main(nifti_path, masks_dir, output_folder, binary_output_folder,nifti_output
 
     metrics = {'80p_cutoff':None, 
                 '60p_cutoff':None, 
-                '40p_cutoff':None
+                '40p_cutoff':None,
+                '0p2v_cutoff':None
                 }
     # Create the NIfTI image
     for cutoff in binary_volume:
@@ -417,6 +422,7 @@ stat_data = {
     '80_Percent_Cutoff_Volume': [],
     '60_Percent_Cutoff_Volume': [],
     '40_Percent_Cutoff_Volume': [],
+    '0.2v_Cutoff_Volume':[],
     'Maximum_Value': [],
     'Max_Thalamus_R': [],
     'Max_Thalamus_L': [],
@@ -424,7 +430,7 @@ stat_data = {
     }
 
 
-OutputDir = '/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs'
+OutputDir = '/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Output'
 simulations = os.listdir(OutputDir)
 for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     
@@ -473,13 +479,15 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     volume_80p = volumes.get('80p_cutoff', {}).get('total_volume')
     volume_60p = volumes.get('60p_cutoff', {}).get('total_volume')
     volume_40p = volumes.get('40p_cutoff', {}).get('total_volume')
+    volume_0p2 = volumes.get('0p2v_cutoff', {}).get('total_volume')
     
     # This is the same for all cutoffs 
     max_intensity = volumes.get('80p_cutoff', {}).get('max_intensity')
     
     Stats2CSV(volume_80p,
               volume_60p, 
-              volume_40p,  
+              volume_40p, 
+              volume_0p2, 
               max_intensity, 
               electrode_size,
               electrode_shape,
@@ -506,6 +514,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     stat_data['80_Percent_Cutoff_Volume'].append(volume_80p)
     stat_data['60_Percent_Cutoff_Volume'].append(volume_60p)
     stat_data['40_Percent_Cutoff_Volume'].append(volume_40p)
+    stat_data['0.2v_Cutoff_Volume'].append(volume_0p2)
     
     
     # print(f"Calculated volume of the region: {volume} cubic units")

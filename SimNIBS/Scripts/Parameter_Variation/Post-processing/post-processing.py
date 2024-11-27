@@ -25,19 +25,23 @@ def nii2msh(data,export_path):
     # Convert data to binary (assuming the binary threshold is clear, i.e., 0 is background and others are foreground)
     binary_data = np.where(data > 0, 1, 0)
 
-    # Generate a mesh using marching cubes algorithm from skimage
-    verts, faces, normals, values = measure.marching_cubes(binary_data, level=0.5)
+    if not np.all(np.isnan(binary_data)) and np.any(binary_data):
+        # Generate a mesh using marching cubes algorithm from skimage
+        verts, faces, normals, values = measure.marching_cubes(binary_data, level=0.5)
 
-    # Create the mesh object
-    your_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
-    for i, f in enumerate(faces):
-        for j in range(3):
-            your_mesh.vectors[i][j] = verts[f[j], :]
+        # Create the mesh object
+        your_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
+        for i, f in enumerate(faces):
+            for j in range(3):
+                your_mesh.vectors[i][j] = verts[f[j], :]
 
-    # Write the mesh to file
-    your_mesh.save(export_path)
-    
-    return 1
+        # Write the mesh to file
+        your_mesh.save(export_path)
+        
+        return 1
+    else:
+        tqdm.write(f'Failed to generate mesh from nifti file for case: {export_path}')
+        return
 
 def Extract_stats_csv(OutputDirContents, save_data=False):
     
@@ -341,6 +345,13 @@ def stack_images(images):
 
 def calculate_volume(binary_volume, voxel_size, nifti_path, binary_volume_path):
     
+    if np.all(np.isnan(binary_volume)):
+        cut = binary_volume_path.split('/')[-1].split('.')[0]
+        case = nifti_path.split('/')[-2]
+        tqdm.write(f'All values in the {cut} are NaNs for case {case}')
+        return
+
+    
     stats = {
         'total_volume':None,
         'max_intensity':None,
@@ -362,10 +373,12 @@ def calculate_volume(binary_volume, voxel_size, nifti_path, binary_volume_path):
     # Count the non-NaN values
     non_nan_count = np.sum(~np.isnan(binary_volume))
 
+    
+    #TODO: What the fuck is this - fix it
     stats['total_volume'] = non_nan_count * voxel_size
     # stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
     stats['max_intensity'] = np.nanmax(masked_binary_data.get_fdata())
-    stats['min_intensity'] = np.min(binary_volume[~np.isnan(binary_volume)])
+    stats['min_intensity'] = np.nanmin(binary_volume[~np.isnan(binary_volume)])
     return stats
 
 # Main function to process images and calculate volume
@@ -517,7 +530,7 @@ for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
     stat_data['0.2v_Cutoff_Volume'].append(volume_0p2)
     
     
-    # tqdm.write(f"Calculated volume of the region: {volume} cubic units")
+    tqdm.write(f"Finished processing case: {simulation}")
 
 stat_data = Extract_stats_csv(OutputDir, save_data=True)
 # GenerateHeatmap(stat_data)

@@ -37,33 +37,44 @@ class PostProcess:
             'Max_Thalamus': []
             }
         
-
-    def nii2msh(self, data,export_path):
-        # Load the NIfTI file
-        # img = nib.load(nifti_path)
-        # data = img.get_fdata()
-
-        # Convert data to binary (assuming the binary threshold is clear, i.e., 0 is background and others are foreground)
-        binary_data = np.where(data > 0, 1, 0)
-
-        if not np.all(np.isnan(binary_data)) and np.any(binary_data):
-            # Generate a mesh using marching cubes algorithm from skimage
-            verts, faces, normals, values = measure.marching_cubes(binary_data, level=0.5)
-
-            # Create the mesh object
-            your_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
-            for i, f in enumerate(faces):
-                for j in range(3):
-                    your_mesh.vectors[i][j] = verts[f[j], :]
-
-            # Write the mesh to file
-            your_mesh.save(export_path)
-            
-            return 1
-        else:
-            tqdm.write(f'Failed to generate mesh from nifti file for case: {export_path}')
+    def calculate_volume(self, binary_volume, voxel_size, nifti_path, binary_volume_path):
+    
+        if np.all(np.isnan(binary_volume)):
+            cut = binary_volume_path.split('/')[-1].split('.')[0]
+            case = nifti_path.split('/')[-2]
+            tqdm.write(f'All values in the {cut} are NaNs for case {case}')
             return
 
+        
+        stats = {
+            'total_volume':None,
+            'max_intensity':None,
+            'min_intensity':None
+        }
+        
+        # Load the thalamus and volume images
+        thalamus_img = nib.load(os.path.join(nifti_path,'combined_thalamus_data.nii'))
+        binary_img = nib.load(binary_volume_path)
+        
+        resampled_thalamus = resample_to_img(source_img=thalamus_img, target_img=binary_img, interpolation='nearest')
+        
+        # Invert the thalamus mask to exclude thalamus region
+        non_thalamus_mask = image.math_img("img == 0", img=resampled_thalamus)
+        
+        # Apply the non-thalamus mask to the binary volume
+        masked_binary_data = image.math_img("a * b", a=binary_img, b=non_thalamus_mask)
+        
+        # Count the non-NaN values
+        non_nan_count = np.sum(~np.isnan(binary_volume))
+
+        
+        #TODO: What the fuck is this - fix it
+        stats['total_volume'] = non_nan_count * voxel_size
+        # stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
+        stats['max_intensity'] = np.nanmax(masked_binary_data.get_fdata())
+        stats['min_intensity'] = np.nanmin(binary_volume[~np.isnan(binary_volume)])
+        return stats
+    
     def Extract_stats_csv(self, OutputDirContents, save_data=False):
         
         # Init empty dataframe for stats storage
@@ -337,43 +348,28 @@ class PostProcess:
             # return np.stack(images, axis=-1)
         return image_stacks
 
-    def calculate_volume(self, binary_volume, voxel_size, nifti_path, binary_volume_path):
-        
-        if np.all(np.isnan(binary_volume)):
-            cut = binary_volume_path.split('/')[-1].split('.')[0]
-            case = nifti_path.split('/')[-2]
-            tqdm.write(f'All values in the {cut} are NaNs for case {case}')
+    def nii2msh(data,export_path):
+
+        # Convert data to binary (assuming the binary threshold is clear, i.e., 0 is background and others are foreground)
+        binary_data = np.where(data > 0, 1, 0)
+
+        if not np.all(np.isnan(binary_data)) and np.any(binary_data):
+            # Generate a mesh using marching cubes algorithm from skimage
+            verts, faces, normals, values = measure.marching_cubes(binary_data, level=0.5)
+
+            # Create the mesh object
+            your_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
+            for i, f in enumerate(faces):
+                for j in range(3):
+                    your_mesh.vectors[i][j] = verts[f[j], :]
+
+            # Write the mesh to file
+            your_mesh.save(export_path)
+            
+            return 1
+        else:
+            tqdm.write(f'Failed to generate mesh from nifti file for case: {export_path}')
             return
-
-        
-        stats = {
-            'total_volume':None,
-            'max_intensity':None,
-            'min_intensity':None
-        }
-        
-        # Load the thalamus and volume images
-        thalamus_img = nib.load(os.path.join(nifti_path,'combined_thalamus_data.nii'))
-        binary_img = nib.load(binary_volume_path)
-        
-        resampled_thalamus = resample_to_img(source_img=thalamus_img, target_img=binary_img, interpolation='nearest')
-        
-        # Invert the thalamus mask to exclude thalamus region
-        non_thalamus_mask = image.math_img("img == 0", img=resampled_thalamus)
-        
-        # Apply the non-thalamus mask to the binary volume
-        masked_binary_data = image.math_img("a * b", a=binary_img, b=non_thalamus_mask)
-        
-        # Count the non-NaN values
-        non_nan_count = np.sum(~np.isnan(binary_volume))
-
-        
-        #TODO: What the fuck is this - fix it
-        stats['total_volume'] = non_nan_count * voxel_size
-        # stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
-        stats['max_intensity'] = np.nanmax(masked_binary_data.get_fdata())
-        stats['min_intensity'] = np.nanmin(binary_volume[~np.isnan(binary_volume)])
-        return stats
 
     # Main function to process images and calculate volume
     def run_analysis(self):
@@ -441,19 +437,14 @@ class PostProcess:
                 metrics[cutoff] = self.calculate_volume(binary_volume[cutoff][0], voxel_size, nifti_output, bin_volume_name)
                 
             
-            return metrics,thalamic_left_data, thalamic_right_data, combined_thalamic_data
-            volumes, thal_L,thal_R, thal_ALL = main(base_nifti_path, masks_nifti_dir, 
-                                                        output_folder, binary_output, nifti_output, 
-                                                        voxel_size)
-            
             # Extract stats from volume dict
-            volume_80p = volumes.get('80p_cutoff', {}).get('total_volume')
-            volume_60p = volumes.get('60p_cutoff', {}).get('total_volume')
-            volume_40p = volumes.get('40p_cutoff', {}).get('total_volume')
-            volume_0p2 = volumes.get('0p2v_cutoff', {}).get('total_volume')
+            volume_80p = metrics.get('80p_cutoff', {}).get('total_volume')
+            volume_60p = metrics.get('60p_cutoff', {}).get('total_volume')
+            volume_40p = metrics.get('40p_cutoff', {}).get('total_volume')
+            volume_0p2 = metrics.get('0p2v_cutoff', {}).get('total_volume')
             
             # This is the same for all cutoffs 
-            max_intensity = volumes.get('80p_cutoff', {}).get('max_intensity')
+            max_intensity = metrics.get('80p_cutoff', {}).get('max_intensity')
             
             self.FileManager.Stats2CSV(volume_80p,
                     volume_60p, 
@@ -465,9 +456,9 @@ class PostProcess:
                     intensity,
                     pair_1_pos,
                     pair_2_pos,
-                    thal_L,
-                    thal_R,
-                    thal_ALL,
+                    thalamic_left_data,
+                    thalamic_right_data,
+                    combined_thalamic_data,
                     os.path.join(OutputDir,simulation)
                     )
             
@@ -479,9 +470,9 @@ class PostProcess:
             stat_data['Input_current'].append(intensity)
             stat_data['Pair_1_Pos'].append(pair_1_pos)
             stat_data['Pair_2_Pos'].append(pair_2_pos)
-            stat_data['Max_Thalamus_R'].append(thal_R)
-            stat_data['Max_Thalamus_L'].append(thal_L)
-            stat_data['Max_Thalamus'].append(thal_ALL)
+            stat_data['Max_Thalamus_R'].append(thalamic_right_data)
+            stat_data['Max_Thalamus_L'].append(thalamic_left_data)
+            stat_data['Max_Thalamus'].append(combined_thalamic_data)
             stat_data['80_Percent_Cutoff_Volume'].append(volume_80p)
             stat_data['60_Percent_Cutoff_Volume'].append(volume_60p)
             stat_data['40_Percent_Cutoff_Volume'].append(volume_40p)

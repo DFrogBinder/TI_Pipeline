@@ -18,9 +18,14 @@ from skimage import measure
 from stl import mesh
 
 class PostProcess:
-    def __init__(self,data_dir, verbose=True):
+    #region Class Init
+    def __init__(self,data_dir, verbose=True, plot_flag=False, voxel_size=1):
         self.data_dir = data_dir
+        self.voxel_size = voxel_size # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
+
         self.vebose = verbose
+        self.plot_flag = plot_flag
+        
         self.stat_data = {
             'Electrode_Size': [],
             'Electrode_Shape': [],
@@ -36,6 +41,26 @@ class PostProcess:
             'Max_Thalamus_L': [],
             'Max_Thalamus': []
             }
+        
+        # Procecssing Flags
+        self.Setup_Output_Dirs_flag = False
+        self.Get_White_Gray_Matte_flag = False
+        self.Extract_Thalamus_flag = False
+        self.create_volumes_flag = False
+        self.calculate_volume_flag = False
+        
+        # Failed case tracker
+        self.failed_cases = []
+        
+    #endregion
+    
+    #region Prcessing functions
+    def reset_processing_flags(self):
+        self.Setup_Output_Dirs_flag = False
+        self.Get_White_Gray_Matte_flag = False
+        self.Extract_Thalamus_flag = False
+        self.create_volumes_flag = False
+        self.calculate_volume_flag = False
         
     def calculate_volume(self, binary_volume, voxel_size, nifti_path, binary_volume_path):
     
@@ -90,6 +115,7 @@ class PostProcess:
             'Max_Thalamus_R',
             'Max_Thalamus_L',
             'Max_Thalamus']
+        
         StatDF = pd.DataFrame(columns=pd_columns)
         
         studies = os.listdir(OutputDirContents)
@@ -120,7 +146,7 @@ class PostProcess:
                 
         return StatDF
 
-    def Extract_Thalamus(self, base_path,output_path):
+    def Extract_Thalamus(self):
         # Load the AAL atlas
         aal_dataset = datasets.fetch_atlas_aal(version='SPM12', data_dir='./aal_SPM12')
         atlas_filename = aal_dataset.maps
@@ -138,32 +164,179 @@ class PostProcess:
         thalamus_right_mask = image.math_img(f"img == {thalamus_right_idx}", img=atlas_img)
         combined_thalamus_mask = image.math_img("img1 + img2", img1=thalamus_left_mask, img2=thalamus_right_mask)
 
-        
-        nifti = nib.load(base_path)
         # Resample simulation data to match the atlas space
-        resampled_sim_data = resample_to_img(source_img=nifti, target_img=atlas_img, interpolation='nearest')
+        resampled_sim_data = resample_to_img(source_img=self.TI_nifti, target_img=atlas_img, interpolation='nearest')
 
-        
         # Apply the masks to the simulation data
-        thalamic_left_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_left_mask)
-        thalamic_right_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_right_mask)
-        combined_thalamic_data = image.math_img("a * b", a=resampled_sim_data, b=combined_thalamus_mask)
+        self.thalamic_left_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_left_mask)
+        self.thalamic_right_data = image.math_img("a * b", a=resampled_sim_data, b=thalamus_right_mask)
+        self.combined_thalamic_data = image.math_img("a * b", a=resampled_sim_data, b=combined_thalamus_mask)
 
 
         # Save the masked data or proceed with analysis
-        nib.save(thalamic_left_data, os.path.join(output_path, 'thalamic_left_data.nii'))
-        nib.save(thalamic_right_data, os.path.join(output_path, 'thalamic_right_data.nii'))
-        nib.save(combined_thalamic_data, os.path.join(output_path, 'combined_thalamus_data.nii'))
+        nib.save(self.thalamic_left_data, os.path.join(self.nifti_results_dir, 'thalamic_left_data.nii'))
+        nib.save(self.thalamic_right_data, os.path.join(self.nifti_results_dir, 'thalamic_right_data.nii'))
+        nib.save(self.combined_thalamic_data, os.path.join(self.nifti_results_dir, 'combined_thalamus_data.nii'))
 
         
-        
-        return np.max(thalamic_left_data.get_fdata()), np.max(thalamic_right_data.get_fdata()), np.max(combined_thalamic_data.get_fdata())
+        self.Extract_Thalamus_flag = True
+    
+    def Get_White_Gray_Matter(self, masks_dir):
+            # Load the NIfTI file
+            self.TI_nifti = nib.load(self.TI_nifti_path)
+            data = self.TI_nifti.get_fdata()
+            
+            # Load White and Gray Matter Masks
+            masks_list = os.listdir(masks_dir)
+            for mask in masks_list:
+                if '1' in mask and '10' not in mask:
+                    wm = nib.load(os.path.join(masks_dir, mask)).get_fdata().astype(np.int16)
+                elif '2' in mask:
+                    gm = nib.load(os.path.join(masks_dir, mask)).get_fdata().astype(np.int16)
+                else:
+                    continue
 
+            # Combine the masks
+            combined_mask = np.logical_or(wm, gm).astype(np.int16)
+            
+            # Apply the mask - This zeros out all parts of the image not covered by the mask
+            self.brain_data = data * combined_mask
+            
+            if self.plot_flag:
+                slice_number = 190
+                
+                # Create a figure with 4 subplots
+                fig, axs = plt.subplots(2, 2)
+
+                # Display each image
+                axs[0, 0].imshow(wm[:,:,slice_number], cmap='viridis')
+                axs[0, 0].set_title('White Matter Mask')
+                axs[0, 0].axis('off')  # Hide axes for clarity
+
+                axs[0, 1].imshow(gm[:,:,slice_number], cmap='viridis')
+                axs[0, 1].set_title('Gray Matter Mask')
+                axs[0, 1].axis('off')
+
+                im1 = axs[1, 0].imshow(data[:,:,slice_number], cmap='viridis')
+                axs[1, 0].set_title('Base Volume Mesh')
+                axs[1, 0].axis('off')
+                # Add a colorbar for the third subplot
+                cbar1 = fig.colorbar(im1, ax=axs[1, 0])
+                cbar1.set_label('Intensity')
+
+                im2 = axs[1, 1].imshow(self.brain_data[:,:,slice_number], cmap='viridis')
+                axs[1, 1].set_title('Extracted Brain Mesh')
+                axs[1, 1].axis('off')
+                # Add a colorbar for the fourth subplot
+                cbar2 = fig.colorbar(im2, ax=axs[1, 1])
+                cbar2.set_label('Intensity')
+
+                # Adjust layout to prevent overlap
+                plt.tight_layout()
+
+                # Show the plot
+                plt.show()
+            
+            
+            # Create a new NIfTI image from the mask
+            label_img = nib.Nifti1Image(self.brain_data, self.TI_nifti.affine, self.TI_nifti.header)
+            label_img_path = os.path.join(self.nifti_results_dir, 'white_gray_matter.nii.gz')
+            nib.save(label_img, label_img_path)
+
+            
+            # Slices the brain in the z direction to crate a .png collection
+            for i in range(self.brain_data.shape[2]):
+                # Ensure no alteration in orientation during slicing
+                slice = self.brain_data[:, :, i]
+
+                # Normalize and convert to uint8 for image saving
+                # normalized_slice = cv2.normalize(slice, None, 0, 255, cv2.NORM_MINMAX)
+                image = np.uint8(slice)
+                
+                # Save each slice as an image
+                cv2.imwrite(os.path.join(self.slice_results_dir, f'slice_{i:04d}.png'), image)
+            
+            self.Get_White_Gray_Matte_flag = True  
+            return 
+        
+    def create_volumes(self):
+        
+        def stack_images(images):
+            image_stacks = {'80p_cutoff':[], 
+                            '60p_cutoff':[], 
+                            '40p_cutoff':[],
+                            '0p2v_cutoff':[]
+                            }
+            
+            for key in images:
+                image_stacks[key].append(np.stack(images[key], axis=-1))
+            
+            return image_stacks
+        
+        self.cutoff_images = {'80p_cutoff':[], 
+                        '60p_cutoff':[], 
+                        '40p_cutoff':[],
+                        '0p2v_cutoff':[]
+                        }
+        
+        threshold_list = {'80p_cutoff':np.max(self.brain_data)*0.8, 
+                        '60p_cutoff':np.max(self.brain_data)*0.6, 
+                        '40p_cutoff':np.max(self.brain_data)*0.4,
+                        '0p2v_cutoff': 0.2
+                        }
+        
+        # Check and create folders named after dictionary keys
+        for key in threshold_list:
+            path = os.path.join(self.volumes_results_dir, key)
+            if not os.path.exists(path):
+                os.makedirs(path)
+            else:
+                continue
+                
+        
+        for name, threshold in threshold_list.items():
+            for slice, counter in zip(self.brain_data, range(len(self.brain_data))):
+                if slice is not None:
+                    # Create a mask where every pixel above the threshold is True; others are False
+                    mask = slice > threshold
+                    # Use the mask to keep only the pixels above the threshold; set others to 0
+                    thresholded_image = np.where(mask, slice, np.nan)
+                    self.cutoff_images[name].append(thresholded_image)
+                    # Save the thresholded binary image for inspection, ensuring no change in orientation
+                    tiff.imwrite(os.path.join(self.volumes_results_dir,name, f'binary_{name}_{counter}.tiff'), thresholded_image)
+        
+        self.threshold_volumes = stack_images(self.cutoff_images)
+        self.create_volumes_flag = True
+        return 
+    
+    def Setup_Output_Dirs(self,case_name):
+            
+        # Output Destinations
+        self.slice_results_dir = os.path.join(OutputDir, case_name, 'Analysis', 'Slices')
+        if not self.FileManager.CheckCreateDirPath(self.slice_results_dir):
+            tqdm.write(f'Failed to create pathing for {case_name}! Continuing to next study...',file=sys.stderr)
+            return                
+        
+        self.volumes_results_dir = os.path.join(OutputDir, case_name, 'Analysis', 'Binary_Volumes')
+        if not self.FileManager.CheckCreateDirPath(self.volumes_results_dir):
+            tqdm.write(f'Failed to create pathing for {case_name}! Continuing to next study...',file=sys.stderr)
+            return
+        
+        self.nifti_results_dir = os.path.join(OutputDir, case_name, 'Analysis', 'nifti')
+        if not self.FileManager.CheckCreateDirPath(self.nifti_results_dir):
+            tqdm.write(f'Failed to create pathing for {case_name}! Continuing to next study...',file=sys.stderr)
+            return
+        
+        self.Setup_Output_Dirs_flag = True
+    #endregion
+      
+    #region File Manager 
     class FileManager:
         def nifti_to_mesh(nifti_file_path, output_mesh_path):
             # Load the NIfTI file
             img = nib.load(nifti_file_path)
             data = img.get_fdata()
+            
             # Convert the float data to int (assuming binary, you can use 0 and 1)
             data_int = (data > 0).astype(np.int16)
             sitk_img = sitk.GetImageFromArray(data_int)
@@ -173,6 +346,7 @@ class PostProcess:
 
             # Convert SimpleITK image to a numpy array and prepare for PyVista
             vtk_img = sitk.GetArrayFromImage(contour_img)
+            
             # Create structured grid with correct dimensions and spacing
             grid = pv.StructuredGrid(*vtk_img.shape[::-1])  # PyVista expects dimensions in x, y, z order
             grid.points = np.stack(np.mgrid[0:vtk_img.shape[2], 0:vtk_img.shape[1], 0:vtk_img.shape[0]], axis=-1).reshape(-1, 3) * img.header.get_zooms() + img.affine[:3, 3]
@@ -212,7 +386,7 @@ class PostProcess:
             
             return data
         
-        def SetupDirPath(path):
+        def CheckCreateDirPath(path):
             if os.path.isdir(path):
                 return True
             else:
@@ -223,159 +397,42 @@ class PostProcess:
                 except:
                     tqdm.write(f'Failed to create folder {path}!',file=sys.stderr)
                     return False
+
+        def nii2msh(data,export_path):
+
+            # Convert data to binary (assuming the binary threshold is clear, i.e., 0 is background and others are foreground)
+            binary_data = np.where(data > 0, 1, 0)
+
+            if not np.all(np.isnan(binary_data)) and np.any(binary_data):
+                # Generate a mesh using marching cubes algorithm from skimage
+                verts, faces, normals, values = measure.marching_cubes(binary_data, level=0.5)
+
+                # Create the mesh object
+                your_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
+                for i, f in enumerate(faces):
+                    for j in range(3):
+                        your_mesh.vectors[i][j] = verts[f[j], :]
+
+                # Write the mesh to file
+                your_mesh.save(export_path)
                 
-        def prepare_base_nifti(file_path, masks_dir, output_folder, nifti_output, plot_flag=False):
-            # Load the NIfTI file
-            nifti = nib.load(file_path)
-            data = nifti.get_fdata()
-            
-            # Load White and Gray Matter Masks
-            masks_list = os.listdir(masks_dir)
-            for mask in masks_list:
-                if '1' in mask and '10' not in mask:
-                    wm = nib.load(os.path.join(masks_dir, mask)).get_fdata().astype(np.int16)
-                elif '2' in mask:
-                    gm = nib.load(os.path.join(masks_dir, mask)).get_fdata().astype(np.int16)
-                else:
-                    continue
-
-            # Combine the masks
-            combined_mask = np.logical_or(wm, gm).astype(np.int16)
-            
-            # Apply the mask - This zeros out all parts of the image not covered by the mask
-            brain = data * combined_mask
-            
-            if plot_flag:
-                slice_number = 190
-                
-                # Create a figure with 4 subplots
-                fig, axs = plt.subplots(2, 2)
-
-                # Display each image
-                axs[0, 0].imshow(wm[:,:,slice_number], cmap='viridis')
-                axs[0, 0].set_title('White Matter Mask')
-                axs[0, 0].axis('off')  # Hide axes for clarity
-
-                axs[0, 1].imshow(gm[:,:,slice_number], cmap='viridis')
-                axs[0, 1].set_title('Gray Matter Mask')
-                axs[0, 1].axis('off')
-
-                im1 = axs[1, 0].imshow(data[:,:,slice_number], cmap='viridis')
-                axs[1, 0].set_title('Base Volume Mesh')
-                axs[1, 0].axis('off')
-                # Add a colorbar for the third subplot
-                cbar1 = fig.colorbar(im1, ax=axs[1, 0])
-                cbar1.set_label('Intensity')
-
-                im2 = axs[1, 1].imshow(brain[:,:,slice_number], cmap='viridis')
-                axs[1, 1].set_title('Extracted Brain Mesh')
-                axs[1, 1].axis('off')
-                # Add a colorbar for the fourth subplot
-                cbar2 = fig.colorbar(im2, ax=axs[1, 1])
-                cbar2.set_label('Intensity')
-
-                # Adjust layout to prevent overlap
-                plt.tight_layout()
-
-                # Show the plot
-                plt.show()
-            
-            
-            # Create a new NIfTI image from the mask
-            label_img = nib.Nifti1Image(brain, nifti.affine, nifti.header)
-            label_img_path = os.path.join(nifti_output, 'white_gray_matter.nii.gz')
-            nib.save(label_img, label_img_path)
-
-            
-            # Assuming the slicing is along the z-axis (axial)
-            for i in range(brain.shape[2]):
-                # Ensure no alteration in orientation during slicing
-                slice = brain[:, :, i]
-
-                # Normalize and convert to uint8 for image saving
-                # normalized_slice = cv2.normalize(slice, None, 0, 255, cv2.NORM_MINMAX)
-                image = np.uint8(slice)
-                
-                # Save each slice as an image
-                cv2.imwrite(os.path.join(output_folder, f'slice_{i:04d}.png'), image)
-                
-            return brain
-
-    def load_images_and_threshold(self, image_data, folder, binary_output_folder):
-        
-        binary_images = {'80p_cutoff':[], 
-                        '60p_cutoff':[], 
-                        '40p_cutoff':[],
-                        '0p2v_cutoff':[]
-                        }
-        
-        threshold_list = {'80p_cutoff':np.max(image_data)*0.8, 
-                        '60p_cutoff':np.max(image_data)*0.6, 
-                        '40p_cutoff':np.max(image_data)*0.4,
-                        '0p2v_cutoff': 0.2
-                        }
-        
-        # Check and create folders named after dictionary keys
-        for key in threshold_list:
-            path = os.path.join(binary_output_folder, key)
-            if not os.path.exists(path):
-                os.makedirs(path)
+                return 1
             else:
-                continue
-                
-        
-        for name, threshold in threshold_list.items():
-            for slice, counter in zip(image_data, range(len(image_data))):
-                if slice is not None:
-                    # Create a mask where every pixel above the threshold is True; others are False
-                    mask = slice > threshold
-                    # Use the mask to keep only the pixels above the threshold; set others to 0
-                    thresholded_image = np.where(mask, slice, np.nan)
-                    binary_images[name].append(thresholded_image)
-                    # Save the thresholded binary image for inspection, ensuring no change in orientation
-                    tiff.imwrite(os.path.join(binary_output_folder,name, f'binary_{name}_{counter}.tiff'), thresholded_image)
-
-        return binary_images
-
-    def stack_images(self, images):
-        image_stacks = {'80p_cutoff':[], 
-                        '60p_cutoff':[], 
-                        '40p_cutoff':[],
-                        '0p2v_cutoff':[]
-                        }
-        for key in images:
-            image_stacks[key].append(np.stack(images[key], axis=-1))
-            # return np.stack(images, axis=-1)
-        return image_stacks
-
-    def nii2msh(data,export_path):
-
-        # Convert data to binary (assuming the binary threshold is clear, i.e., 0 is background and others are foreground)
-        binary_data = np.where(data > 0, 1, 0)
-
-        if not np.all(np.isnan(binary_data)) and np.any(binary_data):
-            # Generate a mesh using marching cubes algorithm from skimage
-            verts, faces, normals, values = measure.marching_cubes(binary_data, level=0.5)
-
-            # Create the mesh object
-            your_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
-            for i, f in enumerate(faces):
-                for j in range(3):
-                    your_mesh.vectors[i][j] = verts[f[j], :]
-
-            # Write the mesh to file
-            your_mesh.save(export_path)
+                tqdm.write(f'Failed to generate mesh from nifti file for case: {export_path}')
+                return
             
-            return 1
-        else:
-            tqdm.write(f'Failed to generate mesh from nifti file for case: {export_path}')
-            return
-
-    # Main function to process images and calculate volume
+        
+    #endregion
+    
+    #region Analysis Runner
     def run_analysis(self):
         
         simulations = os.listdir(self.data_dir)
         for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
+            
+            # Reset the processing flags for each case
+            self.reset_processing_flags()
+            self.Setup_Output_Dirs(simulation)
             
             # Skips stats file
             if 'csv' in simulation:
@@ -390,34 +447,33 @@ class PostProcess:
             pair_2_pos = sim_paramters[3]
             
             # SimNIBS generated files
-            nifti_path = os.path.join(OutputDir, simulation, 'Volume_Base','TI_Volumetric_Base_TImax.nii.gz')
+            self.TI_nifti_path = os.path.join(OutputDir, simulation, 'Volume_Base','TI_Volumetric_Base_TImax.nii.gz')
             masks_dir = os.path.join(OutputDir, simulation, 'Volume_Maks')
 
-            # Output Destinations
-            output_folder = os.path.join(OutputDir, simulation, 'Analysis', 'Slices')
-            if not self.FileManager.SetupDirPath(output_folder):
-                tqdm.write(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)                
-            
-            binary_output = os.path.join(OutputDir, simulation, 'Analysis', 'Binary_Volumes')
-            if not self.FileManager.SetupDirPath(binary_output):
-                tqdm.write(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
-            
-            nifti_output = os.path.join(OutputDir, simulation, 'Analysis', 'nifti')
-            if not self.FileManager.SetupDirPath(nifti_output):
-                tqdm.write(f'Failed to create pathing for {simulation}! Continuing to next study...',file=sys.stderr)
-
-            # threshold_value = 0.19
-            voxel_size = 1.0  # Example voxel size in cubic units (e.g., 1 mm^3 if images are 1mm thick)
-
-            brain_only_images = self.FileManager.prepare_base_nifti(nifti_path, masks_dir, output_folder, nifti_output)
+            if self.Setup_Output_Dirs_flag:
+                # Extract Gray and White matter from the solved FEM mesh
+                self.Get_White_Gray_Matter(masks_dir)
+            else:
+                tqdm.write(f'Uncauguth problem output dir setup for case {simulation}')
+                self.failed_cases.append(simulation)
+                continue
             
             # Extracts left and rigth thalamus regions via the aal brain atlas
-            thalamic_left_data, thalamic_right_data, combined_thalamic_data = self.Extract_Thalamus(nifti_path,nifti_output)
+            if self.Get_White_Gray_Matte_flag:
+                self.Extract_Thalamus()
+            else:
+                tqdm.write(f'Uncauguth problem during brain matter extraction for case {simulation}')
+                self.failed_cases.append(simulation)
+                continue
             
-            # Load processed images, apply threshold, and save binary images
-            brain_only_images = self.load_images_and_threshold(brain_only_images, output_folder, binary_output)
-            binary_volume = self.stack_images(brain_only_images)
-            
+            # Create volumes based on thresholding values
+            if self.Extract_Thalamus_flag:
+                self.create_volumes()
+            else:
+                tqdm.write(f'Uncauguth problem during Thalamus extraction for case {simulation}')
+                self.failed_cases.append(simulation)
+                continue
+                        
             # Create an identity affine matrix (this is a simple placeholder)
             affine = np.eye(4)
 
@@ -426,16 +482,18 @@ class PostProcess:
                         '40p_cutoff':None,
                         '0p2v_cutoff':None
                         }
-            # Create the NIfTI image
-            for cutoff in binary_volume:
-                img = nib.Nifti1Image(binary_volume[cutoff][0], affine)
-                bin_volume_name = os.path.join(nifti_output,f'{cutoff}_thresholded_volume.nii.gz')
-                nib.save(img,bin_volume_name)
-                
-                # Generate a 3d model of the stimulated area
-                self.nii2msh(binary_volume[cutoff][0],os.path.join(nifti_output,f'{cutoff}_thresholded_volume.stl'))
-                metrics[cutoff] = self.calculate_volume(binary_volume[cutoff][0], voxel_size, nifti_output, bin_volume_name)
-                
+            
+            if self.create_volumes_flag:
+                # Create the NIfTI image
+                for cutoff in self.threshold_volumes:
+                    img = nib.Nifti1Image(self.threshold_volumes[cutoff][0], affine)
+                    bin_volume_name = os.path.join(self.nifti_results_dir,f'{cutoff}_thresholded_volume.nii.gz')
+                    nib.save(img,bin_volume_name)
+                    
+                    # Generate a 3d model of the stimulated area
+                    self.nii2msh(self.threshold_volumes[cutoff][0],os.path.join(self.nifti_results_dir,f'{cutoff}_thresholded_volume.stl'))
+                    metrics[cutoff] = self.calculate_volume(self.threshold_volumes[cutoff][0], self.voxel_size, self.nifti_results_dir, bin_volume_name)
+                    
             
             # Extract stats from volume dict
             volume_80p = metrics.get('80p_cutoff', {}).get('total_volume')
@@ -456,9 +514,9 @@ class PostProcess:
                     intensity,
                     pair_1_pos,
                     pair_2_pos,
-                    thalamic_left_data,
-                    thalamic_right_data,
-                    combined_thalamic_data,
+                    self.thalamic_left_data,
+                    self.thalamic_right_data,
+                    self.combined_thalamic_data,
                     os.path.join(OutputDir,simulation)
                     )
             
@@ -470,9 +528,9 @@ class PostProcess:
             stat_data['Input_current'].append(intensity)
             stat_data['Pair_1_Pos'].append(pair_1_pos)
             stat_data['Pair_2_Pos'].append(pair_2_pos)
-            stat_data['Max_Thalamus_R'].append(thalamic_right_data)
-            stat_data['Max_Thalamus_L'].append(thalamic_left_data)
-            stat_data['Max_Thalamus'].append(combined_thalamic_data)
+            stat_data['Max_Thalamus_R'].append(np.nanmax(self.thalamic_right_data))
+            stat_data['Max_Thalamus_L'].append(np.nanmax(self.thalamic_left_data))
+            stat_data['Max_Thalamus'].append(np.nanmax(self.combined_thalamic_data))
             stat_data['80_Percent_Cutoff_Volume'].append(volume_80p)
             stat_data['60_Percent_Cutoff_Volume'].append(volume_60p)
             stat_data['40_Percent_Cutoff_Volume'].append(volume_40p)
@@ -482,9 +540,9 @@ class PostProcess:
             tqdm.write(f"Finished processing case: {simulation}")
         
         stat_data = self.Extract_stats_csv(OutputDir, save_data=True)
-
-
-
+    #endregion
+    
+#region Entry Point
 '''
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ++++++++++++++++++++++++++++++++++++Execution Starts Here++++++++++++++++++++++++++++++++++++

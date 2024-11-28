@@ -390,7 +390,7 @@ class PostProcess:
             else:
                 try:
                     os.makedirs(path)
-                    tqdm.write(f'Folder {path} created!',file=sys.stderr)    
+                    # tqdm.write(f'Folder {path} created!',file=sys.stderr)    
                     return True 
                 except:
                     tqdm.write(f'Failed to create folder {path}!',file=sys.stderr)
@@ -495,7 +495,7 @@ class PostProcess:
                         metrics[cutoff] = self.calculate_volume(self.threshold_volumes[cutoff][0], self.voxel_size, self.nifti_results_dir, bin_volume_name)
                     else:
                         tqdm.write(f'All values for Cuttof {cutoff} in case {simulation} are NaNs. Can not create stl.')
-                        metrics[cutoff] = np.nan # Write an NaN value for empty volumes
+                        metrics[cutoff] = {'total_volume':np.nan} # Write an NaN value for empty volumes
                         self.failed_cases.append(simulation)
                         continue
             
@@ -525,7 +525,6 @@ class PostProcess:
                     )
             
             
-            #? What is stat data in the original code?
             # Update Stats Dict For Plotting later
             self.stat_data['Electrode_Size'].append(electrode_size)
             self.stat_data['Electrode_Shape'].append(electrode_shape)

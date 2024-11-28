@@ -78,10 +78,10 @@ class PostProcess:
         }
         
         # Load the thalamus and volume images
-        thalamus_img = nib.load(os.path.join(nifti_path,'combined_thalamus_data.nii'))
+        # thalamus_img = nib.load(os.path.join(nifti_path,'combined_thalamus_data.nii'))
         binary_img = nib.load(binary_volume_path)
         
-        resampled_thalamus = resample_to_img(source_img=thalamus_img, target_img=binary_img, interpolation='nearest')
+        resampled_thalamus = resample_to_img(source_img=self.combined_thalamic_data, target_img=binary_img, interpolation='nearest')
         
         # Invert the thalamus mask to exclude thalamus region
         non_thalamus_mask = image.math_img("img == 0", img=resampled_thalamus)
@@ -92,12 +92,10 @@ class PostProcess:
         # Count the non-NaN values
         non_nan_count = np.sum(~np.isnan(binary_volume))
 
-        
-        #TODO: What the fuck is this - fix it
+        #? Should be ok
         stats['total_volume'] = non_nan_count * voxel_size
-        # stats['max_intensity'] = np.max(binary_volume[~np.isnan(binary_volume)])
         stats['max_intensity'] = np.nanmax(masked_binary_data.get_fdata())
-        stats['min_intensity'] = np.nanmin(binary_volume[~np.isnan(binary_volume)])
+        stats['min_intensity'] = np.nanmin(masked_binary_data.get_fdata())
         return stats
     
     def Extract_stats_csv(self, OutputDirContents, save_data=False):
@@ -484,16 +482,22 @@ class PostProcess:
                         }
             
             if self.create_volumes_flag:
-                # Create the NIfTI image
+                # Save threshold volumes to NIFTI
                 for cutoff in self.threshold_volumes:
-                    img = nib.Nifti1Image(self.threshold_volumes[cutoff][0], affine)
-                    bin_volume_name = os.path.join(self.nifti_results_dir,f'{cutoff}_thresholded_volume.nii.gz')
-                    nib.save(img,bin_volume_name)
-                    
-                    # Generate a 3d model of the stimulated area
-                    self.nii2msh(self.threshold_volumes[cutoff][0],os.path.join(self.nifti_results_dir,f'{cutoff}_thresholded_volume.stl'))
-                    metrics[cutoff] = self.calculate_volume(self.threshold_volumes[cutoff][0], self.voxel_size, self.nifti_results_dir, bin_volume_name)
-                    
+                    # Check if all values are NaN
+                    if not np.isnan(self.threshold_volumes[cutoff][0]).all():
+                        img = nib.Nifti1Image(self.threshold_volumes[cutoff][0], affine)
+                        bin_volume_name = os.path.join(self.nifti_results_dir,f'{cutoff}_thresholded_volume.nii.gz')
+                        nib.save(img,bin_volume_name)
+                        
+                        # Generate a 3d model of the stimulated area
+                        self.FileManager.nii2msh(self.threshold_volumes[cutoff][0],os.path.join(self.nifti_results_dir,f'{cutoff}_thresholded_volume.stl'))
+                        metrics[cutoff] = self.calculate_volume(self.threshold_volumes[cutoff][0], self.voxel_size, self.nifti_results_dir, bin_volume_name)
+                    else:
+                        tqdm.write(f'All values for Cuttof {cutoff} in case {simulation} are NaNs. Can not create stl.')
+                        metrics[cutoff] = np.nan # Write an NaN value for empty volumes
+                        self.failed_cases.append(simulation)
+                        continue
             
             # Extract stats from volume dict
             volume_80p = metrics.get('80p_cutoff', {}).get('total_volume')
@@ -514,32 +518,33 @@ class PostProcess:
                     intensity,
                     pair_1_pos,
                     pair_2_pos,
-                    self.thalamic_left_data,
-                    self.thalamic_right_data,
-                    self.combined_thalamic_data,
+                    np.max(self.thalamic_left_data.get_fdata()),
+                    np.max(self.thalamic_right_data.get_fdata()),
+                    np.max(self.combined_thalamic_data.get_fdata()),
                     os.path.join(OutputDir,simulation)
                     )
             
             
-            
+            #? What is stat data in the original code?
             # Update Stats Dict For Plotting later
-            stat_data['Electrode_Size'].append(electrode_size)
-            stat_data['Electrode_Shape'].append(electrode_shape)
-            stat_data['Input_current'].append(intensity)
-            stat_data['Pair_1_Pos'].append(pair_1_pos)
-            stat_data['Pair_2_Pos'].append(pair_2_pos)
-            stat_data['Max_Thalamus_R'].append(np.nanmax(self.thalamic_right_data))
-            stat_data['Max_Thalamus_L'].append(np.nanmax(self.thalamic_left_data))
-            stat_data['Max_Thalamus'].append(np.nanmax(self.combined_thalamic_data))
-            stat_data['80_Percent_Cutoff_Volume'].append(volume_80p)
-            stat_data['60_Percent_Cutoff_Volume'].append(volume_60p)
-            stat_data['40_Percent_Cutoff_Volume'].append(volume_40p)
-            stat_data['0.2v_Cutoff_Volume'].append(volume_0p2)
+            self.stat_data['Electrode_Size'].append(electrode_size)
+            self.stat_data['Electrode_Shape'].append(electrode_shape)
+            self.stat_data['Input_current'].append(intensity)
+            self.stat_data['Pair_1_Pos'].append(pair_1_pos)
+            self.stat_data['Pair_2_Pos'].append(pair_2_pos)
+            self.stat_data['Max_Thalamus_R'].append(np.nanmax(self.thalamic_right_data))
+            self.stat_data['Max_Thalamus_L'].append(np.nanmax(self.thalamic_left_data))
+            self.stat_data['Max_Thalamus'].append(np.nanmax(self.combined_thalamic_data))
+            self.stat_data['80_Percent_Cutoff_Volume'].append(volume_80p)
+            self.stat_data['60_Percent_Cutoff_Volume'].append(volume_60p)
+            self.stat_data['40_Percent_Cutoff_Volume'].append(volume_40p)
+            self.stat_data['0.2v_Cutoff_Volume'].append(volume_0p2)
             
             
             tqdm.write(f"Finished processing case: {simulation}")
         
-        stat_data = self.Extract_stats_csv(OutputDir, save_data=True)
+        self.Extract_stats_csv(OutputDir, save_data=True)
+        pd.DataFrame(self.failed_cases).to_csv(os.path.join(OutputDir,'failed_cases.csv'))
     #endregion
     
 #region Entry Point

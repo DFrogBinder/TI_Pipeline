@@ -1,8 +1,16 @@
-from paraview.simple import *
 import os
+import tkinter as tk
+from paraview.simple import *
+
 
 # Check if the paraview.simple module is initialized
 paraview.simple._DisableFirstRenderCameraReset()
+
+# Get screen size
+root = tk.Tk()
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+root.destroy()
 
 # List of STL file paths
 stl_files = [
@@ -14,10 +22,10 @@ stl_files = [
 
 # Colors for each mesh (RGB format, values between 0 and 1)
 colors = [
-    [1, 0, 0],  # Red
-    [0, 1, 0],  # Green
-    [0, 0, 1],  # Blue
-    [1, 1, 0]   # Yellow
+    [1.0, 0.0, 0.0],  # Red
+    [0.0, 1.0, 0.0],  # Green
+    [0.0, 0.0, 1.0],  # Blue
+    [1.0, 1.0, 0.0]   # Yellow
 ]
 
 # Ensure paths are valid
@@ -41,13 +49,34 @@ for idx, stl_file in enumerate(stl_files):
     transform.Transform.Scale = [1.0, 1.0, 1.0]  # Adjust scale if necessary
     transform.Transform.Translate = [0, 0, idx * 10]  # Separate meshes for visibility
 
-    # Show the mesh
+    # Show the mesh as points
     display = Show(transform, render_view)
-    display.Representation = "Surface"  # Use surface rendering
-    display.DiffuseColor = colors[idx]  # Assign color
+    display.Representation = "Points"  # Render as point cloud
+    display.PointSize = 0.5  # Adjust the point size for better visibility
+    
+    # Get all possible values for the 'Representation' property
+    try:
+        representation_values = display.Representation.Available
+        print(f"All possible representation values: {representation_values}")
+    except AttributeError:
+        print("Unable to retrieve possible values for 'Representation'.")
+
+    # Assign a distinct color
+    display.AmbientColor = colors[idx]  # Set the color of the points
+    display.Opacity = 0.5
 
 # Reset the camera to fit all objects
 render_view.ResetCamera()
+
+# Set the render window size to a percentage of the screen size
+render_view = GetActiveViewOrCreate('RenderView')
+render_view.ViewSize = [int(screen_width * 0.8), int(screen_height * 0.8)]  # 80% of screen size
+
+# Set the background to black (RGB values: 0, 0, 0)
+render_view.Background = [0.0, 0.0, 0.0]
+
+# Ensure any gradient-related settings are cleared (if present)
+render_view.Background2 = [0.0, 0.0, 0.0] 
 
 # Render the view
 Render()

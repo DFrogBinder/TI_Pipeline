@@ -72,11 +72,7 @@ render_view.ResetCamera()
 render_view = GetActiveViewOrCreate('RenderView')
 render_view.ViewSize = [int(screen_width * 0.8), int(screen_height * 0.8)]  # 80% of screen size
 
-# Set the background to black (RGB values: 0, 0, 0)
-render_view.Background = [0.0, 0.0, 0.0]
-
-# Ensure any gradient-related settings are cleared (if present)
-render_view.Background2 = [0.0, 0.0, 0.0] 
+LoadPalette(paletteName='BlackBackground')
 
 # Render the view
 Render()

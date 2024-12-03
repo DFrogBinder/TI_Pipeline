@@ -52,18 +52,18 @@ for idx, stl_file in enumerate(stl_files):
     # Show the mesh as points
     display = Show(transform, render_view)
     display.Representation = "Points"  # Render as point cloud
-    display.PointSize = 0.5  # Adjust the point size for better visibility
+    display.PointSize = 0.6  # Adjust the point size for better visibility
     
-    # Get all possible values for the 'Representation' property
-    try:
-        representation_values = display.Representation.Available
-        print(f"All possible representation values: {representation_values}")
-    except AttributeError:
-        print("Unable to retrieve possible values for 'Representation'.")
-
     # Assign a distinct color
     display.AmbientColor = colors[idx]  # Set the color of the points
-    display.Opacity = 0.5
+    display.Opacity = 0.7
+
+# Get all possible values for the 'Representation' property
+try:
+    representation_values = display.Representation.Available
+    print(f"All possible representation values: {representation_values}")
+except AttributeError:
+    print("Unable to retrieve possible values for 'Representation'.")
 
 # Reset the camera to fit all objects
 render_view.ResetCamera()
@@ -76,11 +76,11 @@ LoadPalette(paletteName='BlackBackground')
 
 # Render the view
 Render()
-
-# Keep the render window open
-print("Render window is active. Press Ctrl+C in the terminal to close.")
-try:
-    while True:
-        pass
-except KeyboardInterrupt:
-    print("Closing render window.")
+SaveScreenshot('image.png',quality=600, view=render_view)
+# # Keep the render window open
+# print("Render window is active. Press Ctrl+C in the terminal to close.")
+# try:
+#     while True:
+#         pass
+# except KeyboardInterrupt:
+#     print("Closing render window.")

@@ -54,7 +54,7 @@ class PostProcess:
         self.failed_cases = []
         
         # Creates Conda Wrapper Files
-        # self.env_wrappers()
+        self.env_wrappers()
         
     #endregion
     
@@ -67,13 +67,13 @@ class PostProcess:
         self.calculate_volume_flag = False
     
     def env_wrappers(self):
-        result_1 = subprocess.run(
-            ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/simnibs_post/bin" ,"-d", "/tmp/conda_wrappers",
-             "--conda-env-dir", "~/miniconda3/envs/simnibs_post"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        # result_1 = subprocess.run(
+        #     ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/simnibs_post/bin" ,"-d", "/tmp/conda_wrappers",
+        #      "--conda-env-dir", "~/miniconda3/envs/simnibs_post"],
+        #     capture_output=True,
+        #     text=True,
+        #     check=True
+        # )
         
         result_2 = subprocess.run(
             ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/stl_viz/bin" ,"-d", "/tmp/conda_wrappers",
@@ -83,10 +83,10 @@ class PostProcess:
             check=True
         )
         
-        if result_1.returncode != 0 or result_2.returncode != 0:
-            raise RuntimeError(f"Wrapper Creation Failed \n Simnibs_post: {result_1.stderr} \n Stl_viz: {result_2.stderr}")
+        if result_2.returncode != 0:
+            raise RuntimeError(f"Wrapper Creation Failed \n Stl_viz: {result_2.stderr}")
         else:
-            print("Created Both Environmental Wrappers!")
+            print("Created Stl_viz Environmental Wrappers!")
                     
     def visualize_stl(self):
         """
@@ -475,7 +475,7 @@ class PostProcess:
     def run_analysis(self):
         
         simulations = os.listdir(self.data_dir)
-        self.visualize_stl(simulations) #TODO: Move at the end once working properly
+        self.visualize_stl() #TODO: Move at the end once working properly
         
         for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
             

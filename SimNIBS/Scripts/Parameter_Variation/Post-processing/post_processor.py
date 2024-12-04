@@ -1,14 +1,15 @@
-import numpy as np
 import cv2
 import os
 import sys
-import matplotlib.pyplot as plt
+import json
+import subprocess
+import numpy as np
+import pandas as pd
+import pyvista as pv
 import nibabel as nib
 import tifffile as tiff
-import pandas as pd
-import seaborn as sns
 import SimpleITK as sitk
-import pyvista as pv
+import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from scipy.ndimage import label
@@ -52,6 +53,9 @@ class PostProcess:
         # Failed case tracker
         self.failed_cases = []
         
+        # Creates Conda Wrapper Files
+        # self.env_wrappers()
+        
     #endregion
     
     #region Prcessing functions
@@ -61,7 +65,52 @@ class PostProcess:
         self.Extract_Thalamus_flag = False
         self.create_volumes_flag = False
         self.calculate_volume_flag = False
+    
+    def env_wrappers(self):
+        result_1 = subprocess.run(
+            ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/simnibs_post/bin" ,"-d", "/tmp/conda_wrappers",
+             "--conda-env-dir", "~/miniconda3/envs/simnibs_post"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
         
+        result_2 = subprocess.run(
+            ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/stl_viz/bin" ,"-d", "/tmp/conda_wrappers",
+             "--conda-env-dir", "~/miniconda3/envs/stl_viz"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        if result_1.returncode != 0 or result_2.returncode != 0:
+            raise RuntimeError(f"Wrapper Creation Failed \n Simnibs_post: {result_1.stderr} \n Stl_viz: {result_2.stderr}")
+        else:
+            print("Created Both Environmental Wrappers!")
+                    
+    def visualize_stl(self):
+        """
+        Calls stl visualizer as a subprocess, passing data and receiving the result.
+        """
+        
+        conda_exec = '/tmp/conda_wrappers/python'
+        file_path = os.path.join(os.path.dirname(self.data_dir),'Stl_visualization')
+        
+        # Run Obj2 script in its Conda environment
+        result = subprocess.run(
+            [conda_exec, os.path.join(file_path,"Visualizer_Object.py")],
+            input=json.dumps(self.data_dir),
+            capture_output=True,
+            text=True
+         )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Stl visualizer failed: {result.stderr}")
+        else:
+            print(result.stdout)        
+             
+        return 1
+       
     def calculate_volume(self, binary_volume, voxel_size, nifti_path, binary_volume_path):
     
         if np.all(np.isnan(binary_volume)):
@@ -426,6 +475,8 @@ class PostProcess:
     def run_analysis(self):
         
         simulations = os.listdir(self.data_dir)
+        self.visualize_stl(simulations) #TODO: Move at the end once working properly
+        
         for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
             
             # Reset the processing flags for each case
@@ -544,7 +595,7 @@ class PostProcess:
         
         self.Extract_stats_csv(OutputDir, save_data=True)
         pd.DataFrame(self.failed_cases).to_csv(os.path.join(OutputDir,'failed_cases.csv'))
-    #endregion
+    # #endregion
     
 #region Entry Point
 '''

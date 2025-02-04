@@ -13,7 +13,7 @@ except Exception as e:
     print(f"Error loading mesh: {e}")
     mesh = None
 
-## Ensure mesh is loaded before proceeding
+# Ensure mesh is loaded before proceeding
 if mesh:
     # Get the directory of the input file
     output_dir = os.path.splitext(file_path)[0] + "_stl_export"
@@ -31,19 +31,29 @@ if mesh:
         for group_id in unique_groups:
             # Extract indices belonging to this group
             group_indices = np.where(group_ids == group_id)[0]
-            selected_cells = [mesh.cells_dict[cell_type][i] for i in group_indices]
+
+            # Check if there are elements in this group
+            if len(group_indices) == 0:
+                print(f"  - Skipping Physical Group {group_id} (No elements)")
+                continue
+
+            # Use NumPy slicing instead of list comprehension (memory-efficient)
+            selected_cells = mesh.cells_dict[cell_type][group_indices]
 
             # Create a new mesh for this physical group
             extracted_mesh = meshio.Mesh(
                 points=mesh.points,  # Use original points
-                cells=[(cell_type, np.array(selected_cells))]  # Filtered cells
+                cells=[(cell_type, selected_cells)]  # Use sliced array instead of list comprehension
             )
 
             # Define output file path
             output_file = os.path.join(output_dir, f"physical_group_{group_id}.stl")
 
             # Save to STL
-            meshio.write(output_file, extracted_mesh)
-            print(f"  - Saved Physical Group {group_id} to {output_file}")
+            try:
+                meshio.write(output_file, extracted_mesh)
+                print(f"  - Saved Physical Group {group_id} to {output_file}")
+            except Exception as e:
+                print(f"  - Error saving Physical Group {group_id}: {e}")
 
     print("\n=== Extraction and Export Complete! ===")

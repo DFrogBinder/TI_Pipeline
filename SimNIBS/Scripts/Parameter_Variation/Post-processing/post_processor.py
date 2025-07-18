@@ -15,6 +15,7 @@ from tqdm import tqdm
 from scipy.ndimage import label
 from nilearn import datasets, image
 from nilearn.image import resample_to_img
+from nilearn.datasets import load_mni152_template
 from skimage import measure
 from stl import mesh
 
@@ -54,7 +55,7 @@ class PostProcess:
         self.failed_cases = []
         
         # Creates Conda Wrapper Files
-        self.env_wrappers()
+        # self.env_wrappers()
         
     #endregion
     
@@ -66,7 +67,7 @@ class PostProcess:
         self.create_volumes_flag = False
         self.calculate_volume_flag = False
     
-    def env_wrappers(self):
+    # def env_wrappers(self):
         # result_1 = subprocess.run(
         #     ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/simnibs_post/bin" ,"-d", "/tmp/conda_wrappers",
         #      "--conda-env-dir", "~/miniconda3/envs/simnibs_post"],
@@ -75,18 +76,18 @@ class PostProcess:
         #     check=True
         # )
         
-        result_2 = subprocess.run(
-            ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/stl_viz/bin" ,"-d", "/tmp/conda_wrappers",
-             "--conda-env-dir", "~/miniconda3/envs/stl_viz"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        # result_2 = subprocess.run(
+        #     ["create-wrappers",  "-t", "conda", "-b", "~/miniconda3/envs/stl_viz/bin" ,"-d", "/tmp/conda_wrappers",
+        #      "--conda-env-dir", "~/miniconda3/envs/stl_viz"],
+        #     capture_output=True,
+        #     text=True,
+        #     check=True
+        # )
         
-        if result_2.returncode != 0:
-            raise RuntimeError(f"Wrapper Creation Failed \n Stl_viz: {result_2.stderr}")
-        else:
-            print("Created Stl_viz Environmental Wrappers!")
+        # if result_2.returncode != 0:
+        #     raise RuntimeError(f"Wrapper Creation Failed \n Stl_viz: {result_2.stderr}")
+        # else:
+        #     print("Created Stl_viz Environmental Wrappers!")
                     
     def visualize_stl(self):
         """
@@ -475,7 +476,7 @@ class PostProcess:
     def run_analysis(self):
         
         simulations = os.listdir(self.data_dir)
-        self.visualize_stl() #TODO: Move at the end once working properly
+        # self.visualize_stl() #TODO: Move at the end once working properly
         
         for simulation in tqdm(simulations,file=sys.stdout,desc="Progress"):
             
@@ -611,6 +612,6 @@ if __name__ == "__main__":
     plt.rcParams['ytick.labelsize'] = 14  # Sets the y-axis tick labels size
     plt.rcParams['axes.titlesize'] = 30  # Sets the default title size
 
-    OutputDir = '/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Output'
+    OutputDir = '/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Post-processing/Output'
     processor = PostProcess(OutputDir)
     processor.run_analysis()

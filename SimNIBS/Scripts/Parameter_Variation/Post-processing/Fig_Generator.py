@@ -10,6 +10,7 @@ from statsmodels.formula.api import ols
 from sklearn.linear_model import LinearRegression
 from statsmodels.graphics.factorplots import interaction_plot
 
+#region Electrode Size
 def Electrode_Size(data):
     # Filter the data where 'Pair 1 Position' equals 'AF4-PO4'
     data = data[data['Pair 1 Position'] == 'AF4-PO4']
@@ -48,7 +49,9 @@ def Electrode_Size(data):
     plt.show()
 
     return anova_volume, anova_max_thalamus, anova_max_value
+#endregion
 
+#region Electrode Shape
 def Electrode_Shape_Size(data):
     data.columns = [col.replace(' ', '_') for col in data.columns]
 
@@ -96,8 +99,9 @@ def Electrode_Shape_Size(data):
     plt.subplots_adjust(hspace=0.4)  # Increase the vertical space between the plots
 
     plt.show()
-    
-    
+#endregion
+
+#region Electrode Shape   
 def Electrode_Shape(data):
     
     # Filter the data where 'Pair 1 Position' equals 'AF4-PO4'
@@ -131,7 +135,9 @@ def Electrode_Shape(data):
     print("P-value:", p_value)
     
     return t_stat, p_value    
-    
+#endregion
+
+#region Max_vs_Current    
 def perform_linear_regression(x, y):
         model = LinearRegression()
         x_values = x.values.reshape(-1, 1)  # Reshape for sklearn
@@ -169,26 +175,34 @@ def Max_vs_Current(data):
     x_values_max_thalamus, y_pred_max_thalamus, coef_max_thalamus, intercept_max_thalamus = perform_linear_regression(data['Input Current Numeric'], data['Max_Thalamus'])
 
     # Plotting
-    fig, ax = plt.subplots(1, 2, figsize=(14, 6))
+    fig, ax = plt.subplots(1, 2, figsize=(18, 6))
+    # Set the background color for the axes.
+    hex_color = '#F9F7FC' 
+    
+    # Set the background color for the figure.
+    fig.patch.set_facecolor(hex_color)
+
 
     # Scatter plots colored by 'Pair Position'
     for pair in unique_pairs:
         subset = data[data['Pair Position'] == pair]
         sns.scatterplot(x=subset['Input Current Numeric'], y=subset['Maximum Value'], ax=ax[0], label=f'Pair {pair}', color=pair_color_mapping[pair])
     ax[0].plot(x_values_max_value.flatten(), y_pred_max_value, color='red', label=f'Linear Fit: y={coef_max_value:.2f}x+{intercept_max_value:.2f}')
-    ax[0].set_title('Max. Intensity (Brain) vs. Input Current')
+    ax[0].set_title('Peak E-field Intensity (Brain) vs. Input Current')
     ax[0].set_xlabel('Input Current (mA)')
     ax[0].set_ylabel('Peak E-field Intesity (V/m)')
     ax[0].legend(fontsize='large') 
+    ax[0].set_facecolor(hex_color)
 
     for pair in unique_pairs:
         subset = data[data['Pair Position'] == pair]
         sns.scatterplot(x=subset['Input Current Numeric'], y=subset['Max_Thalamus'], ax=ax[1], label=f'Pair {pair}', color=pair_color_mapping[pair])
     ax[1].plot(x_values_max_thalamus.flatten(), y_pred_max_thalamus, color='red', label=f'Linear Fit: y={coef_max_thalamus:.2f}x+{intercept_max_thalamus:.2f}')
-    ax[1].set_title('Max. Intensity (Thalamus) vs. Input Current')
+    ax[1].set_title('Peak E-field Intensity (Thalamus) vs. Input Current')
     ax[1].set_xlabel('Input Current (mA)')
     ax[1].set_ylabel('Peak E-field Intesity (V/m)')
     ax[1].legend()
+    ax[1].set_facecolor(hex_color)
 
     plt.tight_layout()
     plt.show()
@@ -202,7 +216,9 @@ def Max_vs_Current(data):
     # Print correlation matrix
     print(correlation_matrix)
     return correlation_matrix
+#endregion
 
+#region Electrode Position
 def ElectrodePossition(data):
     # Combine the positions into a single column for interaction effects
     data['Electrode_Positions'] = data['Pair 1 Position'] + ' / ' + data['Pair 2 Position']
@@ -220,7 +236,7 @@ def ElectrodePossition(data):
     # Plotting the results
     plt.figure(figsize=(14, 7))
     grouped_positions.plot(kind='bar')
-    plt.title('Average Max. Thalamus Intensity by Electrode Positions')
+    plt.title('Average Peak E-field in Thalamus by Electrode Positions')
     plt.xlabel('Electrode Positions')
     plt.ylabel('Average Max Intensty')
     plt.xticks(rotation=45, ha='right')  # Slanting the x-axis text for better readability
@@ -228,30 +244,35 @@ def ElectrodePossition(data):
     plt.show()
         
     # Create the boxplot with adjusted aesthetics
-    plt.figure(figsize=(14, 8))
-    sns.boxplot(x='Electrode_Positions', y='Max_Thalamus', data=data,
+    fig = plt.figure(figsize=(14, 8))
+    hex_color = '#F9F7FC' 
+    
+    # Set the background color for the figure.
+    fig.patch.set_facecolor(hex_color)
+    ax=sns.boxplot(x='Electrode_Positions', y='Max_Thalamus', data=data,
                 linewidth=2.5,  # Makes the outlines of the boxes thicker
                 palette="muted")  # Uses a matte color palette
-    plt.title('Distribution of Max Thalamus Intensity Across Electrode Positions')
+    ax.set_facecolor(hex_color)
+    plt.title('Distribution of Peak E-field in the Thalamus Across Electrode Positions')
     plt.xlabel('Electrode Positions')
     plt.ylabel('Peak E-field Intesity (V/m)')
-    plt.xticks(rotation=45, ha='right')  # Slanting the x-axis text for better readability
+    plt.xticks(rotation=20, ha='right')  # Slanting the x-axis text for better readability
     plt.tight_layout()
     plt.show()
     
     return anova_results
-
+#endregion
 # Load the CSV file
-data = pd.read_csv('/home/cogitatorprime/sandbox/TI_Pipeline/SimNIBS/Scripts/Python/Parameter_Variation/Outputs/All_Stats.csv')
+data = pd.read_csv('/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Post-processing/Output/All_Stats.csv')
 
 # Set font sizes for all figures via rcParams
 plt.rcParams['axes.labelsize'] = 28  # Sets the default axes labels size
-plt.rcParams['xtick.labelsize'] = 14  # Sets the x-axis tick labels size
-plt.rcParams['ytick.labelsize'] = 14  # Sets the y-axis tick labels size
-plt.rcParams['axes.titlesize'] = 29  # Sets the default title size
+plt.rcParams['xtick.labelsize'] = 19  # Sets the x-axis tick labels size
+plt.rcParams['ytick.labelsize'] = 19  # Sets the y-axis tick labels size
+plt.rcParams['axes.titlesize'] = 25  # Sets the default title size
 
 
-# cm = Max_vs_Current(data)
+cm = Max_vs_Current(data)
 # anova_stats = ElectrodePossition(data)
 # t,p = Electrode_Shape(data)
-Electrode_Size(data)
+# Electrode_Size(data)

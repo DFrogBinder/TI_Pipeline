@@ -29,29 +29,31 @@ def load_msh_file(file_path):
     print("Initial physical groups number:", len(initial_physical_groups))
 
     # physical_groups = gmsh.model.getPhysicalGroups()
-
-
-    # Get nodes and elements
-    nodes = mesh.getNodes()
-    elements = mesh.getElements()
        
     defined_elements_types = gmsh.model.mesh.getElementTypes()
-    print(f'{defined_elements_types}')
+    print(f'Defined elements types for mesh: {defined_elements_types}')
 
     # Choose which physical group to remove (e.g., if tag is 1 and dimension is 2 for surfaces)
     dimension_to_remove = 2  # 0: Points, 1: Edges, 2: Surfaces, 3: Volumes
     tag_to_remove = [11,12]  # Replace with the actual tag of the region you want to remove
 
     for tag in tag_to_remove:
+                
+        entity_dim_tags = gmsh.model.getEntitiesForPhysicalGroup(dimension_to_remove, tag)
+        element_types,element_tags = gmsh.model.mesh.getElements(dimension_to_remove, tag)
         
-        entities_to_remove = []
-        entity_tuples = gmsh.model.getEntitiesForPhysicalGroup(dimension_to_remove, tag)
-        for entity in entity_tuples:
-            entities_to_remove.append(entity)  # entity is a tuple (dimension, tag)
+        for element_type, tags in zip(element_types,element_tags):
+            for tag in tags:
+                gmsh.model.removeElements(element_type,tag)
 
+        for entity_dim, entity_tag in entity_dim_tags:
+            try:
+                gmsh.model.removeEntities(entity_dim, entity_tag)
+            except Exception as e:
+                print(f"Warning: Could not remove entity {entity_dim}, {entity_tag}: {e}")
         
-        # Remove the unwanted physical group
-        gmsh.model.removePhysicalGroups([(dimension_to_remove, entities_to_remove[0])])
+        gmsh.model.removePhysicalGroup(dimension_to_remove, tag)
+
         
     gmsh.write("modified_model.msh")
     print("Modified model saved")

@@ -14,10 +14,10 @@ root.destroy()
 
 # List of STL file paths
 stl_files = [
-    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Output/2cm_1.5mA_F6-P6_F5-P5_rect/Analysis/nifti/0p2v_cutoff_thresholded_volume.stl",
-    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Output/2cm_1.5mA_F6-P6_F5-P5_rect/Analysis/nifti/40p_cutoff_thresholded_volume.stl",
-    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Output/2cm_1.5mA_F6-P6_F5-P5_rect/Analysis/nifti/60p_cutoff_thresholded_volume.stl",
-    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Output/2cm_1.5mA_F6-P6_F5-P5_rect/Analysis/nifti/80p_cutoff_thresholded_volume.stl"
+    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Post-processing/Output/1cm_1mA_FC6-CP6_FC5-CP5_ellipse/Analysis/nifti/0p2v_cutoff_thresholded_volume.stl",
+    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Post-processing/Output/1cm_1mA_FC6-CP6_FC5-CP5_ellipse/Analysis/nifti/40p_cutoff_thresholded_volume.stl",
+    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Post-processing/Output/1cm_1mA_FC6-CP6_FC5-CP5_ellipse/Analysis/nifti/60p_cutoff_thresholded_volume.stl",
+    "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/Parameter_Variation/Post-processing/Output/1cm_1mA_FC6-CP6_FC5-CP5_ellipse/Analysis/nifti/80p_cutoff_thresholded_volume.stl"
 ]
 
 # Colors for each mesh (RGB format, values between 0 and 1)
@@ -28,11 +28,8 @@ colors = [
     [1.0, 1.0, 0.0]   # Yellow
 ]
 
-# Ensure paths are valid
-for path in stl_files:
-    if not os.path.exists(path):
-        print(f"Error: File not found: {path}")
-        exit()
+# Ensure paths are valid and removes non-existent files
+stl_files = [path for path in stl_files if os.path.exists(path)]
 
 # Get the active render view or create one
 render_view = GetActiveViewOrCreate('RenderView')
@@ -42,8 +39,12 @@ for idx, stl_file in enumerate(stl_files):
     print(f"Loading {stl_file}...")
 
     # Load the STL file
-    stl_reader = STLReader(FileNames=[stl_file])
-
+    try:
+        stl_reader = STLReader(FileNames=[stl_file])
+    except:
+        print(f"Error: Unable to load STL file: {stl_file}")
+        continue
+    
     # Apply Transform (Optional, for scaling or adjusting placement)
     transform = Transform(Input=stl_reader)
     transform.Transform.Scale = [1.0, 1.0, 1.0]  # Adjust scale if necessary
@@ -70,7 +71,7 @@ render_view.ResetCamera()
 
 # Set the render window size to a percentage of the screen size
 render_view = GetActiveViewOrCreate('RenderView')
-render_view.ViewSize = [int(screen_width * 0.8), int(screen_height * 0.8)]  # 80% of screen size
+render_view.ViewSize = [int(screen_width * 0.9), int(screen_height * 0.9)]  # 80% of screen size
 
 LoadPalette(paletteName='BlackBackground')
 

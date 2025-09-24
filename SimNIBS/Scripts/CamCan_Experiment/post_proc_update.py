@@ -3,6 +3,7 @@ import os, sys, csv, argparse, numpy as np, nibabel as nib
 from nilearn import datasets, image as nli, plotting
 from nibabel.processing import resample_from_to
 from nibabel.affines import apply_affine
+from functions import _normalize_roi_name, ensure_dir, vol_mm3, load_ti_as_scalar, save_masked_nii, make_overlay_png, basic_stats, roi_masks_on_ti_grid, extract_table, write_csv
 
 # -------------------- CONFIG --------------------
 output_root = '/home/boyan/sandbox/TI_Pipeline/SimNIBS/MNI152_TI_Output'
@@ -20,132 +21,6 @@ EFIELD_PERCENTILE     = 95   # top percentile (e.g., 90 or 95)
 WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
 # ------------------------------------------------
 
-def ensure_dir(p):
-    os.makedirs(p, exist_ok=True)
-
-def load_ti_as_scalar(img: nib.Nifti1Image) -> np.ndarray:
-    """Return scalar field; if 4D with last dim=3, convert vector -> magnitude."""
-    data = img.get_fdata(dtype=np.float32)
-    if data.ndim == 4 and data.shape[-1] == 3:
-        data = np.linalg.norm(data, axis=-1).astype(np.float32)
-    return data
-
-def vol_mm3(img: nib.Nifti1Image) -> float:
-    z = img.header.get_zooms()[:3]
-    return float(z[0] * z[1] * z[2])
-
-def _labels_to_lower(labels):
-    out = []
-    for l in labels:
-        if isinstance(l, bytes):
-            out.append(l.decode("utf-8", errors="ignore").lower())
-        else:
-            out.append(str(l).lower())
-    return out
-
-def fetch_and_resample_ho(atlas_name: str, target_img: nib.Nifti1Image):
-    """Fetch a Harvard–Oxford atlas and resample it to target_img grid (nearest-neighbor)."""
-    ho = datasets.fetch_atlas_harvard_oxford(atlas_name)
-    ho_img = nli.load_img(ho.maps)
-    ho_res = resample_from_to(ho_img, target_img, order=0)  # order=0 => NN for labels
-    labels = _labels_to_lower(ho.labels)
-    return ho_res, labels
-
-def find_label_indices(labels, substr):
-    """Return sorted indices for labels containing substr (case-insensitive)."""
-    ss = substr.lower()
-    idx = [i for i, name in enumerate(labels) if ss in name]
-    return sorted(idx)
-
-def roi_masks_on_ti_grid(ti_img: nib.Nifti1Image):
-    """
-    Build ROI masks for each entry in ROI_QUERIES on the TI grid.
-    Returns:
-        roi_masks: dict[str, np.ndarray(bool)]
-        atlas_imgs: dict[str, nib.Nifti1Image]  # resampled atlas per unique atlas_name
-    """
-    # group queries by atlas to avoid double fetching
-    atlas_groups = {}
-    for roi_name, conf in ROI_QUERIES.items():
-        atlas_groups.setdefault(conf["atlas"], []).append((roi_name, conf["query"]))
-
-    atlas_imgs = {}
-    roi_masks  = {k: None for k in ROI_QUERIES.keys()}
-
-    for atlas_name, roi_list in atlas_groups.items():
-        resampled_img, labels = fetch_and_resample_ho(atlas_name, ti_img)
-        atlas_imgs[atlas_name] = resampled_img
-        atlas_data = resampled_img.get_fdata().astype(np.int32, copy=False)
-
-        for roi_name, query in roi_list:
-            ids = find_label_indices(labels, query)
-            if not ids:
-                raise RuntimeError(f"'{query}' not found in Harvard–Oxford labels for atlas '{atlas_name}'.")
-            mask = np.isin(atlas_data, ids)
-            roi_masks[roi_name] = mask
-
-    return roi_masks, atlas_imgs
-
-def extract_table(mask: np.ndarray, ti_img: nib.Nifti1Image, values: np.ndarray):
-    """Return ijk, xyz(mm), and value arrays for voxels where mask==True."""
-    ijk = np.argwhere(mask)
-    if ijk.size == 0:
-        return np.empty((0,3), dtype=int), np.empty((0,3), dtype=float), np.empty((0,), dtype=float)
-    xyz = apply_affine(ti_img.affine, ijk)
-    vals = values[mask]
-    return ijk, xyz, vals
-
-def write_csv(path, ijk, xyz, vals):
-    ensure_dir(os.path.dirname(path))
-    with open(path, 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(["i","j","k","x_mm","y_mm","z_mm","value"])
-        for (i,j,k), (x,y,z), v in zip(ijk, xyz, vals):
-            w.writerow([int(i), int(j), int(k), float(x), float(y), float(z), float(v)])
-
-def save_masked_nii(path, mask, ti_img, values):
-    """Save the scalar field zeroed outside mask."""
-    arr = np.zeros_like(values, dtype=np.float32)
-    arr[mask] = values[mask]
-    nib.save(nib.Nifti1Image(arr, ti_img.affine, ti_img.header), path)
-
-def basic_stats(arr: np.ndarray):
-    if arr.size == 0:
-        return dict(n=0, mean=np.nan, median=np.nan, p95=np.nan, max=np.nan)
-    finite = np.isfinite(arr)
-    arr = arr[finite]
-    if arr.size == 0:
-        return dict(n=0, mean=np.nan, median=np.nan, p95=np.nan, max=np.nan)
-    return dict(
-        n=arr.size,
-        mean=float(np.nanmean(arr)),
-        median=float(np.nanmedian(arr)),
-        p95=float(np.nanpercentile(arr, 95)),
-        max=float(np.nanmax(arr)),
-    )
-
-def make_overlay_png(out_png, stat_img, roi_img, bg_img=None, thr=None, title=None):
-    """Render TI as stat map with ROI contours. Uses bg_img if provided."""
-    display = plotting.plot_stat_map(
-        stat_img,
-        bg_img=bg_img if bg_img is not None else None,
-        display_mode='ortho',
-        threshold=thr,
-        colorbar=True,
-        annotate=True,
-        title=title or "",
-    )
-    display.add_contours(roi_img, levels=[0.5], linewidths=2)
-    display.savefig(out_png, dpi=200)
-    display.close()
-
-def _normalize_roi_name(s: str) -> str:
-    s = (s or '').strip().lower()
-    if s in {'m1','motor','precentral','precentral gyrus','primary motor cortex'}:
-        return 'M1'
-    if s in {'hip','hipp','hippocampus'}:
-        return 'Hippocampus'
-    raise SystemExit(f"--plot-roi must be one of: M1, Hippocampus (got: {s})")
 
 def main():
 

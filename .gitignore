@@ -420,3 +420,13 @@ aal_SPM12/
 Outputs/
 
 # End of https://www.gitignore.io/api/c,c++,macos,matlab,python,pycharm,jupyternotebooks,jabref
+SimNIBS/MNI152_TI_Output/TI_brain_only/.lg.png
+SimNIBS/MNI152_TI_Output/TI_brain_only
+SimNIBS/MNI152_TI_Output
+SimNIBS/sub-CC110056_SegMapFolder/TI_brain_only
+SimNIBS/sub-CC110056_charm/TI_brain_only
+SimNIBS/sub-CC110056_localMap/TI_brain_only
+SimNIBS/sub-CC110056_segMapFolder/TI_brain_only
+SimNIBS/sub-CC110087_charm/TI_brain_only
+SimNIBS/sub-CC110087_localMap/TI_brain_only
+SimNIBS/sub-CC110087_segMapFolder/TI_brain_only

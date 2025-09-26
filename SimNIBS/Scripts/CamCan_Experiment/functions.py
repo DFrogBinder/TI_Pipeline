@@ -1,5 +1,5 @@
 import os
-from typing import Tuple, Union, Optional
+from typing import Tuple, Union, Optional, Sequence
 import numpy as np
 import nibabel as nib
 
@@ -331,3 +331,162 @@ def atomic_replace(src_path: str, dst_path: str, force_int: bool = False, int_dt
         except Exception:
             pass
         raise
+
+
+def fix_csf_and_scalp_gaps_along_z(
+    seg: NiftiLike,
+    output_path: Optional[str] = None,
+    *,
+    csf_label: int,
+    scalp_label: int,
+    skull_label: Optional[int] = None,              # if None, gaps between scalp and CSF filled with scalp_label
+    background_labels: Sequence[int] = (0,),       # labels considered “holes/air”
+    max_csf_gap: int = 6,                          # max length (voxels) to fill as CSF pocket
+    max_between_gap: int = 8,                      # max length to fill between scalp and CSF
+    return_debug: bool = False,
+) -> Union[nib.Nifti1Image, Tuple[nib.Nifti1Image, dict]]:
+    """
+    Sweep along +Z for each (x,y) column to fix small gaps:
+      (A) CSF pockets: short non-CSF runs bounded by CSF above and below -> set to CSF.
+      (B) Scalp–CSF gaps: short runs between nearest scalp (outer) and subsequent CSF -> fill with skull_label
+          if provided, else scalp_label.
+
+    Parameters
+    ----------
+    seg : path or NIfTI
+        Integer label volume (already on target grid).
+    output_path : str or None
+        If provided, save the fixed NIfTI here (handles .nii.gz).
+    csf_label : int
+        Label ID for CSF.
+    scalp_label : int
+        Label ID for scalp/skin.
+    skull_label : int or None
+        Label to use when closing gaps between scalp and CSF. If None, uses scalp_label.
+    background_labels : sequence[int]
+        Labels treated as “empty/hole” when considering fills (typically [0]).
+    max_csf_gap : int
+        Max pocket length (in voxels) that will be filled as CSF.
+    max_between_gap : int
+        Max gap length (in voxels) between scalp and CSF that will be closed.
+    return_debug : bool
+        If True, also return a dict of counts.
+
+    Returns
+    -------
+    fixed_img : NIfTI
+    [debug] : dict with counts if return_debug=True
+    """
+    NiftiLike = Union[str, nib.Nifti1Image]
+    
+    img = nib.load(seg) if not isinstance(seg, nib.Nifti1Image) else seg
+    arr = np.asarray(img.get_fdata(), dtype=np.int32)   # work in int32, labels
+    assert arr.ndim == 3, "Only 3D label volumes are supported."
+
+    X, Y, Z = arr.shape
+    out = arr.copy()
+
+    bg_set = set(int(b) for b in background_labels)
+    fill_between_label = skull_label if skull_label is not None else scalp_label
+
+    csf_filled_total = 0
+    between_filled_total = 0
+
+    # Helper to fill short gaps in a boolean mask along 1D signal
+    def _fill_short_gaps(mask_true: np.ndarray, max_gap: int) -> Tuple[np.ndarray, int]:
+        """
+        Given a boolean array where True marks the target class (e.g., CSF),
+        fill any contiguous False-runs that are strictly bounded by True on both
+        sides and whose length <= max_gap.
+        Returns new mask and count of voxels flipped True.
+        """
+        m = mask_true.copy()
+        n = len(m)
+        if n == 0:
+            return m, 0
+
+        i = 0
+        filled = 0
+        while i < n:
+            if not m[i]:
+                # start of a False-run
+                j = i + 1
+                while j < n and not m[j]:
+                    j += 1
+                # Now [i, j) is a False-run; it is bounded if i>0 and j<n and m[i-1]==True and m[j]==True
+                if i > 0 and j < n and m[i-1] and m[j]:
+                    run_len = j - i
+                    if run_len <= max_gap:
+                        m[i:j] = True
+                        filled += run_len
+                i = j
+            else:
+                i += 1
+        return m, filled
+
+    # Main sweep over columns (x,y) along +Z
+    for x in range(X):
+        for y in range(Y):
+            col = out[x, y, :]  # shape (Z,)
+
+            # --- A) CSF pockets ---
+            csf_mask = (col == csf_label)
+            csf_mask_filled, added = _fill_short_gaps(csf_mask, max_csf_gap)
+            if added:
+                col[csf_mask_filled & ~csf_mask] = csf_label
+                csf_filled_total += int(added)
+
+            # --- B) Gaps between scalp and CSF (only near the *outer* surface) ---
+            # Find first scalp index going in +Z, then the next CSF index deeper.
+            # If there is a short gap between them consisting only of backgrounds (or tiny noise), fill it.
+            # (We do not try to correct long anatomical gaps or overwrite brain/other tissues.)
+            # 1) first scalp voxel (outermost)
+            scalp_idxs = np.flatnonzero(col == scalp_label)
+            if scalp_idxs.size == 0:
+                out[x, y, :] = col
+                continue
+            s0 = int(scalp_idxs[0])
+
+            # 2) first CSF voxel deeper than s0
+            csf_deeper = np.flatnonzero((col == csf_label) & (np.arange(Z) > s0))
+            if csf_deeper.size == 0:
+                out[x, y, :] = col
+                continue
+            c0 = int(csf_deeper[0])
+
+            # 3) consider the gap (s0+1 .. c0-1)
+            if c0 - s0 > 1:  # there is a gap
+                gap_slice = slice(s0 + 1, c0)
+                gap_vals = col[gap_slice]
+
+                # Only fill if the gap is short and doesn't contain "forbidden" tissue.
+                if (c0 - s0 - 1) <= max_between_gap:
+                    # permit filling if gap is wholly backgrounds or tiny specks not equal to scalp/csf
+                    # Basic rule: if every voxel in gap is background OR one of (background, scalp, csf),
+                    # we treat it as a hole. To be stricter, demand mostly background:
+                    if np.all(np.isin(gap_vals, list(bg_set))):
+                        col[gap_slice] = fill_between_label
+                        between_filled_total += (c0 - s0 - 1)
+
+            out[x, y, :] = col  # write back
+
+    fixed_img = nib.Nifti1Image(out.astype(np.int16, copy=False), img.affine, img.header)
+    fixed_img.set_data_dtype(np.int16)
+
+    if output_path:
+        nib.save(fixed_img, output_path)
+
+    if return_debug:
+        return fixed_img, {
+            "voxels_filled_as_csf_pockets": int(csf_filled_total),
+            "voxels_filled_between_scalp_and_csf": int(between_filled_total),
+            "params": {
+                "csf_label": int(csf_label),
+                "scalp_label": int(scalp_label),
+                "skull_label": None if skull_label is None else int(skull_label),
+                "background_labels": list(map(int, bg_set)),
+                "max_csf_gap": int(max_csf_gap),
+                "max_between_gap": int(max_between_gap),
+            },
+        }
+    return fixed_img

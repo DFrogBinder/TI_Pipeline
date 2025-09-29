@@ -1,13 +1,16 @@
 import os
-from typing import Tuple, Union, Optional, Sequence
+import shutil
+import tempfile
+import json
 import numpy as np
 import nibabel as nib
+import csv, numpy as np, nibabel as nib
 
-import tempfile
-import shutil
 from pathlib import Path
+from scipy.ndimage import binary_dilation  
+from typing import Tuple, Union, Optional, Sequence
+from typing import Optional, Sequence, Tuple, Dict, Any, Union
 
-import os, csv, numpy as np, nibabel as nib
 from nilearn import datasets, image as nli, plotting
 from nibabel.processing import resample_from_to
 from nibabel.affines import apply_affine
@@ -332,161 +335,173 @@ def atomic_replace(src_path: str, dst_path: str, force_int: bool = False, int_dt
             pass
         raise
 
-
-def fix_csf_and_scalp_gaps_along_z(
-    seg: NiftiLike,
-    output_path: Optional[str] = None,
+def threshold_gap_fill(
+    manual_seg: NiftiLike,
+    charm_seg: NiftiLike,
     *,
-    csf_label: int,
-    scalp_label: int,
-    skull_label: Optional[int] = None,              # if None, gaps between scalp and CSF filled with scalp_label
-    background_labels: Sequence[int] = (0,),       # labels considered “holes/air”
-    max_csf_gap: int = 6,                          # max length (voxels) to fill as CSF pocket
-    max_between_gap: int = 8,                      # max length to fill between scalp and CSF
-    return_debug: bool = False,
-) -> Union[nib.Nifti1Image, Tuple[nib.Nifti1Image, dict]]:
+    output_path: Optional[str] = None,
+    manual_skin_id: int = 5,
+    background_label: int = 0,
+    dilate_envelope_voxels: int = 0,
+    # optional artifacts
+    save_envelope_path: Optional[str] = None,
+    save_outside_mask_path: Optional[str] = None,
+    qc_dir: Optional[str] = None,
+    make_summary_json: bool = False,
+) -> Tuple[nib.Nifti1Image, Dict[str, Any]]:
     """
-    Sweep along +Z for each (x,y) column to fix small gaps:
-      (A) CSF pockets: short non-CSF runs bounded by CSF above and below -> set to CSF.
-      (B) Scalp–CSF gaps: short runs between nearest scalp (outer) and subsequent CSF -> fill with skull_label
-          if provided, else scalp_label.
+    Clip manual scalp to CHARM's head envelope (>0), as suggested:
+      1) envelope = (CHARM > 0)
+      2) manual scalp outside envelope -> set to background_label
+      3) keep all other manual labels as-is
+    If grids differ, manual is resampled to CHARM grid using nearest-neighbor.
 
     Parameters
     ----------
-    seg : path or NIfTI
-        Integer label volume (already on target grid).
+    manual_seg : path or NIfTI
+        Manual/Jake segmentation (integer labels).
+    charm_seg : path or NIfTI
+        CHARM segmentation (integer labels). Defines target grid & envelope.
     output_path : str or None
-        If provided, save the fixed NIfTI here (handles .nii.gz).
-    csf_label : int
-        Label ID for CSF.
-    scalp_label : int
-        Label ID for scalp/skin.
-    skull_label : int or None
-        Label to use when closing gaps between scalp and CSF. If None, uses scalp_label.
-    background_labels : sequence[int]
-        Labels treated as “empty/hole” when considering fills (typically [0]).
-    max_csf_gap : int
-        Max pocket length (in voxels) that will be filled as CSF.
-    max_between_gap : int
-        Max gap length (in voxels) between scalp and CSF that will be closed.
-    return_debug : bool
-        If True, also return a dict of counts.
+        If given, save the clipped segmentation here (.nii or .nii.gz).
+    manual_skin_id : int
+        Label id used for scalp/skin in the manual segmentation.
+    background_label : int
+        Label id to assign where manual scalp lies outside the envelope.
+    dilate_envelope_voxels : int
+        Optional morphological dilation steps for the envelope (forgiving on tight areas).
+    save_envelope_path : str or None
+        If set, save the (possibly dilated) envelope as a NIfTI (uint8).
+    save_outside_mask_path : str or None
+        If set, save the mask of manual scalp voxels removed (uint8).
+    qc_dir : str or None
+        If set, save a few axial QC PNGs (requires matplotlib).
+    make_summary_json : bool
+        If True and qc_dir is set, write a summary.json there.
 
     Returns
     -------
-    fixed_img : NIfTI
-    [debug] : dict with counts if return_debug=True
+    out_img : nib.Nifti1Image
+        The clipped segmentation on CHARM's grid.
+    debug : dict
+        Stats and parameter echo.
     """
-    NiftiLike = Union[str, nib.Nifti1Image]
-    
-    img = nib.load(seg) if not isinstance(seg, nib.Nifti1Image) else seg
-    arr = np.asarray(img.get_fdata(), dtype=np.int32)   # work in int32, labels
-    assert arr.ndim == 3, "Only 3D label volumes are supported."
+    def _resample_nn(src_img, tgt_img):
+        from nibabel.processing import resample_from_to
+        return resample_from_to(src_img, tgt_img, order=0)
 
-    X, Y, Z = arr.shape
-    out = arr.copy()
+    def _maybe_dilate(mask: np.ndarray, steps: int) -> np.ndarray:
+        if steps <= 0:
+            return mask
+        try:
+            from scipy.ndimage import binary_dilation
+        except Exception:
+            # SciPy not available -> skip dilation
+            return mask
+        out = mask.copy()
+        for _ in range(int(steps)):
+            out = binary_dilation(out)
+        return out
 
-    bg_set = set(int(b) for b in background_labels)
-    fill_between_label = skull_label if skull_label is not None else scalp_label
+    # --- Load ---
+    man_img = nib.load(manual_seg) if not isinstance(manual_seg, nib.Nifti1Image) else manual_seg
+    cha_img = nib.load(charm_seg)  if not isinstance(charm_seg,  nib.Nifti1Image)  else charm_seg
 
-    csf_filled_total = 0
-    between_filled_total = 0
+    # --- Align manual -> CHARM grid if needed (NN preserves labels) ---
+    if (man_img.shape != cha_img.shape) or (not np.allclose(man_img.affine, cha_img.affine, atol=1e-5)):
+        man_img = _resample_nn(man_img, cha_img)
 
-    # Helper to fill short gaps in a boolean mask along 1D signal
-    def _fill_short_gaps(mask_true: np.ndarray, max_gap: int) -> Tuple[np.ndarray, int]:
-        """
-        Given a boolean array where True marks the target class (e.g., CSF),
-        fill any contiguous False-runs that are strictly bounded by True on both
-        sides and whose length <= max_gap.
-        Returns new mask and count of voxels flipped True.
-        """
-        m = mask_true.copy()
-        n = len(m)
-        if n == 0:
-            return m, 0
+    man = np.asarray(man_img.get_fdata(), dtype=np.int32)
+    cha = np.asarray(cha_img.get_fdata(), dtype=np.int32)
 
-        i = 0
-        filled = 0
-        while i < n:
-            if not m[i]:
-                # start of a False-run
-                j = i + 1
-                while j < n and not m[j]:
-                    j += 1
-                # Now [i, j) is a False-run; it is bounded if i>0 and j<n and m[i-1]==True and m[j]==True
-                if i > 0 and j < n and m[i-1] and m[j]:
-                    run_len = j - i
-                    if run_len <= max_gap:
-                        m[i:j] = True
-                        filled += run_len
-                i = j
-            else:
-                i += 1
-        return m, filled
+    # --- Build envelope (>0), optional dilation ---
+    envelope = cha > 0
+    envelope = _maybe_dilate(envelope, dilate_envelope_voxels)
 
-    # Main sweep over columns (x,y) along +Z
-    for x in range(X):
-        for y in range(Y):
-            col = out[x, y, :]  # shape (Z,)
+    # --- Manual scalp & outside mask ---
+    man_scalp = (man == manual_skin_id)
+    outside = man_scalp & (~envelope)
 
-            # --- A) CSF pockets ---
-            csf_mask = (col == csf_label)
-            csf_mask_filled, added = _fill_short_gaps(csf_mask, max_csf_gap)
-            if added:
-                col[csf_mask_filled & ~csf_mask] = csf_label
-                csf_filled_total += int(added)
+    removed_voxels = int(outside.sum())
+    total_scalp_voxels = int(man_scalp.sum())
 
-            # --- B) Gaps between scalp and CSF (only near the *outer* surface) ---
-            # Find first scalp index going in +Z, then the next CSF index deeper.
-            # If there is a short gap between them consisting only of backgrounds (or tiny noise), fill it.
-            # (We do not try to correct long anatomical gaps or overwrite brain/other tissues.)
-            # 1) first scalp voxel (outermost)
-            scalp_idxs = np.flatnonzero(col == scalp_label)
-            if scalp_idxs.size == 0:
-                out[x, y, :] = col
-                continue
-            s0 = int(scalp_idxs[0])
+    # --- Apply clipping ---
+    out_arr = man.copy()
+    out_arr[outside] = background_label
 
-            # 2) first CSF voxel deeper than s0
-            csf_deeper = np.flatnonzero((col == csf_label) & (np.arange(Z) > s0))
-            if csf_deeper.size == 0:
-                out[x, y, :] = col
-                continue
-            c0 = int(csf_deeper[0])
+    out_img = nib.Nifti1Image(out_arr.astype(np.int16, copy=False), cha_img.affine, cha_img.header)
 
-            # 3) consider the gap (s0+1 .. c0-1)
-            if c0 - s0 > 1:  # there is a gap
-                gap_slice = slice(s0 + 1, c0)
-                gap_vals = col[gap_slice]
-
-                # Only fill if the gap is short and doesn't contain "forbidden" tissue.
-                if (c0 - s0 - 1) <= max_between_gap:
-                    # permit filling if gap is wholly backgrounds or tiny specks not equal to scalp/csf
-                    # Basic rule: if every voxel in gap is background OR one of (background, scalp, csf),
-                    # we treat it as a hole. To be stricter, demand mostly background:
-                    if np.all(np.isin(gap_vals, list(bg_set))):
-                        col[gap_slice] = fill_between_label
-                        between_filled_total += (c0 - s0 - 1)
-
-            out[x, y, :] = col  # write back
-
-    fixed_img = nib.Nifti1Image(out.astype(np.int16, copy=False), img.affine, img.header)
-    fixed_img.set_data_dtype(np.int16)
-
+    # --- Save main output (optional) ---
     if output_path:
-        nib.save(fixed_img, output_path)
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        nib.save(out_img, output_path)
 
-    if return_debug:
-        return fixed_img, {
-            "voxels_filled_as_csf_pockets": int(csf_filled_total),
-            "voxels_filled_between_scalp_and_csf": int(between_filled_total),
-            "params": {
-                "csf_label": int(csf_label),
-                "scalp_label": int(scalp_label),
-                "skull_label": None if skull_label is None else int(skull_label),
-                "background_labels": list(map(int, bg_set)),
-                "max_csf_gap": int(max_csf_gap),
-                "max_between_gap": int(max_between_gap),
-            },
-        }
-    return fixed_img
+    # --- Save side artifacts (optional) ---
+    if save_envelope_path:
+        env_img = nib.Nifti1Image(envelope.astype(np.uint8, copy=False), cha_img.affine, cha_img.header)
+        nib.save(env_img, save_envelope_path)
+
+    if save_outside_mask_path:
+        outside_img = nib.Nifti1Image(outside.astype(np.uint8, copy=False), cha_img.affine, cha_img.header)
+        nib.save(outside_img, save_outside_mask_path)
+
+    # --- QC PNGs (optional) ---
+    if qc_dir:
+        try:
+            import matplotlib.pyplot as plt
+            os.makedirs(qc_dir, exist_ok=True)
+            Z = out_arr.shape[2]
+            zs = sorted(set([Z // 2, Z // 3, (2 * Z) // 3]))
+            for i, z in enumerate(zs, 1):
+                base = envelope[:, :, z].astype(float)
+                pre_scalp = (man[:, :, z] == manual_skin_id)
+                post_scalp = (out_arr[:, :, z] == manual_skin_id)
+                removed = outside[:, :, z]
+
+                fig = plt.figure(figsize=(6, 6), dpi=120)
+                plt.imshow(base, vmin=0, vmax=1)  # grayscale envelope
+                # simple scatter overlays (fast & readable)
+                ys, xs = np.where(pre_scalp)
+                plt.scatter(xs, ys, s=0.15, label="manual scalp (pre)")
+                ys, xs = np.where(removed)
+                if ys.size:
+                    plt.scatter(xs, ys, s=0.15, label="removed (outside)")
+                ys, xs = np.where(post_scalp)
+                plt.scatter(xs, ys, s=0.15, label="manual scalp (post)")
+                plt.title(f"QC: z={z}")
+                plt.legend(markerscale=10, loc="lower right", fontsize=7)
+                plt.axis("off")
+                out_png = os.path.join(qc_dir, f"qc_axial_{i}_z{z}.png")
+                plt.savefig(out_png, bbox_inches="tight")
+                plt.close(fig)
+        except Exception:
+            pass  # QC is optional; ignore plotting errors
+
+        if make_summary_json:
+            summary = {
+                "manual_skin_id": int(manual_skin_id),
+                "background_label": int(background_label),
+                "dilate_envelope_voxels": int(dilate_envelope_voxels),
+                "stats": {
+                    "manual_scalp_voxels": total_scalp_voxels,
+                    "removed_outside_voxels": removed_voxels,
+                },
+                "shapes": {
+                    "output_shape": list(map(int, out_arr.shape)),
+                },
+                "paths": {
+                    "output_path": output_path,
+                    "envelope_path": save_envelope_path,
+                    "outside_mask_path": save_outside_mask_path,
+                },
+            }
+            with open(os.path.join(qc_dir, "summary.json"), "w") as f:
+                json.dump(summary, f, indent=2)
+
+    debug = {
+        "removed_outside_voxels": removed_voxels,
+        "manual_scalp_voxels": total_scalp_voxels,
+        "dilate_envelope_voxels": int(dilate_envelope_voxels),
+        "background_label": int(background_label),
+    }
+    return out_img, debug

@@ -24,7 +24,7 @@ rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
 t = os.listdir(rootDIR)[0]
 for subject in [t]:
     fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh') 
-    output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS','Output')
+    output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
     subject_dir = os.path.join(rootDIR, subject, 'anat')
 # region Meshing
     cmd = [
@@ -186,14 +186,17 @@ for subject in [t]:
 
     # Define tissue tags (replace with actual IDs from your head model)
     gray_tags  = [1002]   # e.g. cortical gray matter tag
-    white_tags = [1003]   # e.g. subcortical/white matter tag
+    # white_tags = [1003]   # e.g. subcortical/white matter tag
 
     tags_keep = np.hstack((np.arange(ElementTags.TH_START, ElementTags.SALINE_START - 1), np.arange(ElementTags.TH_SURFACE_START, ElementTags.SALINE_TH_SURFACE_START - 1)))
 
-    # Crop to gray + white matter only
-    m1=m1.crop_mesh(tags = tags_keep)
-    m2=m2.crop_mesh(tags = tags_keep)
+    # # Crop to gray + white matter only
+    # m1=m1.crop_mesh(tags = tags_keep)
+    # m2=m2.crop_mesh(tags = tags_keep)
 
+    m1 = m1.crop_mesh(tags = tags_keep)
+    m2 = m2.crop_mesh(tags = tags_keep)
+    
     # Extract field vectors on gray+white mesh
     E1_vec = m1.field['E']
     E2_vec = m2.field['E']
@@ -206,8 +209,8 @@ for subject in [t]:
     mout.elmdata = []
 
     # Add magnitude and TI fields
-    mout.add_element_field(E1_vec.norm(), 'magnE - pair 1')
-    mout.add_element_field(E2_vec.norm(), 'magnE - pair 2')
+    # mout.add_element_field(E1_vec.norm(), 'magnE - pair 1')
+    # mout.add_element_field(E2_vec.norm(), 'magnE - pair 2')
     mout.add_element_field(TImax,       'TImax')
 
     # Write out the gray+white TI mesh
@@ -234,17 +237,17 @@ for subject in [t]:
 
     print('Exporting volumetric meshes...')
     try:
-        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz", labels_path,"--create_label"])
+        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), labels_path,"--create_label"])
     except Exception as e:
         print(f"Error creating label meshes: {e}")
 
     try:
-        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz", masks_path,"--create_masks"])
+        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), masks_path,"--create_masks"])
     except Exception as e:
         print(f"Error creating mask meshes: {e}")
 
     try:
-        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz", ti_volume_path])
+        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), ti_volume_path])
     except Exception as e:
         print(f"Error creating volumetric mesh: {e}")
     #endregion

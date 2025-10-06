@@ -29,6 +29,117 @@ ROI_QUERIES = {
 EFIELD_PERCENTILE     = 95   # top percentile (e.g., 90 or 95)
 WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
 # ------------------------------------------------
+#region post_funciton
+def normalize_roi_name(name: str) -> str:
+    """Make a filesystem-safe ROI name."""
+    return "".join(c if c.isalnum() else "_" for c in name.strip().replace(" ", "_"))
+def ensure_dir(directory: str) -> None:
+    """Create directory if it doesn't exist."""
+    os.makedirs(directory, exist_ok=True)
+def vol_mm3(img: nib.Nifti1Image) -> float:
+    """Compute voxel volume in mm^3."""
+    zooms = img.header.get_zooms()[:3]
+    return float(np.prod(zooms))
+def load_ti_as_scalar(img: nib.Nifti1Image) -> np.ndarray:
+    """Load TI data as a scalar array, converting from vector if needed."""
+    data = np.asarray(img.dataobj)
+    if data.ndim == 4 and data.shape[3] == 3:
+        # Vector field: compute magnitude
+        data = np.linalg.norm(data, axis=3)
+    elif data.ndim != 3:
+        raise ValueError(f"Unexpected TI data shape: {data.shape}")
+    return data
+def save_masked_nii(data: np.ndarray, mask: np.ndarray, ref_img: nib.Nifti1Image, out_path: str) -> None:
+    """Save a NIfTI file with data masked by mask, using ref_img's affine and header."""
+    masked_data = np.where(mask, data, 0)
+    out_img = nib.Nifti1Image(masked_data, ref_img.affine, ref_img.header)
+    nib.save(out_img, out_path)
+def make_overlay_png(bg_img: nib.Nifti1Image, overlay_img: nib.Nifti1Image, out_png: str, title: str = "", threshold: Optional[float] = None) -> None:
+    """Create and save an overlay PNG using nilearn's plotting."""
+    display = plotting.plot_anat(bg_img, title=title, display_mode='ortho', dim=-1)
+    if threshold is not None:
+        display.add_overlay(overlay_img, threshold=threshold, cmap='hot')
+    else:
+        display.add_overlay(overlay_img, cmap='hot')
+    display.savefig(out_png)
+    display.close()
+def basic_stats(data: np.ndarray, mask: Optional[np.ndarray] = None) -> Dict[str, float]:
+    """Compute basic statistics (min, max, mean, std) on data, optionally within a mask."""
+    if mask is not None:
+        data = data[mask]
+    finite_data = data[np.isfinite(data)]
+    if finite_data.size == 0:
+        return {"min": np.nan, "max": np.nan, "mean": np.nan, "std": np.nan}
+    return {
+        "min": float(np.min(finite_data)),
+        "max": float(np.max(finite_data)),
+        "mean": float(np.mean(finite_data)),
+        "std": float(np.std(finite_data)),
+    }
+def roi_masks_on_ti_grid(ti_img: nib.Nifti1Image) -> Tuple[Dict[str, np.ndarray], Dict[str, nib.Nifti1Image]]:
+    """Fetch ROI masks on the TI image grid.
+    Returns a dict of ROI name -> boolean mask arrays, and a dict of ROI name -> nibabel images.
+    """
+    def as_niimg(maybe_img):
+        """Return a nibabel image whether input is a path or already an image."""
+        # Already a nibabel spatial image (covers Nifti1Image, etc.)
+        if isinstance(maybe_img, nib.spatialimages.SpatialImage):
+            return maybe_img
+        # Path-like (string or Path)
+        if isinstance(maybe_img, (str, Path)):
+            return nib.load(str(maybe_img))
+        # Anything with get_fdata() quacks like a niimg
+        if hasattr(maybe_img, "get_fdata"):
+            return maybe_img
+        raise TypeError(f"Expected path or niimg, got {type(maybe_img)}")
+    roi_masks = {}
+    atlas_imgs = {}
+    for roi_name, info in ROI_QUERIES.items():
+        atlas = datasets.fetch_atlas_harvard_oxford(info["atlas"])
+        atlas_img = as_niimg(atlas.maps)
+        
+        atlas_data = np.asarray(atlas_img.dataobj)
+        labels = atlas.labels
+
+        # Find label indices matching the query (case-insensitive substring match)
+        matched_indices = [i for i, label in enumerate(labels) if info["query"].lower() in label.lower()]
+        if not matched_indices:
+            raise ValueError(f"No labels found matching query '{info['query']}' in atlas '{info['atlas']}'")
+
+        # Build combined mask for all matched labels
+        combined_mask = np.isin(atlas_data, matched_indices)
+
+        # Resample to TI grid if needed
+        if (atlas_img.shape != ti_img.shape) or (not np.allclose(atlas_img.affine, ti_img.affine, atol=1e-5)):
+            resampled_img = resample_from_to(nib.Nifti1Image(combined_mask.astype(np.uint8), atlas_img.affine), ti_img, order=0)
+            combined_mask = np.asarray(resampled_img.dataobj).astype(bool)
+            atlas_img = resampled_img  # update to resampled image
+
+        roi_masks[roi_name] = combined_mask
+        atlas_imgs[roi_name] = atlas_img
+
+    return roi_masks, atlas_imgs
+def extract_table(mask: np.ndarray, ref_img: nib.Nifti1Image, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Extract voxel indices, coordinates, and data values within the mask."""
+    ijk = np.argwhere(mask)
+    xyz = apply_affine(ref_img.affine, ijk)
+    vals = data[mask]
+    return ijk, xyz, vals
+def write_csv(out_path: str, ijk: np.ndarray, xyz: np.ndarray, vals: np.ndarray) -> None:
+    """Write voxel indices, coordinates, and values to a
+    with open(out_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['I', 'J', 'K', 'X_mm', 'Y_mm', 'Z_mm', 'Value'])
+        for (i, j, k), (x, y, z), v in zip(ijk, xyz, vals):
+            writer.writerow([i, j, k, f"{x:.2f}", f"{y:.2f}", f"{z:.2f}", f"{v:.6g}"]) CSV file."""
+    with open(out_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['I', 'J', 'K', 'X_mm', 'Y_mm', 'Z_mm', 'Value'])
+        for (i, j, k), (x, y, z), v in zip(ijk, xyz, vals):
+            writer.writerow([i, j, k, f"{x:.2f}", f"{y:.2f}", f"{z:.2f}", f"{v:.6g}"])      
+
+
+
 def close_gmsh_windows():
     """Kill any lingering Gmsh GUI windows."""
     stop_flag = True
@@ -42,7 +153,7 @@ def close_gmsh_windows():
         except Exception:
             stop_flag = False
 
-
+#region 3d gen functions
 def format_output_dir(directory_path: str) -> None:
     """Delete all files in a folder (leave subfolders intact)."""
     if not os.path.isdir(directory_path):
@@ -287,3 +398,4 @@ def merge_segmentation_maps(
         "background_label": int(background_label),
     }
     return out_img, debug
+

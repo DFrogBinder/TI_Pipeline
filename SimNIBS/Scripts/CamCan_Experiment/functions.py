@@ -16,6 +16,8 @@ from typing import Optional, Sequence, Tuple, Dict, Any, Union
 from nilearn import datasets, image as nli, plotting
 from nibabel.processing import resample_from_to
 from nibabel.affines import apply_affine
+from nilearn.image import resample_to_img
+from nilearn.plotting import plot_anat
 
 NiftiLike = Union[str, os.PathLike, nib.Nifti1Image]
 
@@ -30,6 +32,76 @@ EFIELD_PERCENTILE     = 95   # top percentile (e.g., 90 or 95)
 WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
 # ------------------------------------------------
 #region post_funciton
+
+def overlay_roi_outline(
+    bg_img,                 # path or NIfTI: background (anatomical or stat map)
+    roi_img,                # path or NIfTI: ROI or label map (subset of bg)
+    out_path="overlay.png",
+    roi_label=None,         # int label to extract (if roi_img is a label map). If None, treats nonzero as ROI
+    resample=True,          # resample ROI to bg grid if they differ
+    display_mode="ortho",   # 'ortho', 'x', 'y', 'z', 'xz', etc.
+    cut_coords=None,        # e.g., 7 or list of coords; None lets nilearn pick
+    contour_color="red",
+    contour_level=0.5,      # 0.5 works for binary masks (contour between 0 and 1)
+    linewidths=2.0,
+    black_bg=False,
+    dpi=200,
+    title=None,
+):
+    """
+    Save a PNG with the ROI drawn as an outline over the background.
+
+    Examples:
+        overlay_roi_outline("T1.nii.gz", "hipp_mask.nii.gz", "hipp_overlay.png")
+        overlay_roi_outline("T1.nii.gz", "atlas_labels.nii.gz", roi_label=17)
+    """
+    def _as_img(x):
+        if isinstance(x, (str, Path)):
+            return nib.load(str(x))
+        if isinstance(x, nib.spatialimages.SpatialImage):
+            return x
+        if hasattr(x, "get_fdata"):
+            return x
+        raise TypeError(f"Expected NIfTI image or path, got {type(x)}")
+
+    bg_img = _as_img(bg_img)
+    roi_img = _as_img(roi_img)
+
+    # If needed, resample ROI to background grid (nearest to preserve labels)
+    if resample:
+        roi_img = resample_to_img(roi_img, bg_img, interpolation="nearest")
+
+    # Build a binary mask from ROI image (label map or generic ROI)
+    roi_data = roi_img.get_fdata()
+    if roi_label is None:
+        mask_data = (roi_data != 0).astype(np.uint8)
+    else:
+        # Exact integer match against label
+        mask_data = (np.rint(roi_data).astype(np.int64) == int(roi_label)).astype(np.uint8)
+
+    # Wrap back into an image (same header/affine as resampled ROI)
+    roi_mask_img = nib.Nifti1Image(mask_data, roi_img.affine, roi_img.header)
+
+    # Plot background and add a contour along the 0.5 level of the binary mask
+    display = plot_anat(
+        bg_img,
+        display_mode=display_mode,
+        cut_coords=cut_coords,
+        black_bg=black_bg,
+        title=title,
+        annotate=False,
+        dim=False,
+    )
+    display.add_contours(
+        roi_mask_img,
+        levels=[contour_level],
+        colors=[contour_color],
+        linewidths=linewidths,
+    )
+    display.savefig(str(out_path), dpi=dpi, bbox_inches="tight", pad_inches=0.02)
+    display.close()
+    return out_path
+
 def normalize_roi_name(name: str) -> str:
     """Make a filesystem-safe ROI name."""
     return "".join(c if c.isalnum() else "_" for c in name.strip().replace(" ", "_"))

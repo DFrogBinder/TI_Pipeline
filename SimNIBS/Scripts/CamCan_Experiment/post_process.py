@@ -3,7 +3,7 @@ import os, sys, csv, argparse, numpy as np, nibabel as nib
 from nilearn import datasets, image as nli, plotting
 from nibabel.processing import resample_from_to
 from nibabel.affines import apply_affine
-from functions import normalize_roi_name, ensure_dir, vol_mm3, load_ti_as_scalar, save_masked_nii, make_overlay_png, basic_stats, roi_masks_on_ti_grid, extract_table, write_csv
+from functions import *
 
 # -------------------- CONFIG --------------------
 output_root = '/home/boyan/sandbox/Jake_Data/camcan_test_run/sub-CC110062/anat/post'
@@ -13,8 +13,8 @@ t1_path     = "/home/boyan/sandbox/simnibs4_examples/m2m_MNI152/T1.nii.gz"
 # Which ROIs to extract. The queries are matched case-insensitively against labels.
 # We fetch the appropriate HO atlas (cortical OR subcortical) per-ROI under the hood.
 ROI_QUERIES = {
-    "M1":          {"atlas": "cort-maxprob-thr25-2mm", "query": "precentral gyrus"},
-    "Hippocampus": {"atlas": "sub-maxprob-thr25-2mm",  "query": "hippocampus"},
+    "M1":          {"atlas": "cort-maxprob-thr25-1mm", "query": "precentral gyrus"},
+    "Hippocampus": {"atlas": "sub-maxprob-thr25-1mm",  "query": "hippocampus"},
 }
 
 EFIELD_PERCENTILE     = 95   # top percentile (e.g., 90 or 95)
@@ -118,6 +118,14 @@ def main():
                 title=f"TI field (≥ {EFIELD_PERCENTILE}th pct) + {roi_name} contour (Selected ROI: {selected_roi})"
         )
 
+    
+    # 1) Binary ROI mask
+    overlay_roi_outline(bg_img, ti_data,
+                        out_path="overlay_top5.png", title="Top 5% TI region", linewidths=2.5)
+
+
+    
+    
     # Optional: show the resampled atlas for the selected ROI (sanity check)
     for atlas_name, img in atlas_imgs.items():
         # only show the atlas used by the selected ROI

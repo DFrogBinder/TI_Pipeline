@@ -19,112 +19,127 @@ import time
 #region Parameters
 # Mesh and output
 start = time.time()
+meshPresent = True
+runMNI152 = True
 rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)[0]
 for subject in [t]:
-    fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh') 
-    output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
-    subject_dir = os.path.join(rootDIR, subject, 'anat')
+    if runMNI152:
+        #? Use MNI152 template mesh | Adjust paths as needed
+        subject = 'MNI152'
+        sadnboxDIR      = rootDIR.split('Jake_Data')[0]
+        fnamehead    = os.path.join(sadnboxDIR,'simnibs4_exmaples','m2m_MNI152','MNI152.msh')
+        
+        output_root  = os.path.join(rootDIR, subject, 'anat','SimNIBS')
+        subject_dir = os.path.join(rootDIR, subject, 'anat')
+        
+    else:    
+        fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh') 
+        output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
+        subject_dir = os.path.join(rootDIR, subject, 'anat')
 # region Meshing
-    cmd = [
-        "charm",
-        subject,  # SUBJECT_ID must be first
-        os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-        os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
-        "--forcerun"
+    if meshPresent:
+        print("[INFO] Mesh present, skipping meshing step.")
+    else:
+        cmd = [
+            "charm",
+            subject,  # SUBJECT_ID must be first
+            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            "--forcerun"
+            ]
+        
+        try:
+            subprocess.run(cmd, cwd=str(subject_dir), check=True)
+        except Exception as e:
+            print(f"[ERROR] Error creating initial head model for {subject}: {e}")
+            continue
+        
+        # Load images
+        custom_seg_map_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii")
+        custom_seg_map = nib.load(custom_seg_map_path)
+        
+        charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
+        charm_seg_map = nib.load(charm_seg_map_path)
+        
+        # Ensure integer labels; nibabel exposes floats via get_fdata().
+        # We'll round+cast only if dtype isn't int-like.
+        def to_int_img(img, like):
+            data = img.get_fdata(dtype=np.float32)  # safe access; may be float
+            # Detect non-integers
+            if not np.allclose(data, np.round(data)):
+                print("[WARN] Custom segmentation contains non-integer values; rounding to nearest integers.")
+            data = np.rint(data).astype(np.int16)
+            return nib.Nifti1Image(data, like.affine, like.header)
+
+        # Resample to reference grid if needed
+        same_shape = custom_seg_map.shape == charm_seg_map.shape
+        same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
+        
+        #? Low to high resampling is not recommended
+        # if not (same_shape and same_affine):
+            
+        #     print("[INFO] Resampling custom segmentation to CHARM label grid (nearest-neighbor).")
+        #     # order=0 enforces nearest-neighbor to preserve labels
+        #     # src_img_nn = nib.Nifti1Image(
+        #     #     np.rint(custom_seg_map.get_fdata()).astype(np.int16), custom_seg_map.affine, custom_seg_map.header
+        #     # )
+        #     resampled = resample_from_to(custom_seg_map, charm_seg_map, order=0)
+        #     # rsmpl_custom_seg_map = to_int_img(resampled, charm_seg_map)
+        
+        # else:
+        #     rsmpl_custom_seg_map = to_int_img(custom_seg_map, charm_seg_map)
+            
+        #region Re-mesh
+        # merged_img, debug = merge_segmentation_maps(resampled, charm_seg_map,
+        #     manual_skin_id=5,          # scalp ID in custom segmentation
+        #     dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
+        #     background_label=0,              # background ID in custom segmentation
+        #     output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
+        #     save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
+        
+        
+        #? High to low resampling
+        if not (same_shape and same_affine):
+            
+            print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
+            # order=0 enforces nearest-neighbor to preserve labels
+            src_img_nn = nib.Nifti1Image(
+                np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
+            )
+            resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
+        
+        #region Re-mesh
+        merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
+            manual_skin_id=5,          # scalp ID in custom segmentation
+            dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
+            background_label=0,              # background ID in custom segmentation
+            output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
+            save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
+        
+        
+        
+        
+        merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
+        nib.save(merged_img, merged_seg_img_path)
+        
+        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
+
+
+        # Re-mesh with charm --mesh from the directory that contains m2m_<subject>
+        remesh_cmd = [
+            "charm",
+            subject,
+            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            "--mesh"
         ]
-    
-    try:
-        subprocess.run(cmd, cwd=str(subject_dir), check=True)
-    except Exception as e:
-        print(f"Error creating initial head model for {subject}: {e}")
-        continue
-    
-    # Load images
-    custom_seg_map_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii")
-    custom_seg_map = nib.load(custom_seg_map_path)
-    
-    charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
-    charm_seg_map = nib.load(charm_seg_map_path)
-    
-    # Ensure integer labels; nibabel exposes floats via get_fdata().
-    # We'll round+cast only if dtype isn't int-like.
-    def to_int_img(img, like):
-        data = img.get_fdata(dtype=np.float32)  # safe access; may be float
-        # Detect non-integers
-        if not np.allclose(data, np.round(data)):
-            print("[WARN] Custom segmentation contains non-integer values; rounding to nearest integers.")
-        data = np.rint(data).astype(np.int16)
-        return nib.Nifti1Image(data, like.affine, like.header)
-
-    # Resample to reference grid if needed
-    same_shape = custom_seg_map.shape == charm_seg_map.shape
-    same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
-    
-    #? Low to high resampling is not recommended
-    # if not (same_shape and same_affine):
         
-    #     print("[INFO] Resampling custom segmentation to CHARM label grid (nearest-neighbor).")
-    #     # order=0 enforces nearest-neighbor to preserve labels
-    #     # src_img_nn = nib.Nifti1Image(
-    #     #     np.rint(custom_seg_map.get_fdata()).astype(np.int16), custom_seg_map.affine, custom_seg_map.header
-    #     # )
-    #     resampled = resample_from_to(custom_seg_map, charm_seg_map, order=0)
-    #     # rsmpl_custom_seg_map = to_int_img(resampled, charm_seg_map)
-    
-    # else:
-    #     rsmpl_custom_seg_map = to_int_img(custom_seg_map, charm_seg_map)
-        
-    #region Re-mesh
-    # merged_img, debug = merge_segmentation_maps(resampled, charm_seg_map,
-    #     manual_skin_id=5,          # scalp ID in custom segmentation
-    #     dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-    #     background_label=0,              # background ID in custom segmentation
-    #     output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-    #     save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-    
-    
-    #? High to low resampling
-    if not (same_shape and same_affine):
-        
-        print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
-        # order=0 enforces nearest-neighbor to preserve labels
-        src_img_nn = nib.Nifti1Image(
-            np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
-        )
-        resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
-    
-    #region Re-mesh
-    merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
-        manual_skin_id=5,          # scalp ID in custom segmentation
-        dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-        background_label=0,              # background ID in custom segmentation
-        output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-        save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-    
-    
-    
-    
-    merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
-    nib.save(merged_img, merged_seg_img_path)
-    
-    atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
-
-
-    # Re-mesh with charm --mesh from the directory that contains m2m_<subject>
-    remesh_cmd = [
-        "charm",
-        subject,
-        os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-        os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
-        "--mesh"
-    ]
-    
-    try:
-        subprocess.run(remesh_cmd, cwd=str(subject_dir), check=True)
-    except Exception as e:
-        print(f"Error remeshing head model for {subject}: {e}")
+        try:
+            subprocess.run(remesh_cmd, cwd=str(subject_dir), check=True)
+        except Exception as e:
+            print(f"Error remeshing head model for {subject}: {e}")
 
     
     electrode_size        = [10, 1]       # [radius_mm, thickness_mm]
@@ -182,6 +197,7 @@ for subject in [t]:
     sim.run_simnibs(S)
 
     # ———— POST-PROCESS ————
+    
     m1 = mesh_io.read_msh(os.path.join(S.pathfem, f'{subject}_TDCS_1_scalar.msh'))
     m2 = mesh_io.read_msh(os.path.join(S.pathfem, f'{subject}_TDCS_2_scalar.msh'))
 
@@ -238,17 +254,29 @@ for subject in [t]:
 
     print('Exporting volumetric meshes...')
     try:
-        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), labels_path,"--create_label"])
+        if runMNI152:
+            t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"])
+        else:
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), labels_path,"--create_label"])
     except Exception as e:
         print(f"Error creating label meshes: {e}")
 
     try:
-        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), masks_path,"--create_masks"])
+        if runMNI152:
+            t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"])
+        else:
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), masks_path,"--create_masks"])
     except Exception as e:
         print(f"Error creating mask meshes: {e}")
 
     try:
-        subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), ti_volume_path])
+        if runMNI152:
+            t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path])
+        else:
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), ti_volume_path])
     except Exception as e:
         print(f"Error creating volumetric mesh: {e}")
     #endregion

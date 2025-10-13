@@ -33,74 +33,98 @@ WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
 # ------------------------------------------------
 #region post_funciton
 
-def overlay_roi_outline(
-    bg_img,                 # path or NIfTI: background (anatomical or stat map)
-    roi_img,                # path or NIfTI: ROI or label map (subset of bg)
-    out_path="overlay.png",
-    roi_label=None,         # int label to extract (if roi_img is a label map). If None, treats nonzero as ROI
-    resample=True,          # resample ROI to bg grid if they differ
-    display_mode="ortho",   # 'ortho', 'x', 'y', 'z', 'xz', etc.
-    cut_coords=None,        # e.g., 7 or list of coords; None lets nilearn pick
-    contour_color="red",
-    contour_level=0.5,      # 0.5 works for binary masks (contour between 0 and 1)
-    linewidths=2.0,
-    black_bg=False,
-    dpi=200,
-    title=None,
-):
+def overlay_ti_thresholds_on_t1_with_roi(
+    *,
+    ti_img: nib.Nifti1Image,         # 3D scalar TI (or 4D vector -> handled)
+    t1_img: nib.Nifti1Image,         # 3D T1
+    roi_mask_img: nib.Nifti1Image,   # 0/1 mask for M1
+    out_prefix: str,                 # base name (saves 2 PNGs)
+    percentile: float = 95.0,
+    hard_threshold: float = 0.2,
+    contour_color: str = "lime",
+    contour_linewidth: float = 2.5,
+    cmap: str = "jet",
+    dpi: int = 150,
+    alpha: float = 0.85
+) -> tuple[str, str]:
     """
-    Save a PNG with the ROI drawn as an outline over the background.
+    Save two PNG overlays:
+      1. TI ≥ percentile
+      2. TI ≥ hard_threshold
+    Both show T1 as background and the ROI outlined.
 
-    Examples:
-        overlay_roi_outline("T1.nii.gz", "hipp_mask.nii.gz", "hipp_overlay.png")
-        overlay_roi_outline("T1.nii.gz", "atlas_labels.nii.gz", roi_label=17)
+    Returns (percentile_path, hard_threshold_path).
     """
-    def _as_img(x):
-        if isinstance(x, (str, Path)):
-            return nib.load(str(x))
-        if isinstance(x, nib.spatialimages.SpatialImage):
-            return x
-        if hasattr(x, "get_fdata"):
-            return x
-        raise TypeError(f"Expected NIfTI image or path, got {type(x)}")
+    
+    data = ti_img.get_fdata()
+    finite = np.isfinite(data)
+    if np.any(finite):
+        vmin = np.percentile(data[finite], 2)
+        vmax = np.percentile(data[finite], 98)
+        if vmin >= vmax:  # fallback if data are weird
+            vmin, vmax = np.nanmin(data[finite]), np.nanmax(data[finite])
+    
+    # Ensure scalar TI
+    ti_arr = load_ti_as_scalar(ti_img)
+    ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
 
-    bg_img = _as_img(bg_img)
-    roi_img = _as_img(roi_img)
+    # Resample to TI grid
+    t1_on_ti  = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
+    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
 
-    # If needed, resample ROI to background grid (nearest to preserve labels)
-    if resample:
-        roi_img = resample_to_img(roi_img, bg_img, interpolation="nearest")
+    # Compute thresholds
+    arr = np.asarray(ti_arr, dtype=float)
+    finite_pos = np.isfinite(arr) & (arr > 0)
+    if not np.any(finite_pos):
+        raise ValueError("TI has no positive finite voxels.")
+    thr_percentile = float(np.percentile(arr[finite_pos], percentile))
+    thr_fixed = float(hard_threshold)
 
-    # Build a binary mask from ROI image (label map or generic ROI)
-    roi_data = roi_img.get_fdata()
-    if roi_label is None:
-        mask_data = (roi_data != 0).astype(np.uint8)
-    else:
-        # Exact integer match against label
-        mask_data = (np.rint(roi_data).astype(np.int64) == int(roi_label)).astype(np.uint8)
+    def _plot_overlay(thr_value: float, label: str):
+        masked = np.where(arr >= thr_value, arr, 0.0)
+        shown = masked[masked > 0]
+        if np.any(shown):
+            vmin = np.percentile(shown, 2)
+            vmax = np.percentile(shown, 98)
+            if vmin >= vmax:  # fallback if data are weird
+                vmin, vmax = np.nanmin(shown), np.nanmax(shown)
 
-    # Wrap back into an image (same header/affine as resampled ROI)
-    roi_mask_img = nib.Nifti1Image(mask_data, roi_img.affine, roi_img.header)
+        display = plot_anat(
+            t1_on_ti,
+            display_mode="ortho",
+            dim=0,
+            annotate=True,
+            draw_cross=False,
+            colorbar=False,      # <- NO colorbar for anatom
+            black_bg=True,
+            title=f"TI ≥ {thr_value:.3f} ({label})",
+            )
+        display.add_overlay(
+            ti_img,
+            colorbar=True,       # <- YES colorbar for E-field
+            vmin=vmin,
+            vmax=vmax,
+            cmap="viridis",      # or any cmap you prefer
+        )
+        display.add_contours(
+            roi_on_ti,
+            levels=[0.5],
+            colors=[contour_color],
+            linewidths=contour_linewidth
+        )
 
-    # Plot background and add a contour along the 0.5 level of the binary mask
-    display = plot_anat(
-        bg_img,
-        display_mode=display_mode,
-        cut_coords=cut_coords,
-        black_bg=black_bg,
-        title=title,
-        annotate=False,
-        dim=False,
-    )
-    display.add_contours(
-        roi_mask_img,
-        levels=[contour_level],
-        colors=[contour_color],
-        linewidths=linewidths,
-    )
-    display.savefig(str(out_path), dpi=dpi, bbox_inches="tight", pad_inches=0.02)
-    display.close()
-    return out_path
+        out_path = f"{out_prefix}_{label}.png"
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+        display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+        display.close()
+        return out_path
+
+    # Generate both overlays
+    png_percentile = _plot_overlay(thr_percentile, f"top{int(percentile)}")
+    png_fixed      = _plot_overlay(thr_fixed, f"above{hard_threshold:.2f}")
+
+    return png_percentile, png_fixed
+
 
 def normalize_roi_name(name: str) -> str:
     """Make a filesystem-safe ROI name."""
@@ -126,15 +150,70 @@ def save_masked_nii(data: np.ndarray, mask: np.ndarray, ref_img: nib.Nifti1Image
     masked_data = np.where(mask, data, 0)
     out_img = nib.Nifti1Image(masked_data, ref_img.affine, ref_img.header)
     nib.save(out_img, out_path)
-def make_overlay_png(bg_img: nib.Nifti1Image, overlay_img: nib.Nifti1Image, out_png: str, title: str = "", threshold: Optional[float] = None) -> None:
-    """Create and save an overlay PNG using nilearn's plotting."""
-    display = plotting.plot_anat(bg_img, title=title, display_mode='ortho', dim=-1)
-    if threshold is not None:
-        display.add_overlay(overlay_img, threshold=threshold, cmap='hot')
+from nilearn import plotting
+import numpy as np
+import nibabel as nib
+
+def make_overlay_png(out_png, overlay_img, bg_img=None, title=None, roi_mask_img=None, abs_colour=False):
+    """
+    overlay_img: NIfTI of the E-field scalar (TI). The colorbar will use its values.
+    bg_img:      T1 (resampled to TI grid), shown without a colorbar.
+    roi_mask_img: optional binary mask to be drawn as a contour.
+    """
+    # Choose sensible vmin/vmax from E-field data (ignore NaNs/Infs)
+    data = overlay_img.get_fdata()
+    finite = np.isfinite(data)
+    if np.any(finite):
+        if abs_colour == True:
+            vmin = np.min(data[finite])
+            vmax = np.max(data[finite])
+        else:
+            vmin = np.percentile(data[finite], 2)
+            vmax = np.percentile(data[finite], 98)
+        if vmin >= vmax:  # fallback if data are weird
+            vmin, vmax = np.nanmin(data[finite]), np.nanmax(data[finite])
     else:
-        display.add_overlay(overlay_img, cmap='hot')
-    display.savefig(out_png)
-    display.close()
+        vmin = vmax = None  # nilearn will handle, but values won't mean much
+
+    if bg_img is not None:
+        disp = plotting.plot_anat(
+            bg_img,
+            annotate=False,
+            draw_cross=False,
+            black_bg=True,
+            colorbar=False,      # <- NO colorbar for anatomy
+        )
+        # Add the E-field as an overlay WITH colorbar
+        disp.add_overlay(
+            overlay_img,
+            colorbar=True,       # <- YES colorbar for E-field
+            vmin=vmin,
+            vmax=vmax,
+            cmap="viridis",      # or any cmap you prefer
+        )
+    else:
+        # Fall back to showing the E-field alone, colorbar included
+        disp = plotting.plot_img(
+            overlay_img,
+            annotate=False,
+            draw_cross=False,
+            black_bg=True,
+            colorbar=True,       # <- colorbar reflects overlay
+            vmin=vmin,
+            vmax=vmax,
+            cmap="viridis",
+        )
+
+    # Optional: add ROI contour on top
+    if roi_mask_img is not None:
+        disp.add_contours(roi_mask_img, levels=[0.5], linewidths=1.5, colors="yellow")
+
+    if title:
+        disp.title(title)
+
+    disp.savefig(out_png, dpi=300)
+    disp.close()
+
 def basic_stats(data: np.ndarray, mask: Optional[np.ndarray] = None) -> Dict[str, float]:
     """Compute basic statistics (min, max, mean, std) on data, optionally within a mask."""
     if mask is not None:

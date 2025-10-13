@@ -3,6 +3,7 @@ import meshio
 import numpy as np
 import nibabel as nib
 from typing import Iterable, Optional
+import pyvista as pv
 
 def load_canonical(path: str) -> nib.Nifti1Image:
     img = nib.load(path)
@@ -119,10 +120,54 @@ def make_hex_volume_from_nifti(
     meshio.write(out_vtk_path, mesh)
     print(f"Wrote volumetric HEX mesh: {out_vtk_path}\n"
           f"  points: {xyz.shape[0]}, cells: {cells[0][1].shape[0]} (hexahedra)")
+    
+    
+    vtk_hex_path = "out_hex.vtk"           # your hexahedral volume with cell_data["TImax"]
+    vtp_path     = "out_hex_surface_TI.vtp"  # rich format (keeps scalars)
+    ply_path     = "out_hex_surface_TI.ply"  # optional: vertex colors for Blender/etc.    
+    
+    out_surf_path = "out_hex_surface_smooth.stl"    
+    grid  = pv.read(out_vtk_path)          # UnstructuredGrid with hexahedra
+    surf  = grid.extract_surface()         # extract boundary surface
+    # 2) Convert cell data -> point data so we can sample a continuous field
+    #    (averages neighboring cell values at points)
+    grid_p = grid.cell_data_to_point_data()
+    # The scalar name to carry through:
+    scalar_name = "TImax"  # must match what you wrote as cell_data
 
-subject    = 'sub-CC110062'  # change to your subject ID
+    # 3) Extract and smooth the boundary surface
+    surf = grid.extract_surface().triangulate()
+    surf_s = surf.smooth(n_iter=50, relaxation_factor=0.1,
+                        feature_smoothing=False, boundary_smoothing=True)
+
+    # 4) Sample the volume point-data onto the surface vertices
+    #    (this attaches TImax to surf_s.point_data)
+    surf_s = surf_s.sample(grid_p)  # uses vtkProbeFilter under the hood
+
+    # 5) Save as VTP (keeps the scalar array -> perfect for ParaView coloring)
+    surf_s.save(vtp_path)
+    print("Saved:", vtp_path)
+
+    # 6) (Optional) Also save as PLY with baked vertex colors.
+    #    PLY supports vertex colors (uint8), not arbitrary scalar arrays.
+    #    We'll map TImax -> RGB using a simple linear map.
+    if scalar_name in surf_s.point_data:
+        vals = surf_s.point_data[scalar_name]
+        # Normalize to 0..1 (robust: clip to 1st–99th percentiles to avoid outliers)
+        lo, hi = np.percentile(vals, [1, 99])
+        norm = np.clip((vals - lo) / (hi - lo + 1e-12), 0, 1)
+
+        # Simple grayscale (or swap in your own colormap lookup)
+        rgb = (norm * 255).astype(np.uint8)
+        colors = np.c_[rgb, rgb, rgb]  # shape (N, 3)
+        surf_ply = surf_s.copy()
+        surf_ply.point_data.clear()         # PLY won't store arbitrary arrays in many viewers
+        surf_ply["RGB"] = colors            # PyVista writes this as vertex colors
+        surf_ply.save(ply_path)
+        print("Saved:", ply_path)
+subject    = 'MNI152'  # change to your subject ID
 rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
-output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
+output_root  = os.path.join(rootDIR,subject, 'Hippocampus_New_Params','SimNIBS')
 
 # --- Example usage ---
 make_hex_volume_from_nifti(

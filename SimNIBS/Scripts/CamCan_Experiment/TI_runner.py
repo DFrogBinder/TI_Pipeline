@@ -19,8 +19,11 @@ import time
 #region Parameters
 # Mesh and output
 start = time.time()
+
+#? Set appropriate flags
 meshPresent = True
 runMNI152 = True
+
 rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)[0]
@@ -147,12 +150,12 @@ for subject in [t]:
     electrode_conductivity = 0.85
 
     # Hippocampus montage
-    # montage_right = ('F8', 1.9, 'P4', -1.9)
-    # montage_left  = ('FT10', 1.9, 'P9',  -1.9)
+    montage_right = ('Fp2', 2, 'P8', -2)
+    montage_left  = ('T7', 2, 'P7',  -2)
     
     # M1 montage
-    montage_right = ('Cz', 1.9, 'FC2', -1.9)
-    montage_left  = ('C3', 0.6, 'C1',  -0.6)
+    # montage_right = ('C1', 1.34, 'Cz', -1.34)
+    # montage_left  = ('C3', 2.66, 'CP5',  -2.66)
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
@@ -333,6 +336,7 @@ for subject in [t]:
     masked_img = nib.Nifti1Image(masked, label_img.affine, label_img.header)
     masked_img.header.set_data_dtype(np.float32)
     nib.save(masked_img, os.path.join(output_root,"ti_brain_only.nii.gz"))
+    
     #endregion
     
 print("Done.")

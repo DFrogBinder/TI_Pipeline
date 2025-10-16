@@ -40,7 +40,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
     roi_mask_img: nib.Nifti1Image,   # 0/1 mask for M1
     out_prefix: str,                 # base name (saves 2 PNGs)
     percentile: float = 95.0,
-    hard_threshold: float = 0.2,
+    hard_threshold: float = 200,
     contour_color: str = "lime",
     contour_linewidth: float = 2.5,
     cmap: str = "jet",

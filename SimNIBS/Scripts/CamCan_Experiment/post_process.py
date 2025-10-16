@@ -7,7 +7,7 @@ from functions import *
 
 # -------------------- CONFIG --------------------
 subject = 'MNI152'
-output_root = f'/home/boyan/sandbox/Jake_Data/camcan_test_run/{subject}/anat/post'
+output_root = f'/home/boyan/sandbox/Jake_Data/camcan_test_run/{subject}/M1_New_Params/post'
 # output_root = '/home/boyan/sandbox/Jake_Data/camcan_test_run/MNI152/post'
 
 ti_path     = os.path.join(os.path.dirname(output_root), 'SimNIBS',"ti_brain_only.nii.gz")   # FEM result (scalar or 3-vec)
@@ -118,21 +118,21 @@ def main():
         save_masked_nii(ti_data,mask,ti_img,os.path.join(output_root, f"TI_in_{roi_name}.nii.gz"))
         save_masked_nii(ti_data, overlap_mask, ti_img ,os.path.join(output_root, f"TI_in_{roi_name}_Top{EFIELD_PERCENTILE}.nii.gz"))
 
-        # Overlays only for the selected ROI
-        if roi_name == selected_roi:
-            make_overlay_png(
-                out_png =os.path.join(output_root, f"overlay_TI_with_{roi_name}_contour.png"),
-                overlay_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-                bg_img=bg_img,
-                title=f"TI field with {roi_name} contour (Selected ROI: {selected_roi})"
-        )
+        # # Overlays only for the selected ROI
+        # if roi_name == selected_roi:
+        #     make_overlay_png(
+        #         out_png =os.path.join(output_root, f"overlay_TI_with_{roi_name}_contour.png"),
+        #         overlay_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+        #         bg_img=bg_img,
+        #         title=f"TI field with {roi_name} contour (Selected ROI: {selected_roi})"
+        # )
 
-            make_overlay_png(
-                out_png=os.path.join(output_root, f"overlay_TI_top{EFIELD_PERCENTILE}pct_with_{roi_name}.png"),
-                overlay_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-                bg_img=bg_img,
-                title=f"TI field (≥ {EFIELD_PERCENTILE}th pct) + {roi_name} contour (Selected ROI: {selected_roi})"
-        )
+        #     make_overlay_png(
+        #         out_png=os.path.join(output_root, f"overlay_TI_top{EFIELD_PERCENTILE}pct_with_{roi_name}.png"),
+        #         overlay_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+        #         bg_img=bg_img,
+        #         title=f"TI field (≥ {EFIELD_PERCENTILE}th pct) + {roi_name} contour (Selected ROI: {selected_roi})"
+        # )
     
         # After roi_masks, ti_img, ti_data, and bg_img/t1_path are set
         # Build a NIfTI mask for M1 on the TI grid
@@ -162,7 +162,7 @@ def main():
                 roi_mask_img=m1_mask_img,
                 out_prefix=m1_out_base,
                 percentile=95.0,
-                hard_threshold=0.2,
+                hard_threshold=200,
                 # contour_color="yellow"
             )
             
@@ -172,7 +172,7 @@ def main():
                 roi_mask_img=hippocampus_mask_img,
                 out_prefix=hipp_out_base,
                 percentile=95.0,
-                hard_threshold=0.2,
+                hard_threshold=200,
                 # contour_color="yellow"
             )
 

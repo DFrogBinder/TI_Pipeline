@@ -1,197 +1,256 @@
-#!/home/boyan/anaconda3/envs/simnibs_post/bin/python3
-import os, sys, csv, argparse, numpy as np, nibabel as nib
-from nilearn import datasets, image as nli, plotting
-from nibabel.processing import resample_from_to
-from nibabel.affines import apply_affine
-from functions import *
+# post_process.py
+import os
+from dataclasses import dataclass
+from typing import Optional, Dict, Tuple
 
-# -------------------- CONFIG --------------------
-subject = 'MNI152'
-output_root = f'/home/boyan/sandbox/Jake_Data/camcan_test_run/{subject}/M1_New_Params/post'
-# output_root = '/home/boyan/sandbox/Jake_Data/camcan_test_run/MNI152/post'
+import numpy as np
+import nibabel as nib
 
-ti_path     = os.path.join(os.path.dirname(output_root), 'SimNIBS',"ti_brain_only.nii.gz")   # FEM result (scalar or 3-vec)
-# ti_path     = os.path.join(os.path.dirname(output_root), 'anat', 'SimNIBS',"ti_brain_only.nii.gz")   # FEM result (scalar or 3-vec)
+from post_functions import *
+
+@dataclass
+class PostProcessConfig:
+    # Required-ish
+    root_dir: str
+    subject: str = "MNI152"
+    ti_path: Optional[str] = None
+    t1_path: Optional[str] = None
+
+    # Atlas selection
+    atlas_mode: str = "auto"          # "auto" | "mni" | "fastsurfer"
+    fastsurfer_root: Optional[str] = None
+    fs_mri_path: Optional[str] = None # explicit path to aparc.DKTatlas+aseg.deep.nii.gz
+
+    # Behavior
+    out_dir: Optional[str] = None
+    plot_roi: str = "Hippocampus"     # which ROI to highlight in overlays
+    percentile: float = 95.0
+    hard_threshold: float = 200.0
+
+    # Debug/logging
+    verbose: bool = True
 
 
-t1_path     = os.path.join("/home","boyan","sandbox","simnibs4_exmaples",'m2m_MNI152',"T1.nii.gz")
+def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str]]:
+    subj = cfg.subject
+    root = os.path.abspath(cfg.root_dir)
+    out_root = cfg.out_dir or os.path.join(root, subj, "anat", "post")
 
-# Which ROIs to extract. The queries are matched case-insensitively against labels.
-# We fetch the appropriate HO atlas (cortical OR subcortical) per-ROI under the hood.
-ROI_QUERIES = {
-    "M1":          {"atlas": "cort-maxprob-thr25-1mm", "query": "precentral gyrus"},
-    "Hippocampus": {"atlas": "sub-maxprob-thr25-1mm",  "query": "hippocampus"},
-}
+    # TI path
+    if cfg.ti_path:
+        ti_path = cfg.ti_path
+    else:
+        ti_path = os.path.join(root, subj, "anat", "SimNIBS", "ti_brain_only.nii.gz")
 
-EFIELD_PERCENTILE     = 95   # top percentile (e.g., 90 or 95)
-WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
-# ------------------------------------------------
+    # T1 path
+    if cfg.t1_path:
+        t1_path = cfg.t1_path
+    else:
+        if subj.upper() == "MNI152":
+            # adjust this default if needed
+            t1_path = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
+        else:
+            t1_path = os.path.join(root, subj, "anat", f"{subj}_T1w.nii.gz")
+
+    return out_root, ti_path, t1_path
 
 
-def main():
+def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
+    """
+    Library entrypoint. Returns a dict with useful results and file paths.
+    Set breakpoints inside to step through.
+    """
+    # ---- Paths & IO ----
+    out_dir, ti_path, t1_path = _infer_paths(cfg)
+    if cfg.verbose:
+        print(f"[cfg] subject={cfg.subject} | atlas_mode={cfg.atlas_mode}")
+        print(f"[cfg] ti_path={ti_path}")
+        print(f"[cfg] t1_path={t1_path}")
+        print(f"[cfg] out_dir={out_dir}")
 
-    # --- CLI args ---
-    parser = argparse.ArgumentParser(description='Post-process TI maps with ROI overlays')
-    parser.add_argument('--plot-roi', default='Hippocampus',
-                        help='Which ROI to plot in figures: M1 or Hippocampus (case-insensitive). Default: M1')
-    args = parser.parse_args()
-    selected_roi = normalize_roi_name(args.plot_roi)
-
-    ensure_dir(output_root)
-
-    # --- Load volumes ---
+    ensure_dir(out_dir)
     ti_img = nib.load(ti_path)
     ti_data = load_ti_as_scalar(ti_img)
 
-    # ROIs on TI grid
-    roi_masks, atlas_imgs = roi_masks_on_ti_grid(ti_img)
+    # ---- Atlas / ROI masks on TI grid ----
+    roi_masks, atlas_imgs = roi_masks_on_ti_grid(
+        ti_img,
+        atlas_mode=cfg.atlas_mode,
+        subject=cfg.subject,
+        fastsurfer_root=cfg.fastsurfer_root,
+        fastsurfer_atlas_path=cfg.fs_mri_path,
+    )
+    
+    mask = roi_masks.get("Hippocampus")
+    print("[INFO]:MODE CHECK")
+    print("[INFO]:subject:", cfg.subject, "| atlas_mode:", cfg.atlas_mode)
+    print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, cfg.subject, "mri", "aparc.DKTatlas+aseg.deep.nii.gz")))
+    print("[INFO]:mask dtype/shape:", mask.dtype, mask.shape if mask is not None else None)
+    print("[INFO]:mask voxels >0:", int(mask.sum()) if mask is not None else 0)
 
-    # Finite mask + percentile threshold over all finite voxels
+
+    # ---- Thresholds ----
     finite = np.isfinite(ti_data)
     if not np.any(finite):
-        raise RuntimeError("[ERROR]No finite values in ti_data; check your masking.")
+        raise RuntimeError("[ERROR] No finite values in ti_data; check your masking.")
 
-    thr = np.nanpercentile(ti_data[finite], EFIELD_PERCENTILE)
+    thr = float(np.nanpercentile(ti_data[finite], cfg.percentile))
     topP_mask = finite & (ti_data >= thr)
 
-    # --- Background for overlays: T1 if available, else TI itself ---
-    bg_img = None
+    # Background for overlays (resampled to TI grid if available)
+    t1_img_full = None
     if t1_path and os.path.exists(t1_path):
         try:
-            bg_img = nib.load(t1_path)
-            bg_img = resample_from_to(bg_img, ti_img, order=1)
+            t1_img_full = nib.load(t1_path)
         except Exception as e:
-            print(f"[WARNING] could not load/resample T1: {e}")
-            bg_img = None
-    else:
-        print("[WARNING] no T1 provided/found; using TI as background.")
-    
+            if cfg.verbose:
+                print(f"[WARN] Failed loading T1 ({t1_path}): {e}")
 
+    # Save global masks
     vox_vol = vol_mm3(ti_img)
-    vol_ml = lambda mask: mask.sum()*vox_vol/1e3
+    topP_mask_path = os.path.join(out_dir, f"efield_top{int(cfg.percentile)}pct_mask.nii.gz")
+    nib.save(nib.Nifti1Image(topP_mask.astype(np.uint8), ti_img.affine), topP_mask_path)
 
-    # --- Save global masks ---
-    nib.save(nib.Nifti1Image(topP_mask.astype(np.uint8), ti_img.affine),
-             os.path.join(output_root, f"efield_top{EFIELD_PERCENTILE}pct_mask.nii.gz"))
-    save_masked_nii(ti_data, topP_mask, ti_img, os.path.join(output_root, f"TI_in_Top{EFIELD_PERCENTILE}.nii.gz"))
+    topP_ti_path = os.path.join(out_dir, f"TI_in_Top{int(cfg.percentile)}.nii.gz")
+    save_masked_nii(ti_data, topP_mask, ti_img, topP_ti_path)
 
-    # --- Per-ROI processing ---
+    # ---- Per-ROI products ----
+    per_roi = {}
     for roi_name, mask in roi_masks.items():
         if mask is None:
             continue
 
         overlap_mask = topP_mask & mask
+        roi_mask_img = nib.Nifti1Image(mask.astype(np.uint8), ti_img.affine, ti_img.header)
+        overlap_mask_img = nib.Nifti1Image(overlap_mask.astype(np.uint8), ti_img.affine, ti_img.header)
 
-        print(f"[INFO][{roi_name}] Threshold @ {EFIELD_PERCENTILE}th pct = {thr:.6g}")
-        print(f"[INFO][{roi_name}] ROI voxels:       {mask.sum():,} ({vol_ml(mask):.3f} mL)")
-        print(f"[INFO][{roi_name}] Overlap voxels:   {overlap_mask.sum():,} ({vol_ml(overlap_mask):.3f} mL)")
-        print(f"[INFO][{roi_name}] Overlap within top-P: {overlap_mask.sum()/max(1, topP_mask.sum()):.2%}")
-        print(f"[INFO][{roi_name}] Overlap within ROI:   {overlap_mask.sum()/max(1, mask.sum()):.2%}")
+        if cfg.verbose:
+            print(f"[ROI:{roi_name}] thr@{cfg.percentile}th = {thr:.6g}")
+            print(f"[ROI:{roi_name}] ROI voxels: {mask.sum():,} ({mask.sum()*vox_vol/1e3:.3f} mL)")
+            print(f"[ROI:{roi_name}] Overlap voxels: {overlap_mask.sum():,} "
+                  f"({overlap_mask.sum()*vox_vol/1e3:.3f} mL)")
 
-        # Extract per-voxel tables
-        if WRITE_PER_VOXEL_CSV:
-            roi_ijk,  roi_xyz,  roi_vals  = extract_table(mask,         ti_img, ti_data)
-            top_ijk,  top_xyz,  top_vals  = extract_table(topP_mask,    ti_img, ti_data)
-            ov_ijk,   ov_xyz,   ov_vals   = extract_table(overlap_mask, ti_img, ti_data)
+        # Tables
+        ijk_r, xyz_r, vals_r = extract_table(mask,         ti_img, ti_data)
+        ijk_t, xyz_t, vals_t = extract_table(topP_mask,    ti_img, ti_data)
+        ijk_o, xyz_o, vals_o = extract_table(overlap_mask, ti_img, ti_data)
 
-            write_csv(os.path.join(output_root, f"{roi_name}_values.csv"),                   roi_ijk, roi_xyz, roi_vals)
-            write_csv(os.path.join(output_root, f"Top{EFIELD_PERCENTILE}_values.csv"),      top_ijk, top_xyz, top_vals)
-            write_csv(os.path.join(output_root, f"{roi_name}_Top{EFIELD_PERCENTILE}_overlap_values.csv"), ov_ijk, ov_xyz, ov_vals)
+        roi_csv         = os.path.join(out_dir, f"{roi_name}_values.csv")
+        topp_csv        = os.path.join(out_dir, f"Top{int(cfg.percentile)}_values.csv")
+        overlap_csv     = os.path.join(out_dir, f"{roi_name}_Top{int(cfg.percentile)}_overlap_values.csv")
+        write_csv(roi_csv,     ijk_r, xyz_r, vals_r)
+        write_csv(topp_csv,    ijk_t, xyz_t, vals_t)
+        write_csv(overlap_csv, ijk_o, xyz_o, vals_o)
 
-            print(f"[INFO] Stats ({roi_name}):",  basic_stats(roi_vals))
-            print(f"[INFO] Stats (Top{EFIELD_PERCENTILE}):", basic_stats(top_vals))
-            print(f"[INFO] Stats (Overlap {roi_name}∩Top{EFIELD_PERCENTILE}):", basic_stats(ov_vals))
+        # Save masks
+        atlas_mask_path = os.path.join(out_dir, f"atlas_{roi_name}_mask.nii.gz")
+        overlap_mask_path = os.path.join(out_dir, f"{roi_name}_overlap_top{int(cfg.percentile)}pct_mask.nii.gz")
+        nib.save(roi_mask_img, atlas_mask_path)
+        nib.save(overlap_mask_img, overlap_mask_path)
 
-        # Save NIfTI masks and masked maps
-        if mask is not None:
-            nib.save(nib.Nifti1Image(mask.astype(np.uint8), ti_img.affine),
-                    os.path.join(output_root, f"atlas_{roi_name}_mask.nii.gz"))
-        else:
-            print(f"[WARNING]: no voxels for {roi_name}; skipping saving ROI mask.")
-            
-        if overlap_mask is not None:
-            nib.save(nib.Nifti1Image(overlap_mask.astype(np.uint8), ti_img.affine),
-                    os.path.join(output_root, f"{roi_name}_overlap_top{EFIELD_PERCENTILE}pct_mask.nii.gz"))
-        else:
-            print(f"[WARNING]: no overlap voxels for {roi_name}; skipping saving overlap mask.")
-            
-        save_masked_nii(ti_data,mask,ti_img,os.path.join(output_root, f"TI_in_{roi_name}.nii.gz"))
-        save_masked_nii(ti_data, overlap_mask, ti_img ,os.path.join(output_root, f"TI_in_{roi_name}_Top{EFIELD_PERCENTILE}.nii.gz"))
+        # Save masked TI
+        ti_in_roi_path        = os.path.join(out_dir, f"TI_in_{roi_name}.nii.gz")
+        ti_in_roi_topP_path   = os.path.join(out_dir, f"TI_in_{roi_name}_Top{int(cfg.percentile)}.nii.gz")
+        save_masked_nii(ti_data, mask,         ti_img, ti_in_roi_path)
+        save_masked_nii(ti_data, overlap_mask, ti_img, ti_in_roi_topP_path)
 
-        # # Overlays only for the selected ROI
-        # if roi_name == selected_roi:
-        #     make_overlay_png(
-        #         out_png =os.path.join(output_root, f"overlay_TI_with_{roi_name}_contour.png"),
-        #         overlay_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-        #         bg_img=bg_img,
-        #         title=f"TI field with {roi_name} contour (Selected ROI: {selected_roi})"
-        # )
-
-        #     make_overlay_png(
-        #         out_png=os.path.join(output_root, f"overlay_TI_top{EFIELD_PERCENTILE}pct_with_{roi_name}.png"),
-        #         overlay_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-        #         bg_img=bg_img,
-        #         title=f"TI field (≥ {EFIELD_PERCENTILE}th pct) + {roi_name} contour (Selected ROI: {selected_roi})"
-        # )
-    
-        # After roi_masks, ti_img, ti_data, and bg_img/t1_path are set
-        # Build a NIfTI mask for M1 on the TI grid
-        m1_bool = roi_masks["M1"]        # boolean array on TI grid
-        m1_mask_img = nib.Nifti1Image(m1_bool.astype(np.uint8), ti_img.affine, ti_img.header)
-        
-        hippocampus_bool = roi_masks["Hippocampus"]        # boolean array on TI grid
-        hippocampus_mask_img = nib.Nifti1Image(hippocampus_bool.astype(np.uint8), ti_img.affine, ti_img.header)
-
-
-        # Load original T1 (not resampled) for the helper (it resamples internally)
-        t1_img_full = nib.load(t1_path) if t1_path and os.path.exists(t1_path) else None
-        if t1_img_full is None:
-            raise RuntimeError("T1 not found; required for the requested overlay.")
-
-        m1_mask_img = nib.Nifti1Image(roi_masks["M1"].astype(np.uint8), ti_img.affine, ti_img.header)
-        hippocampus_mask_img = nib.Nifti1Image(roi_masks["Hippocampus"].astype(np.uint8), ti_img.affine, ti_img.header)
-        t1_img_full = nib.load(t1_path)
-
-        m1_out_base = os.path.join(output_root, "M1_TI_overlay")
-        hipp_out_base = os.path.join(output_root, "Hippocampus_TI_overlay")
-
-        if roi_name == selected_roi:
-            png_95, png_02 = overlay_ti_thresholds_on_t1_with_roi(
-                ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-                t1_img=t1_img_full,
-                roi_mask_img=m1_mask_img,
-                out_prefix=m1_out_base,
-                percentile=95.0,
-                hard_threshold=200,
-                # contour_color="yellow"
-            )
-            
-            png_95, png_02 = overlay_ti_thresholds_on_t1_with_roi(
-                ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-                t1_img=t1_img_full,
-                roi_mask_img=hippocampus_mask_img,
-                out_prefix=hipp_out_base,
-                percentile=95.0,
-                hard_threshold=200,
-                # contour_color="yellow"
-            )
-
-            print(f"[INFO] Saved percentile overlay: {png_95}")
-            print(f"[INFO] Saved hard-threshold overlay: {png_02}")
-            print(f"[INFO] Tranfsorming TI values to MNI152 space...")
-            # Transform TI to MNI152 space by applyting both a linear and non-linear transform
-    
-    # Optional: show the resampled atlas for the selected ROI (sanity check)
-    for atlas_name, img in atlas_imgs.items():
-        # only show the atlas used by the selected ROI
-        if atlas_name.lower() != ROI_QUERIES[selected_roi]['query'].lower():
-            continue
-        make_overlay_png(
-            out_png=os.path.join(output_root, f"overlay_{atlas_name}_labels_on_BG.png"),
-            overlay_img=img,  # visualize label extents
-            bg_img=bg_img,
-            title=f"Harvard–Oxford (resampled for {selected_roi}): {atlas_name}"
+        per_roi[roi_name] = dict(
+            roi_csv=roi_csv,
+            topp_csv=topp_csv,
+            overlap_csv=overlap_csv,
+            atlas_mask=atlas_mask_path,
+            overlap_mask=overlap_mask_path,
+            ti_in_roi=ti_in_roi_path,
+            ti_in_roi_topP=ti_in_roi_topP_path,
         )
+        
+        hippo_outline_path = None
+        hippo_label_path   = None
+        hippo_boldmask_path = None
 
-if __name__ == "__main__":
-    main()
+        if roi_name.lower() == "hippocampus":
+            outline = make_outline(mask, iterations=1)  # increase to 2-3 if you want thicker edge
+            hippo_outline_path = os.path.join(out_dir, "atlas_Hippocampus_outline_mask.nii.gz")
+            nib.save(nib.Nifti1Image(outline, ti_img.affine), hippo_outline_path)
+
+            # 2b) Make a "bold" (high intensity) filled mask for viewers that fade 0/1 overlays
+            bold = (mask.astype(np.uint8) * 255)
+            hippo_boldmask_path = os.path.join(out_dir, "atlas_Hippocampus_mask_255.nii.gz")
+            nib.save(nib.Nifti1Image(bold, ti_img.affine), hippo_boldmask_path)
+
+            # 2c) Export a label-ID volume on the TI grid (17 for L, 53 for R; 0 elsewhere)
+            #     This is often the easiest to color distinctly in Freeview/FSLEyes.
+            #     We reconstruct it from the original atlas image on the TI grid:
+            ids = [17, 53]  # bilateral; change to [17] or [53] if you want unilateral
+            # Start from zeros, paint the mask with ID 17/53 depending on which side each voxel belongs to.
+            # If you don't need per-side split, you can just use e.g. 17 for all.
+            # Here’s a simple approach: put 77 for left, 88 for right (or keep 17/53 if preferred).
+            label_vol = np.zeros(mask.shape, dtype=np.uint16)
+            # Heuristic split by x in world space (left/right). Feel free to skip and just set 17/53 both.
+            ijk = np.argwhere(mask)
+            xyz = nib.affines.apply_affine(ti_img.affine, ijk)
+            # Left hemisphere has x<0 in RAS (typical); adjust if your orientation differs.
+            left_idx  = (xyz[:, 0] < 0)
+            right_idx = ~left_idx
+            if ijk.size > 0:
+                if left_idx.any():  label_vol[tuple(ijk[left_idx].T)]  = 17
+                if right_idx.any(): label_vol[tuple(ijk[right_idx].T)] = 53
+
+            hippo_label_path = os.path.join(out_dir, "atlas_Hippocampus_labels_on_TI.nii.gz")
+            nib.save(nib.Nifti1Image(label_vol, ti_img.affine), hippo_label_path)
+
+            # Track in the return dict
+            per_roi[roi_name].update(dict(
+                hippo_outline=hippo_outline_path,
+                hippo_mask_255=hippo_boldmask_path,
+                hippo_label_ids=hippo_label_path,
+            ))
+
+
+    # ---- Pretty overlays for selected ROI (optional) ----
+    overlay_paths = {}
+    sel = cfg.plot_roi
+    sel_norm = normalize_roi_name(sel)
+    if t1_img_full is not None and sel in roi_masks:
+        roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)
+        out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
+        png_95, png_02 = overlay_ti_thresholds_on_t1_with_roi(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=out_base,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+        )
+        overlay_paths[sel] = [png_95, png_02]
+    elif t1_img_full is None:
+        if cfg.verbose:
+            print("[INFO] Skipping overlays (T1 not found).")
+
+    # ---- Return everything useful for tests / notebooks ----
+    return dict(
+        config=cfg,
+        ti_path=ti_path,
+        t1_path=t1_path,
+        out_dir=out_dir,
+        percentile_threshold=thr,
+        topP_mask_path=topP_mask_path,
+        topP_ti_path=topP_ti_path,
+        per_roi=per_roi,
+        overlays=overlay_paths,
+    )
+
+cfg = PostProcessConfig(
+    root_dir="/home/boyan/sandbox/Jake_Data/camcan_test_run",
+    subject="sub-CC110056",                 # or "MNI152"
+    atlas_mode="auto",                      # or "mni" / "fastsurfer"
+    fastsurfer_root="/home/boyan/sandbox/Jake_Data/camcan_test_run/FastSurfer_out",
+    fs_mri_path=None,                       # or explicit path to aparc.DKTatlas+aseg.deep.nii.gz
+    plot_roi="Hippocampus",
+    percentile=95.0,
+    hard_threshold=200.0,
+    verbose=True,
+)
+
+# set a breakpoint here, then:
+result = run_post_process(cfg)

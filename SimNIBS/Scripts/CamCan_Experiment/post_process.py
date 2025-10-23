@@ -17,7 +17,7 @@ class PostProcessConfig:
     t1_path: Optional[str] = None
 
     # Atlas selection
-    atlas_mode: str = "auto"          # "auto" | "mni" | "fastsurfer"
+    atlas_mode: str = "mni"          # "auto" | "mni" | "fastsurfer"
     fastsurfer_root: Optional[str] = None
     fs_mri_path: Optional[str] = None # explicit path to aparc.DKTatlas+aseg.deep.nii.gz
 
@@ -242,7 +242,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
 cfg = PostProcessConfig(
     root_dir="/home/boyan/sandbox/Jake_Data/camcan_test_run",
-    subject="sub-CC110056",                 # or "MNI152"
+    subject="MNI152",                 # or "MNI152"
     atlas_mode="auto",                      # or "mni" / "fastsurfer"
     fastsurfer_root="/home/boyan/sandbox/Jake_Data/camcan_test_run/FastSurfer_out",
     fs_mri_path=None,                       # or explicit path to aparc.DKTatlas+aseg.deep.nii.gz
@@ -251,6 +251,7 @@ cfg = PostProcessConfig(
     hard_threshold=200.0,
     verbose=True,
 )
-
+print("[INFO] Running post-processing...")
 # set a breakpoint here, then:
 result = run_post_process(cfg)
+print("[INFO] Post-processing complete.")

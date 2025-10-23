@@ -176,7 +176,7 @@ def make_overlay_png(out_png, overlay_img, bg_img=None, title=None, roi_mask_img
 
     if bg_img is not None:
         disp = plotting.plot_anat(
-            bg_img, annotate=False, draw_cross=False, black_bg=True, colorbar=False
+            bg_img, annotate=False, draw_cross=False, black_bg=True, colorbar=False,cut_coords=(30, 0, 0)
         )
         disp.add_overlay(overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap="viridis")
     else:
@@ -186,7 +186,7 @@ def make_overlay_png(out_png, overlay_img, bg_img=None, title=None, roi_mask_img
         )
 
     if roi_mask_img is not None:
-        disp.add_contours(roi_mask_img, levels=[0.5], linewidths=1.5, colors="yellow")
+        disp.add_contours(roi_mask_img, levels=[0.5], linewidths=1.5, colors="red")
 
     if title:
         disp.title(title)
@@ -202,7 +202,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
     out_prefix: str,
     percentile: float = 95.0,
     hard_threshold: float = 200.0,
-    contour_color: str = "lime",
+    contour_color: str = "red",
     contour_linewidth: float = 2.5,
     cmap: str = "jet",
     dpi: int = 150,
@@ -239,7 +239,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
 
         display = plot_anat(
             t1_on_ti, display_mode="ortho", dim=0, annotate=True,
-            draw_cross=False, colorbar=False, black_bg=True,
+            draw_cross=True, colorbar=False, black_bg=True, cut_coords=(-20, 0, -30),
             title=f"TI ≥ {thr_value:.3f} ({label})",
         )
         display.add_overlay(
@@ -313,6 +313,7 @@ def roi_masks_on_ti_grid(
 
     if atlas_mode == "auto":
         not_mni = subject is not None and subject.upper() != "MNI152"
+        # not_mni = True #! DELETE LATER --- FORCE FASTSURFER FOR TESTING
         if not_mni:
             fs_atlas = _resolve_fastsurfer_atlas(subject, fastsurfer_root, fastsurfer_atlas_path)
         chosen_mode = "fastsurfer" if fs_atlas else "mni"

@@ -20,14 +20,14 @@ import time
 # Mesh and output
 start = time.time()
 
-#? Set appropriate flags
-meshPresent = True
-runMNI152 = True
+#! Set appropriate flags
+meshPresent = False
+runMNI152 = False
 
 rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
-t = os.listdir(rootDIR)[0]
-for subject in [t]:
+t = os.listdir(rootDIR)
+for subject in t:
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed
         subject = 'MNI152'
@@ -38,9 +38,13 @@ for subject in [t]:
         subject_dir = os.path.join(rootDIR, subject, 'anat')
         
     else:    
-        fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh') 
-        output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
-        subject_dir = os.path.join(rootDIR, subject, 'anat')
+        if not subject == 'MNI152':
+            fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh') 
+            output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
+            subject_dir = os.path.join(rootDIR, subject, 'anat')
+        else:
+            print("[INFO]:Skipping MNI152 in subject list when runMNI152 is False.")
+            continue
 # region Meshing
     if meshPresent:
         print("[INFO] Mesh present, skipping meshing step.")
@@ -134,8 +138,6 @@ for subject in [t]:
         remesh_cmd = [
             "charm",
             subject,
-            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
             "--mesh"
         ]
         

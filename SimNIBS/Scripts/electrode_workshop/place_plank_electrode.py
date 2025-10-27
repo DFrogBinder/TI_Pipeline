@@ -310,24 +310,108 @@ def local_rotation_degrees(center: np.ndarray, toward: np.ndarray,
     ang_rad = math.atan2(y, x)
     return math.degrees(ang_rad)
 
-def resolve_point(m2m_dir: str,
-                  label: Optional[str],
-                  xyz: Optional[List[float]]) -> np.ndarray:
+def resolve_point(m2m_dir: str, label: str | None, xyz: list[float] | None) -> np.ndarray:
+    """
+    Resolve either an EEG label (10-10/10-20) to subject-space XYZ using the m2m_ directory,
+    or use explicit coordinates if provided.
+    """
+    import os
+    import numpy as np
+
     if xyz is not None:
-        arr = np.asarray(xyz, dtype=float)
-        if arr.shape != (3,):
-            raise ValueError("xyz must be three numbers")
-        return arr
-    if label is None:
-        raise ValueError("Need either an EEG label or explicit coordinates")
+        return np.asarray(xyz, dtype=float)
+
+    if not label:
+        raise RuntimeError("No label or coordinates supplied.")
+
+    # --- Try SimNIBS APIs (varies by version) ---
+    eeg_by_label_funcs = []
     try:
+        # SimNIBS <=4.0-ish (some builds)
         from simnibs.utils.eeg_positions import eeg_pos_by_label  # type: ignore
-        p = eeg_pos_by_label(m2m_dir, label)
-        return np.asarray(p, dtype=float)
-    except Exception as e:
-        raise RuntimeError(
-            f"Could not resolve EEG label '{label}'. Pass coordinates instead. Original error: {e}"
-        )
+        eeg_by_label_funcs.append(eeg_pos_by_label)
+    except Exception:
+        pass
+    try:
+        # SimNIBS 4.1+ (some builds renamed modules)
+        from simnibs.utils.electrode_positions import eeg_pos_by_label  # type: ignore
+        eeg_by_label_funcs.append(eeg_pos_by_label)
+    except Exception:
+        pass
+    try:
+        # Another alias used in a few packs
+        from simnibs.utils.electrodes import eeg_pos_by_label  # type: ignore
+        eeg_by_label_funcs.append(eeg_pos_by_label)
+    except Exception:
+        pass
+
+    for fn in eeg_by_label_funcs:
+        try:
+            p = fn(label, m2m_dir)
+            return np.asarray(p, dtype=float)
+        except Exception:
+            continue  # try the next one
+
+    # --- Fallback: scan m2m_* for a cap file and parse the label ---
+    def _scan_candidate_files(root: str):
+        # common locations and names created by headreco / m2m
+        candidates = []
+        for dirpath, _, filenames in os.walk(root):
+            for fn in filenames:
+                lfn = fn.lower()
+                if any(lfn.endswith(ext) for ext in (".elc", ".txt", ".csv")) and \
+                   any(key in lfn for key in ("eeg", "10-20", "10-10", "cap", "electrode")):
+                    candidates.append(os.path.join(dirpath, fn))
+        return candidates
+
+    def _parse_position_from_file(path: str, lbl: str):
+        lbl_up = lbl.upper()
+        # Try simple CSV/TXT: label, x, y, z  (or "Label x y z")
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    s = line.strip()
+                    if not s or s.startswith("#") or s.lower().startswith(("unit", "labels", "positions")):
+                        continue
+                    parts = [p for p in s.replace(",", " ").split() if p]
+                    if len(parts) >= 4 and parts[0].upper() == lbl_up:
+                        x, y, z = map(float, parts[1:4])
+                        return np.array([x, y, z], dtype=float)
+        except Exception:
+            pass
+        # Very lightweight .elc parser (common format: one label per line under "Positions")
+        try:
+            in_positions = False
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    s = line.strip()
+                    if not s:
+                        continue
+                    low = s.lower()
+                    if "positions" in low:
+                        in_positions = True
+                        continue
+                    if in_positions:
+                        parts = [p for p in s.replace("\t", " ").split() if p]
+                        if len(parts) >= 4 and parts[0].upper() == lbl_up:
+                            x, y, z = map(float, parts[1:4])
+                            return np.array([x, y, z], dtype=float)
+        except Exception:
+            pass
+        return None
+
+    for cand in _scan_candidate_files(m2m_dir):
+        pos = _parse_position_from_file(cand, label)
+        if pos is not None:
+            return pos
+
+    raise RuntimeError(
+        f"Could not resolve EEG label '{label}'. "
+        "Either install a SimNIBS version that exposes an eeg_positions API, "
+        "place a cap file (e.g., *.elc/CSV with label,x,y,z) in the m2m_* folder, "
+        "or pass explicit coordinates via --*-x/--*-y/--*-z."
+    )
+
 
 
 # ----------------- Session builder -----------------

@@ -1,6 +1,7 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import os
+import concurrent.futures
 import numpy as np
 import simnibs as sim
 import subprocess
@@ -26,24 +27,33 @@ runMNI152 = True
 
 rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
-t = os.listdir(rootDIR)[0]
-for subject in [t]:
+t = os.listdir(rootDIR)
+
+def process_subject(subject_entry):
+    """Run the TI pipeline for a single subject entry."""
+    subject_source = subject_entry
+    subject = subject_entry
+    subject_start = time.time()
+
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed
         subject = 'MNI152'
         sadnboxDIR      = rootDIR.split('Jake_Data')[0]
         fnamehead    = os.path.join(sadnboxDIR,'simnibs4_exmaples','m2m_MNI152','MNI152.msh')
-        
+
         output_root  = os.path.join(rootDIR, subject, 'anat','SimNIBS')
         subject_dir = os.path.join(rootDIR, subject, 'anat')
-        
-    else:    
-        fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh') 
+
+    else:
+        fnamehead    = os.path.join(rootDIR, subject, 'anat', f'm2m_{subject}', f'{subject}.msh')
         output_root  = os.path.join(rootDIR,subject, 'anat','SimNIBS')
         subject_dir = os.path.join(rootDIR, subject, 'anat')
-# region Meshing
+
+    print(f"[INFO] Starting TI pipeline for {subject_source} (using '{subject}' resources).")
+
+    # region Meshing
     if meshPresent:
-        print("[INFO] Mesh present, skipping meshing step.")
+        print(f"[INFO] ({subject_source}) Mesh present, skipping meshing step.")
     else:
         cmd = [
             "charm",
@@ -52,20 +62,20 @@ for subject in [t]:
             os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
             "--forcerun"
             ]
-        
+
         try:
             subprocess.run(cmd, cwd=str(subject_dir), check=True)
         except Exception as e:
             print(f"[ERROR] Error creating initial head model for {subject}: {e}")
-            continue
-        
+            return
+
         # Load images
         custom_seg_map_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii")
         custom_seg_map = nib.load(custom_seg_map_path)
-        
+
         charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
         charm_seg_map = nib.load(charm_seg_map_path)
-        
+
         # Ensure integer labels; nibabel exposes floats via get_fdata().
         # We'll round+cast only if dtype isn't int-like.
         def to_int_img(img, like):
@@ -79,10 +89,10 @@ for subject in [t]:
         # Resample to reference grid if needed
         same_shape = custom_seg_map.shape == charm_seg_map.shape
         same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
-        
+
         #? Low to high resampling is not recommended
         # if not (same_shape and same_affine):
-            
+
         #     print("[INFO] Resampling custom segmentation to CHARM label grid (nearest-neighbor).")
         #     # order=0 enforces nearest-neighbor to preserve labels
         #     # src_img_nn = nib.Nifti1Image(
@@ -90,10 +100,10 @@ for subject in [t]:
         #     # )
         #     resampled = resample_from_to(custom_seg_map, charm_seg_map, order=0)
         #     # rsmpl_custom_seg_map = to_int_img(resampled, charm_seg_map)
-        
+
         # else:
         #     rsmpl_custom_seg_map = to_int_img(custom_seg_map, charm_seg_map)
-            
+
         #region Re-mesh
         # merged_img, debug = merge_segmentation_maps(resampled, charm_seg_map,
         #     manual_skin_id=5,          # scalp ID in custom segmentation
@@ -101,18 +111,18 @@ for subject in [t]:
         #     background_label=0,              # background ID in custom segmentation
         #     output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
         #     save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-        
-        
+
+
         #? High to low resampling
         if not (same_shape and same_affine):
-            
+
             print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
             # order=0 enforces nearest-neighbor to preserve labels
             src_img_nn = nib.Nifti1Image(
                 np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
             )
             resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
-        
+
         #region Re-mesh
         merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
             manual_skin_id=5,          # scalp ID in custom segmentation
@@ -120,13 +130,13 @@ for subject in [t]:
             background_label=0,              # background ID in custom segmentation
             output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
             save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-        
-        
-        
-        
+
+
+
+
         merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
         nib.save(merged_img, merged_seg_img_path)
-        
+
         atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
 
 
@@ -138,13 +148,13 @@ for subject in [t]:
             os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
             "--mesh"
         ]
-        
+
         try:
             subprocess.run(remesh_cmd, cwd=str(subject_dir), check=True)
         except Exception as e:
             print(f"Error remeshing head model for {subject}: {e}")
 
-    
+
     electrode_size        = [10, 1]       # [radius_mm, thickness_mm]
     electrode_shape       = 'ellipse'
     electrode_conductivity = 0.85
@@ -152,7 +162,7 @@ for subject in [t]:
     # Hippocampus montage
     montage_right = ('Fp2', 2, 'P8', -2)
     montage_left  = ('T7', 2, 'P7',  -2)
-    
+
     # M1 montage
     # montage_right = ('C1', 1.34, 'Cz', -1.34)
     # montage_left  = ('C3', 2.66, 'CP5',  -2.66)
@@ -196,11 +206,11 @@ for subject in [t]:
     tdcs2.electrode[1].mesh_element_size = 0.1
 
     # ———— RUN SIMULATION ————
-    print("Running SimNIBS for TI brain-only mesh…")
+    print(f"Running SimNIBS for TI brain-only mesh… ({subject_source})")
     sim.run_simnibs(S)
 
     # ———— POST-PROCESS ————
-    
+
     m1 = mesh_io.read_msh(os.path.join(S.pathfem, f'{subject}_TDCS_1_scalar.msh'))
     m2 = mesh_io.read_msh(os.path.join(S.pathfem, f'{subject}_TDCS_2_scalar.msh'))
 
@@ -216,7 +226,7 @@ for subject in [t]:
 
     m1 = m1.crop_mesh(tags = tags_keep)
     m2 = m2.crop_mesh(tags = tags_keep)
-    
+
     # Extract field vectors on gray+white mesh
     E1_vec = m1.field['E']
     E2_vec = m2.field['E']
@@ -238,15 +248,15 @@ for subject in [t]:
     mesh_io.write_msh(mout, out_path)
     print(f"Saved gray+white TI mesh to: {out_path}")
     #endregion
-    #region Saving Results 
+    #region Saving Results
     volume_masks_path = os.path.join(S.pathfem,'Volume_Maks')
     if not os.path.isdir(volume_masks_path):
         os.mkdir(volume_masks_path)
-        
+
     volume_base_path = os.path.join(S.pathfem,'Volume_Base')
     if not os.path.isdir(volume_base_path):
         os.mkdir(volume_base_path)
-        
+
     volume_labels_path = os.path.join(S.pathfem,'Volume_Labels')
     if not os.path.isdir(volume_labels_path):
         os.mkdir(volume_labels_path)
@@ -297,7 +307,7 @@ for subject in [t]:
 
     label_img = nib.load(os.path.join(volume_labels_path,label_file_path))
     data = label_img.get_fdata(dtype=np.float32)  # read into RAM as float32
-    affine = label_img.affine                 
+    affine = label_img.affine
     hdr = label_img.header
 
     print(f'—— Label image info for: {label_file_path} ———')
@@ -308,7 +318,7 @@ for subject in [t]:
 
     ti_img = nib.load(os.path.join(volume_base_path,ti_volume_path))
     ti_data = ti_img.get_fdata(dtype=np.float32)  # read into RAM as float32
-    ti_affine = ti_img.affine                 
+    ti_affine = ti_img.affine
     ti_hdr = ti_img.header
 
     print(f'—— TI image info for: {ti_volume_path} ———')
@@ -336,9 +346,38 @@ for subject in [t]:
     masked_img = nib.Nifti1Image(masked, label_img.affine, label_img.header)
     masked_img.header.set_data_dtype(np.float32)
     nib.save(masked_img, os.path.join(output_root,"ti_brain_only.nii.gz"))
-    
+
     #endregion
-    
+
+    elapsed = time.time() - subject_start
+    print(f"[INFO] Completed TI pipeline for {subject_source} in {elapsed:.2f} seconds.")
+    return elapsed
+
+
+if not t:
+    print("[WARN] No subjects found in root directory; exiting.")
+else:
+    max_workers = min(len(t), max(1, os.cpu_count() or 1))
+    print(f"[INFO] Launching TI pipeline on {len(t)} subject(s) with {max_workers} worker(s).")
+    subject_durations = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_subject = {executor.submit(process_subject, subject): subject for subject in t}
+        for future in concurrent.futures.as_completed(future_to_subject):
+            subject = future_to_subject[future]
+            try:
+                duration = future.result()
+                if duration is not None:
+                    subject_durations[subject] = duration
+            except Exception as exc:
+                print(f"[ERROR] Failure while processing {subject}: {exc}")
+
 print("Done.")
 end = time.time()
-print(f"Execution time: {end - start} seconds")
+total_runtime = end - start
+print(f"Execution time: {total_runtime:.2f} seconds")
+if 'subject_durations' in locals() and subject_durations:
+    sequential_estimate = sum(subject_durations.values())
+    print(f"[INFO] Sum of per-subject runtimes (sequential baseline): {sequential_estimate:.2f} seconds")
+    if total_runtime > 0:
+        speedup = sequential_estimate / total_runtime
+        print(f"[INFO] Approximate speed-up vs sequential: {speedup:.2f}x")

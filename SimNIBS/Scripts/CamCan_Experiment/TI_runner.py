@@ -10,7 +10,8 @@ import nibabel as nib
 from nibabel.processing import resample_from_to
 
 from copy import deepcopy
-from simnibs import sim_struct, mesh_io, ElementTags
+#from simnibs import sim_struct, mesh_io, ElementTags
+from simnibs import *
 from simnibs.utils import TI_utils as TI
 from functions import *
 import time
@@ -22,10 +23,9 @@ import time
 start = time.time()
 
 #? Set appropriate flags
-meshPresent = True
-runMNI152 = True
-
-rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run'
+meshPresent = False
+runMNI152 = False
+rootDIR='/users/cop23bi/Data/sample-dataset-parallel'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)
 
@@ -60,7 +60,8 @@ def process_subject(subject_entry):
             subject,  # SUBJECT_ID must be first
             os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
             os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
-            "--forcerun"
+            "--forcerun",
+	        "--forceqform"
             ]
 
         try:
@@ -218,7 +219,11 @@ def process_subject(subject_entry):
     gray_tags  = [1002]   # e.g. cortical gray matter tag
     # white_tags = [1003]   # e.g. subcortical/white matter tag
 
-    tags_keep = np.hstack((np.arange(ElementTags.TH_START, ElementTags.SALINE_START - 1), np.arange(ElementTags.TH_SURFACE_START, ElementTags.SALINE_TH_SURFACE_START - 1)))
+    tags_keep = np.hstack((
+        np.arange(0, 499),     # 0–498 inclusive
+        np.arange(1000, 1499)  # 1000–1498 inclusive
+        ))
+   # tags_keep = np.hstack((np.arange(ElementTags.TH_START, ElementTags.SALINE_START - 1), np.arange(ElementTags.TH_SURFACE_START, ElementTags.SALINE_TH_SURFACE_START - 1)))
 
     # # Crop to gray + white matter only
     # m1=m1.crop_mesh(tags = tags_keep)

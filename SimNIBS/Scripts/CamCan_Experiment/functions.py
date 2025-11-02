@@ -33,6 +33,15 @@ WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
 # ------------------------------------------------
 #region post_funciton
 
+def img_info(label, img):
+    zooms = img.header.get_zooms()[:3]
+    shape = img.shape
+    center_vox = (np.array(shape)-1)/2.0
+    center_mm  = img.affine @ np.append(center_vox, 1)
+    print(f"{label}: shape={shape}, zooms={zooms}, axcodes={nib.aff2axcodes(img.affine)}")
+    print(f"{label}: center_vox={center_vox}, center_mm={center_mm[:3]}")
+    print(f"{label}: affine=\n{img.affine}\n")
+
 def overlay_ti_thresholds_on_t1_with_roi(
     *,
     ti_img: nib.Nifti1Image,         # 3D scalar TI (or 4D vector -> handled)
@@ -451,6 +460,12 @@ def merge_segmentation_maps(
     man_img = nib.load(manual_seg) if not isinstance(manual_seg, nib.Nifti1Image) else manual_seg
     cha_img = nib.load(charm_seg)  if not isinstance(charm_seg,  nib.Nifti1Image)  else charm_seg
 
+    # Reorient both to RAS canonical orientation
+    man_img = nib.as_closest_canonical(man_img)
+    cha_img = nib.as_closest_canonical(cha_img)
+    print("Manual:", nib.aff2axcodes(man_img.affine))
+    print("CHARM :", nib.aff2axcodes(cha_img.affine))   
+    
     # --- Align manual -> CHARM grid if needed (NN preserves labels) ---
     if (man_img.shape != cha_img.shape) or (not np.allclose(man_img.affine, cha_img.affine, atol=1e-5)):
         man_img = _resample_nn(man_img, cha_img)

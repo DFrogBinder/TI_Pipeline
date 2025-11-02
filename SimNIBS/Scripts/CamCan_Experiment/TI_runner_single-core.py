@@ -114,6 +114,9 @@ for subject in [t]:
             )
             resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
         
+        img_info("MAN", custom_seg_map)
+        img_info("CHA", resampled)
+        
         #region Re-mesh
         merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
             manual_skin_id=5,          # scalp ID in custom segmentation

@@ -253,9 +253,9 @@ def run_single_combination(width: float,
     m2 = mesh_io.read_msh(os.path.join(S.pathfem, f'{subject}_TDCS_2_scalar.msh'))
 
     tags_keep = np.hstack((
-        np.arange(ElementTags.TH_START, ElementTags.SALINE_START - 1),
-        np.arange(ElementTags.TH_SURFACE_START, ElementTags.SALINE_TH_SURFACE_START - 1)
-    ))
+        np.arange(0, 499),     # 0–498 inclusive
+        np.arange(1000, 1499)  # 1000–1498 inclusive
+        ))
 
     m1 = m1.crop_mesh(tags=tags_keep)
     m2 = m2.crop_mesh(tags=tags_keep)

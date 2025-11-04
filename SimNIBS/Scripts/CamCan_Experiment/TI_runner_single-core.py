@@ -1,10 +1,13 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import os
+import matplotlib
+matplotlib.use("TkAgg")      # must run before pyplot import
 import numpy as np
 import simnibs as sim
 import subprocess
 import nibabel as nib
+import matplotlib.pyplot as plt
 
 from nibabel.processing import resample_from_to
 
@@ -24,9 +27,25 @@ start = time.time()
 meshPresent = False
 runMNI152 = False
 
+#? To load from checkpoint
+#==================================================================
+# import cloudpickle
+#   state = cloudpickle.loads(open("/home/boyan/sandbox/tmp/checkpoint.pkl", "rb").read())
+#  globals().update(state)
+#==================================================================
+
 rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run/hpc_test_data/sample-dataset'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)[0]
+state = cloudpickle.loads(open("/home/boyan/sandbox/tmp/checkpoint.pkl", "rb").read())
+globals().update(state)
+charm_data = resampled.get_fdata()
+custom_data = custom_seg_map.get_fdata()
+
+shape = charm_data.shape
+for i in custom_data:
+    print(i)
+
 for subject in [t]:
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed

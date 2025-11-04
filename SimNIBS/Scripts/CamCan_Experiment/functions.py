@@ -1,6 +1,8 @@
 import os
-import shutil
 import tempfile
+import cloudpickle
+import inspect
+import types
 import json
 import numpy as np
 import nibabel as nib
@@ -30,6 +32,38 @@ ROI_QUERIES = {
 
 EFIELD_PERCENTILE     = 95   # top percentile (e.g., 90 or 95)
 WRITE_PER_VOXEL_CSV   = True # CSV per voxel; set False if files get too big
+
+def save_locals(dst, *, exclude=("__builtins__",), frame=None):
+    """
+    Serialize the caller’s locals into `dst`, skipping entries that cannot be pickled.
+    Prints which names were skipped and where the checkpoint was saved.
+    """
+    if frame is None:
+        frame = inspect.currentframe().f_back
+
+    keep = {}
+    skipped = []
+    for name, value in frame.f_locals.items():
+        if name in exclude:
+            continue
+        if isinstance(value, types.FrameType):
+            skipped.append(name)
+            continue
+        try:
+            cloudpickle.dumps(value)
+        except Exception:
+            skipped.append(name)
+            continue
+        keep[name] = value
+
+    path = Path(dst).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(cloudpickle.dumps(keep))
+
+    if skipped:
+        print(f"[INFO] save_locals skipped {len(skipped)} names: {', '.join(skipped)}")
+    print(f"[INFO] save_locals wrote {len(keep)} objects to {path}")
+
 # ------------------------------------------------
 #region post_funciton
 

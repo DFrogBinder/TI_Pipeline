@@ -11,7 +11,7 @@ import nibabel as nib
 from nibabel.processing import resample_from_to
 
 from copy import deepcopy
-from simnibs import sim_struct, mesh_io, ElementTags
+from simnibs import sim_struct, mesh_io
 from simnibs.utils import TI_utils as TI
 from functions import *
 import time
@@ -26,14 +26,14 @@ start = time.time()
 meshPresent = True
 runMNI152 = True
 
-rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run/main_data'
+rootDIR = '~/Data/custom_electrodes/base_data/'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)[0]
 for subject in [t]:
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed
         subject = 'MNI152'
-        sadnboxDIR      = rootDIR.split('Jake_Data')[0]
+        sadnboxDIR      = rootDIR.split('base_data')[0]
         fnamehead    = os.path.join(sadnboxDIR,'simnibs4_exmaples','m2m_MNI152','MNI152.msh')
         
         output_root  = os.path.join(rootDIR, subject, 'anat','SimNIBS')

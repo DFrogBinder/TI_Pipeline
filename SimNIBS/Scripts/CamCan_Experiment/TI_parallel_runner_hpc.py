@@ -14,7 +14,7 @@ from typing import Dict, Iterable, List, Tuple
 import nibabel as nib
 import numpy as np
 import simnibs as sim
-from simnibs import ElementTags, mesh_io, sim_struct
+from simnibs import mesh_io, sim_struct
 from simnibs.utils import TI_utils as TI
 
 
@@ -30,11 +30,11 @@ def prepare_subject_environment(root_dir: str,
     Prepares subject-specific paths (only once) and optionally re-runs meshing.
     Returns a dict with paths used by individual simulations.
     """
-    subject = os.listdir(root_dir)[0]
+    subject = os.listdir(root_dir)[1]
 
     if run_mni152:
         subject = 'MNI152'
-        sandbox_dir = root_dir.split('Jake_Data')[0]
+        sandbox_dir = root_dir.split('base_data')[0]
         fnamehead = os.path.join(sandbox_dir, 'simnibs4_exmaples', 'm2m_MNI152', 'MNI152.msh')
         output_root = os.path.join(root_dir, subject, 'anat', 'SimNIBS')
         subject_dir = os.path.join(root_dir, subject, 'anat')
@@ -330,7 +330,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--root-dir",
         type=str,
-        default='/home/boyan/sandbox/Jake_Data/camcan_test_run/main_data',
+        default='~/Data/custom_electrodes/base_data/',
         help="Root directory of the dataset (default: current setting from TI_runner)."
     )
     return parser.parse_args(argv)

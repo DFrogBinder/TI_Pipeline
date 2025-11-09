@@ -34,19 +34,19 @@ runMNI152 = False
 #  globals().update(state)
 #==================================================================
 
-rootDIR     = '/home/boyan/sandbox/Jake_Data/camcan_test_run/hpc_test_data/sample-dataset'
+rootDIR     = '~/Data/good_data_test'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
-t = os.listdir(rootDIR)[0]
-state = cloudpickle.loads(open("/home/boyan/sandbox/tmp/checkpoint.pkl", "rb").read())
-globals().update(state)
-charm_data = resampled.get_fdata()
-custom_data = custom_seg_map.get_fdata()
+t = os.listdir(rootDIR)
+#state = cloudpickle.loads(open("/home/boyan/sandbox/tmp/checkpoint.pkl", "rb").read())
+#globals().update(state)
+#charm_data = resampled.get_fdata()
+#custom_data = custom_seg_map.get_fdata()
 
-shape = charm_data.shape
-for i in custom_data:
-    print(i)
+#shape = charm_data.shape
+#for i in custom_data:
+#    print(i)
 
-for subject in [t]:
+for subject in t:
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed
         subject = 'MNI152'
@@ -67,8 +67,8 @@ for subject in [t]:
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
-            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T1w.nii"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii"),
             "--forcerun",
             "--forceqform"
             ]
@@ -157,8 +157,8 @@ for subject in [t]:
         remesh_cmd = [
             "charm",
             subject,
-            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            #os.path.join(subject_dir, f"{subject}_T1w.nii"),
+            #os.path.join(subject_dir, f"{subject}_T2w.nii"),
             "--mesh"
         ]
         
@@ -288,7 +288,7 @@ for subject in [t]:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), labels_path,"--create_label"])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"])
     except Exception as e:
         print(f"Error creating label meshes: {e}")
 
@@ -297,7 +297,7 @@ for subject in [t]:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), masks_path,"--create_masks"])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"])
     except Exception as e:
         print(f"Error creating mask meshes: {e}")
 
@@ -306,7 +306,7 @@ for subject in [t]:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), ti_volume_path])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path])
     except Exception as e:
         print(f"Error creating volumetric mesh: {e}")
     #endregion

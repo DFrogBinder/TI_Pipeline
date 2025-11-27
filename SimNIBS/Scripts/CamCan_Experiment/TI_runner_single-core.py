@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 import os
 import matplotlib
-from tqdm import tqdm
-matplotlib.use("TkAgg")      # must run before pyplot import
 import numpy as np
 import simnibs as sim
 import subprocess
@@ -35,7 +33,7 @@ runMNI152 = False
 #  globals().update(state)
 #==================================================================
 
-rootDIR     = '/users/cop23bi/Data/good_data_test'
+rootDIR     = '/users/cop23bi/Data/batch'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)
 #state = cloudpickle.loads(open("/home/boyan/sandbox/tmp/checkpoint.pkl", "rb").read())
@@ -47,7 +45,7 @@ t = os.listdir(rootDIR)
 #for i in custom_data:
 #    tqdm.write(i)
 
-for subject in tqdm(t):
+for subject in t:
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed
         subject = 'MNI152'
@@ -63,7 +61,7 @@ for subject in tqdm(t):
         subject_dir = os.path.join(rootDIR, subject, 'anat')
 # region Meshing
     if meshPresent:
-        tqdm.write("[INFO] Mesh present, skipping meshing step.")
+        print("[INFO] Mesh present, skipping meshing step.")
     else:
         cmd = [
             "charm",
@@ -77,7 +75,7 @@ for subject in tqdm(t):
         try:
             subprocess.run(cmd, cwd=str(subject_dir), check=True)
         except Exception as e:
-            tqdm.write(f"[ERROR] Error creating initial head model for {subject}: {e}")
+            print(f"[ERROR] Error creating initial head model for {subject}: {e}")
             continue
         
         # Load images
@@ -93,7 +91,7 @@ for subject in tqdm(t):
             data = img.get_fdata(dtype=np.float32)  # safe access; may be float
             # Detect non-integers
             if not np.allclose(data, np.round(data)):
-                tqdm.write("[WARN] Custom segmentation contains non-integer values; rounding to nearest integers.")
+                print("[WARN] Custom segmentation contains non-integer values; rounding to nearest integers.")
             data = np.rint(data).astype(np.int16)
             return nib.Nifti1Image(data, like.affine, like.header)
 
@@ -127,7 +125,7 @@ for subject in tqdm(t):
         #? High to low resampling
         if not (same_shape and same_affine):
             
-            tqdm.write("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
+            print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
             # order=0 enforces nearest-neighbor to preserve labels
             src_img_nn = nib.Nifti1Image(
                 np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
@@ -166,7 +164,7 @@ for subject in tqdm(t):
         try:
             subprocess.run(remesh_cmd, cwd=str(subject_dir), check=True)
         except Exception as e:
-            tqdm.write(f"Error remeshing head model for {subject}: {e}")
+            print(f"Error remeshing head model for {subject}: {e}")
 
     
     electrode_size        = [10, 1]       # [radius_mm, thickness_mm]
@@ -220,7 +218,7 @@ for subject in tqdm(t):
     tdcs2.electrode[1].mesh_element_size = 0.1
 
     # ———— RUN SIMULATION ————
-    tqdm.write("Running SimNIBS for TI brain-only mesh…")
+    print("Running SimNIBS for TI brain-only mesh…")
     sim.run_simnibs(S)
 
     # ———— POST-PROCESS ————
@@ -263,7 +261,7 @@ for subject in tqdm(t):
     # Write out the gray+white TI mesh
     out_path = os.path.join(S.pathfem, 'TI.msh')
     mesh_io.write_msh(mout, out_path)
-    tqdm.write(f"Saved gray+white TI mesh to: {out_path}")
+    print(f"Saved gray+white TI mesh to: {out_path}")
     #endregion
     #region Saving Results 
     volume_masks_path = os.path.join(S.pathfem,'Volume_Maks')
@@ -282,7 +280,7 @@ for subject in tqdm(t):
     masks_path = os.path.join(volume_masks_path, "TI_Volumetric_Masks")
     ti_volume_path = os.path.join(volume_base_path, "TI_Volumetric_Base")
 
-    tqdm.write('Exporting volumetric meshes...')
+    print('Exporting volumetric meshes...')
     try:
         if runMNI152:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
@@ -290,7 +288,7 @@ for subject in tqdm(t):
         else:
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"])
     except Exception as e:
-        tqdm.write(f"Error creating label meshes: {e}")
+        print(f"Error creating label meshes: {e}")
 
     try:
         if runMNI152:
@@ -299,7 +297,7 @@ for subject in tqdm(t):
         else:
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"])
     except Exception as e:
-        tqdm.write(f"Error creating mask meshes: {e}")
+        print(f"Error creating mask meshes: {e}")
 
     try:
         if runMNI152:
@@ -308,7 +306,7 @@ for subject in tqdm(t):
         else:
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path])
     except Exception as e:
-        tqdm.write(f"Error creating volumetric mesh: {e}")
+        print(f"Error creating volumetric mesh: {e}")
     #endregion
 
     #region Post-process
@@ -327,22 +325,22 @@ for subject in tqdm(t):
     affine = label_img.affine                 
     hdr = label_img.header
 
-    tqdm.write(f'—— Label image info for: {label_file_path} ———')
-    tqdm.write("shape:", data.shape)
-    tqdm.write("voxel sizes (mm):", hdr.get_zooms()[:3])
-    tqdm.write("units:", hdr.get_xyzt_units())
-    tqdm.write(f'———'*19)
+    #print(f'—— Label image info for: {label_file_path} ———')
+    #print("shape:", data.shape)
+    #print("voxel sizes (mm):", hdr.get_zooms()[:3])
+    #print("units:", hdr.get_xyzt_units())
+    #tqdm.write(f'———'*19)
 
     ti_img = nib.load(os.path.join(volume_base_path,ti_volume_path))
     ti_data = ti_img.get_fdata(dtype=np.float32)  # read into RAM as float32
     ti_affine = ti_img.affine                 
     ti_hdr = ti_img.header
 
-    tqdm.write(f'—— TI image info for: {ti_volume_path} ———')
-    tqdm.write("shape:", ti_data.shape)
-    tqdm.write("voxel sizes (mm):", ti_hdr.get_zooms()[:3])
-    tqdm.write("units:", ti_hdr.get_xyzt_units())
-    tqdm.write(f'———'*19)
+#    tqdm.write(f'—— TI image info for: {ti_volume_path} ———')
+#   # tqdm.write("shape:", ti_data.shape)
+   # tqdm.write("voxel sizes (mm):", ti_hdr.get_zooms()[:3])
+   # tqdm.write("units:", ti_hdr.get_xyzt_units())
+   # tqdm.write(f'———'*19)
 
     # Extract unique labels
     labels = np.asarray(label_img.dataobj)  # lazy; no copy unless needed
@@ -366,6 +364,6 @@ for subject in tqdm(t):
     
     #endregion
     
-tqdm.write("Done.")
+print("Done.")
 end = time.time()
-tqdm.write(f"Execution time: {end - start} seconds")
+print(f"Execution time: {end - start} seconds")

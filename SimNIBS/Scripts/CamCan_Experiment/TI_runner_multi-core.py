@@ -25,7 +25,7 @@ start = time.time()
 #? Set appropriate flags
 meshPresent = False
 runMNI152 = False
-rootDIR='/users/cop23bi/Data/sample-dataset-parallel'
+rootDIR='/mnt/parscratch/users/cop23bi/sample-ti-dataset'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)
 
@@ -58,8 +58,8 @@ def process_subject(subject_entry):
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
-            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T1w.nii"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii"),
             "--forcerun",
 	        "--forceqform"
             ]
@@ -145,8 +145,8 @@ def process_subject(subject_entry):
         remesh_cmd = [
             "charm",
             subject,
-            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            #os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
+            #os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
             "--mesh"
         ]
 
@@ -276,7 +276,7 @@ def process_subject(subject_entry):
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), labels_path,"--create_label"])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"])
     except Exception as e:
         print(f"Error creating label meshes: {e}")
 
@@ -285,7 +285,7 @@ def process_subject(subject_entry):
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), masks_path,"--create_masks"])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"])
     except Exception as e:
         print(f"Error creating mask meshes: {e}")
 
@@ -294,7 +294,7 @@ def process_subject(subject_entry):
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), ti_volume_path])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path])
     except Exception as e:
         print(f"Error creating volumetric mesh: {e}")
     #endregion
@@ -315,22 +315,22 @@ def process_subject(subject_entry):
     affine = label_img.affine
     hdr = label_img.header
 
-    print(f'—— Label image info for: {label_file_path} ———')
-    print("shape:", data.shape)
-    print("voxel sizes (mm):", hdr.get_zooms()[:3])
-    print("units:", hdr.get_xyzt_units())
-    print(f'———'*19)
+    #print(f'—— Label image info for: {label_file_path} ———')
+    #print("shape:", data.shape)
+    #print("voxel sizes (mm):", hdr.get_zooms()[:3])
+    #print("units:", hdr.get_xyzt_units())
+    #print(f'———'*19)
 
     ti_img = nib.load(os.path.join(volume_base_path,ti_volume_path))
     ti_data = ti_img.get_fdata(dtype=np.float32)  # read into RAM as float32
     ti_affine = ti_img.affine
     ti_hdr = ti_img.header
 
-    print(f'—— TI image info for: {ti_volume_path} ———')
-    print("shape:", ti_data.shape)
-    print("voxel sizes (mm):", ti_hdr.get_zooms()[:3])
-    print("units:", ti_hdr.get_xyzt_units())
-    print(f'———'*19)
+    #print(f'—— TI image info for: {ti_volume_path} ———')
+    #print("shape:", ti_data.shape)
+    #print("voxel sizes (mm):", ti_hdr.get_zooms()[:3])
+    #print("units:", ti_hdr.get_xyzt_units())
+    #print(f'———'*19)
 
     # Extract unique labels
     labels = np.asarray(label_img.dataobj)  # lazy; no copy unless needed

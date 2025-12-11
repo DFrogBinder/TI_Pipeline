@@ -1,6 +1,7 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import os
+import argparse
 import concurrent.futures
 import numpy as np
 import simnibs as sim
@@ -18,16 +19,11 @@ import time
 
 
 
-#region Parameters
-# Mesh and output
-start = time.time()
-
 #? Set appropriate flags
 meshPresent = False
 runMNI152 = False
-rootDIR='/mnt/parscratch/users/cop23bi/sample-ti-dataset'
-# fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
-t = os.listdir(rootDIR)
+rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
+
 
 def process_subject(subject_entry):
     """Run the TI pipeline for a single subject entry."""
@@ -58,10 +54,10 @@ def process_subject(subject_entry):
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
-            os.path.join(subject_dir, f"{subject}_T1w.nii"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii"),
+            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
             "--forcerun",
-	        "--forceqform"
+	    "--forceqform"
             ]
 
         try:
@@ -359,14 +355,38 @@ def process_subject(subject_entry):
     return elapsed
 
 
-if not t:
-    print("[WARN] No subjects found in root directory; exiting.")
-else:
-    max_workers = min(len(t), max(1, os.cpu_count() or 1))
-    print(f"[INFO] Launching TI pipeline on {len(t)} subject(s) with {max_workers} worker(s).")
-    subject_durations = {}
+
+
+def run_many_subjects(max_workers: int | None = None):
+    """
+    Legacy / local mode: process all subjects found in rootDIR with a pool.
+
+    This is NOT what we use on the Slurm array. On the array we always call
+    process_subject() with a single --subject from the job script.
+    """
+    # Discover subject folders
+    subjects = [
+        d for d in os.listdir(rootDIR)
+        if os.path.isdir(os.path.join(rootDIR, d))
+    ]
+
+    if not subjects:
+        print(f"[WARN] No subjects found in root directory '{rootDIR}'; exiting.")
+        return None
+
+    # Default: as many workers as CPUs, capped at number of subjects
+    if max_workers is None:
+        max_workers = min(len(subjects), max(1, os.cpu_count() or 1))
+
+    print(f"[INFO] Launching TI pipeline on {len(subjects)} subject(s) "
+          f"with {max_workers} worker(s).")
+
+    subject_durations: dict[str, float] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_subject = {executor.submit(process_subject, subject): subject for subject in t}
+        future_to_subject = {
+            executor.submit(process_subject, subject): subject
+            for subject in subjects
+        }
         for future in concurrent.futures.as_completed(future_to_subject):
             subject = future_to_subject[future]
             try:
@@ -376,13 +396,67 @@ else:
             except Exception as exc:
                 print(f"[ERROR] Failure while processing {subject}: {exc}")
 
-print("Done.")
-end = time.time()
-total_runtime = end - start
-print(f"Execution time: {total_runtime:.2f} seconds")
-if 'subject_durations' in locals() and subject_durations:
-    sequential_estimate = sum(subject_durations.values())
-    print(f"[INFO] Sum of per-subject runtimes (sequential baseline): {sequential_estimate:.2f} seconds")
-    if total_runtime > 0:
-        speedup = sequential_estimate / total_runtime
-        print(f"[INFO] Approximate speed-up vs sequential: {speedup:.2f}x")
+    return subject_durations
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Temporal Interference pipeline runner (single- or multi-subject)."
+    )
+    parser.add_argument(
+        "--subject",
+        help=(
+            "Run the pipeline for a single subject ID, e.g. 'sub-CC110056'. "
+            "This is the mode to use from the Slurm job array."
+        ),
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help=(
+            "Max number of worker threads when processing multiple subjects. "
+            "Ignored when --subject is given. Defaults to #CPUs (capped by #subjects)."
+        ),
+    )
+
+    args = parser.parse_args()
+    start = time.time()
+
+    if args.subject:
+        # ---------- Single-subject (Slurm array) mode ----------
+        subject_id = args.subject.strip()
+        print(f"[INFO] Running TI pipeline for single subject: {subject_id}")
+        duration = process_subject(subject_id)
+        total_runtime = time.time() - start
+
+        print("Done.")
+        print(f"[INFO] Subject {subject_id} runtime: "
+              f"{(duration or 0.0):.2f} seconds.")
+        print(f"[INFO] Total execution time: {total_runtime:.2f} seconds.")
+
+    else:
+        # ---------- Multi-subject / local mode ----------
+        subject_durations = run_many_subjects(max_workers=args.max_workers)
+        total_runtime = time.time() - start
+
+        print("Done.")
+        print(f"[INFO] Total execution time: {total_runtime:.2f} seconds.")
+
+        if subject_durations:
+            sequential_estimate = sum(subject_durations.values())
+            print(
+                f"[INFO] Sum of per-subject runtimes (sequential baseline): "
+                f"{sequential_estimate:.2f} seconds"
+            )
+            if total_runtime > 0:
+                speedup = sequential_estimate / total_runtime
+                print(
+                    f"[INFO] Approximate speed-up vs sequential: "
+                    f"{speedup:.2f}x"
+                )
+
+
+if __name__ == "__main__":
+    main()
+

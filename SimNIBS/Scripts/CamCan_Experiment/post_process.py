@@ -26,6 +26,9 @@ class PostProcessConfig:
     plot_roi: str = "Hippocampus"     # which ROI to highlight in overlays
     percentile: float = 95.0
     hard_threshold: float = 200.0
+    write_region_table: bool = True
+    region_percentile: float = 95.0
+    offtarget_threshold: float = 0.2  # V/m threshold for focality checks
 
     # Debug/logging
     verbose: bool = True
@@ -80,6 +83,14 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         fastsurfer_root=cfg.fastsurfer_root,
         fastsurfer_atlas_path=cfg.fs_mri_path,
     )
+
+    # Resolve full FastSurfer atlas if available (for full-region summary)
+    fs_atlas_path = None
+    if cfg.atlas_mode in ("auto", "fastsurfer"):
+        try:
+            fs_atlas_path = _resolve_fastsurfer_atlas(cfg.subject, cfg.fastsurfer_root, cfg.fs_mri_path)
+        except Exception:
+            fs_atlas_path = None
     
     mask = roi_masks.get("Hippocampus")
     print("[INFO]:MODE CHECK")
@@ -116,6 +127,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # ---- Per-ROI products ----
     per_roi = {}
+    per_roi_metrics = {}
     for roi_name, mask in roi_masks.items():
         if mask is None:
             continue
@@ -163,6 +175,14 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             ti_in_roi=ti_in_roi_path,
             ti_in_roi_topP=ti_in_roi_topP_path,
         )
+
+        per_roi_metrics[roi_name] = dict(
+            roi_voxels=int(mask.sum()),
+            overlap_top_voxels=int(overlap_mask.sum()),
+            roi_volume_mm3=float(mask.sum() * vox_vol),
+            overlap_volume_mm3=float(overlap_mask.sum() * vox_vol),
+            overlap_fraction=float(overlap_mask.sum() / mask.sum()) if mask.sum() else 0.0,
+        )
         
         hippo_outline_path = None
         hippo_label_path   = None
@@ -206,6 +226,26 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
                 hippo_label_ids=hippo_label_path,
             ))
 
+    # ---- Full atlas region summaries (FastSurfer only) ----
+    region_table_path = None
+    region_df = None
+    if cfg.write_region_table and fs_atlas_path:
+        try:
+            fs_atlas_img = resample_atlas_to_ti_grid(nib.load(fs_atlas_path), ti_img)
+            region_df = summarize_atlas_regions(
+                nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+                fs_atlas_img,
+                fastsurfer_dkt_labels,
+                percentile=cfg.region_percentile,
+            )
+            region_table_path = os.path.join(out_dir, "region_stats_fastsurfer.csv")
+            region_df.to_csv(region_table_path, index=False)
+            if cfg.verbose:
+                print(f"[INFO] Saved region stats to {region_table_path}")
+        except Exception as e:
+            if cfg.verbose:
+                print(f"[WARN] Skipped region table: {e}")
+
 
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
@@ -227,6 +267,20 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         if cfg.verbose:
             print("[INFO] Skipping overlays (T1 not found).")
 
+    # ---- Subject-level robustness metrics ----
+    subject_metrics = dict(
+        subject=cfg.subject,
+        percentile=cfg.percentile,
+        percentile_value=float(thr),
+        voxel_volume_mm3=vox_vol,
+        top_percentile_voxels=int(topP_mask.sum()),
+        rois=per_roi_metrics,
+    )
+
+    metrics_path = os.path.join(out_dir, "subject_metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(subject_metrics, f, indent=2)
+
     # ---- Return everything useful for tests / notebooks ----
     return dict(
         config=cfg,
@@ -238,6 +292,9 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         topP_ti_path=topP_ti_path,
         per_roi=per_roi,
         overlays=overlay_paths,
+        region_table=region_table_path,
+        region_df=region_df,
+        metrics_path=metrics_path,
     )
 
 cfg = PostProcessConfig(

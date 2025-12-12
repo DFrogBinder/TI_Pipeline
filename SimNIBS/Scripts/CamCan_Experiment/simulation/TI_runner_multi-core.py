@@ -1,6 +1,8 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import os
+import sys
+from pathlib import Path
 import argparse
 import concurrent.futures
 import numpy as np
@@ -14,6 +16,11 @@ from copy import deepcopy
 #from simnibs import sim_struct, mesh_io, ElementTags
 from simnibs import *
 from simnibs.utils import TI_utils as TI
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from functions import *
 import time
 
@@ -459,4 +466,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

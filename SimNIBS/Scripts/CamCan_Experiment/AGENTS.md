@@ -1,17 +1,20 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `TI_runner_multi-core.py`, `TI_runner_single-core.py`: run SimNIBS TI simulations (meshing → TDCS pairs → TImax → msh2nii export).
-- `post_process.py` + `post_functions.py`: subject-level TI mapping to atlases, ROI masks/CSVs/overlays, region stats, robustness metrics.
-- `post_population.py`: aggregates per-subject outputs into population hotspot/robustness summaries.
+- `simulation/TI_runner_multi-core.py`, `simulation/TI_runner_single-core.py`: run SimNIBS TI simulations (meshing → TDCS pairs → TImax → msh2nii export).
+- `post/post_process.py` + `post/post_functions.py`: subject-level TI mapping to atlases, ROI masks/CSVs/overlays, region stats, robustness metrics.
+- `post/post_population.py`: aggregates per-subject outputs into population hotspot/robustness summaries.
+- `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py`: FastSurfer/FreeSurfer atlas generation.
+- `viz/create3dmesh.py`: VTK/PLY/STL exports for visualization.
+- `utils/ti_utils.py`: shared helpers (ROI naming, TI scalar loading, atlas resampling, region summaries).
 - `make_atlas.sh`, `run_atlasMaker.py`: FastSurfer/FreeSurfer atlas generation.
 - `create3dmesh.py`: convert TI volumes + masks to VTK/PLY/STL.
 - Slurm wrappers: `my_jobArray.slurm`, `ti_multi.slurm`.
 - Docs/diagrams: `README.md`, `Updated_TI_Pipeline.drawio`.
 
 ## Build, Test, and Development Commands
-- Subject post-process (example): `python post_process.py` (edit cfg at bottom or import `run_post_process`).
-- Population aggregation: `python post_population.py --root <root> --peak-threshold 0.2 --target-roi Hippocampus`.
+- Subject post-process (example): `python post/post_process.py` (edit cfg at bottom or import `run_post_process`).
+- Population aggregation: `python post/post_population.py --root <root> --peak-threshold 0.2 --target-roi Hippocampus`.
 - Simulation (single subject): `python TI_runner_multi-core.py --subject sub-XXX` (expects SimNIBS env and input data).
 - Atlas generation: `./make_atlas.sh <DATA_DIR> <THREADS> <LICENSE_PATH>` (Docker required).
 

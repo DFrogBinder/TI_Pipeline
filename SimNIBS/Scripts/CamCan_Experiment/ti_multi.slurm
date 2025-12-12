@@ -32,4 +32,4 @@ PYTHON=/home/boyan/SimNIBS-4.5/bin/simnibs_python
 
 # If TI_runner_multi-core.py is updated to read MAX_WORKERS, this will cap workers at 3.
 # Otherwise set max_workers directly in the script before submitting.
-$PYTHON TI_runner_multi-core.py
+$PYTHON simulation/TI_runner_multi-core.py

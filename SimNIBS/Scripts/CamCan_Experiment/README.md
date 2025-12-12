@@ -13,23 +13,32 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
   - Reports variability/robustness/hotspot tables (fraction above threshold, IQR, CV, worst-case peaks, volume–intensity correlation).
 - Helper utilities (`post_functions.py`) gained atlas resampling and region summarization helpers to support the above.
 
-## Components (quick map)
-- **Atlas generation**: `make_atlas.sh`, `run_atlasMaker.py` (FastSurfer+FreeSurfer Docker, produces aparc.DKTatlas+aseg.deep.nii.gz).
-- **Simulation**: `TI_runner_multi-core.py` (Slurm array/local multi-subject) and `TI_runner_single-core.py` (sequential) create meshes, run SimNIBS TDCS pairs, compute TImax, export TI volumes (`ti_brain_only.nii.gz`).
-- **Subject post-processing**: `post_process.py` consumes TI volume + T1 + atlas; writes ROI masks, CSVs, overlays, region stats, and subject-level metrics.
-- **Population analysis**: `post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
-- **Mesh export**: `create3dmesh.py` converts TI volumes + masks to VTK/PLY/STL for visualization.
+- **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries).
+- **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker, produces aparc.DKTatlas+aseg.deep.nii.gz).
+- **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject) and `simulation/TI_runner_single-core.py` (sequential) create meshes, run SimNIBS TDCS pairs, compute TImax, export TI volumes (`ti_brain_only.nii.gz`).
+- **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
+- **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
+- **Mesh export**: `viz/create3dmesh.py` converts TI volumes + masks to VTK/PLY/STL for visualization.
 - **Job wrappers**: `my_jobArray.slurm`, `ti_multi.slurm` submit simulations on HPC.
+- **Docs/diagrams**: `README.md`, `PIPELINE_OVERVIEW.md`, `Updated_TI_Pipeline.drawio`.
+
+## Directory layout
+- `atlas/`: FastSurfer/FreeSurfer atlas scripts.
+- `simulation/`: SimNIBS TI runners (single/multi-subject).
+- `post/`: Subject and population post-processing.
+- `utils/`: Shared helpers (TI/atlas utilities).
+- `viz/`: Geometry export utilities.
+- Root: Slurm wrappers, legacy `functions.py`, docs/diagrams.
 
 ## Subject-level post-processing
-1) Set config in `post_process.py` (or instantiate `PostProcessConfig` in your own script):
+1) Set config in `post/post_process.py` (or instantiate `PostProcessConfig` in your own script):
    - `root_dir`: dataset root.
    - `subject`: subject ID (e.g., `sub-CC110037` or `MNI152`).
    - `atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
    - `fastsurfer_root` / `fs_mri_path`: where to find `aparc.DKTatlas+aseg.deep.nii.gz`.
 2) Run:
 ```bash
-python post_process.py
+python post/post_process.py
 # or import and call run_post_process(cfg)
 ```
 Outputs go to `<root>/<subject>/anat/post/`:
@@ -43,7 +52,7 @@ Outputs go to `<root>/<subject>/anat/post/`:
 ## Population aggregation
 Run after all subjects have post-processing outputs:
 ```bash
-python post_population.py \
+python post/post_population.py \
   --root /path/to/root \
   --peak-threshold 0.2 \
   --target-roi Hippocampus \

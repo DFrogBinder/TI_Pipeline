@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import tempfile
 import subprocess
@@ -9,12 +10,25 @@ import numpy as np
 import pandas as pd
 import nibabel as nib
 from scipy.ndimage import binary_erosion
-from nibabel.affines import apply_affine
 from nibabel.processing import resample_from_to
 from nilearn import datasets, plotting
 from nilearn.image import resample_to_img
 from nilearn.plotting import plot_anat
-import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from utils.ti_utils import (
+    normalize_roi_name,
+    ensure_dir,
+    vol_mm3,
+    load_ti_as_scalar,
+    save_masked_nii,
+    resample_atlas_to_ti_grid,
+    summarize_atlas_regions,
+    extract_table,
+)
 
 
 
@@ -88,31 +102,6 @@ fastsurfer_dkt_labels = {
     2029: "ctx-rh-supramarginal", 2030: "ctx-rh-frontalpole",
     2031: "ctx-rh-temporalpole", 2032: "ctx-rh-transversetemporal", 2033: "ctx-rh-insula",
 }
-
-# ------------------ Small utilities ------------------
-
-def normalize_roi_name(name: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in name.strip().replace(" ", "_"))
-
-def ensure_dir(directory: str) -> None:
-    os.makedirs(directory, exist_ok=True)
-
-def vol_mm3(img: nib.Nifti1Image) -> float:
-    zooms = img.header.get_zooms()[:3]
-    return float(np.prod(zooms))
-
-def load_ti_as_scalar(img: nib.Nifti1Image) -> np.ndarray:
-    data = np.asarray(img.dataobj)
-    if data.ndim == 4 and data.shape[3] == 3:
-        data = np.linalg.norm(data, axis=3)
-    elif data.ndim != 3:
-        raise ValueError(f"Unexpected TI data shape: {data.shape}")
-    return data
-
-def save_masked_nii(data: np.ndarray, mask: np.ndarray, ref_img: nib.Nifti1Image, out_path: str) -> None:
-    masked_data = np.where(mask, data, 0)
-    out_img = nib.Nifti1Image(masked_data, ref_img.affine, ref_img.header)
-    nib.save(out_img, out_path)
 
 # ------------------ Overlay helpers ------------------
 
@@ -458,14 +447,6 @@ def roi_masks_on_ti_grid(
         atlas_imgs[roi_name] = resampled_img
 
     return roi_masks, atlas_imgs
-
-# ------------------ Table and IO helpers ------------------
-
-def extract_table(mask: np.ndarray, ref_img: nib.Nifti1Image, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    ijk = np.argwhere(mask)
-    xyz = apply_affine(ref_img.affine, ijk)
-    vals = data[mask]
-    return ijk, xyz, vals
 
 import csv
 def write_csv(out_path: str, ijk: np.ndarray, xyz: np.ndarray, vals: np.ndarray) -> None:

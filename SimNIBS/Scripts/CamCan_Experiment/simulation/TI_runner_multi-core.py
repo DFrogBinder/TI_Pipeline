@@ -21,7 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from functions import *
+from utils.sim_utils import (
+    format_output_dir,
+    merge_segmentation_maps,
+    atomic_replace,
+    img_info,
+)
 import time
 
 

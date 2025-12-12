@@ -12,7 +12,7 @@ THREADS_PER_JOB = 9
 MAX_PARALLEL_JOBS = 3
 LICENSE_PATH = ROOT_DIR / "freesurfer_licence.txt"
 
-home_dir = Path.cwd()
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def input_available(subject: str) -> bool:
@@ -33,7 +33,7 @@ def process_subject(subject: str) -> None:
     env["OMP_NUM_THREADS"] = str(THREADS_PER_JOB)
 
     cmd = [
-        str(home_dir / "make_atlas.sh"),
+        str(SCRIPT_DIR / "make_atlas.sh"),
         str(DATA_DIR),
         subject,
         str(THREADS_PER_JOB),

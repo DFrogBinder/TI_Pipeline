@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from post.post_functions import *
+from utils.paths import post_root, ti_brain_path, t1_path, fastsurfer_atlas_path
 
 @dataclass
 class PostProcessConfig:
@@ -43,23 +44,16 @@ class PostProcessConfig:
 def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str]]:
     subj = cfg.subject
     root = os.path.abspath(cfg.root_dir)
-    out_root = cfg.out_dir or os.path.join(root, subj, "anat", "post")
+    out_root = cfg.out_dir or str(post_root(root, subj))
 
-    # TI path
-    if cfg.ti_path:
-        ti_path = cfg.ti_path
-    else:
-        ti_path = os.path.join(root, subj, "anat", "SimNIBS", "ti_brain_only.nii.gz")
-
-    # T1 path
+    ti_path = cfg.ti_path or str(ti_brain_path(root, subj))
     if cfg.t1_path:
         t1_path = cfg.t1_path
     else:
         if subj.upper() == "MNI152":
-            # adjust this default if needed
             t1_path = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
         else:
-            t1_path = os.path.join(root, subj, "anat", f"{subj}_T1w.nii.gz")
+            t1_path = str(t1_path(root, subj))
 
     return out_root, ti_path, t1_path
 
@@ -94,7 +88,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     fs_atlas_path = None
     if cfg.atlas_mode in ("auto", "fastsurfer"):
         try:
-            fs_atlas_path = _resolve_fastsurfer_atlas(cfg.subject, cfg.fastsurfer_root, cfg.fs_mri_path)
+        fs_atlas_path = _resolve_fastsurfer_atlas(cfg.subject, cfg.fastsurfer_root, cfg.fs_mri_path)
         except Exception:
             fs_atlas_path = None
     
@@ -304,17 +298,19 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     )
 
 cfg = PostProcessConfig(
-    root_dir="/home/boyan/sandbox/Jake_Data/camcan_test_run",
-    subject="MNI152",                 # or "MNI152"
-    atlas_mode="auto",                      # or "mni" / "fastsurfer"
-    fastsurfer_root="/home/boyan/sandbox/Jake_Data/camcan_test_run/FastSurfer_out",
-    fs_mri_path=None,                       # or explicit path to aparc.DKTatlas+aseg.deep.nii.gz
+    root_dir="CHANGE_ME",
+    subject="MNI152",
+    atlas_mode="auto",
+    fastsurfer_root=None,
+    fs_mri_path=None,
     plot_roi="Hippocampus",
     percentile=95.0,
     hard_threshold=200.0,
     verbose=True,
 )
-print("[INFO] Running post-processing...")
-# set a breakpoint here, then:
-result = run_post_process(cfg)
-print("[INFO] Post-processing complete.")
+
+if __name__ == "__main__":
+    raise SystemExit(
+        "Import run_post_process and supply a PostProcessConfig; "
+        "this module no longer runs with hard-coded paths."
+    )

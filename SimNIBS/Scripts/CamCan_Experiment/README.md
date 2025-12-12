@@ -26,7 +26,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - `atlas/`: FastSurfer/FreeSurfer atlas scripts.
 - `simulation/`: SimNIBS TI runners (single/multi-subject).
 - `post/`: Subject and population post-processing.
-- `utils/`: Shared helpers (TI/atlas utilities).
+- `utils/`: Shared helpers (TI/atlas utilities, simulation helpers).
 - `viz/`: Geometry export utilities.
 - Root: Slurm wrappers, legacy `functions.py`, docs/diagrams.
 
@@ -58,6 +58,9 @@ python post/post_population.py \
   --target-roi Hippocampus \
   --template-region-csv /path/to/MNI152/region_stats_fastsurfer.csv
 ```
+
+## Tests
+- Minimal smoke tests for utils: `pytest tests/test_ti_utils.py` (requires pytest + nibabel).
 Outputs in `/path/to/root/population_analysis/`:
 - `all_region_values.csv` (concatenated per-subject region stats).
 - `population_region_summary.csv` (variability/robustness per label).

@@ -7,6 +7,7 @@
 - `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py`: FastSurfer/FreeSurfer atlas generation.
 - `viz/create3dmesh.py`: VTK/PLY/STL exports for visualization.
 - `utils/ti_utils.py`: shared helpers (ROI naming, TI scalar loading, atlas resampling, region summaries).
+- `utils/sim_utils.py`: simulation helpers (segmentation merge, atomic replace, directory formatting).
 - `make_atlas.sh`, `run_atlasMaker.py`: FastSurfer/FreeSurfer atlas generation.
 - `create3dmesh.py`: convert TI volumes + masks to VTK/PLY/STL.
 - Slurm wrappers: `my_jobArray.slurm`, `ti_multi.slurm`.
@@ -15,6 +16,7 @@
 ## Build, Test, and Development Commands
 - Subject post-process (example): `python post/post_process.py` (edit cfg at bottom or import `run_post_process`).
 - Population aggregation: `python post/post_population.py --root <root> --peak-threshold 0.2 --target-roi Hippocampus`.
+- Tests: `pytest tests/test_ti_utils.py` (requires pytest + nibabel).
 - Simulation (single subject): `python TI_runner_multi-core.py --subject sub-XXX` (expects SimNIBS env and input data).
 - Atlas generation: `./make_atlas.sh <DATA_DIR> <THREADS> <LICENSE_PATH>` (Docker required).
 

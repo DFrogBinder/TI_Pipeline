@@ -32,32 +32,46 @@ from typing import List, Optional
 # -----------------------------
 
 # Directories that should always be traversable / included (relative to SRC root).
-# For SimNIBS runs, this is commonly where your outputs live.
+# For SimNIBS, output artifacts commonly live under SimNIBS/Output.
 INCLUDE_DIRS: List[str] = [
     "SimNIBS/Output",
 ]
+
+INCLUDE_SPECIAL: List[str] = [
+    "**/m2m_*/[!/]*.msh",
+]
+
+# # File patterns you want to keep anywhere under the included trees.
+# INCLUDE_FILES: List[str] = [
+#     "*.msh",
+#     "*.nii",
+#     "*.nii.gz",
+#     "*.csv",
+#     "*.tsv",
+#     "*.json",
+#     "*.mat",
+#     "*.pkl",
+#     "*.npz",
+#     "*.txt",
+#     "*.log",
+#     "*.out",
+#     "*.err",
+# ]
 
 # File patterns you want to keep anywhere under the included trees.
 INCLUDE_FILES: List[str] = [
     "*.msh",
     "*.nii",
-    "*.nii.gz",
-    "*.csv",
-    "*.tsv",
-    "*.json",
-    "*.mat",
-    "*.pkl",
-    "*.npz",
-    "*.txt",
-    "*.log",
-    "*.out",
-    "*.err",
+    "*.nii.gz"
 ]
 
 # Patterns to exclude (often large or regenerable).
 # These use rsync filter wildcard syntax.
 EXCLUDE_DIRS: List[str] = [
     "**/m2m_*",
+    "**/Volume_Base/**",
+    "**/Volume_Labels/**",
+    "**/Volume_Maks/**",
     "**/tmp/**",
     "**/.git/**",
     "**/__pycache__/**",
@@ -67,9 +81,9 @@ EXCLUDE_DIRS: List[str] = [
 ]
 
 
-# -----------------------------
-# Implementation
-# -----------------------------
+# =============================================================================
+# Helpers
+# =============================================================================
 
 def which_or_exit(binary: str) -> str:
     path = shutil.which(binary)
@@ -79,11 +93,66 @@ def which_or_exit(binary: str) -> str:
     return path
 
 
+def format_bytes(num_bytes: int) -> str:
+    gb = 1024 ** 3
+    mb = 1024 ** 2
+    if num_bytes >= gb:
+        return f"{num_bytes / gb:.2f} GB"
+    if num_bytes >= mb:
+        return f"{num_bytes / mb:.2f} MB"
+    return f"{num_bytes} bytes"
+
+
+def parse_rsync_total_size_bytes(rsync_output: str) -> int | None:
+    """
+    Parse rsync --info=stats2 output and extract a useful estimate of transfer size.
+
+    We prefer:
+      - 'Total transferred file size: X bytes'
+    Fallback:
+      - 'Total file size: X bytes' (less precise for "would transfer", but informative)
+    """
+    patterns = [
+        r"Total transferred file size:\s+([\d,]+)\s+bytes",
+        r"Total file size:\s+([\d,]+)\s+bytes",
+    ]
+    for pat in patterns:
+        m = re.search(pat, rsync_output)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    return None
+
+
+def get_directory_size_bytes(path: Path) -> int:
+    """
+    Python-native directory size calculation (works even if `du` is unavailable).
+    """
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except OSError:
+                # Ignore unreadable files (rare on HPC scratch but possible)
+                pass
+    return total
+
+
+def shlex_quote(s: str) -> str:
+    import shlex
+    return shlex.quote(s)
+
+
+# =============================================================================
+# rsync filter generation and execution
+# =============================================================================
+
 def build_rsync_filter_file(path: Path) -> None:
     """
     Create an rsync filter file that:
       - allows directory traversal
       - includes INCLUDE_DIRS trees
+      - includes INCLUDE_SPECIAL patterns (e.g., the single .msh in m2m_*)
       - includes INCLUDE_FILES patterns
       - excludes EXCLUDE_DIRS
       - excludes everything else
@@ -98,10 +167,12 @@ def build_rsync_filter_file(path: Path) -> None:
     lines.append("# Include key output directories (full subtree)")
     for d in INCLUDE_DIRS:
         d = d.strip("/")
-
-        # Include that directory subtree explicitly
-        # e.g. + SimNIBS/Output/***
         lines.append(f"+ {d}/***")
+    lines.append("")
+
+    lines.append("# Special-case includes (must come before excludes)")
+    for pat in INCLUDE_SPECIAL:
+        lines.append(f"+ {pat}")
     lines.append("")
 
     lines.append("# Include relevant file types (anywhere)")
@@ -121,36 +192,6 @@ def build_rsync_filter_file(path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def format_bytes(num_bytes: int) -> str:
-    gb = 1024 ** 3
-    mb = 1024 ** 2
-    if num_bytes >= gb:
-        return f"{num_bytes / gb:.2f} GB"
-    if num_bytes >= mb:
-        return f"{num_bytes / mb:.2f} MB"
-    return f"{num_bytes} bytes"
-
-
-def parse_rsync_total_size_bytes(rsync_output: str) -> int | None:
-    """
-    Parse rsync --info=stats2 output and extract the best available estimate
-    of the amount of data that would be transferred.
-
-    We prefer:
-      - 'Total transferred file size: X bytes'
-    Fallbacks:
-      - 'Total file size: X bytes' (less precise for transfer, but still informative)
-    """
-    patterns = [
-        r"Total transferred file size:\s+([\d,]+)\s+bytes",
-        r"Total file size:\s+([\d,]+)\s+bytes",
-    ]
-    for pat in patterns:
-        m = re.search(pat, rsync_output)
-        if m:
-            return int(m.group(1).replace(",", ""))
-    return None
-
 def run_rsync(
     src_root: Path,
     dst_root: Path,
@@ -160,7 +201,7 @@ def run_rsync(
 ) -> str:
     """
     Run rsync with a filter file to copy only allowed files into dst_root.
-    Returns rsync stdout+stderr text so we can parse stats in dry-run mode.
+    Returns rsync combined stdout/stderr text so we can parse stats in dry-run mode.
     """
     which_or_exit("rsync")
 
@@ -179,6 +220,7 @@ def run_rsync(
     if dry_run:
         cmd.append("--dry-run")
 
+    # Trailing slashes ensure rsync copies CONTENTS of src_root into dst_root
     cmd.extend([str(src_root) + "/", str(dst_root) + "/"])
 
     print("[INFO] Running rsync command:")
@@ -193,11 +235,14 @@ def run_rsync(
         stderr=subprocess.STDOUT,
     )
 
-    # Still show rsync output (useful for debugging)
+    # Show rsync output (useful for debugging and confirming matches)
     print(proc.stdout)
     return proc.stdout
 
 
+# =============================================================================
+# Compression (optional)
+# =============================================================================
 
 def compress_export(
     export_dir: Path,
@@ -226,7 +271,6 @@ def compress_export(
         which_or_exit("zstd")
         which_or_exit("tar")
 
-        # tar -C parent -cf - name | zstd -T0 -19 -o out_path
         cmd = (
             f"tar -C {shlex_quote(str(parent))} -cf - {shlex_quote(name)}"
             f" | zstd -T0 -19 -o {shlex_quote(str(out_path))}"
@@ -238,7 +282,6 @@ def compress_export(
     elif method == "gzip":
         which_or_exit("tar")
 
-        # tar -C parent -czf out_path name
         cmd = [
             "tar",
             "-C",
@@ -258,40 +301,9 @@ def compress_export(
     return out_path
 
 
-def shlex_quote(s: str) -> str:
-    # Minimal safe quoting for shell pipeline commands
-    import shlex
-    return shlex.quote(s)
-
-
-def du_h(path: Path) -> None:
-    if shutil.which("du"):
-        subprocess.run(["du", "-sh", str(path)], check=False)
-    else:
-        # fallback: estimate by walking
-        total = 0
-        for p in path.rglob("*"):
-            if p.is_file():
-                try:
-                    total += p.stat().st_size
-                except OSError:
-                    pass
-        print(f"{total / (1024**3):.2f} GB\t{path}")
-
-def format_bytes(num_bytes: int) -> str:
-    """
-    Convert bytes to a human-readable string (MB / GB).
-    """
-    gb = 1024 ** 3
-    mb = 1024 ** 2
-
-    if num_bytes >= gb:
-        return f"{num_bytes / gb:.2f} GB"
-    elif num_bytes >= mb:
-        return f"{num_bytes / mb:.2f} MB"
-    else:
-        return f"{num_bytes} bytes"
-
+# =============================================================================
+# CLI / Main
+# =============================================================================
 
 def main() -> None:
     p = argparse.ArgumentParser(
@@ -342,7 +354,7 @@ def main() -> None:
         build_rsync_filter_file(filter_path)
         print(f"[INFO] Wrote rsync filter file to: {filter_path}")
     else:
-        tmp = tempfile.NamedTemporaryFile(prefix="rsync_filter_", suffix=".txt", delete=False)
+        tmp = tempfile.NamedTemporaryFile(prefix="rsync_filter_", suffix=".rules", delete=False)
         filter_path = Path(tmp.name)
         tmp.close()
         build_rsync_filter_file(filter_path)
@@ -359,14 +371,6 @@ def main() -> None:
             dry_run=args.dry_run,
             verbose=not args.no_verbose,
         )
-        if args.dry_run:
-            est = parse_rsync_total_size_bytes(rsync_text)
-            print("[INFO] Dry-run complete. No files were copied.")
-            if est is not None:
-                print(f"[INFO] Estimated transfer size (dry-run): {format_bytes(est)}  ({est:,} bytes)")
-            else:
-                print("[WARN] Could not parse rsync stats for estimated transfer size.")
-            return
     finally:
         # Only delete if we created a temp file
         if not args.write_filter_to:
@@ -376,20 +380,15 @@ def main() -> None:
                 pass
 
     if args.dry_run:
+        est = parse_rsync_total_size_bytes(rsync_text)
         print("[INFO] Dry-run complete. No files were copied.")
+        if est is not None:
+            print(f"[INFO] Estimated transfer size (dry-run): {format_bytes(est)}  ({est:,} bytes)")
+        else:
+            print("[WARN] Could not parse rsync stats for estimated transfer size.")
         return
 
-    def get_directory_size_bytes(path: Path) -> int:
-        total = 0
-        for p in path.rglob("*"):
-            if p.is_file():
-                try:
-                    total += p.stat().st_size
-                except OSError:
-                    pass
-        return total
-
-
+    # Real run: compute actual export directory size (Python-native)
     size_bytes = get_directory_size_bytes(dst_root)
     print("[INFO] Export size:")
     print(f"       {format_bytes(size_bytes)}  ({size_bytes:,} bytes)")
@@ -398,13 +397,12 @@ def main() -> None:
     if args.compress != "none":
         archive_path = Path(args.archive_path).expanduser().resolve() if args.archive_path else None
         created = compress_export(dst_root, archive_path, args.compress)
+
         if created.exists():
             archive_size = created.stat().st_size
             print("[INFO] Archive size:")
             print(f"       {format_bytes(archive_size)}  ({archive_size:,} bytes)")
 
 
-
 if __name__ == "__main__":
     main()
-

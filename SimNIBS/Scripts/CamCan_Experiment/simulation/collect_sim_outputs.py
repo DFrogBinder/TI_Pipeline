@@ -142,6 +142,11 @@ def build_rsync_filter_file(path: Path) -> None:
     for pat in INCLUDE_SPECIAL:
         lines.append(f"+ {pat}")
 
+    # IMPORTANT: Put directory excludes BEFORE generic include file types
+    lines += ["", "# Exclude unwanted directories (must come before include file types)"]
+    for pat in EXCLUDE_DIRS:
+        lines.append(f"- {pat}")
+
     lines += ["", "# Include general file types"]
     for pat in INCLUDE_FILES:
         lines.append(f"+ **/{pat}")
@@ -150,13 +155,10 @@ def build_rsync_filter_file(path: Path) -> None:
     for pat in EXCLUDE_FILE_PATTERNS:
         lines.append(f"- **/{pat}")
 
-    lines += ["", "# Exclude unwanted directories"]
-    for pat in EXCLUDE_DIRS:
-        lines.append(f"- {pat}")
-
     lines += ["", "# Exclude everything else", "- **", ""]
 
     path.write_text("\n".join(lines), encoding="utf-8")
+
 
 
 def run_rsync(

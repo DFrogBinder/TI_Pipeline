@@ -236,6 +236,20 @@ def du_h(path: Path) -> None:
                     pass
         print(f"{total / (1024**3):.2f} GB\t{path}")
 
+def format_bytes(num_bytes: int) -> str:
+    """
+    Convert bytes to a human-readable string (MB / GB).
+    """
+    gb = 1024 ** 3
+    mb = 1024 ** 2
+
+    if num_bytes >= gb:
+        return f"{num_bytes / gb:.2f} GB"
+    elif num_bytes >= mb:
+        return f"{num_bytes / mb:.2f} MB"
+    else:
+        return f"{num_bytes} bytes"
+
 
 def main() -> None:
     p = argparse.ArgumentParser(
@@ -315,16 +329,30 @@ def main() -> None:
         print("[INFO] Dry-run complete. No files were copied.")
         return
 
+    def get_directory_size_bytes(path: Path) -> int:
+        total = 0
+        for p in path.rglob("*"):
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+        return total
+
+
+    size_bytes = get_directory_size_bytes(dst_root)
     print("[INFO] Export size:")
-    du_h(dst_root)
+    print(f"       {format_bytes(size_bytes)}  ({size_bytes:,} bytes)")
     print()
 
     if args.compress != "none":
         archive_path = Path(args.archive_path).expanduser().resolve() if args.archive_path else None
         created = compress_export(dst_root, archive_path, args.compress)
-        print("[INFO] Archive size:")
         if created.exists():
-            du_h(created)
+            archive_size = created.stat().st_size
+            print("[INFO] Archive size:")
+            print(f"       {format_bytes(archive_size)}  ({archive_size:,} bytes)")
+
 
 
 if __name__ == "__main__":

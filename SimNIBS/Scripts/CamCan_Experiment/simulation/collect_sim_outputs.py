@@ -28,11 +28,6 @@ from typing import List, Optional
 # ========================= USER-EDITABLE FILTERS ==============================
 # =============================================================================
 
-# Output directories that must be traversable
-INCLUDE_DIRS: List[str] = [
-    "SimNIBS/Output",
-]
-
 # File extensions you generally want
 INCLUDE_FILES: List[str] = [
     "*.msh",
@@ -132,32 +127,48 @@ def build_rsync_filter_file(path: Path) -> None:
         "# Always allow directory traversal",
         "+ */",
         "",
-        "# Include main output directories",
+        "# Allow traversal into SimNIBS output trees (directories only, NOT files)",
+        "+ SimNIBS/",
+        "+ SimNIBS/**/",
+        "+ **/SimNIBS/Output/",
+        "+ **/SimNIBS/Output/**/",
+        "",
+        "# Special-case: keep ONLY the top-level .msh file inside any m2m_* folder",
+        # (this must appear before any excludes that remove m2m contents)
     ]
-
-    for d in INCLUDE_DIRS:
-        lines.append(f"+ {d.strip('/')}/***")
-
-    lines += ["", "# Special-case includes (must precede excludes)"]
     for pat in INCLUDE_SPECIAL:
         lines.append(f"+ {pat}")
 
-    # IMPORTANT: Put directory excludes BEFORE generic include file types
-    lines += ["", "# Exclude unwanted directories (must come before include file types)"]
+    lines += [
+        "",
+        "# Exclude unwanted directories early (must come BEFORE generic include file types)",
+    ]
     for pat in EXCLUDE_DIRS:
         lines.append(f"- {pat}")
 
-    lines += ["", "# Include general file types"]
+    lines += [
+        "",
+        "# Include general file types (anywhere that is still reachable)",
+    ]
     for pat in INCLUDE_FILES:
         lines.append(f"+ **/{pat}")
 
-    lines += ["", "# Exclude specific filename patterns"]
+    lines += [
+        "",
+        "# Exclude specific filename patterns (overrides include file types)",
+    ]
     for pat in EXCLUDE_FILE_PATTERNS:
         lines.append(f"- **/{pat}")
 
-    lines += ["", "# Exclude everything else", "- **", ""]
+    lines += [
+        "",
+        "# Exclude everything else",
+        "- **",
+        "",
+    ]
 
     path.write_text("\n".join(lines), encoding="utf-8")
+
 
 
 

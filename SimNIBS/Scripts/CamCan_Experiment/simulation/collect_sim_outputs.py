@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -120,15 +121,46 @@ def build_rsync_filter_file(path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def format_bytes(num_bytes: int) -> str:
+    gb = 1024 ** 3
+    mb = 1024 ** 2
+    if num_bytes >= gb:
+        return f"{num_bytes / gb:.2f} GB"
+    if num_bytes >= mb:
+        return f"{num_bytes / mb:.2f} MB"
+    return f"{num_bytes} bytes"
+
+
+def parse_rsync_total_size_bytes(rsync_output: str) -> int | None:
+    """
+    Parse rsync --info=stats2 output and extract the best available estimate
+    of the amount of data that would be transferred.
+
+    We prefer:
+      - 'Total transferred file size: X bytes'
+    Fallbacks:
+      - 'Total file size: X bytes' (less precise for transfer, but still informative)
+    """
+    patterns = [
+        r"Total transferred file size:\s+([\d,]+)\s+bytes",
+        r"Total file size:\s+([\d,]+)\s+bytes",
+    ]
+    for pat in patterns:
+        m = re.search(pat, rsync_output)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    return None
+
 def run_rsync(
     src_root: Path,
     dst_root: Path,
     filter_file: Path,
     dry_run: bool = False,
     verbose: bool = True,
-) -> None:
+) -> str:
     """
     Run rsync with a filter file to copy only allowed files into dst_root.
+    Returns rsync stdout+stderr text so we can parse stats in dry-run mode.
     """
     which_or_exit("rsync")
 
@@ -147,14 +179,24 @@ def run_rsync(
     if dry_run:
         cmd.append("--dry-run")
 
-    # Important: trailing slashes so rsync copies CONTENTS of src_root into dst_root
     cmd.extend([str(src_root) + "/", str(dst_root) + "/"])
 
     print("[INFO] Running rsync command:")
     print("       " + " ".join(cmd))
     print()
 
-    subprocess.run(cmd, check=True)
+    proc = subprocess.run(
+        cmd,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    # Still show rsync output (useful for debugging)
+    print(proc.stdout)
+    return proc.stdout
+
 
 
 def compress_export(
@@ -310,13 +352,21 @@ def main() -> None:
     print()
 
     try:
-        run_rsync(
+        rsync_text = run_rsync(
             src_root=src_root,
             dst_root=dst_root,
             filter_file=filter_path,
             dry_run=args.dry_run,
             verbose=not args.no_verbose,
         )
+        if args.dry_run:
+            est = parse_rsync_total_size_bytes(rsync_text)
+            print("[INFO] Dry-run complete. No files were copied.")
+            if est is not None:
+                print(f"[INFO] Estimated transfer size (dry-run): {format_bytes(est)}  ({est:,} bytes)")
+            else:
+                print("[WARN] Could not parse rsync stats for estimated transfer size.")
+            return
     finally:
         # Only delete if we created a temp file
         if not args.write_filter_to:

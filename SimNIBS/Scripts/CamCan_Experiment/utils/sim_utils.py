@@ -8,7 +8,7 @@ import os
 import tempfile
 import types
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Tuple
 
 import cloudpickle
 import nibabel as nib
@@ -116,49 +116,63 @@ def atomic_replace(src_path: str, dst_path: str, force_int: bool = False, int_dt
         raise
 
 
+def _load_nifti(x: Union[str, Path, nib.Nifti1Image]) -> nib.Nifti1Image:
+    if isinstance(x, nib.Nifti1Image):
+        return x
+    return nib.load(str(x))
+
+
 def merge_segmentation_maps(
-    manual_seg: Union[str, nib.Nifti1Image],
-    charm_seg: Union[str, nib.Nifti1Image],
+    manual_seg: Union[str, Path, nib.Nifti1Image],
+    charm_seg: Union[str, Path, nib.Nifti1Image],
     *,
-    output_path: Optional[str] = None,
+    output_path: Optional[Union[str, Path]] = None,
+    save_envelope_path: Optional[Union[str, Path]] = None,
     manual_skin_id: int = 5,
     background_label: int = 0,
     dilate_envelope_voxels: int = 0,
-) -> tuple[nib.Nifti1Image, Dict[str, Any]]:
+) -> Tuple[nib.Nifti1Image, Dict[str, Any]]:
     """
-    Clip manual scalp to CHARM's head envelope (>0):
-      1) envelope = (CHARM > 0)
-      2) manual scalp outside envelope -> background_label
-      3) keep other manual labels as-is
-    If grids differ, manual is resampled to CHARM grid (NN).
+    Clip manual scalp label voxels outside the CHARM 'envelope' (charm > 0).
+    Saves optional envelope mask and output segmentation.
     """
-    def _resample_nn(src_img, tgt_img):
-        return resample_from_to(src_img, tgt_img, order=0)
 
-    # --- Load ---
-    man_img = nib.load(manual_seg) if not isinstance(manual_seg, nib.Nifti1Image) else manual_seg
-    cha_img = nib.load(charm_seg) if not isinstance(charm_seg, nib.Nifti1Image) else charm_seg
+    man_img = _load_nifti(manual_seg)
+    charm_img = _load_nifti(charm_seg)
 
-    # Reorient to canonical for safer comparison
-    man_img = nib.as_closest_canonical(man_img)
-    cha_img = nib.as_closest_canonical(cha_img)
+    # Use integer arrays for label operations.
+    man = np.asanyarray(man_img.dataobj)
+    cha = np.asanyarray(charm_img.dataobj)
 
-    # Align manual -> CHARM grid if needed
-    if (man_img.shape != cha_img.shape) or (not np.allclose(man_img.affine, cha_img.affine, atol=1e-5)):
-        man_img = _resample_nn(man_img, cha_img)
-
-    man = np.asarray(man_img.get_fdata(), dtype=np.int32)
-    cha = np.asarray(cha_img.get_fdata(), dtype=np.int32)
+    # Hard safety: shapes must match for voxelwise boolean ops.
+    if man.shape != cha.shape:
+        raise ValueError(
+            f"Shape mismatch: manual {man.shape} vs charm {cha.shape}. "
+            "Resample one to the other's grid before calling merge_segmentation_maps()."
+        )
 
     envelope = cha > 0
 
-    # Optional dilation
-    if dilate_envelope_voxels > 0:
+    if dilate_envelope_voxels and dilate_envelope_voxels > 0:
         from scipy.ndimage import binary_dilation
+
         env = envelope
         for _ in range(int(dilate_envelope_voxels)):
             env = binary_dilation(env)
         envelope = env
+
+    # Save envelope mask if requested (0/1 uint8 on CHARM grid).
+    if save_envelope_path:
+        env_path = Path(save_envelope_path)
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+
+        env_img = nib.Nifti1Image(
+            envelope.astype(np.uint8, copy=False),
+            charm_img.affine,
+            charm_img.header,
+        )
+        env_img.header.set_data_dtype(np.uint8)
+        nib.save(env_img, str(env_path))
 
     man_scalp = (man == manual_skin_id)
     outside = man_scalp & (~envelope)
@@ -166,10 +180,16 @@ def merge_segmentation_maps(
     removed_voxels = int(outside.sum())
     total_scalp_voxels = int(man_scalp.sum())
 
-    out_arr = man.copy()
+    out_arr = np.array(man, copy=True)
     out_arr[outside] = background_label
 
-    out_img = nib.Nifti1Image(out_arr.astype(np.int16, copy=False), cha_img.affine, cha_img.header)
+    # Keep output on CHARM grid (affine/header) since envelope is defined there.
+    out_img = nib.Nifti1Image(
+        out_arr.astype(np.int16, copy=False),
+        charm_img.affine,
+        charm_img.header,
+    )
+    out_img.header.set_data_dtype(np.int16)
 
     if output_path:
         out_path = Path(output_path)
@@ -181,5 +201,6 @@ def merge_segmentation_maps(
         "manual_scalp_voxels": total_scalp_voxels,
         "dilate_envelope_voxels": int(dilate_envelope_voxels),
         "background_label": int(background_label),
+        "manual_skin_id": int(manual_skin_id),
     }
     return out_img, debug

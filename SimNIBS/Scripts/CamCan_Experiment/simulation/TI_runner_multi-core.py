@@ -66,8 +66,8 @@ def process_subject(subject_entry):
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
-            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T1w.nii"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii"),
             "--forcerun",
 	        "--forceqform"
             ]
@@ -284,7 +284,7 @@ def process_subject(subject_entry):
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), labels_path,"--create_label"])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"])
     except Exception as e:
         print(f"Error creating label meshes: {e}")
 
@@ -293,7 +293,7 @@ def process_subject(subject_entry):
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), masks_path,"--create_masks"])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"])
     except Exception as e:
         print(f"Error creating mask meshes: {e}")
 
@@ -302,7 +302,7 @@ def process_subject(subject_entry):
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
             subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path])
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii.gz'), ti_volume_path])
+            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path])
     except Exception as e:
         print(f"Error creating volumetric mesh: {e}")
     #endregion

@@ -77,8 +77,8 @@ for subject in t:
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
-            os.path.join(subject_dir, f"{subject}_T1w.nii"),
-            os.path.join(subject_dir, f"{subject}_T2w.nii"),
+            os.path.join(subject_dir, f"{subject}_T1w.nii.gz"),
+            os.path.join(subject_dir, f"{subject}_T2w.nii.gz"),
             "--forcerun",
             "--forceqform"
             ]

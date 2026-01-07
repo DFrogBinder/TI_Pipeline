@@ -28,7 +28,7 @@ def ti_brain_path(root: str, subject: str) -> Path:
 
 
 def t1_path(root: str, subject: str) -> Path:
-    return anat_root(root, subject) / f"{subject}_T1w.nii.gz"
+    return anat_root(root, subject) / f"{subject}_T1w.nii"
 
 
 def post_root(root: str, subject: str) -> Path:

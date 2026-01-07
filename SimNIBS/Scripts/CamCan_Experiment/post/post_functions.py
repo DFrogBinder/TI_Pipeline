@@ -317,13 +317,14 @@ def load_custom_atlas(atlas_path: NiftiLike) -> nib.Nifti1Image:
 def _resolve_fastsurfer_atlas(subject: str, fastsurfer_root: Optional[str], explicit_path: Optional[str]) -> Optional[str]:
     """
     Try several canonical locations for aparc.DKTatlas+aseg.deep.nii.gz.
-    Priority: explicit_path > {fastsurfer_root}/{subject}/mri/... > env SUBJECTS_DIR.
+    Priority: explicit_path > {fastsurfer_root}/{subject}.nii.gz >
+              {fastsurfer_root}/{subject}/mri/... > env SUBJECTS_DIR.
     """
     candidates: List[Path] = []
     if explicit_path:
         candidates.append(Path(explicit_path))
     if fastsurfer_root:
-        candidates.append(Path(fastsurfer_root) / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz")
+        candidates.append(Path(fastsurfer_root) / f"{subject}.nii.gz")
     env_sd = os.environ.get("SUBJECTS_DIR")
     if env_sd:
         candidates.append(Path(env_sd) / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz")
@@ -408,7 +409,7 @@ def roi_masks_on_ti_grid(
         return roi_masks, atlas_imgs
 
     # ---- FastSurfer path (chosen_mode == "fastsurfer") ----
-    print(f"[INFO] Using FastSurfer DKT+aseg for subject '{subject}'")
+    print(f"[INFO] Using FastSurfer segementation for subject '{subject}'")
     assert fs_atlas is not None, "Internal: fs_atlas must be resolved here."
 
     atlas_img = load_custom_atlas(fs_atlas)

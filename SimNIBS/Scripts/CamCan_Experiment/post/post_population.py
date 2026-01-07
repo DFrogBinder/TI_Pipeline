@@ -126,24 +126,21 @@ def load_template_peak(template_csv: Optional[Path], target_roi: str) -> Optiona
     return float(match["max"].iloc[0])
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Aggregate TI post-processing across subjects.")
-    parser.add_argument("--root", required=True, help="Root directory containing subject folders.")
-    parser.add_argument("--subjects", nargs="*", help="Explicit list of subject IDs to include.")
-    parser.add_argument("--out-dir", default=None, help="Output directory for population summaries.")
-    parser.add_argument("--region-filename", default="region_stats_fastsurfer.csv", help="Per-subject region stats filename.")
-    parser.add_argument("--metrics-filename", default="subject_metrics.json", help="Per-subject metrics filename.")
-    parser.add_argument("--peak-threshold", type=float, default=0.2, help="Threshold (V/m) for 'stimulated' peak fraction.")
-    parser.add_argument("--target-roi", default="Hippocampus", help="ROI name for robustness/target-drop reporting.")
-    parser.add_argument("--template-region-csv", default=None, help="Template (MNI) region stats CSV for baseline peaks.")
-
-    args = parser.parse_args()
-
-    root = Path(args.root).expanduser()
-    out_dir = Path(args.out_dir or (root / "population_analysis"))
+def run_population(
+    *,
+    root: Path,
+    subjects: Optional[Iterable[str]] = None,
+    out_dir: Optional[Path] = None,
+    region_filename: str = "region_stats_fastsurfer.csv",
+    metrics_filename: str = "subject_metrics.json",
+    peak_threshold: float = 0.2,
+    target_roi: str = "Hippocampus",
+    template_region_csv: Optional[Path] = None,
+) -> Path:
+    out_dir = Path(out_dir or (root / "population_analysis"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    subjects = discover_subjects(root, args.subjects, args.region_filename)
+    subjects = discover_subjects(root, subjects, region_filename)
     if not subjects:
         raise SystemExit("No subjects found with region stats.")
 
@@ -151,8 +148,8 @@ def main():
     subj_metrics = []
     for subj in subjects:
         subj_root = root / subj / "anat" / "post"
-        reg_path = subj_root / args.region_filename
-        met_path = subj_root / args.metrics_filename
+        reg_path = subj_root / region_filename
+        met_path = subj_root / metrics_filename
 
         df = load_subject_region_table(subj, reg_path)
         if df is not None:
@@ -168,20 +165,45 @@ def main():
     all_regions = pd.concat(region_tables, ignore_index=True)
     all_regions.to_csv(out_dir / "all_region_values.csv", index=False)
 
-    summary = aggregate_regions(all_regions, args.peak_threshold)
+    summary = aggregate_regions(all_regions, peak_threshold)
     summary.to_csv(out_dir / "population_region_summary.csv", index=False)
 
     corr = correlation_volume_intensity(all_regions)
     corr.to_csv(out_dir / "volume_intensity_correlation.csv", index=False)
 
-    template_peak = load_template_peak(
-        Path(args.template_region_csv) if args.template_region_csv else None,
-        args.target_roi,
-    )
-    subj_df = subject_target_table(all_regions, subj_metrics, args.target_roi, template_peak)
+    template_peak = load_template_peak(template_region_csv, target_roi)
+    subj_df = subject_target_table(all_regions, subj_metrics, target_roi, template_peak)
     subj_df.to_csv(out_dir / "subject_robustness.csv", index=False)
 
     print(f"[INFO] Aggregated {len(subjects)} subject(s). Outputs in: {out_dir}")
+    return out_dir
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Aggregate TI post-processing across subjects.")
+    parser.add_argument("--root", required=True, help="Root directory containing subject folders.")
+    parser.add_argument("--subjects", nargs="*", help="Explicit list of subject IDs to include.")
+    parser.add_argument("--out-dir", default=None, help="Output directory for population summaries.")
+    parser.add_argument("--region-filename", default="region_stats_fastsurfer.csv", help="Per-subject region stats filename.")
+    parser.add_argument("--metrics-filename", default="subject_metrics.json", help="Per-subject metrics filename.")
+    parser.add_argument("--peak-threshold", type=float, default=0.2, help="Threshold (V/m) for 'stimulated' peak fraction.")
+    parser.add_argument("--target-roi", default="Hippocampus", help="ROI name for robustness/target-drop reporting.")
+    parser.add_argument("--template-region-csv", default=None, help="Template (MNI) region stats CSV for baseline peaks.")
+
+    args = parser.parse_args()
+
+    run_population(
+        root=Path(args.root).expanduser(),
+        subjects=args.subjects,
+        out_dir=Path(args.out_dir).expanduser() if args.out_dir else None,
+        region_filename=args.region_filename,
+        metrics_filename=args.metrics_filename,
+        peak_threshold=args.peak_threshold,
+        target_roi=args.target_roi,
+        template_region_csv=Path(args.template_region_csv).expanduser()
+        if args.template_region_csv
+        else None,
+    )
 
 
 if __name__ == "__main__":

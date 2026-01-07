@@ -18,6 +18,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject) and `simulation/TI_runner_single-core.py` (sequential) create meshes, run SimNIBS TDCS pairs, compute TImax, export TI volumes (`ti_brain_only.nii.gz`).
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
+- **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
 - **Mesh export**: `viz/create3dmesh.py` converts TI volumes + masks to VTK/PLY/STL for visualization.
 - **Job wrappers**: `my_jobArray.slurm`, `ti_multi.slurm` submit simulations on HPC.
 - **Docs/diagrams**: `README.md`, `PIPELINE_OVERVIEW.md`, `Updated_TI_Pipeline.drawio`.
@@ -30,16 +31,16 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - `viz/`: Geometry export utilities.
 - Root: Slurm wrappers, legacy `functions.py`, docs/diagrams.
 
-## Subject-level post-processing
-1) Set config in `post/post_process.py` (or instantiate `PostProcessConfig` in your own script):
-   - `root_dir`: dataset root.
-   - `subject`: subject ID (e.g., `sub-CC110037` or `MNI152`).
-   - `atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
-   - `fastsurfer_root` / `fs_mri_path`: where to find `aparc.DKTatlas+aseg.deep.nii.gz`.
+## Post-processing pipeline
+1) Edit the pipeline config in `post/run_post_processing.py`:
+   - `post.root`: dataset root.
+   - `post.subjects`: list of subject IDs or `None` for all.
+   - `post.atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
+   - `post.fastsurfer_root` / `post.fs_mri_path`: where to find `aparc.DKTatlas+aseg.deep.nii.gz`.
+   - `population.enabled`: toggle population aggregation.
 2) Run:
 ```bash
-python post/post_process.py
-# or import and call run_post_process(cfg)
+python post/run_post_processing.py
 ```
 Outputs go to `<root>/<subject>/anat/post/`:
 - ROI masks/overlaps (`atlas_<ROI>_mask.nii.gz`, `<ROI>_overlap_topXXpct_mask.nii.gz`).
@@ -50,7 +51,8 @@ Outputs go to `<root>/<subject>/anat/post/`:
 - Overlays for selected ROI (`<ROI>_TI_overlay_topXX.png`, `..._aboveHHH.png` if T1 available).
 
 ## Population aggregation
-Run after all subjects have post-processing outputs:
+Population aggregation runs from `post/run_post_processing.py` when `population.enabled=True`.
+You can still run it directly:
 ```bash
 python post/post_population.py \
   --root /path/to/root \

@@ -6,14 +6,32 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Tuple
 
 import numpy as np
+import json
 import nibabel as nib
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from post.post_functions import *
-from utils.paths import post_root, ti_brain_path, t1_path, fastsurfer_atlas_path
+from post.post_functions import (
+    _resolve_fastsurfer_atlas,
+    fastsurfer_dkt_labels,
+    make_outline,
+    overlay_ti_thresholds_on_t1_with_roi,
+    roi_masks_on_ti_grid,
+    write_csv,
+)
+from utils.paths import post_root, ti_brain_path, t1_path
+from utils.ti_utils import (
+    ensure_dir,
+    extract_table,
+    load_ti_as_scalar,
+    normalize_roi_name,
+    resample_atlas_to_ti_grid,
+    save_masked_nii,
+    summarize_atlas_regions,
+    vol_mm3,
+)
 
 @dataclass
 class PostProcessConfig:
@@ -30,7 +48,7 @@ class PostProcessConfig:
 
     # Behavior
     out_dir: Optional[str] = None
-    plot_roi: str = "Hippocampus"     # which ROI to highlight in overlays
+    plot_roi: str = "ctx-lh-precentral"     # which ROI to highlight in overlays
     percentile: float = 95.0
     hard_threshold: float = 200.0
     write_region_table: bool = True
@@ -48,14 +66,14 @@ def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str]]:
 
     ti_path = cfg.ti_path or str(ti_brain_path(root, subj))
     if cfg.t1_path:
-        t1_path = cfg.t1_path
+        t1_file = cfg.t1_path
     else:
         if subj.upper() == "MNI152":
-            t1_path = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
+            t1_file = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
         else:
-            t1_path = str(t1_path(root, subj))
+            t1_file = str(t1_path(root, subj))
 
-    return out_root, ti_path, t1_path
+    return out_root, ti_path, t1_file
 
 
 def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
@@ -87,10 +105,10 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     # Resolve full FastSurfer atlas if available (for full-region summary)
     fs_atlas_path = None
     if cfg.atlas_mode in ("auto", "fastsurfer"):
-        try:
+        # try:
         fs_atlas_path = _resolve_fastsurfer_atlas(cfg.subject, cfg.fastsurfer_root, cfg.fs_mri_path)
-        except Exception:
-            fs_atlas_path = None
+        # except Exception:
+        #     fs_atlas_path = None
     
     mask = roi_masks.get("Hippocampus")
     print("[INFO]:MODE CHECK")
@@ -297,20 +315,8 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         metrics_path=metrics_path,
     )
 
-cfg = PostProcessConfig(
-    root_dir="CHANGE_ME",
-    subject="MNI152",
-    atlas_mode="auto",
-    fastsurfer_root=None,
-    fs_mri_path=None,
-    plot_roi="Hippocampus",
-    percentile=95.0,
-    hard_threshold=200.0,
-    verbose=True,
-)
-
 if __name__ == "__main__":
     raise SystemExit(
-        "Import run_post_process and supply a PostProcessConfig; "
-        "this module no longer runs with hard-coded paths."
+        "Use post/run_post_processing.py to run batch post-processing. "
+        "This module is intended to be imported and called as a library."
     )

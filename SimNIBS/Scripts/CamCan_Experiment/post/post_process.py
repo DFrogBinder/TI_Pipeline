@@ -277,6 +277,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             t1_img=t1_img_full,
             roi_mask_img=roi_mask_img,
             out_prefix=out_base,
+            subject=cfg.subject,
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
         )

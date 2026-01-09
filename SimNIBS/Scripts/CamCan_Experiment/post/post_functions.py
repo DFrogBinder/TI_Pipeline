@@ -246,6 +246,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
     t1_img: nib.Nifti1Image,
     roi_mask_img: nib.Nifti1Image,
     out_prefix: str,
+    subject: Optional[str] = None,
     percentile: float = 95.0,
     hard_threshold: float = 200.0,
     contour_color: str = "red",
@@ -276,6 +277,15 @@ def overlay_ti_thresholds_on_t1_with_roi(
     thr_percentile = float(np.percentile(arr[finite_pos], percentile))
     thr_fixed = float(hard_threshold)
 
+    roi_data = np.asarray(roi_on_ti.dataobj)
+    roi_coords = np.argwhere(roi_data > 0)
+    if roi_coords.size:
+        center_ijk = roi_coords.mean(axis=0)
+        center_xyz = nib.affines.apply_affine(roi_on_ti.affine, center_ijk)
+        cut_coords = tuple(float(x) for x in center_xyz)
+    else:
+        cut_coords = (0.0, 0.0, 0.0)
+
     def _plot_overlay(thr_value: float, label: str):
         masked = np.where(arr >= thr_value, arr, 0.0)
         shown = masked[masked > 0]
@@ -285,7 +295,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
 
         display = plot_anat(
             t1_on_ti, display_mode="ortho", dim=0, annotate=True,
-            draw_cross=True, colorbar=False, black_bg=True, cut_coords=(-20, 0, -30),
+            draw_cross=True, colorbar=False, black_bg=True, cut_coords=cut_coords,
             title=f"TI ≥ {thr_value:.3f} ({label})",
         )
         display.add_overlay(
@@ -295,7 +305,10 @@ def overlay_ti_thresholds_on_t1_with_roi(
             roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
         )
 
-        out_path = f"{out_prefix}_{label}.png"
+        if subject:
+            out_path = f"{out_prefix}_{subject}_{label}.png"
+        else:
+            out_path = f"{out_prefix}_{label}.png"
         os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
         display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
         display.close()

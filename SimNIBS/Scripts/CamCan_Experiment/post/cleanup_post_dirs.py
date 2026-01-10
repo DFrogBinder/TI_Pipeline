@@ -9,6 +9,18 @@ import shutil
 from pathlib import Path
 from typing import List
 
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
+console = Console(markup=False)
+
 
 def find_post_dirs(root: Path) -> List[Path]:
     post_dirs: List[Path] = []
@@ -46,22 +58,34 @@ def main() -> None:
         return
 
     for d in post_dirs:
-        print(d)
+        console.log(str(d))
 
     if args.dry_run:
-        print(f"[INFO] Dry run: {len(post_dirs)} directories listed.")
+        console.log(f"[INFO] Dry run: {len(post_dirs)} directories listed.")
         return
 
     if not args.yes:
         resp = input(f"Delete {len(post_dirs)} directories listed above? [y/N]: ").strip().lower()
         if resp not in ("y", "yes"):
-            print("[INFO] Aborted.")
+            console.log("[INFO] Aborted.")
             return
 
-    for d in post_dirs:
-        shutil.rmtree(d)
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+    with progress:
+        task = progress.add_task("Deleting post directories", total=len(post_dirs))
+        for d in post_dirs:
+            shutil.rmtree(d)
+            progress.advance(task)
 
-    print(f"[INFO] Deleted {len(post_dirs)} directories.")
+    console.log(f"[INFO] Deleted {len(post_dirs)} directories.")
 
 
 if __name__ == "__main__":

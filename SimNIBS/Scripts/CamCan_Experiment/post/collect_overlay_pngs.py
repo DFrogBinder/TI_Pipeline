@@ -9,6 +9,18 @@ import shutil
 from pathlib import Path
 from typing import List
 
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
+console = Console(markup=False)
+
 
 def find_overlay_pngs(root: Path, pattern: str) -> List[Path]:
     pngs: List[Path] = []
@@ -45,20 +57,33 @@ def main() -> None:
 
     pngs = find_overlay_pngs(root, args.pattern)
     if not pngs:
-        print("[INFO] No overlay PNGs found.")
+        console.log("[INFO] No overlay PNGs found.")
         return
 
     dest.mkdir(parents=True, exist_ok=True)
 
-    for src in pngs:
-        subject_id = src.parents[2].name  # <root>/<subject>/anat/post/<file>
-        dst_name = f"{subject_id}__{src.name}"
-        dst = dest / dst_name
-        print(f"{src} -> {dst}")
-        if not args.dry_run:
-            shutil.copy2(src, dst)
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+    with progress:
+        task = progress.add_task("Copying overlay PNGs", total=len(pngs))
+        for src in pngs:
+            subject_id = src.parents[2].name  # <root>/<subject>/anat/post/<file>
+            dst_name = f"{subject_id}__{src.name}"
+            dst = dest / dst_name
+            if args.dry_run:
+                console.log(f"{src} -> {dst}")
+            else:
+                shutil.copy2(src, dst)
+            progress.advance(task)
 
-    print(f"[INFO] Copied {len(pngs)} file(s) to {dest}.")
+    console.log(f"[INFO] Copied {len(pngs)} file(s) to {dest}.")
 
 
 if __name__ == "__main__":

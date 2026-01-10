@@ -3,7 +3,7 @@
 Find subject IDs missing a specific post-processing file.
 
 Expected structure:
-  ProjectDir/[subjectID]/anat/post/M1_overlay.png
+  ProjectDir/[subjectID]/anat/post/M1_TI_overlay_[subjectID]_above200.00.png
 """
 
 from __future__ import annotations
@@ -15,8 +15,9 @@ from typing import List
 
 def find_missing_subjects(
     project_dir: Path,
-    rel_target: Path,
+    rel_target: str,
     require_post_dir: bool,
+    roi: Optional[str],
 ) -> List[str]:
     missing: List[str] = []
 
@@ -30,7 +31,8 @@ def find_missing_subjects(
         subject_id = subj_dir.name
 
         post_dir = subj_dir / "anat" / "post"
-        target_path = subj_dir / rel_target
+        rel_path = Path(rel_target.format(subject=subject_id, roi=roi or ""))
+        target_path = subj_dir / rel_path
 
         if require_post_dir and not post_dir.is_dir():
             # If you only care about cases where post/ exists, skip subjects without it.
@@ -53,9 +55,17 @@ def main() -> None:
         help="Path to ProjectDir (contains subjectID subfolders).",
     )
     parser.add_argument(
+        "--roi",
+        default="M1",
+        help="ROI name used in the overlay filename (e.g., M1, Hippocampus).",
+    )
+    parser.add_argument(
         "--target",
-        default="anat/post/M1_overlay.png",
-        help="Relative path (from each subject folder) to the required file.",
+        default="anat/post/{roi}_TI_overlay_{subject}_above200.00.png",
+        help=(
+            "Relative path (from each subject folder) to the required file. "
+            "Use '{subject}' and '{roi}' placeholders."
+        ),
     )
     parser.add_argument(
         "--require-post-dir",
@@ -70,12 +80,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    rel_target = Path(args.target)
-
     missing = find_missing_subjects(
         project_dir=args.project_dir.resolve(),
-        rel_target=rel_target,
+        rel_target=args.target,
         require_post_dir=args.require_post_dir,
+        roi=args.roi,
     )
 
     # Print to stdout

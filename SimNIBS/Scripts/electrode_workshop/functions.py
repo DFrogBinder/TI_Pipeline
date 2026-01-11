@@ -2,16 +2,14 @@ import os
 import shutil
 import tempfile
 import json
+import subprocess
+import csv
+from pathlib import Path
+from typing import Tuple, Union, Optional, Dict, Any
+
 import numpy as np
 import nibabel as nib
-import subprocess
-
-import csv, numpy as np, nibabel as nib
-
-from pathlib import Path
-from scipy.ndimage import binary_dilation  
-from typing import Tuple, Union, Optional, Sequence
-from typing import Optional, Sequence, Tuple, Dict, Any, Union
+from scipy.ndimage import binary_dilation
 
 from nilearn import datasets, image as nli, plotting
 from nibabel.processing import resample_from_to
@@ -150,9 +148,6 @@ def save_masked_nii(data: np.ndarray, mask: np.ndarray, ref_img: nib.Nifti1Image
     masked_data = np.where(mask, data, 0)
     out_img = nib.Nifti1Image(masked_data, ref_img.affine, ref_img.header)
     nib.save(out_img, out_path)
-from nilearn import plotting
-import numpy as np
-import nibabel as nib
 
 def make_overlay_png(out_png, overlay_img, bg_img=None, title=None, roi_mask_img=None, abs_colour=False):
     """
@@ -277,12 +272,7 @@ def extract_table(mask: np.ndarray, ref_img: nib.Nifti1Image, data: np.ndarray) 
     vals = data[mask]
     return ijk, xyz, vals
 def write_csv(out_path: str, ijk: np.ndarray, xyz: np.ndarray, vals: np.ndarray) -> None:
-    """Write voxel indices, coordinates, and values to a
-    with open(out_path, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(['I', 'J', 'K', 'X_mm', 'Y_mm', 'Z_mm', 'Value'])
-        for (i, j, k), (x, y, z), v in zip(ijk, xyz, vals):
-            writer.writerow([i, j, k, f"{x:.2f}", f"{y:.2f}", f"{z:.2f}", f"{v:.6g}"]) CSV file."""
+    """Write voxel indices, coordinates, and values to a CSV file."""
     with open(out_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['I', 'J', 'K', 'X_mm', 'Y_mm', 'Z_mm', 'Value'])
@@ -549,4 +539,3 @@ def merge_segmentation_maps(
         "background_label": int(background_label),
     }
     return out_img, debug
-

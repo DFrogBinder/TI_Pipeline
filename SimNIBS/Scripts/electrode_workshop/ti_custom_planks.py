@@ -17,30 +17,16 @@ Author: you+me :)
 from __future__ import annotations
 import os
 import argparse
+import math
 from copy import deepcopy
+
 import numpy as np
 import nibabel as nib
-
-from place_plank_electrode import (
-    load_scalp_vertices_normals,
-    resolve_point,
-    local_rotation_degrees,
-    ensure_dir,
-)
-import math
-import numpy as np
-try:
-    import trimesh
-except Exception:
-    trimesh = None
-
-
 
 import simnibs as sim
 from simnibs import sim_struct, mesh_io, ElementTags
 from simnibs.utils import TI_utils as TI
 
-# Reuse your helpers (projection, normals, EEG label lookup) from the plank placer
 from place_plank_electrode import (
     load_scalp_vertices_normals,
     resolve_point,
@@ -55,7 +41,7 @@ try:
     try:
         _ = trimesh.util.bounds_tree  # triggers rtree import on demand
         import rtree  # noqa: F401
-    except Exception as e:
+    except Exception:
         print("[hint] Fast nearest-point lookups need 'rtree'. Install with: pip install rtree")
         raise
 except ImportError:
@@ -469,7 +455,7 @@ def build_and_run(args: argparse.Namespace) -> None:
         tdcs1,
         centre_xyz=r_center.tolist(),
         gel_stl=RPOS[0], el_stl=RPOS[1],
-        gel_sigma=args.gel_sigma, el_sigma=RPOS[1],
+        gel_sigma=args.gel_sigma, el_sigma=args.el_sigma,
         rotation_deg=rot_r, name=args.right_name_pos,
         thickness_mm=thick,
         current_mA=+I_mA,   # NOTE: helper writes el.current; your env expects mA

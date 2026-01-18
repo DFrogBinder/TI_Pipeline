@@ -40,6 +40,8 @@ class PostBatchConfig:
     plot_roi: str = "Hippocampus"
     percentile: float = 95.0
     hard_threshold: float = 200.0
+    overlay_z_offset_mm: float = 0.0
+    overlay_full_field: bool = False
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2
@@ -92,6 +94,8 @@ def run_batch(cfg: PostBatchConfig) -> dict:
             plot_roi=cfg.plot_roi,
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
+            overlay_z_offset_mm=cfg.overlay_z_offset_mm,
+            overlay_full_field=cfg.overlay_full_field,
             write_region_table=cfg.write_region_table,
             region_percentile=cfg.region_percentile,
             offtarget_threshold=cfg.offtarget_threshold,
@@ -140,12 +144,12 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 if __name__ == "__main__":
     cfg = PipelineConfig(
         post=PostBatchConfig(
-            root="/media/boyan/main/PhD/export_sim_outputs",
+            root="/media/boyan/main/PhD/Hippocampus/Hippocampus-data",
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
             atlas_mode="fastsurfer",
             fastsurfer_root='/home/boyan/sandbox/Jake_Data/atlases',
             fs_mri_path=None,
-            plot_roi="M1",  # M1 (ctx-lh-precentral) / Hippocampus
+            plot_roi="Hippocampus",  # M1 (ctx-lh-precentral) / Hippocampus
             percentile=95.0,
             hard_threshold=200.0,
             write_region_table=True,
@@ -153,6 +157,8 @@ if __name__ == "__main__":
             offtarget_threshold=0.2,
             force=False,
             verbose=True,
+            overlay_z_offset_mm=10.0,
+            overlay_full_field=True,
         ),
         population=PopulationConfig(
             enabled=True,

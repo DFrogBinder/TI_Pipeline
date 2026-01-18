@@ -247,10 +247,12 @@ def overlay_ti_thresholds_on_t1_with_roi(
     roi_mask_img: nib.Nifti1Image,
     out_prefix: str,
     subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    include_full_field: bool = False,
     percentile: float = 95.0,
     hard_threshold: float = 200.0,
     contour_color: str = "red",
-    contour_linewidth: float = 2.5,
+    contour_linewidth: float = 0.5,
     cmap: str = "jet",
     dpi: int = 150,
     alpha: float = 0.85
@@ -282,21 +284,28 @@ def overlay_ti_thresholds_on_t1_with_roi(
     if roi_coords.size:
         center_ijk = roi_coords.mean(axis=0)
         center_xyz = nib.affines.apply_affine(roi_on_ti.affine, center_ijk)
+        center_xyz = np.asarray(center_xyz, dtype=float)
+        center_xyz[2] += float(z_offset_mm)
         cut_coords = tuple(float(x) for x in center_xyz)
     else:
         cut_coords = (0.0, 0.0, 0.0)
 
-    def _plot_overlay(thr_value: float, label: str):
-        masked = np.where(arr >= thr_value, arr, 0.0)
-        shown = masked[masked > 0]
+    def _plot_overlay(thr_value: Optional[float], label: str):
+        if thr_value is None:
+            shown = arr[finite_pos]
+        else:
+            masked = np.where(arr >= thr_value, arr, 0.0)
+            shown = masked[masked > 0]
         if np.any(shown):
             vmin = np.percentile(shown, 2); vmax = np.percentile(shown, 98)
             if vmin >= vmax: vmin, vmax = np.nanmin(shown), np.nanmax(shown)
+        else:
+            vmin = vmax = None
 
         display = plot_anat(
             t1_on_ti, display_mode="ortho", dim=0, annotate=True,
             draw_cross=True, colorbar=False, black_bg=True, cut_coords=cut_coords,
-            title=f"TI ≥ {thr_value:.3f} ({label})",
+            title=f"TI ≥ {thr_value:.3f} ({label})" if thr_value is not None else "TI (full field)",
         )
         display.add_overlay(
             ti_img, colorbar=True, vmin=vmin, vmax=vmax, cmap="viridis"
@@ -314,9 +323,10 @@ def overlay_ti_thresholds_on_t1_with_roi(
         display.close()
         return out_path
 
+    png_full = _plot_overlay(None, "full") if include_full_field else None
     png_percentile = _plot_overlay(thr_percentile, f"top{int(percentile)}")
-    png_fixed      = _plot_overlay(thr_fixed,      f"above{hard_threshold:.2f}")
-    return png_percentile, png_fixed
+    png_fixed = _plot_overlay(thr_fixed, f"above{hard_threshold:.2f}")
+    return png_percentile, png_fixed, png_full
 
 # ------------------ ROI extraction core ------------------
 

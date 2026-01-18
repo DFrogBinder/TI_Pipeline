@@ -51,6 +51,8 @@ class PostProcessConfig:
     plot_roi: str = "ctx-lh-precentral"     # which ROI to highlight in overlays
     percentile: float = 95.0
     hard_threshold: float = 200.0
+    overlay_z_offset_mm: float = 0.0
+    overlay_full_field: bool = False
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2  # V/m threshold for focality checks
@@ -272,16 +274,18 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     if t1_img_full is not None and sel in roi_masks:
         roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)
         out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
-        png_95, png_02 = overlay_ti_thresholds_on_t1_with_roi(
+        png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
             ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
             t1_img=t1_img_full,
             roi_mask_img=roi_mask_img,
             out_prefix=out_base,
             subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
         )
-        overlay_paths[sel] = [png_95, png_02]
+        overlay_paths[sel] = [p for p in (png_95, png_02, png_full) if p is not None]
     elif t1_img_full is None:
         if cfg.verbose:
             print("[INFO] Skipping overlays (T1 not found).")

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 import argparse
 import concurrent.futures
+import json
 import numpy as np
 import simnibs as sim
 import subprocess
@@ -37,11 +38,41 @@ runMNI152 = False
 rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
 
 
+def log_event(event: str, **fields) -> None:
+    payload = {"event": event, **fields}
+    print(json.dumps(payload, default=str))
+
+
+def log_file_info(label: str, path: str) -> None:
+    p = Path(path)
+    log_event(
+        "file_info",
+        label=label,
+        path=str(p),
+        exists=p.exists(),
+        size_bytes=p.stat().st_size if p.exists() else None,
+    )
+
+
+def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
+    log_event("run_cmd", label=label, cmd=cmd, cwd=cwd)
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    log_event(
+        "cmd_result",
+        label=label,
+        returncode=result.returncode,
+        stdout_tail=result.stdout[-2000:] if result.stdout else "",
+        stderr_tail=result.stderr[-2000:] if result.stderr else "",
+    )
+    result.check_returncode()
+
+
 def process_subject(subject_entry):
     """Run the TI pipeline for a single subject entry."""
     subject_source = subject_entry
     subject = subject_entry
     subject_start = time.time()
+    log_event("subject_start", subject=subject_source)
 
     if runMNI152:
         #? Use MNI152 template mesh | Adjust paths as needed
@@ -58,6 +89,8 @@ def process_subject(subject_entry):
         subject_dir = os.path.join(rootDIR, subject, 'anat')
 
     print(f"[INFO] Starting TI pipeline for {subject_source} (using '{subject}' resources).")
+    log_file_info("t1", os.path.join(subject_dir, f"{subject}_T1w.nii"))
+    log_file_info("t2", os.path.join(subject_dir, f"{subject}_T2w.nii"))
 
     # region Meshing
     if meshPresent:
@@ -73,9 +106,9 @@ def process_subject(subject_entry):
             ]
 
         try:
-            subprocess.run(cmd, cwd=str(subject_dir), check=True)
+            run_cmd(cmd, cwd=str(subject_dir), label="charm_init")
         except Exception as e:
-            print(f"[ERROR] Error creating initial head model for {subject}: {e}")
+            log_event("error", stage="charm_init", subject=subject, error=str(e))
             return
 
         # Load images
@@ -84,6 +117,8 @@ def process_subject(subject_entry):
 
         charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
         charm_seg_map = nib.load(charm_seg_map_path)
+        log_file_info("custom_seg_map", custom_seg_map_path)
+        log_file_info("charm_seg_map", charm_seg_map_path)
 
         # Ensure integer labels; nibabel exposes floats via get_fdata().
         # We'll round+cast only if dtype isn't int-like.
@@ -159,9 +194,9 @@ def process_subject(subject_entry):
         ]
 
         try:
-            subprocess.run(remesh_cmd, cwd=str(subject_dir), check=True)
+            run_cmd(remesh_cmd, cwd=str(subject_dir), label="charm_remesh")
         except Exception as e:
-            print(f"Error remeshing head model for {subject}: {e}")
+            log_event("error", stage="charm_remesh", subject=subject, error=str(e))
 
 
     electrode_size        = [10, 1]       # [radius_mm, thickness_mm]
@@ -216,7 +251,9 @@ def process_subject(subject_entry):
 
     # ———— RUN SIMULATION ————
     print(f"Running SimNIBS for TI brain-only mesh… ({subject_source})")
+    log_event("simnibs_start", subject=subject_source)
     sim.run_simnibs(S)
+    log_event("simnibs_done", subject=subject_source)
 
     # ———— POST-PROCESS ————
 
@@ -282,35 +319,50 @@ def process_subject(subject_entry):
     try:
         if runMNI152:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"])
+            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"], label="msh2nii_labels")
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"])
+            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"], label="msh2nii_labels")
     except Exception as e:
-        print(f"Error creating label meshes: {e}")
+        log_event("error", stage="msh2nii_labels", subject=subject, error=str(e))
 
     try:
         if runMNI152:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"])
+            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"], label="msh2nii_masks")
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"])
+            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"], label="msh2nii_masks")
     except Exception as e:
-        print(f"Error creating mask meshes: {e}")
+        log_event("error", stage="msh2nii_masks", subject=subject, error=str(e))
 
     try:
         if runMNI152:
             t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path])
+            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path], label="msh2nii_volume")
         else:
-            subprocess.run(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path])
+            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path], label="msh2nii_volume")
     except Exception as e:
-        print(f"Error creating volumetric mesh: {e}")
+        log_event("error", stage="msh2nii_volume", subject=subject, error=str(e))
     #endregion
 
     #region Post-process
-    # Loads the label file
-    label_file_path = os.listdir(volume_labels_path)[0]
-    ti_volume_path = os.listdir(volume_base_path)[0]
+    # Loads the label and TI volume files (prefer TI_Volumetric_* outputs)
+    label_candidates = sorted(
+        [f for f in os.listdir(volume_labels_path) if f.startswith("TI_Volumetric_")]
+        or os.listdir(volume_labels_path)
+    )
+    volume_candidates = sorted(
+        [f for f in os.listdir(volume_base_path) if f.startswith("TI_Volumetric_")]
+        or os.listdir(volume_base_path)
+    )
+    label_file_path = label_candidates[0]
+    ti_volume_path = volume_candidates[0]
+    log_event(
+        "volume_selection",
+        label_file=label_file_path,
+        ti_volume_file=ti_volume_path,
+        label_candidates=label_candidates,
+        volume_candidates=volume_candidates,
+    )
 
 
 
@@ -351,19 +403,39 @@ def process_subject(subject_entry):
 
     same_shape = ti_img.shape == label_img.shape
     same_affine = np.allclose(ti_img.affine, label_img.affine, atol=1e-3)
+    log_event(
+        "grid_check",
+        same_shape=same_shape,
+        same_affine=same_affine,
+        ti_shape=ti_img.shape,
+        label_shape=label_img.shape,
+    )
+    if not (same_shape and same_affine):
+        label_img = resample_from_to(label_img, ti_img, order=0)
 
     ti_data = ti_img.get_fdata(dtype=np.float32)
     masked = np.where(brain_mask, ti_data, np.nan).astype(np.float32)
+    finite = np.isfinite(masked)
+    log_event(
+        "ti_stats",
+        ti_min=float(np.nanmin(ti_data)),
+        ti_max=float(np.nanmax(ti_data)),
+        ti_mean=float(np.nanmean(ti_data)),
+        brain_mask_voxels=int(brain_mask.sum()),
+        masked_finite_voxels=int(finite.sum()),
+    )
 
     # --- Save outputs ---
-    masked_img = nib.Nifti1Image(masked, label_img.affine, label_img.header)
+    masked_img = nib.Nifti1Image(masked, ti_img.affine, ti_img.header)
     masked_img.header.set_data_dtype(np.float32)
     nib.save(masked_img, os.path.join(output_root,"ti_brain_only.nii.gz"))
+    log_file_info("ti_brain_only", os.path.join(output_root,"ti_brain_only.nii.gz"))
 
     #endregion
 
     elapsed = time.time() - subject_start
     print(f"[INFO] Completed TI pipeline for {subject_source} in {elapsed:.2f} seconds.")
+    log_event("subject_done", subject=subject_source, elapsed_sec=elapsed)
     return elapsed
 
 

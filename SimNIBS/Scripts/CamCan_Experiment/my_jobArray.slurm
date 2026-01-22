@@ -57,5 +57,9 @@ echo "[INFO] Mem per task:${SLURM_MEM_PER_NODE:-${SLURM_MEM_PER_TASK}} MB"
 # 3) Run TI pipeline for ONE subject
 # -------------------------
 
-python /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py \
-    --subject "$SUBJECT"
+LOG_DIR="/users/cop23bi/scripts/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/${SUBJECT}.log"
+
+python -u /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py \
+    --subject "$SUBJECT" 2>&1 | tee "$LOG_FILE"

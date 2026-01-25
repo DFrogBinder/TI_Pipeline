@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=ti_array
+#BATCH --job-name=ti_array
 #SBATCH --partition=sheffield
 #SBATCH --cpus-per-task=8             # per-subject threads (tune if needed)
 #SBATCH --mem=32G                     # per-subject RAM (tune if needed)
@@ -18,15 +18,53 @@ module load SimNIBS/4.0.1-foss-2023a
 # Avoid user site-packages overriding the cluster env
 export PYTHONNOUSERSITE=1
 
-# --- FIX: NumPy compatibility shim for SimNIBS 4.0.1 (np.bool removed in NumPy >= 1.24) ---
-SHIM_DIR="${SLURM_TMPDIR:-/tmp}/${USER}_numpy_shim_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+# --- FIX: runtime shims (NumPy alias + disable SimNIBS Gmsh visualization) ---
+# This avoids:
+#   1) SimNIBS 4.0.1 crash with NumPy >= 1.24 (np.bool removal)
+#   2) bundled gmsh crash on older glibc nodes (GLIBC_2.23 not found)
+SHIM_DIR="${SLURM_TMPDIR:-/tmp}/${USER}_simnibs_shim_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$SHIM_DIR"
 
 cat > "${SHIM_DIR}/sitecustomize.py" << 'EOF'
-import numpy as _np
-# SimNIBS 4.0.1 uses np.bool; NumPy >= 1.24 removed it.
-if not hasattr(_np, "bool"):
-    _np.bool = _np.bool_
+# Auto-imported by Python at startup if on PYTHONPATH.
+
+# (1) NumPy compatibility: restore np.bool if missing (NumPy >= 1.24)
+try:
+    import numpy as _np
+    if not hasattr(_np, "bool"):
+        _np.bool = _np.bool_
+except Exception:
+    pass
+
+# (2) Disable SimNIBS auto-opening/visualizations in Gmsh (avoids bundled gmsh binary)
+import builtins
+_real_import = builtins.__import__
+
+def _patched_import(name, globals=None, locals=None, fromlist=(), level=0):
+    mod = _real_import(name, globals, locals, fromlist, level)
+
+    try:
+        if name == "simnibs" or name.startswith("simnibs."):
+            from simnibs import sim_struct as _sim_struct
+
+            if not getattr(_sim_struct.SESSION, "_gmsh_disabled", False):
+                _orig_init = _sim_struct.SESSION.__init__
+
+                def _new_init(self, *a, **k):
+                    _orig_init(self, *a, **k)
+                    try:
+                        self.open_in_gmsh = False
+                    except Exception:
+                        pass
+
+                _sim_struct.SESSION.__init__ = _new_init
+                _sim_struct.SESSION._gmsh_disabled = True
+    except Exception:
+        pass
+
+    return mod
+
+builtins.__import__ = _patched_import
 EOF
 
 export PYTHONPATH="${SHIM_DIR}:${PYTHONPATH:-}"
@@ -67,3 +105,4 @@ LOG_FILE="${LOG_DIR}/${SUBJECT}.log"
 
 python -u /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py \
     --subject "$SUBJECT" 2>&1 | tee "$LOG_FILE"
+

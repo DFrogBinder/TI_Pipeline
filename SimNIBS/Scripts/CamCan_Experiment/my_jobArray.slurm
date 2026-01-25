@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=8             # per-subject threads (tune if needed)
 #SBATCH --mem=32G                     # per-subject RAM (tune if needed)
 #SBATCH --time=08:00:00
-#SBATCH --array=0-175%16              # 176 subjects, max 16 running at once
+#SBATCH --array=0-175%8              # 176 subjects, max 8 running at once
 #SBATCH --output=slurm-%A_%a.out
 
 # -------------------------
@@ -18,15 +18,19 @@ module load SimNIBS/4.0.1-foss-2023a
 # Avoid user site-packages overriding the cluster env
 export PYTHONNOUSERSITE=1
 
-# If you still need the numpy bool shim, add it here.
-# Example:
-# mkdir -p fix_numpy_bool
-# cat > fix_numpy_bool/sitecustomize.py << 'EOF'
-# import numpy as _np
-# if not hasattr(_np, "bool"):
-#     _np.bool = _np.bool_
-# EOF
-# export PYTHONPATH="$PWD/fix_numpy_bool"
+# --- FIX: NumPy compatibility shim for SimNIBS 4.0.1 (np.bool removed in NumPy >= 1.24) ---
+SHIM_DIR="${SLURM_TMPDIR:-/tmp}/${USER}_numpy_shim_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+mkdir -p "$SHIM_DIR"
+
+cat > "${SHIM_DIR}/sitecustomize.py" << 'EOF'
+import numpy as _np
+# SimNIBS 4.0.1 uses np.bool; NumPy >= 1.24 removed it.
+if not hasattr(_np, "bool"):
+    _np.bool = _np.bool_
+EOF
+
+export PYTHONPATH="${SHIM_DIR}:${PYTHONPATH:-}"
+# --- END FIX ---
 
 # Make SimNIBS/OpenMP respect the Slurm allocation
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}

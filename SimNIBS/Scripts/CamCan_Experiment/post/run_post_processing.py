@@ -37,6 +37,7 @@ class PostBatchConfig:
     atlas_mode: str = "auto"  # "auto" | "mni" | "fastsurfer"
     fastsurfer_root: Optional[str] = None
     fs_mri_path: Optional[str] = None
+    t1_path: Optional[str] = None
     plot_roi: str = "Hippocampus"
     percentile: float = 95.0
     hard_threshold: float = 200.0
@@ -91,6 +92,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
             atlas_mode=cfg.atlas_mode,
             fastsurfer_root=cfg.fastsurfer_root,
             fs_mri_path=cfg.fs_mri_path,
+            t1_path=cfg.t1_path,
             plot_roi=cfg.plot_roi,
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
@@ -144,9 +146,10 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 if __name__ == "__main__":
     cfg = PipelineConfig(
         post=PostBatchConfig(
-            root="/media/boyan/main/PhD/Hippocampus/Hippocampus-data",
+            root="/home/boyan/sandbox/Jake_Data/MNI152-data",
+            t1_path='/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152/anat/MNI152_Hippocampus_T1.nii.gz',
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
-            atlas_mode="fastsurfer",
+            atlas_mode="mni",
             fastsurfer_root='/home/boyan/sandbox/Jake_Data/atlases',
             fs_mri_path=None,
             plot_roi="Hippocampus",  # M1 (ctx-lh-precentral) / Hippocampus
@@ -157,11 +160,11 @@ if __name__ == "__main__":
             offtarget_threshold=0.2,
             force=False,
             verbose=True,
-            overlay_z_offset_mm=10.0,
+            overlay_z_offset_mm=0,
             overlay_full_field=True,
         ),
         population=PopulationConfig(
-            enabled=True,
+            enabled=False,
             out_dir=None,
             region_filename="region_stats_fastsurfer.csv",
             metrics_filename="subject_metrics.json",

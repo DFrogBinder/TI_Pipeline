@@ -256,20 +256,95 @@ def overlay_ti_thresholds_on_t1_with_roi(
     cmap: str = "jet",
     dpi: int = 150,
     alpha: float = 0.85
-) -> tuple[str, str]:
-
-    data = ti_img.get_fdata()
-    finite = np.isfinite(data)
-    if np.any(finite):
-        vmin = np.percentile(data[finite], 2)
-        vmax = np.percentile(data[finite], 98)
-        if vmin >= vmax:
-            vmin, vmax = np.nanmin(data[finite]), np.nanmax(data[finite])
+) -> tuple[str, str, Optional[str]]:
 
     ti_arr = load_ti_as_scalar(ti_img)
     ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
 
     t1_on_ti  = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
+    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
+
+    arr = np.asarray(ti_arr, dtype=float)
+    finite_pos = np.isfinite(arr) & (arr > 0)
+    if not np.any(finite_pos):
+        raise ValueError("TI has no positive finite voxels.")
+    thr_percentile = float(np.percentile(arr[finite_pos], percentile))
+    thr_fixed = float(hard_threshold)
+    global_vmax = float(np.nanmax(arr[finite_pos]))
+
+    roi_data = np.asarray(roi_on_ti.dataobj)
+    roi_coords = np.argwhere(roi_data > 0)
+    if roi_coords.size:
+        center_ijk = roi_coords.mean(axis=0)
+        center_xyz = nib.affines.apply_affine(roi_on_ti.affine, center_ijk)
+        center_xyz = np.asarray(center_xyz, dtype=float)
+        center_xyz[2] += float(z_offset_mm)
+        cut_coords = tuple(float(x) for x in center_xyz)
+    else:
+        cut_coords = (0.0, 0.0, 0.0)
+
+    def _plot_overlay(thr_value: Optional[float], label: str):
+        if thr_value is None:
+            overlay_data = arr
+            subset = arr[finite_pos]
+        else:
+            overlay_data = np.where(arr >= thr_value, arr, 0.0)
+            subset = overlay_data[overlay_data > 0]
+        vmin = float(np.nanmin(subset)) if subset.size else 0.0
+        vmax = global_vmax
+        overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
+
+        display = plot_anat(
+            t1_on_ti, display_mode="ortho", dim=0, annotate=True,
+            draw_cross=True, colorbar=False, black_bg=True, cut_coords=cut_coords,
+            title=f"TI ≥ {thr_value:.3f} ({label})" if thr_value is not None else "TI (full field)",
+        )
+        display.add_overlay(
+            overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap="viridis"
+        )
+        display.add_contours(
+            roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
+        )
+
+        if subject:
+            out_path = f"{out_prefix}_{subject}_{label}.png"
+        else:
+            out_path = f"{out_prefix}_{label}.png"
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+        display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+        display.close()
+        return out_path
+
+    png_full = _plot_overlay(None, "full") if include_full_field else None
+    png_percentile = _plot_overlay(thr_percentile, f"top{int(percentile)}")
+    png_fixed = _plot_overlay(thr_fixed, f"above{hard_threshold:.2f}")
+    return png_percentile, png_fixed, png_full
+
+
+def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    out_prefix: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    include_full_field: bool = False,
+    percentile: float = 95.0,
+    hard_threshold: float = 200.0,
+    contour_color: str = "red",
+    contour_linewidth: float = 0.5,
+    cmap: str = "viridis",
+    dpi: int = 150,
+) -> tuple[str, str, Optional[str]]:
+    """
+    Overlay TI on T1 with ROI contour using per-image vmin/vmax.
+    Each image uses min/max of its own subset.
+    """
+    ti_arr = load_ti_as_scalar(ti_img)
+    ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
+
+    t1_on_ti = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
     roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
 
     arr = np.asarray(ti_arr, dtype=float)
@@ -292,15 +367,14 @@ def overlay_ti_thresholds_on_t1_with_roi(
 
     def _plot_overlay(thr_value: Optional[float], label: str):
         if thr_value is None:
-            shown = arr[finite_pos]
+            overlay_data = arr
+            subset = arr[finite_pos]
         else:
-            masked = np.where(arr >= thr_value, arr, 0.0)
-            shown = masked[masked > 0]
-        if np.any(shown):
-            vmin = np.percentile(shown, 2); vmax = np.percentile(shown, 98)
-            if vmin >= vmax: vmin, vmax = np.nanmin(shown), np.nanmax(shown)
-        else:
-            vmin = vmax = None
+            overlay_data = np.where(arr >= thr_value, arr, 0.0)
+            subset = overlay_data[overlay_data > 0]
+        vmin = float(np.nanmin(subset)) if subset.size else 0.0
+        vmax = float(np.nanmax(subset)) if subset.size else 1.0
+        overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
 
         display = plot_anat(
             t1_on_ti, display_mode="ortho", dim=0, annotate=True,
@@ -308,7 +382,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
             title=f"TI ≥ {thr_value:.3f} ({label})" if thr_value is not None else "TI (full field)",
         )
         display.add_overlay(
-            ti_img, colorbar=True, vmin=vmin, vmax=vmax, cmap="viridis"
+            overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap=cmap
         )
         display.add_contours(
             roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth

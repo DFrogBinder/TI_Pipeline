@@ -18,6 +18,7 @@ from post.post_functions import (
     fastsurfer_dkt_labels,
     make_outline,
     overlay_ti_thresholds_on_t1_with_roi,
+    overlay_ti_thresholds_on_t1_with_roi_individual_scale,
     roi_masks_on_ti_grid,
     write_csv,
 )
@@ -285,7 +286,21 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
         )
-        overlay_paths[sel] = [p for p in (png_95, png_02, png_full) if p is not None]
+        dyn_base = f"{out_base}_dynamic"
+        dyn_95, dyn_02, dyn_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=dyn_base,
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+        )
+        overlay_paths[sel] = [
+            p for p in (png_95, png_02, png_full, dyn_95, dyn_02, dyn_full) if p is not None
+        ]
     elif t1_img_full is None:
         if cfg.verbose:
             print("[INFO] Skipping overlays (T1 not found).")

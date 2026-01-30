@@ -15,11 +15,45 @@ except ImportError as e:
     print("ERROR: meshio is required. Install with: pip install meshio", file=sys.stderr)
     raise
 
+# Optional pretty table libraries
+try:
+    from tabulate import tabulate  # type: ignore
+    _HAS_TABULATE = True
+except Exception:
+    _HAS_TABULATE = False
+    tabulate = None  # type: ignore
+
+try:
+    from prettytable import PrettyTable  # type: ignore
+    _HAS_PRETTYTABLE = True
+except Exception:
+    _HAS_PRETTYTABLE = False
+    PrettyTable = None  # type: ignore
+
 try:
     from scipy.spatial import cKDTree  # type: ignore
     _HAS_SCIPY = True
 except Exception:
     _HAS_SCIPY = False
+
+
+# Built-in SimNIBS m2m_*/segmentation/labeling LUT (override with --lut if needed)
+DEFAULT_LUT = {
+    1: "White-Matter",
+    2: "Gray-Matter",
+    3: "CSF",
+    4: "Bone",
+    5: "Scalp",
+    6: "Eye_balls",
+    7: "Compact_bone",
+    8: "Spongy_bone",
+    9: "Blood",
+    10: "Muscle",
+    11: "Cartilage",
+    12: "Fat",
+    100: "Electrode",
+    500: "Saline_or_gel",
+}
 
 
 def load_mesh(path):
@@ -74,6 +108,91 @@ def label_stats(mesh):
     return results
 
 
+def format_table(headers, rows, padding=1):
+    cols = len(headers)
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i in range(cols):
+            widths[i] = max(widths[i], len(str(row[i])))
+
+    def fmt_row(row):
+        parts = []
+        for i in range(cols):
+            s = str(row[i]).ljust(widths[i])
+            parts.append(s)
+        return (" " * padding).join(parts)
+
+    line = "-".join("-" * w for w in widths)
+    out = [fmt_row(headers), line]
+    out.extend(fmt_row(r) for r in rows)
+    return "\n".join(out)
+
+
+def format_table_pretty(headers, rows):
+    tbl = PrettyTable()
+    tbl.field_names = headers
+    for r in rows:
+        tbl.add_row(r)
+    return tbl.get_string()
+
+
+def format_table_tabulate(headers, rows):
+    return tabulate(rows, headers=headers, tablefmt="github")
+
+
+def render_table(headers, rows, style="auto"):
+    if style == "tabulate":
+        if not _HAS_TABULATE:
+            print("Warning: tabulate not available; falling back to plain tables.", file=sys.stderr)
+            return format_table(headers, rows)
+        return format_table_tabulate(headers, rows)
+    if style == "prettytable":
+        if not _HAS_PRETTYTABLE:
+            print("Warning: prettytable not available; falling back to plain tables.", file=sys.stderr)
+            return format_table(headers, rows)
+        return format_table_pretty(headers, rows)
+    if style == "plain":
+        return format_table(headers, rows)
+    # auto
+    if _HAS_TABULATE:
+        return format_table_tabulate(headers, rows)
+    if _HAS_PRETTYTABLE:
+        return format_table_pretty(headers, rows)
+    return format_table(headers, rows)
+
+
+def load_lut(path):
+    lut = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                try:
+                    label = int(parts[0])
+                except (ValueError, IndexError):
+                    continue
+                # Label name may contain hyphens/underscores; stop before RGBA if present
+                name_parts = []
+                for p in parts[1:]:
+                    if p.isdigit():
+                        break
+                    name_parts.append(p)
+                if name_parts:
+                    lut[label] = " ".join(name_parts)
+    except FileNotFoundError:
+        return {}
+    return lut
+
+
+def label_name(label_id, lut):
+    if not lut:
+        return None
+    return lut.get(label_id)
+
+
 def compare_counters(a, b):
     all_keys = set(a.keys()) | set(b.keys())
     diffs = {}
@@ -101,7 +220,7 @@ def compare_label_stats(a, b):
     return diffs
 
 
-def summarize_mesh(mesh, name, tol, quiet=False):
+def summarize_mesh(mesh, name, tol, lut, table_style, quiet=False):
     pts = mesh.points
     mn, mx = bbox(pts)
     size = mx - mn
@@ -130,15 +249,20 @@ def summarize_mesh(mesh, name, tol, quiet=False):
     print(f"Bounding box volume: {vol:.6g}")
     print(f"Total cells: {total_cells}")
     print("Cells by type:")
-    for k, v in sorted(cell_counts.items()):
-        print(f"  {k}: {v}")
+    cell_rows = [[k, v] for k, v in sorted(cell_counts.items())]
+    print(render_table(["type", "count"], cell_rows, style=table_style))
     if labels:
         print("Label stats by cell_data key:")
         for key, per_type in labels.items():
             print(f"  key: {key}")
             for t, counter in per_type.items():
                 top = counter.most_common(5)
-                print(f"    {t}: {len(counter)} labels (top5: {top})")
+                rows = []
+                for lab, cnt in top:
+                    name = label_name(lab, lut)
+                    rows.append([lab, name or "-", cnt])
+                print(f"    {t}: {len(counter)} labels (top5)")
+                print(render_table(["label", "name", "count"], rows, style=table_style))
     else:
         print("No cell_data labels found.")
     print()
@@ -181,6 +305,16 @@ def main():
         action="store_true",
         help="emit machine-readable JSON report",
     )
+    ap.add_argument(
+        "--table",
+        choices=["auto", "tabulate", "prettytable", "plain"],
+        default="auto",
+        help="table formatting style (default: auto)",
+    )
+    ap.add_argument(
+        "--lut",
+        help="path to label LUT (overrides built-in default)",
+    )
     if len(sys.argv) == 1:
         ap.print_help()
         sys.exit(2)
@@ -189,8 +323,16 @@ def main():
     mesh_a = load_mesh(args.mesh_a)
     mesh_b = load_mesh(args.mesh_b)
 
-    summary_a = summarize_mesh(mesh_a, "Mesh A", args.tol, quiet=args.quiet or args.json)
-    summary_b = summarize_mesh(mesh_b, "Mesh B", args.tol, quiet=args.quiet or args.json)
+    lut = dict(DEFAULT_LUT)
+    if args.lut:
+        override = load_lut(args.lut)
+        if override:
+            lut = override
+        else:
+            print(f"Warning: LUT file '{args.lut}' not found or empty; using built-in LUT.", file=sys.stderr)
+
+    summary_a = summarize_mesh(mesh_a, "Mesh A", args.tol, lut, args.table, quiet=args.quiet or args.json)
+    summary_b = summarize_mesh(mesh_b, "Mesh B", args.tol, lut, args.table, quiet=args.quiet or args.json)
 
     if not (args.quiet or args.json):
         print("== Differences ==")
@@ -238,8 +380,10 @@ def main():
         cell_diff = True
         if not (args.quiet or args.json):
             print("Cell count differences by type:")
+            rows = []
             for k, (av, bv) in sorted(cell_diffs.items()):
-                print(f"  {k}: {av} vs {bv} (Δ {bv - av})")
+                rows.append([k, av, bv, bv - av])
+            print(render_table(["type", "A", "B", "Δ"], rows, style=args.table))
     else:
         if not (args.quiet or args.json):
             print("Cell counts by type match.")
@@ -260,10 +404,13 @@ def main():
                     items = sorted(diff.items(), key=lambda kv: abs(kv[1][1] - kv[1][0]), reverse=True)
                     print(f"    {t}: {len(diff)} differing labels")
                     # show a few label diffs
+                    rows = []
                     for i, (lab, (av, bv)) in enumerate(items):
                         if i >= 5:
                             break
-                        print(f"      label {lab}: {av} vs {bv} (Δ {bv - av})")
+                        name = label_name(lab, lut)
+                        rows.append([lab, name or "-", av, bv, bv - av])
+                    print(render_table(["label", "name", "A", "B", "Δ"], rows, style=args.table))
     else:
         if not (args.quiet or args.json):
             print("Label distributions match.")

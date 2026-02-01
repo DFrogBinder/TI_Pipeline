@@ -33,6 +33,7 @@ import time
 meshPresent = False
 runMNI152 = False
 rootDIR = '/mnt/parscratch/users/cop23bi/repeatability-ti-dataset'
+REPEAT_BASE = os.path.join(rootDIR, "repeats")
 
 REPEAT_PREFIX = "repeat_"
 DEFAULT_REPEAT_COUNT = 30
@@ -85,6 +86,39 @@ def _select_repeat_tags(base_root: str, prefix: str, count: int, *, start_index:
     return tags
 
 
+def _ensure_link(dest: str, src: str) -> None:
+    if os.path.exists(dest):
+        return
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    os.symlink(src, dest)
+
+
+def _prepare_repeat_workspace(subject: str, repeat_tag: str) -> tuple[str, str, str]:
+    src_subject_dir = os.path.join(rootDIR, subject, "anat")
+    repeat_root = os.path.join(REPEAT_BASE, repeat_tag, subject)
+    subject_dir = os.path.join(repeat_root, "anat")
+    output_root = os.path.join(subject_dir, "SimNIBS")
+
+    os.makedirs(subject_dir, exist_ok=True)
+    os.makedirs(output_root, exist_ok=True)
+
+    # Link required inputs from the original dataset subject folder.
+    _ensure_link(
+        os.path.join(subject_dir, f"{subject}_T1w.nii"),
+        os.path.join(src_subject_dir, f"{subject}_T1w.nii"),
+    )
+    _ensure_link(
+        os.path.join(subject_dir, f"{subject}_T2w.nii"),
+        os.path.join(src_subject_dir, f"{subject}_T2w.nii"),
+    )
+    _ensure_link(
+        os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii"),
+        os.path.join(src_subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii"),
+    )
+
+    return repeat_root, subject_dir, output_root
+
+
 def process_subject(subject_entry, *, repeat_tag: str | None = None):
     """Run the TI pipeline for a single subject entry."""
     subject_source = subject_entry
@@ -107,8 +141,8 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
         subject_dir = os.path.join(rootDIR, subject, 'anat')
 
     if repeat_tag:
-        output_root = os.path.join(output_root, repeat_tag)
-        os.makedirs(output_root, exist_ok=True)
+        repeat_root, subject_dir, output_root = _prepare_repeat_workspace(subject, repeat_tag)
+        fnamehead = os.path.join(subject_dir, f'm2m_{subject}', f'{subject}.msh')
 
     print(f"[INFO] Starting TI pipeline for {subject_source} (using '{subject}' resources).")
     log_file_info("t1", os.path.join(subject_dir, f"{subject}_T1w.nii"))

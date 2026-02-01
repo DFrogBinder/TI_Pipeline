@@ -1,0 +1,122 @@
+#!/bin/bash
+#SBATCH --job-name=ti_repeat_array
+#SBATCH --partition=sheffield
+#SBATCH --cpus-per-task=8             # per-repeat threads (tune if needed)
+#SBATCH --mem=32G                     # per-repeat RAM (tune if needed)
+#SBATCH --time=08:00:00
+#SBATCH --array=0-29%8                # set to (REPEAT_COUNT) - 1, max 8 running at once
+#SBATCH --output=slurm-%A_%a.out
+
+# -------------------------
+# 1) Environment
+# -------------------------
+
+module purge
+module use "$HOME/modules"
+module load SimNIBS/4.0.1-foss-2023a
+
+# Avoid user site-packages overriding the cluster env
+export PYTHONNOUSERSITE=1
+
+# --- FIX: runtime shims (NumPy alias + disable SimNIBS Gmsh visualization) ---
+# This avoids:
+#   1) SimNIBS 4.0.1 crash with NumPy >= 1.24 (np.bool removal)
+#   2) bundled gmsh crash on older glibc nodes (GLIBC_2.23 not found)
+SHIM_DIR="${SLURM_TMPDIR:-/tmp}/${USER}_simnibs_shim_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+mkdir -p "$SHIM_DIR"
+
+cat > "${SHIM_DIR}/sitecustomize.py" << 'EOF'
+# Auto-imported by Python at startup if on PYTHONPATH.
+
+# (1) NumPy compatibility: restore np.bool if missing (NumPy >= 1.24)
+try:
+    import numpy as _np
+    if not hasattr(_np, "bool"):
+        _np.bool = _np.bool_
+except Exception:
+    pass
+
+# (2) Disable SimNIBS auto-opening/visualizations in Gmsh (avoids bundled gmsh binary)
+import builtins
+_real_import = builtins.__import__
+
+def _patched_import(name, globals=None, locals=None, fromlist=(), level=0):
+    mod = _real_import(name, globals, locals, fromlist, level)
+
+    try:
+        if name == "simnibs" or name.startswith("simnibs."):
+            from simnibs import sim_struct as _sim_struct
+
+            if not getattr(_sim_struct.SESSION, "_gmsh_disabled", False):
+                _orig_init = _sim_struct.SESSION.__init__
+
+                def _new_init(self, *a, **k):
+                    _orig_init(self, *a, **k)
+                    try:
+                        self.open_in_gmsh = False
+                    except Exception:
+                        pass
+
+                _sim_struct.SESSION.__init__ = _new_init
+                _sim_struct.SESSION._gmsh_disabled = True
+    except Exception:
+        pass
+
+    return mod
+
+builtins.__import__ = _patched_import
+EOF
+
+export PYTHONPATH="${SHIM_DIR}:${PYTHONPATH:-}"
+# --- END FIX ---
+
+# Make SimNIBS/OpenMP respect the Slurm allocation
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+
+# -------------------------
+# 2) Select subject + repeat index from array ID
+# -------------------------
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+REPEAT_COUNT="${REPEAT_COUNT:-30}"
+SUBJECT_ID="${SUBJECT_ID:-}"
+
+if [ -z "${SUBJECT_ID}" ]; then
+    echo "[ERROR] SUBJECT_ID is required for single-subject repeats."
+    echo "[INFO] Set it via: sbatch --export=SUBJECT_ID=sub-XXXX my_jobArray.slurm"
+    exit 1
+fi
+
+# Map array index -> (subject_index, repeat_index)
+REPEAT_INDEX=$((SLURM_ARRAY_TASK_ID % REPEAT_COUNT + 1))
+
+TOTAL_TASKS=$((REPEAT_COUNT))
+
+if [ "${SLURM_ARRAY_TASK_ID}" -ge "${TOTAL_TASKS}" ]; then
+    echo "[INFO] Array index ${SLURM_ARRAY_TASK_ID} >= total tasks ${TOTAL_TASKS}; exiting."
+    exit 0
+fi
+SUBJECT="${SUBJECT_ID}"
+
+echo "[INFO] Job ID:      ${SLURM_JOB_ID}"
+echo "[INFO] Array index: ${SLURM_ARRAY_TASK_ID}"
+echo "[INFO] Subject ID:  ${SUBJECT}"
+echo "[INFO] Repeat idx:  ${REPEAT_INDEX}/${REPEAT_COUNT}"
+echo "[INFO] CPUs:        ${SLURM_CPUS_PER_TASK}"
+echo "[INFO] Mem per task:${SLURM_MEM_PER_NODE:-${SLURM_MEM_PER_TASK}} MB"
+
+# -------------------------
+# 3) Run TI pipeline for ONE subject + ONE repeat
+# -------------------------
+
+LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/logs}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/${SUBJECT}_repeat_${REPEAT_INDEX}.log"
+
+python -u "${SCRIPT_DIR}/TI_runner_multi-core_repeat.py" \
+    --subject "$SUBJECT" \
+    --repeat-index "${REPEAT_INDEX}" 2>&1 | tee "$LOG_FILE"

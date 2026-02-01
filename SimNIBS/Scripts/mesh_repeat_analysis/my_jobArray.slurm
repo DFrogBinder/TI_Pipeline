@@ -79,8 +79,12 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 
 set -euo pipefail
 
-# Prefer the submit directory so logs and relative paths are writable.
-SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# Prefer an explicit pipeline path; fall back to submit dir or script dir.
+PIPELINE_DIR_DEFAULT="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis"
+SCRIPT_DIR="${PIPELINE_DIR:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}}"
+if [ -d "${PIPELINE_DIR_DEFAULT}" ]; then
+    SCRIPT_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_DEFAULT}}"
+fi
 cd "$SCRIPT_DIR"
 
 REPEAT_COUNT="${REPEAT_COUNT:-30}"

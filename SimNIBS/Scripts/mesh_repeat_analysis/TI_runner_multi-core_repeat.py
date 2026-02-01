@@ -32,7 +32,7 @@ import time
 # Set appropriate flags
 meshPresent = False
 runMNI152 = False
-rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
+rootDIR = '/mnt/parscratch/users/cop23bi/repeatability-ti-dataset'
 
 REPEAT_PREFIX = "repeat_"
 DEFAULT_REPEAT_COUNT = 30

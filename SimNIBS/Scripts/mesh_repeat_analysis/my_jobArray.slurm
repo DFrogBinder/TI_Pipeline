@@ -79,7 +79,8 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Prefer the submit directory so logs and relative paths are writable.
+SCRIPT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 cd "$SCRIPT_DIR"
 
 REPEAT_COUNT="${REPEAT_COUNT:-30}"

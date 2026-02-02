@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import nibabel as nib
@@ -18,11 +19,52 @@ from nibabel.processing import resample_from_to
 
 
 REPEAT_PREFIX = "repeat_"
+LOG_FILE: Path | None = None
+
+
+def _short_path(value: str, max_len: int = 120) -> str:
+    if len(value) <= max_len:
+        return value
+    return "…" + value[-(max_len - 1):]
+
+
+def _fmt_value(value: object) -> str:
+    if isinstance(value, Path):
+        value = str(value)
+    if isinstance(value, str) and ("/" in value or "\\" in value):
+        return _short_path(value)
+    return str(value)
+
+
+def _human_lines(event: str, fields: dict) -> list[str]:
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    header = f"[{timestamp}] {event.replace('_', ' ').capitalize()}"
+    items = [(k, v) for k, v in fields.items() if v is not None]
+    if not items:
+        return [header]
+    if len(items) <= 2 and all(len(_fmt_value(v)) <= 60 for _, v in items):
+        tail = " | ".join(f"{k}: {_fmt_value(v)}" for k, v in items)
+        return [f"{header} | {tail}"]
+    lines = [header]
+    for key, value in items:
+        lines.append(f"  - {key}: {_fmt_value(value)}")
+    return lines
 
 
 def log_event(event: str, **fields) -> None:
-    payload = {"event": event, **fields}
-    print(json.dumps(payload, default=str))
+    # Human-readable stdout
+    for line in _human_lines(event, fields):
+        print(line)
+    # JSONL file logging (optional)
+    if LOG_FILE:
+        payload = {"event": event, **fields}
+        line = json.dumps(payload, default=str)
+        try:
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with LOG_FILE.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:
+            pass
 
 
 def _find_repeat_dirs(repeats_root: Path, subject: str) -> list[Path]:
@@ -58,21 +100,32 @@ def _run_msh2nii(ti_msh: Path, t1_path: Path, out_base: Path, *, mode: str) -> N
     result.check_returncode()
 
 
-def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tuple[Path, Path]:
+def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tuple[Path, Path, Path]:
     out_dir = anat_dir / "SimNIBS" / "Output" / subject
     labels_dir = out_dir / "Volume_Labels"
     base_dir = out_dir / "Volume_Base"
+    ti_brain_only = anat_dir / "SimNIBS" / "ti_brain_only.nii.gz"
 
     label_file = _find_volume_candidate(labels_dir, "TI_Volumetric_")
     base_file = _find_volume_candidate(base_dir, "TI_Volumetric_")
 
-    if label_file and base_file:
-        return label_file, base_file
+    if label_file and base_file and ti_brain_only.exists():
+        log_event(
+            "volume_found",
+            subject=subject,
+            anat_dir=str(anat_dir),
+            label=str(label_file),
+            base=str(base_file),
+            ti_brain_only=str(ti_brain_only),
+        )
+        return label_file, base_file, ti_brain_only
 
     ti_msh = out_dir / "TI.msh"
     if not ti_msh.exists():
+        log_event("missing", kind="ti_msh", path=str(ti_msh))
         raise FileNotFoundError(f"Missing TI.msh at {ti_msh}")
     if not t1_path.exists():
+        log_event("missing", kind="t1", path=str(t1_path))
         raise FileNotFoundError(f"Missing T1 at {t1_path}")
 
     labels_dir.mkdir(parents=True, exist_ok=True)
@@ -89,24 +142,52 @@ def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tupl
         base_file = _find_volume_candidate(base_dir, "TI_Volumetric_")
 
     if not label_file or not base_file:
+        log_event(
+            "missing",
+            kind="ti_volumes",
+            label=str(label_file) if label_file else None,
+            base=str(base_file) if base_file else None,
+        )
         raise FileNotFoundError("Failed to generate label/base volumes with msh2nii.")
 
-    return label_file, base_file
+    if not ti_brain_only.exists():
+        log_event("missing", kind="ti_brain_only", path=str(ti_brain_only))
+        raise FileNotFoundError(f"Missing ti_brain_only at {ti_brain_only}")
+
+    return label_file, base_file, ti_brain_only
 
 
-def _ensure_label_grid(label_img: nib.Nifti1Image, ref_img: nib.Nifti1Image) -> nib.Nifti1Image:
+def _ensure_label_grid(label_img: nib.Nifti1Image, ref_img: nib.Nifti1Image, *, label: str) -> nib.Nifti1Image:
     same_shape = label_img.shape == ref_img.shape
     same_affine = np.allclose(label_img.affine, ref_img.affine, atol=1e-4)
+    log_event(
+        "grid_check",
+        label=label,
+        same_shape=same_shape,
+        same_affine=same_affine,
+        src_shape=label_img.shape,
+        ref_shape=ref_img.shape,
+    )
     if same_shape and same_affine:
         return label_img
+    log_event("resample", label=label, mode="nearest")
     return resample_from_to(label_img, ref_img, order=0)
 
 
-def _ensure_scalar_grid(scalar_img: nib.Nifti1Image, ref_img: nib.Nifti1Image) -> nib.Nifti1Image:
+def _ensure_scalar_grid(scalar_img: nib.Nifti1Image, ref_img: nib.Nifti1Image, *, label: str) -> nib.Nifti1Image:
     same_shape = scalar_img.shape == ref_img.shape
     same_affine = np.allclose(scalar_img.affine, ref_img.affine, atol=1e-4)
+    log_event(
+        "grid_check",
+        label=label,
+        same_shape=same_shape,
+        same_affine=same_affine,
+        src_shape=scalar_img.shape,
+        ref_shape=ref_img.shape,
+    )
     if same_shape and same_affine:
         return scalar_img
+    log_event("resample", label=label, mode="linear")
     return resample_from_to(scalar_img, ref_img, order=1)
 
 
@@ -116,14 +197,52 @@ def _dice(a: np.ndarray, b: np.ndarray) -> float:
     return (2.0 * inter / denom) if denom > 0 else np.nan
 
 
+def _plot_diff_overlay(
+    t1_img: nib.Nifti1Image,
+    diff_freq: np.ndarray,
+    out_path: Path,
+    *,
+    title: str,
+) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return
+
+    t1_data = np.asarray(t1_img.dataobj, dtype=np.float32)
+    mid = tuple(s // 2 for s in t1_data.shape)
+    slices = [
+        (t1_data[mid[0], :, :], diff_freq[mid[0], :, :], "sagittal"),
+        (t1_data[:, mid[1], :], diff_freq[:, mid[1], :], "coronal"),
+        (t1_data[:, :, mid[2]], diff_freq[:, :, mid[2]], "axial"),
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    for ax, (bg, fg, title) in zip(axes, slices, strict=False):
+        ax.imshow(bg.T, cmap="gray", origin="lower")
+        overlay = np.ma.masked_where(fg <= 0, fg)
+        ax.imshow(overlay.T, cmap="hot", alpha=0.7, origin="lower", vmin=0, vmax=1)
+        ax.set_title(title)
+        ax.axis("off")
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def _resolve_t1_path(subject: str, anat_dir: Path, t1_root: Path | None) -> Path:
     local_t1 = anat_dir / f"{subject}_T1w.nii"
     if local_t1.exists():
+        log_event("t1_resolve", subject=subject, source="repeat_anat", path=str(local_t1))
         return local_t1
     if t1_root:
         alt = t1_root / f"{subject}_repeatability" / subject / "anat" / f"{subject}_T1w.nii"
         if alt.exists():
+            log_event("t1_resolve", subject=subject, source="t1_root", path=str(alt))
             return alt
+    log_event("t1_resolve", subject=subject, source="missing", path=str(local_t1))
     return local_t1
 
 
@@ -166,14 +285,22 @@ def main() -> None:
         default=None,
         help="Repeat tag to use as reference (e.g., repeat_001). Defaults to first repeat found.",
     )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Optional JSONL log file path. Disabled by default.",
+    )
 
     args = parser.parse_args()
+    global LOG_FILE
+    LOG_FILE = Path(args.log_file) if args.log_file else None
     subject = args.subject.strip()
     rootdir = Path(args.rootdir)
     repeats_root = Path(args.repeats_dir) if args.repeats_dir else (
         rootdir / f"{subject}_repeatability" / "repeats"
     )
 
+    log_event("repeat_root", path=str(repeats_root))
     repeat_anat_dirs = _find_repeat_dirs(repeats_root, subject)
     if not repeat_anat_dirs:
         raise SystemExit(f"No repeats found under {repeats_root}")
@@ -188,13 +315,16 @@ def main() -> None:
 
     output_dir = Path(args.output_dir) if args.output_dir else repeats_root / "_analysis" / subject
     output_dir.mkdir(parents=True, exist_ok=True)
+    log_event("output_dir", path=str(output_dir))
 
     # Load atlas and reference T1
+    log_event("atlas_load", path=str(args.atlas))
     atlas_img = nib.load(args.atlas)
     t1_root = Path(args.t1_root) if args.t1_root else rootdir
+    log_event("t1_root", path=str(t1_root))
     ref_t1_path = _resolve_t1_path(subject, ref_anat, t1_root)
     ref_t1 = nib.load(ref_t1_path)
-    atlas_img = _ensure_label_grid(atlas_img, ref_t1)
+    atlas_img = _ensure_label_grid(atlas_img, ref_t1, label="atlas_to_t1")
     atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32, copy=False)
 
     m1_labels = [int(x.strip()) for x in args.m1_labels.split(",") if x.strip()]
@@ -203,9 +333,9 @@ def main() -> None:
         raise SystemExit("M1 mask is empty after resampling; check label IDs and atlas alignment.")
 
     # Load reference label volume
-    ref_label_path, _ = _load_or_create_volumes(ref_anat, subject, ref_t1_path)
+    ref_label_path, _, ref_ti_path = _load_or_create_volumes(ref_anat, subject, ref_t1_path)
     ref_label_img = nib.load(ref_label_path)
-    ref_label_img = _ensure_label_grid(ref_label_img, ref_t1)
+    ref_label_img = _ensure_label_grid(ref_label_img, ref_t1, label="ref_labels_to_t1")
     ref_labels = np.asarray(ref_label_img.dataobj).astype(np.int32, copy=False)
 
     # Aggregate metrics
@@ -216,13 +346,13 @@ def main() -> None:
     for anat_dir in repeat_anat_dirs:
         repeat_tag = anat_dir.parent.parent.name  # repeat_###
         t1_path = _resolve_t1_path(subject, anat_dir, t1_root)
-        label_path, base_path = _load_or_create_volumes(anat_dir, subject, t1_path)
+        label_path, _, ti_path = _load_or_create_volumes(anat_dir, subject, t1_path)
 
-        label_img = _ensure_label_grid(nib.load(label_path), ref_t1)
+        label_img = _ensure_label_grid(nib.load(label_path), ref_t1, label=f"{repeat_tag}_labels_to_t1")
         labels = np.asarray(label_img.dataobj).astype(np.int32, copy=False)
 
-        base_img = _ensure_scalar_grid(nib.load(base_path), ref_t1)
-        base_data = np.asarray(base_img.dataobj, dtype=np.float32)
+        ti_img = _ensure_scalar_grid(nib.load(ti_path), ref_t1, label=f"{repeat_tag}_ti_to_t1")
+        base_data = np.asarray(ti_img.dataobj, dtype=np.float32)
 
         diff = labels != ref_labels
         diff_counts += diff.astype(np.int32)
@@ -233,6 +363,8 @@ def main() -> None:
         m1_vals = base_data[m1_mask]
         peak_m1 = float(np.nanmax(m1_vals)) if m1_vals.size else float("nan")
         mean_m1 = float(np.nanmean(m1_vals)) if m1_vals.size else float("nan")
+        peak_brain = float(np.nanmax(base_data))
+        mean_brain = float(np.nanmean(base_data))
 
         # Per-label Dice vs reference
         dice_by_label = {}
@@ -248,6 +380,8 @@ def main() -> None:
                 "diff_fraction_m1": diff_fraction_m1,
                 "peak_m1": peak_m1,
                 "mean_m1": mean_m1,
+                "peak_brain": peak_brain,
+                "mean_brain": mean_brain,
                 "dice_by_label": dice_by_label,
             }
         )
@@ -259,11 +393,14 @@ def main() -> None:
         json.dump(summary_rows, f, indent=2)
 
     with summary_csv.open("w", encoding="utf-8") as f:
-        f.write("repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1\n")
+        f.write(
+            "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1,peak_brain,mean_brain\n"
+        )
         for row in summary_rows:
             f.write(
                 f"{row['repeat_tag']},{row['diff_fraction']},"
-                f"{row['diff_fraction_m1']},{row['peak_m1']},{row['mean_m1']}\n"
+                f"{row['diff_fraction_m1']},{row['peak_m1']},{row['mean_m1']},"
+                f"{row['peak_brain']},{row['mean_brain']}\n"
             )
 
     # Save difference frequency map
@@ -271,6 +408,13 @@ def main() -> None:
     diff_img = nib.Nifti1Image(diff_freq, ref_t1.affine, ref_t1.header)
     diff_img.header.set_data_dtype(np.float32)
     nib.save(diff_img, output_dir / "label_diff_frequency.nii.gz")
+    overlay_title = f"Label diff frequency overlay | T1 ref: {ref_t1_path}"
+    _plot_diff_overlay(
+        ref_t1,
+        diff_freq,
+        output_dir / "label_diff_overlay.png",
+        title=overlay_title,
+    )
 
     # Basic plots (matplotlib imported lazily)
     try:
@@ -279,21 +423,35 @@ def main() -> None:
         import matplotlib.pyplot as plt
 
         tags = [r["repeat_tag"] for r in summary_rows]
-        peak_vals = [r["peak_m1"] for r in summary_rows]
+        scale_factor = 1.0 / 10000.0  # 2000 -> 0.2 V/m
+        peak_vals = [r["peak_m1"] * scale_factor for r in summary_rows]
+        peak_brain_vals = [r["peak_brain"] * scale_factor for r in summary_rows]
         diff_vals = [r["diff_fraction_m1"] for r in summary_rows]
-
+        ti_source_desc = "TI: anat/SimNIBS/ti_brain_only.nii.gz (per repeat)"
+        label_source_desc = "Labels: TI_Volumetric_* (per repeat)"
         plt.figure(figsize=(8, 4))
         plt.plot(tags, peak_vals, marker="o")
         plt.xticks(rotation=45, ha="right")
-        plt.ylabel("Peak TI in M1")
+        plt.title(f"Peak TI in M1 | {ti_source_desc}")
+        plt.ylabel("Peak TI in M1 (V/m)")
         plt.tight_layout()
         plt.savefig(output_dir / "peak_m1_by_repeat.png", dpi=150)
         plt.close()
 
+        plt.figure(figsize=(8, 4))
+        plt.plot(tags, peak_brain_vals, marker="o")
+        plt.xticks(rotation=45, ha="right")
+        plt.title(f"Peak TI (whole brain) | {ti_source_desc}")
+        plt.ylabel("Peak TI (whole brain) (V/m)")
+        plt.tight_layout()
+        plt.savefig(output_dir / "peak_brain_by_repeat.png", dpi=150)
+        plt.close()
+
         plt.figure(figsize=(5, 4))
         plt.scatter(diff_vals, peak_vals, alpha=0.8)
+        plt.title(f"M1 peak vs label differences | {label_source_desc}")
         plt.xlabel("M1 label diff fraction vs reference")
-        plt.ylabel("Peak TI in M1")
+        plt.ylabel("Peak TI in M1 (V/m)")
         plt.tight_layout()
         plt.savefig(output_dir / "peak_m1_vs_mesh_diff.png", dpi=150)
         plt.close()

@@ -1,0 +1,71 @@
+<mxfile host="app.diagrams.net" modified="2026-02-02T00:00:00.000Z" agent="codex" version="20.8.3" type="device">
+  <diagram id="mesh-repeat-flow" name="Mesh Repeatability Flow">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="2" value="Start Slurm Array&#xa;repeat_###" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="70" y="40" width="200" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="3" value="Create Repeat Workspace&#xa;repeats/repeat_###/sub-*/anat" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="70" y="130" width="240" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="4" value="Run CHARM Meshing&#xa;(m2m_sub-*/...)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="70" y="230" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="5" value="Run TI Simulation&#xa;(SimNIBS Output)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="70" y="320" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="6" value="TI.msh + Volumes&#xa;TI_Volumetric_*" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="70" y="410" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="7" value="Load FreeSurfer Atlas&#xa;M1 label(s)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="380" y="410" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="8" value="Resample to T1 Grid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="380" y="320" width="200" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="9" value="Compute Differences&#xa;Label diff + M1 peak TI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="380" y="230" width="240" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="10" value="Outputs&#xa;summary.csv/json&#xa;label_diff_frequency.nii.gz&#xa;plots" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="380" y="130" width="240" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="11" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="2" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="12" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="3" target="4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="13" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="4" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="14" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="5" target="6">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="15" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="6" target="8">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="16" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="7" target="8">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="17" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="8" target="9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="18" style="endArrow=block;html=1;strokeColor=#666666;" edge="1" parent="1" source="9" target="10">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -12,6 +12,7 @@ import subprocess
 import nibabel as nib
 
 from nibabel.processing import resample_from_to
+from scipy import ndimage as ndi
 
 from copy import deepcopy
 from simnibs import *
@@ -37,6 +38,16 @@ REPEAT_BASE = os.path.join(rootDIR, "repeats")
 
 REPEAT_PREFIX = "repeat_"
 DEFAULT_REPEAT_COUNT = 30
+
+# Deterministic meshing settings
+USE_CUSTOM_LABELS_ONLY = True
+SMOOTH_SCALP = True
+SCALP_LABEL = 5
+MORPH_KERNEL = (3, 3, 3)  # fixed structuring element
+CLOSE_ITERS = 1
+OPEN_ITERS = 0
+DILATE_ITERS = 0
+ERODE_ITERS = 0
 
 
 def log_event(event: str, **fields) -> None:
@@ -66,6 +77,24 @@ def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> No
         stderr_tail=result.stderr[-2000:] if result.stderr else "",
     )
     result.check_returncode()
+
+def _smooth_scalp_labels(label_data: np.ndarray) -> np.ndarray:
+    """Deterministically smooth scalp label (binary morphology)."""
+    mask = label_data == SCALP_LABEL
+    structure = np.ones(MORPH_KERNEL, dtype=bool)
+    if CLOSE_ITERS > 0:
+        mask = ndi.binary_closing(mask, structure=structure, iterations=CLOSE_ITERS)
+    if OPEN_ITERS > 0:
+        mask = ndi.binary_opening(mask, structure=structure, iterations=OPEN_ITERS)
+    if DILATE_ITERS > 0:
+        mask = ndi.binary_dilation(mask, structure=structure, iterations=DILATE_ITERS)
+    if ERODE_ITERS > 0:
+        mask = ndi.binary_erosion(mask, structure=structure, iterations=ERODE_ITERS)
+
+    out = label_data.copy()
+    out[out == SCALP_LABEL] = 0
+    out[mask] = SCALP_LABEL
+    return out
 
 
 def _repeat_tag(prefix: str, index: int, width: int = 3) -> str:
@@ -172,7 +201,6 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
         custom_seg_map = nib.load(custom_seg_map_path)
 
         charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
-        charm_seg_map = nib.load(charm_seg_map_path)
         log_file_info("custom_seg_map", custom_seg_map_path)
         log_file_info("charm_seg_map", charm_seg_map_path)
 
@@ -186,31 +214,19 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
             data = np.rint(data).astype(np.int16)
             return nib.Nifti1Image(data, like.affine, like.header)
 
-        # Resample to reference grid if needed
-        same_shape = custom_seg_map.shape == charm_seg_map.shape
-        same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
+        # Deterministic pipeline: use ONLY the custom segmentation map.
+        custom_int = to_int_img(custom_seg_map, custom_seg_map)
+        label_data = custom_int.get_fdata(dtype=np.float32).astype(np.int16)
 
-        # High to low resampling
-        if not (same_shape and same_affine):
+        if USE_CUSTOM_LABELS_ONLY and SMOOTH_SCALP:
+            label_data = _smooth_scalp_labels(label_data)
 
-            print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
-            # order=0 enforces nearest-neighbor to preserve labels
-            src_img_nn = nib.Nifti1Image(
-                np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
-            )
-            resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
+        merged_seg_img_path = os.path.join(subject_dir, f\"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii\")
+        out_img = nib.Nifti1Image(label_data.astype(np.uint16), custom_int.affine, custom_int.header)
+        nib.save(out_img, merged_seg_img_path)
 
-        merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
-            manual_skin_id=5,          # scalp ID in custom segmentation
-            dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-            background_label=0,              # background ID in custom segmentation
-            output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-            save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-
-        merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
-        nib.save(merged_img, merged_seg_img_path)
-
-        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
+        # Overwrite CHARM label map used for meshing
+        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype=\"uint16\")
 
         # Re-mesh with charm --mesh from the directory that contains m2m_<subject>
         remesh_cmd = [

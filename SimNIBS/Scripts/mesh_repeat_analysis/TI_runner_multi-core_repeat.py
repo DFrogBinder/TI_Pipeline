@@ -221,12 +221,12 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
         if USE_CUSTOM_LABELS_ONLY and SMOOTH_SCALP:
             label_data = _smooth_scalp_labels(label_data)
 
-        merged_seg_img_path = os.path.join(subject_dir, f\"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii\")
+        merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
         out_img = nib.Nifti1Image(label_data.astype(np.uint16), custom_int.affine, custom_int.header)
         nib.save(out_img, merged_seg_img_path)
 
         # Overwrite CHARM label map used for meshing
-        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype=\"uint16\")
+        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
 
         # Re-mesh with charm --mesh from the directory that contains m2m_<subject>
         remesh_cmd = [

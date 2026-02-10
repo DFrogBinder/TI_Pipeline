@@ -138,41 +138,45 @@ def _tile_images(images, *, cols, margin, label_paths, label_size):
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
-        description="Render multiple .msh files into a single mosaic image."
+        description=(
+            "Render a mosaic for meshes found under <root>/repeats/**/<mesh-name>."
+        )
     )
-    parser.add_argument("msh", nargs="*", help="Paths to .msh files.")
-    parser.add_argument("--glob", dest="glob", default=None, help="Glob for .msh files.")
-    parser.add_argument("--output", required=True, help="Output PNG path.")
-    parser.add_argument("--cols", type=int, default=None, help="Number of columns.")
-    parser.add_argument("--img-size", default="400x400", help="Per-mesh render size, e.g. 400x400.")
-    parser.add_argument("--margin", type=int, default=12, help="Margin between tiles.")
-    parser.add_argument("--bg", default="white", help="Background color.")
-    parser.add_argument("--edges", action="store_true", help="Show mesh edges.")
-    parser.add_argument("--view", default="iso", choices=["iso", "xy", "xz", "yz"], help="Camera view.")
-    parser.add_argument("--zoom", type=float, default=2.5, help="Camera distance multiplier.")
-    parser.add_argument("--label", action="store_true", help="Overlay file names on tiles.")
+    parser.add_argument(
+        "--root",
+        default=".",
+        help="Root folder that contains the repeats/ directory (default: current dir).",
+    )
+    parser.add_argument(
+        "--mesh-name",
+        required=True,
+        help="Mesh filename to look for under repeats (e.g., TI.msh).",
+    )
+    parser.add_argument(
+        "--output",
+        default="mesh_mosaic.png",
+        help="Output PNG path (default: mesh_mosaic.png).",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = _parse_args(argv or sys.argv[1:])
 
-    msh_paths: list[Path] = []
-    if args.glob:
-        msh_paths.extend(sorted(Path().glob(args.glob)))
-    msh_paths.extend(Path(p) for p in args.msh)
-    msh_paths = [p for p in msh_paths if p.exists()]
+    root = Path(args.root)
+    repeats_dir = root / "repeats"
+    if not repeats_dir.exists():
+        print(f"Missing repeats directory: {repeats_dir}")
+        return 2
+
+    pattern = f"**/{args.mesh_name}"
+    msh_paths = sorted(p for p in repeats_dir.glob(pattern) if p.is_file())
 
     if not msh_paths:
-        print("No .msh files found. Provide paths or --glob.")
+        print(f"No meshes found matching {args.mesh_name} under {repeats_dir}")
         return 2
 
-    try:
-        w_str, h_str = args.img_size.lower().split("x")
-        size = (int(w_str), int(h_str))
-    except Exception:
-        print("Invalid --img-size. Use format like 400x400.")
-        return 2
+    size = (400, 400)
 
     meshes = []
     radii = []
@@ -182,26 +186,26 @@ def main(argv=None) -> int:
         radii.append(_max_radius(mesh))
 
     max_radius = max(radii) if radii else 1.0
-    distance = max(1.0, max_radius * args.zoom)
-    camera_position = _camera_from_view(args.view, distance)
+    distance = max(1.0, max_radius * 2.5)
+    camera_position = _camera_from_view("iso", distance)
 
     images = []
     for mesh in meshes:
         img = _render_mesh(
             mesh,
             size=size,
-            bg=args.bg,
-            show_edges=args.edges,
+            bg="white",
+            show_edges=True,
             camera_position=camera_position,
         )
         images.append(img)
 
-    cols = args.cols or math.ceil(math.sqrt(len(images)))
-    labels = [p.name for p in msh_paths] if args.label else None
+    cols = math.ceil(math.sqrt(len(images)))
+    labels = [p.parent.parent.name for p in msh_paths]
     mosaic = _tile_images(
         images,
         cols=cols,
-        margin=args.margin,
+        margin=12,
         label_paths=labels,
         label_size=14,
     )
@@ -209,7 +213,7 @@ def main(argv=None) -> int:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mosaic.save(output_path)
-    print(f"Saved mosaic to {output_path}")
+    print(f"Saved mosaic to {output_path} ({len(images)} meshes)")
     return 0
 
 

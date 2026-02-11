@@ -277,8 +277,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default=None,
+        default="./",
         help="Output directory for reports and plots.",
+    )
+    parser.add_argument(
+        "--peak-percentile",
+        type=float,
+        default=None,
+        help=(
+            "Optional: compute peak TI as a percentile (e.g., 99.9) instead of only max. "
+            "Adds peak_pctl_* fields to outputs."
+        ),
     )
     parser.add_argument(
         "--reference-repeat",
@@ -343,6 +352,11 @@ def main() -> None:
     diff_counts = np.zeros(ref_labels.shape, dtype=np.int32)
     label_set = sorted(set(np.unique(ref_labels)))
 
+    use_percentile = args.peak_percentile is not None
+    peak_percentile = float(args.peak_percentile) if use_percentile else None
+    if use_percentile and not (0.0 < peak_percentile <= 100.0):
+        raise SystemExit("--peak-percentile must be in (0, 100].")
+
     for anat_dir in repeat_anat_dirs:
         repeat_tag = anat_dir.parent.parent.name  # repeat_###
         t1_path = _resolve_t1_path(subject, anat_dir, t1_root)
@@ -365,6 +379,14 @@ def main() -> None:
         mean_m1 = float(np.nanmean(m1_vals)) if m1_vals.size else float("nan")
         peak_brain = float(np.nanmax(base_data))
         mean_brain = float(np.nanmean(base_data))
+        if use_percentile:
+            peak_pctl_m1 = (
+                float(np.nanpercentile(m1_vals, peak_percentile)) if m1_vals.size else float("nan")
+            )
+            peak_pctl_brain = float(np.nanpercentile(base_data, peak_percentile))
+        else:
+            peak_pctl_m1 = None
+            peak_pctl_brain = None
 
         # Per-label Dice vs reference
         dice_by_label = {}
@@ -379,8 +401,10 @@ def main() -> None:
                 "diff_fraction": diff_fraction,
                 "diff_fraction_m1": diff_fraction_m1,
                 "peak_m1": peak_m1,
+                "peak_pctl_m1": peak_pctl_m1,
                 "mean_m1": mean_m1,
                 "peak_brain": peak_brain,
+                "peak_pctl_brain": peak_pctl_brain,
                 "mean_brain": mean_brain,
                 "dice_by_label": dice_by_label,
             }
@@ -393,15 +417,28 @@ def main() -> None:
         json.dump(summary_rows, f, indent=2)
 
     with summary_csv.open("w", encoding="utf-8") as f:
-        f.write(
-            "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1,peak_brain,mean_brain\n"
-        )
-        for row in summary_rows:
+        if use_percentile:
             f.write(
-                f"{row['repeat_tag']},{row['diff_fraction']},"
-                f"{row['diff_fraction_m1']},{row['peak_m1']},{row['mean_m1']},"
-                f"{row['peak_brain']},{row['mean_brain']}\n"
+                "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,peak_pctl_m1,mean_m1,"
+                "peak_brain,peak_pctl_brain,mean_brain\n"
             )
+            for row in summary_rows:
+                f.write(
+                    f"{row['repeat_tag']},{row['diff_fraction']},"
+                    f"{row['diff_fraction_m1']},{row['peak_m1']},{row['peak_pctl_m1']},"
+                    f"{row['mean_m1']},{row['peak_brain']},{row['peak_pctl_brain']},"
+                    f"{row['mean_brain']}\n"
+                )
+        else:
+            f.write(
+                "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1,peak_brain,mean_brain\n"
+            )
+            for row in summary_rows:
+                f.write(
+                    f"{row['repeat_tag']},{row['diff_fraction']},"
+                    f"{row['diff_fraction_m1']},{row['peak_m1']},{row['mean_m1']},"
+                    f"{row['peak_brain']},{row['mean_brain']}\n"
+                )
 
     # Save difference frequency map
     diff_freq = diff_counts.astype(np.float32) / max(1, len(repeat_anat_dirs))
@@ -426,6 +463,17 @@ def main() -> None:
         scale_factor = 1.0 / 10000.0  # 2000 -> 0.2 V/m
         peak_vals = [r["peak_m1"] * scale_factor for r in summary_rows]
         peak_brain_vals = [r["peak_brain"] * scale_factor for r in summary_rows]
+        if use_percentile:
+            peak_pctl_vals = [
+                (r["peak_pctl_m1"] * scale_factor) if r["peak_pctl_m1"] is not None else float("nan")
+                for r in summary_rows
+            ]
+            peak_pctl_brain_vals = [
+                (r["peak_pctl_brain"] * scale_factor)
+                if r["peak_pctl_brain"] is not None
+                else float("nan")
+                for r in summary_rows
+            ]
         diff_vals = [r["diff_fraction_m1"] for r in summary_rows]
         ti_source_desc = "TI: anat/SimNIBS/ti_brain_only.nii.gz (per repeat)"
         label_source_desc = "Labels: TI_Volumetric_* (per repeat)"
@@ -447,6 +495,26 @@ def main() -> None:
         plt.savefig(output_dir / "peak_brain_by_repeat.png", dpi=150)
         plt.close()
 
+        if use_percentile:
+            pctl_label = f"P{peak_percentile:g}"
+            plt.figure(figsize=(8, 4))
+            plt.plot(tags, peak_pctl_vals, marker="o")
+            plt.xticks(rotation=45, ha="right")
+            plt.title(f"{pctl_label} TI in M1 | {ti_source_desc}")
+            plt.ylabel(f"{pctl_label} TI in M1 (V/m)")
+            plt.tight_layout()
+            plt.savefig(output_dir / "peak_pctl_m1_by_repeat.png", dpi=150)
+            plt.close()
+
+            plt.figure(figsize=(8, 4))
+            plt.plot(tags, peak_pctl_brain_vals, marker="o")
+            plt.xticks(rotation=45, ha="right")
+            plt.title(f"{pctl_label} TI (whole brain) | {ti_source_desc}")
+            plt.ylabel(f"{pctl_label} TI (whole brain) (V/m)")
+            plt.tight_layout()
+            plt.savefig(output_dir / "peak_pctl_brain_by_repeat.png", dpi=150)
+            plt.close()
+
         plt.figure(figsize=(5, 4))
         plt.scatter(diff_vals, peak_vals, alpha=0.8)
         plt.title(f"M1 peak vs label differences | {label_source_desc}")
@@ -455,6 +523,16 @@ def main() -> None:
         plt.tight_layout()
         plt.savefig(output_dir / "peak_m1_vs_mesh_diff.png", dpi=150)
         plt.close()
+
+        if use_percentile:
+            plt.figure(figsize=(5, 4))
+            plt.scatter(diff_vals, peak_pctl_vals, alpha=0.8)
+            plt.title(f"M1 {pctl_label} vs label differences | {label_source_desc}")
+            plt.xlabel("M1 label diff fraction vs reference")
+            plt.ylabel(f"{pctl_label} TI in M1 (V/m)")
+            plt.tight_layout()
+            plt.savefig(output_dir / "peak_pctl_m1_vs_mesh_diff.png", dpi=150)
+            plt.close()
     except Exception as exc:
         log_event("plot_error", error=str(exc))
 

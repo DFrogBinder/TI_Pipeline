@@ -34,7 +34,7 @@ import time
 start = time.time()
 
 #? Set appropriate flags
-meshPresent = False
+meshPresent = True   # Set to True if mesh already exists and you want to skip meshing step
 runMNI152 = False
 
 #? To load from checkpoint
@@ -44,7 +44,7 @@ runMNI152 = False
 #  globals().update(state)
 #==================================================================
 
-rootDIR     = '/users/cop23bi/Data/batch'
+rootDIR     = '/home/boyan/sandbox/Jake_Data/Workbench'
 # fnamehead    = '/home/boyan/sandbox/Jake_Data/Charm_tests/sub-CC110087_localMap/anat/m2m_sub-CC110087_T1w.nii.gz/sub-CC110087_T1w.nii.gz.msh'
 t = os.listdir(rootDIR)
 #state = cloudpickle.loads(open("/home/boyan/sandbox/tmp/checkpoint.pkl", "rb").read())
@@ -183,12 +183,12 @@ for subject in t:
     electrode_conductivity = 0.85
 
     # Hippocampus montage
-    montage_right = ('Fp2', 2, 'P8', -2)
-    montage_left  = ('T7', 2, 'P7',  -2)
+    montage_right = ('Fp2', 2e-3, 'P8', -2e-3)
+    montage_left  = ('T7', 2e-3, 'P7',  -2e-3)
     
     # M1 montage
-    # montage_right = ('C1', 1.34, 'Cz', -1.34)
-    # montage_left  = ('C3', 2.66, 'CP5',  -2.66)
+    # montage_right = ('C1', 1.34e-3, 'Cz', -1.34e-3)
+    # montage_left  = ('C3', 2.66e-3, 'CP5',  -2.66e-3)
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
@@ -320,7 +320,7 @@ for subject in t:
         print(f"Error creating volumetric mesh: {e}")
     #endregion
 
-    #region Post-process
+    #region Post-process/users/cop23bi/Data/batch
     # Loads the label file
     label_file_path = os.listdir(volume_labels_path)[0]
     ti_volume_path = os.listdir(volume_base_path)[0]

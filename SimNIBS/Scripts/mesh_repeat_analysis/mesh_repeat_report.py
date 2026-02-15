@@ -20,6 +20,7 @@ from nibabel.processing import resample_from_to
 
 REPEAT_PREFIX = "repeat_"
 LOG_FILE: Path | None = None
+TISSUE_LABELS = list(range(1, 11))
 
 
 def _short_path(value: str, max_len: int = 120) -> str:
@@ -197,6 +198,62 @@ def _dice(a: np.ndarray, b: np.ndarray) -> float:
     return (2.0 * inter / denom) if denom > 0 else np.nan
 
 
+def _count_msh_nodes_fallback(ti_msh: Path) -> float:
+    try:
+        with ti_msh.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.strip() == "$Nodes":
+                    header = next(fh, "").strip().split()
+                    if len(header) == 1:
+                        return float(int(header[0]))
+                    if len(header) >= 4:
+                        # Gmsh v4.x: numEntityBlocks numNodes minNodeTag maxNodeTag
+                        return float(int(header[1]))
+                    break
+    except Exception as exc:
+        log_event("mesh_fallback_error", path=str(ti_msh), error=str(exc))
+    return float("nan")
+
+
+def _count_msh_nodes(ti_msh: Path) -> float:
+    try:
+        import meshio
+    except Exception:
+        log_event(
+            "missing_dep",
+            kind="meshio",
+            note="meshio not available; using fallback .msh parser",
+        )
+        return _count_msh_nodes_fallback(ti_msh)
+    try:
+        mesh = meshio.read(str(ti_msh))
+        return float(mesh.points.shape[0])
+    except Exception as exc:
+        log_event("mesh_read_error", path=str(ti_msh), error=str(exc))
+        fallback = _count_msh_nodes_fallback(ti_msh)
+        if not np.isnan(fallback):
+            log_event("mesh_fallback_used", path=str(ti_msh), nodes=fallback)
+        return fallback
+
+
+def _label_name(label_id: int) -> str:
+    # Common SimNIBS tissue labels. Unknowns fallback to numeric.
+    label_map = {
+        0: "Background",
+        1: "WM",
+        2: "GM",
+        3: "CSF",
+        4: "Bone",
+        5: "Scalp",
+        6: "Eyes",
+        7: "Compact Bone",
+        8: "Spongy Bone",
+        9: "Blood",
+        10: "Muscle",
+    }
+    return label_map.get(int(label_id), f"Label {label_id}")
+
+
 def _plot_diff_overlay(
     t1_img: nib.Nifti1Image,
     diff_freq: np.ndarray,
@@ -351,6 +408,8 @@ def main() -> None:
     summary_rows = []
     diff_counts = np.zeros(ref_labels.shape, dtype=np.int32)
     label_set = sorted(set(np.unique(ref_labels)))
+    label_presence: dict[int, list[str]] = {}
+    label_counts: dict[str, dict[int, int]] = {}
 
     use_percentile = args.peak_percentile is not None
     peak_percentile = float(args.peak_percentile) if use_percentile else None
@@ -395,6 +454,20 @@ def main() -> None:
             b = ref_labels == lab
             dice_by_label[int(lab)] = _dice(a, b)
 
+        label_ids = sorted(set(np.unique(labels)) - {0})
+        for lab in label_ids:
+            label_presence.setdefault(int(lab), []).append(repeat_tag)
+
+        counts = np.bincount(labels.ravel(), minlength=max(TISSUE_LABELS) + 1)
+        label_counts[repeat_tag] = {lab: int(counts[lab]) for lab in TISSUE_LABELS}
+
+        ti_msh_path = anat_dir / "SimNIBS" / "Output" / subject / "TI.msh"
+        if not ti_msh_path.exists():
+            log_event("missing", kind="ti_msh", path=str(ti_msh_path))
+            mesh_nodes = float("nan")
+        else:
+            mesh_nodes = _count_msh_nodes(ti_msh_path)
+
         summary_rows.append(
             {
                 "repeat_tag": repeat_tag,
@@ -406,6 +479,8 @@ def main() -> None:
                 "peak_brain": peak_brain,
                 "peak_pctl_brain": peak_pctl_brain,
                 "mean_brain": mean_brain,
+                "mesh_nodes": mesh_nodes,
+                "label_count": len(label_ids),
                 "dice_by_label": dice_by_label,
             }
         )
@@ -420,24 +495,24 @@ def main() -> None:
         if use_percentile:
             f.write(
                 "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,peak_pctl_m1,mean_m1,"
-                "peak_brain,peak_pctl_brain,mean_brain\n"
+                "peak_brain,peak_pctl_brain,mean_brain,mesh_nodes,label_count\n"
             )
             for row in summary_rows:
                 f.write(
                     f"{row['repeat_tag']},{row['diff_fraction']},"
                     f"{row['diff_fraction_m1']},{row['peak_m1']},{row['peak_pctl_m1']},"
                     f"{row['mean_m1']},{row['peak_brain']},{row['peak_pctl_brain']},"
-                    f"{row['mean_brain']}\n"
+                    f"{row['mean_brain']},{row['mesh_nodes']},{row['label_count']}\n"
                 )
         else:
             f.write(
-                "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1,peak_brain,mean_brain\n"
+                "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1,peak_brain,mean_brain,mesh_nodes,label_count\n"
             )
             for row in summary_rows:
                 f.write(
                     f"{row['repeat_tag']},{row['diff_fraction']},"
                     f"{row['diff_fraction_m1']},{row['peak_m1']},{row['mean_m1']},"
-                    f"{row['peak_brain']},{row['mean_brain']}\n"
+                    f"{row['peak_brain']},{row['mean_brain']},{row['mesh_nodes']},{row['label_count']}\n"
                 )
 
     # Save difference frequency map
@@ -532,6 +607,114 @@ def main() -> None:
             plt.ylabel(f"{pctl_label} TI in M1 (V/m)")
             plt.tight_layout()
             plt.savefig(output_dir / "peak_pctl_m1_vs_mesh_diff.png", dpi=150)
+            plt.close()
+
+        # Mesh node counts by repeat
+        node_vals = [r["mesh_nodes"] for r in summary_rows]
+        if not all(np.isnan(v) for v in node_vals):
+            plt.figure(figsize=(8, 4))
+            plt.plot(tags, node_vals, marker="o")
+            plt.xticks(rotation=45, ha="right")
+            plt.title("Head mesh node count by repeat")
+            plt.ylabel("Node count")
+            plt.tight_layout()
+            plt.savefig(output_dir / "mesh_nodes_by_repeat.png", dpi=150)
+            plt.close()
+
+            # Bar chart with outlier-robust mean (mark outliers)
+            plt.figure(figsize=(8, 4))
+
+            node_arr = np.asarray(node_vals, dtype=float)
+            valid_mask = ~np.isnan(node_arr)
+            valid_vals = node_arr[valid_mask]
+            outlier_mask = np.zeros_like(node_arr, dtype=bool)
+            lower = upper = None
+            if valid_vals.size >= 3:
+                q1, q3 = np.percentile(valid_vals, [25, 75])
+                iqr = q3 - q1
+                lower = q1 - 1.5 * iqr
+                upper = q3 + 1.5 * iqr
+                outlier_mask = (node_arr < lower) | (node_arr > upper)
+                outlier_mask &= valid_mask
+
+            colors = ["tab:red" if outlier_mask[i] else "tab:blue" for i in range(len(node_arr))]
+            bars = plt.bar(tags, node_vals, color=colors)
+            for i, bar in enumerate(bars):
+                if outlier_mask[i]:
+                    bar.set_hatch("//")
+
+            plt.xticks(rotation=45, ha="right")
+            plt.title("Head mesh node count by repeat (bar)")
+            plt.ylabel("Node count")
+
+            if lower is not None and upper is not None:
+                inliers = node_arr[(node_arr >= lower) & (node_arr <= upper) & valid_mask]
+                if inliers.size:
+                    mean_val = float(np.mean(inliers))
+                    plt.axhline(mean_val, color="red", linestyle="--", linewidth=1.5)
+                    yticks = list(plt.yticks()[0]) + [mean_val]
+                    yticks = sorted(set(yticks))
+                    plt.yticks(yticks, [f"{y:.0f}" for y in yticks])
+                    ax = plt.gca()
+                    for tick, y in zip(ax.get_yticklabels(), ax.get_yticks()):
+                        if abs(y - mean_val) < 1e-6:
+                            tick.set_color("red")
+                    plt.legend(
+                        handles=[
+                            plt.Rectangle((0, 0), 1, 1, color="tab:blue", label="Inlier"),
+                            plt.Rectangle((0, 0), 1, 1, color="tab:red", hatch="//", label="Outlier"),
+                        ],
+                        fontsize=7,
+                        frameon=False,
+                    )
+
+            plt.tight_layout()
+            plt.savefig(output_dir / "mesh_nodes_by_repeat_bar.png", dpi=150)
+            plt.close()
+        else:
+            log_event("plot_skip", reason="all_nan", plot="mesh_nodes_by_repeat")
+
+        # Label presence heatmap by repeat (labels annotated with tissue names)
+        all_labels = sorted(label_presence.keys())
+        if all_labels:
+            presence = np.zeros((len(tags), len(all_labels)), dtype=np.int32)
+            tag_to_idx = {t: i for i, t in enumerate(tags)}
+            for j, lab in enumerate(all_labels):
+                for tag in label_presence.get(lab, []):
+                    presence[tag_to_idx[tag], j] = 1
+
+            plt.figure(figsize=(max(6, len(all_labels) * 0.4), 6))
+            plt.imshow(presence, aspect="auto", cmap="Greys", interpolation="nearest")
+            plt.yticks(range(len(tags)), tags)
+            xlabels = [f"{lab} ({_label_name(lab)})" for lab in all_labels]
+            plt.xticks(range(len(all_labels)), xlabels, rotation=45, ha="right")
+            plt.title("Tissue label presence by repeat")
+            plt.xlabel("Label ID (tissue)")
+            plt.ylabel("Repeat")
+            plt.tight_layout()
+            plt.savefig(output_dir / "label_presence_by_repeat.png", dpi=150)
+            plt.close()
+
+        # Label voxel counts by repeat (grouped bars, labels 1-10)
+        if label_counts:
+            label_ids = TISSUE_LABELS
+            x = np.arange(len(label_ids))
+            total_width = 0.9
+            width = total_width / max(1, len(tags))
+            plt.figure(figsize=(max(9, len(label_ids) * 1.3), 5))
+            cmap = plt.get_cmap("tab20", len(tags))
+            for idx, tag in enumerate(tags):
+                counts = [label_counts.get(tag, {}).get(lab, 0) for lab in label_ids]
+                offsets = x - total_width / 2 + idx * width
+                plt.bar(offsets, counts, width=width, color=cmap(idx), label=tag)
+            plt.xlim(-0.5, len(label_ids) - 0.5)
+            xlabels = [f"{lab} {_label_name(lab)}" for lab in label_ids]
+            plt.xticks(x, xlabels, rotation=45, ha="right")
+            plt.title("Tissue label voxel counts by repeat (labels 1-10)")
+            plt.ylabel("Voxel count")
+            plt.legend(fontsize=6, ncol=3, frameon=False)
+            plt.tight_layout()
+            plt.savefig(output_dir / "label_counts_by_repeat.png", dpi=150)
             plt.close()
     except Exception as exc:
         log_event("plot_error", error=str(exc))

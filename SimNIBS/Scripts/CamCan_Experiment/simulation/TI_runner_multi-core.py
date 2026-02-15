@@ -67,7 +67,7 @@ def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> No
     result.check_returncode()
 
 
-def process_subject(subject_entry):
+def process_subject(subject_entry, replace_charm_segmentation: bool = False):
     """Run the TI pipeline for a single subject entry."""
     subject_source = subject_entry
     subject = subject_entry
@@ -116,7 +116,6 @@ def process_subject(subject_entry):
         custom_seg_map = nib.load(custom_seg_map_path)
 
         charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
-        charm_seg_map = nib.load(charm_seg_map_path)
         log_file_info("custom_seg_map", custom_seg_map_path)
         log_file_info("charm_seg_map", charm_seg_map_path)
 
@@ -130,9 +129,26 @@ def process_subject(subject_entry):
             data = np.rint(data).astype(np.int16)
             return nib.Nifti1Image(data, like.affine, like.header)
 
-        # Resample to reference grid if needed
-        same_shape = custom_seg_map.shape == charm_seg_map.shape
-        same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
+        custom_seg_map_int = to_int_img(custom_seg_map, custom_seg_map)
+
+        if replace_charm_segmentation:
+            print("[INFO] Replacing CHARM segmentation directly with custom segmentation (merge disabled).")
+            merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
+            nib.save(custom_seg_map_int, merged_seg_img_path)
+            atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
+            log_event(
+                "segmentation_replaced",
+                subject=subject,
+                mode="direct_custom_replacement",
+                source=custom_seg_map_path,
+                target=charm_seg_map_path,
+            )
+        else:
+            charm_seg_map = nib.load(charm_seg_map_path)
+
+            # Resample to reference grid if needed
+            same_shape = custom_seg_map.shape == charm_seg_map.shape
+            same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
 
         #? Low to high resampling is not recommended
         # if not (same_shape and same_affine):
@@ -157,31 +173,30 @@ def process_subject(subject_entry):
         #     save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
 
 
-        #? High to low resampling
-        if not (same_shape and same_affine):
+            #? High to low resampling
+            if not (same_shape and same_affine):
 
-            print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
-            # order=0 enforces nearest-neighbor to preserve labels
-            src_img_nn = nib.Nifti1Image(
-                np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
-            )
-            resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
+                print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
+                # order=0 enforces nearest-neighbor to preserve labels
+                src_img_nn = nib.Nifti1Image(
+                    np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
+                )
+                resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
+                resampled = to_int_img(resampled, custom_seg_map)
+            else:
+                resampled = to_int_img(charm_seg_map, custom_seg_map)
 
-        #region Re-mesh
-        merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
-            manual_skin_id=5,          # scalp ID in custom segmentation
-            dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-            background_label=0,              # background ID in custom segmentation
-            output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-            save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
+            #region Re-mesh
+            merged_img, debug = merge_segmentation_maps(custom_seg_map_int, resampled,
+                manual_skin_id=5,          # scalp ID in custom segmentation
+                dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
+                background_label=0,              # background ID in custom segmentation
+                output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
+                save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
 
-
-
-
-        merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
-        nib.save(merged_img, merged_seg_img_path)
-
-        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
+            merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
+            nib.save(merged_img, merged_seg_img_path)
+            atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
 
 
         # Re-mesh with charm --mesh from the directory that contains m2m_<subject>
@@ -441,7 +456,7 @@ def process_subject(subject_entry):
 
 
 
-def run_many_subjects(max_workers: int | None = None):
+def run_many_subjects(max_workers: int | None = None, replace_charm_segmentation: bool = False):
     """
     Legacy / local mode: process all subjects found in rootDIR with a pool.
 
@@ -468,7 +483,7 @@ def run_many_subjects(max_workers: int | None = None):
     subject_durations: dict[str, float] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_subject = {
-            executor.submit(process_subject, subject): subject
+            executor.submit(process_subject, subject, replace_charm_segmentation): subject
             for subject in subjects
         }
         for future in concurrent.futures.as_completed(future_to_subject):
@@ -503,6 +518,14 @@ def main():
             "Ignored when --subject is given. Defaults to #CPUs (capped by #subjects)."
         ),
     )
+    parser.add_argument(
+        "--replace-charm-segmentation",
+        action="store_true",
+        help=(
+            "Use the custom segmentation map as a direct replacement for CHARM's "
+            "segmentation (no merge with CHARM labels)."
+        ),
+    )
 
     args = parser.parse_args()
     start = time.time()
@@ -511,7 +534,10 @@ def main():
         # ---------- Single-subject (Slurm array) mode ----------
         subject_id = args.subject.strip()
         print(f"[INFO] Running TI pipeline for single subject: {subject_id}")
-        duration = process_subject(subject_id)
+        duration = process_subject(
+            subject_id,
+            replace_charm_segmentation=args.replace_charm_segmentation,
+        )
         total_runtime = time.time() - start
 
         print("Done.")
@@ -521,7 +547,10 @@ def main():
 
     else:
         # ---------- Multi-subject / local mode ----------
-        subject_durations = run_many_subjects(max_workers=args.max_workers)
+        subject_durations = run_many_subjects(
+            max_workers=args.max_workers,
+            replace_charm_segmentation=args.replace_charm_segmentation,
+        )
         total_runtime = time.time() - start
 
         print("Done.")

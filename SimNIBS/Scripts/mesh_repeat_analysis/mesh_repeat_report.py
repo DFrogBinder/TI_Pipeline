@@ -4,7 +4,8 @@
 Repeatability analysis for SimNIBS mesh outputs.
 
 Compares per-repeat volumetric label maps derived from TI.msh, and links
-mesh differences to peak TI within an ROI (e.g., FreeSurfer M1 label).
+mesh differences to TI summary metrics (mean/median) within an ROI
+(e.g., FreeSurfer M1 label) and across the whole head model.
 """
 import argparse
 import json
@@ -342,8 +343,7 @@ def main() -> None:
         type=float,
         default=None,
         help=(
-            "Optional: compute peak TI as a percentile (e.g., 99.9) instead of only max. "
-            "Adds peak_pctl_* fields to outputs."
+            "Deprecated (ignored): legacy percentile-peak reporting option."
         ),
     )
     parser.add_argument(
@@ -411,10 +411,8 @@ def main() -> None:
     label_presence: dict[int, list[str]] = {}
     label_counts: dict[str, dict[int, int]] = {}
 
-    use_percentile = args.peak_percentile is not None
-    peak_percentile = float(args.peak_percentile) if use_percentile else None
-    if use_percentile and not (0.0 < peak_percentile <= 100.0):
-        raise SystemExit("--peak-percentile must be in (0, 100].")
+    if args.peak_percentile is not None:
+        log_event("deprecated_arg_ignored", arg="--peak-percentile", value=args.peak_percentile)
 
     for anat_dir in repeat_anat_dirs:
         repeat_tag = anat_dir.parent.parent.name  # repeat_###
@@ -434,18 +432,12 @@ def main() -> None:
         diff_fraction_m1 = float(diff[m1_mask].mean())
 
         m1_vals = base_data[m1_mask]
-        peak_m1 = float(np.nanmax(m1_vals)) if m1_vals.size else float("nan")
         mean_m1 = float(np.nanmean(m1_vals)) if m1_vals.size else float("nan")
-        peak_brain = float(np.nanmax(base_data))
-        mean_brain = float(np.nanmean(base_data))
-        if use_percentile:
-            peak_pctl_m1 = (
-                float(np.nanpercentile(m1_vals, peak_percentile)) if m1_vals.size else float("nan")
-            )
-            peak_pctl_brain = float(np.nanpercentile(base_data, peak_percentile))
-        else:
-            peak_pctl_m1 = None
-            peak_pctl_brain = None
+        median_m1 = float(np.nanmedian(m1_vals)) if m1_vals.size else float("nan")
+
+        head_vals = base_data[labels > 0]
+        mean_head = float(np.nanmean(head_vals)) if head_vals.size else float("nan")
+        median_head = float(np.nanmedian(head_vals)) if head_vals.size else float("nan")
 
         # Per-label Dice vs reference
         dice_by_label = {}
@@ -473,12 +465,10 @@ def main() -> None:
                 "repeat_tag": repeat_tag,
                 "diff_fraction": diff_fraction,
                 "diff_fraction_m1": diff_fraction_m1,
-                "peak_m1": peak_m1,
-                "peak_pctl_m1": peak_pctl_m1,
                 "mean_m1": mean_m1,
-                "peak_brain": peak_brain,
-                "peak_pctl_brain": peak_pctl_brain,
-                "mean_brain": mean_brain,
+                "median_m1": median_m1,
+                "mean_head": mean_head,
+                "median_head": median_head,
                 "mesh_nodes": mesh_nodes,
                 "label_count": len(label_ids),
                 "dice_by_label": dice_by_label,
@@ -492,28 +482,15 @@ def main() -> None:
         json.dump(summary_rows, f, indent=2)
 
     with summary_csv.open("w", encoding="utf-8") as f:
-        if use_percentile:
+        f.write(
+            "repeat_tag,diff_fraction,diff_fraction_m1,mean_m1,median_m1,mean_head,median_head,mesh_nodes,label_count\n"
+        )
+        for row in summary_rows:
             f.write(
-                "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,peak_pctl_m1,mean_m1,"
-                "peak_brain,peak_pctl_brain,mean_brain,mesh_nodes,label_count\n"
+                f"{row['repeat_tag']},{row['diff_fraction']},"
+                f"{row['diff_fraction_m1']},{row['mean_m1']},{row['median_m1']},"
+                f"{row['mean_head']},{row['median_head']},{row['mesh_nodes']},{row['label_count']}\n"
             )
-            for row in summary_rows:
-                f.write(
-                    f"{row['repeat_tag']},{row['diff_fraction']},"
-                    f"{row['diff_fraction_m1']},{row['peak_m1']},{row['peak_pctl_m1']},"
-                    f"{row['mean_m1']},{row['peak_brain']},{row['peak_pctl_brain']},"
-                    f"{row['mean_brain']},{row['mesh_nodes']},{row['label_count']}\n"
-                )
-        else:
-            f.write(
-                "repeat_tag,diff_fraction,diff_fraction_m1,peak_m1,mean_m1,peak_brain,mean_brain,mesh_nodes,label_count\n"
-            )
-            for row in summary_rows:
-                f.write(
-                    f"{row['repeat_tag']},{row['diff_fraction']},"
-                    f"{row['diff_fraction_m1']},{row['peak_m1']},{row['mean_m1']},"
-                    f"{row['peak_brain']},{row['mean_brain']},{row['mesh_nodes']},{row['label_count']}\n"
-                )
 
     # Save difference frequency map
     diff_freq = diff_counts.astype(np.float32) / max(1, len(repeat_anat_dirs))
@@ -536,78 +513,47 @@ def main() -> None:
 
         tags = [r["repeat_tag"] for r in summary_rows]
         scale_factor = 1.0 / 10000.0  # 2000 -> 0.2 V/m
-        peak_vals = [r["peak_m1"] * scale_factor for r in summary_rows]
-        peak_brain_vals = [r["peak_brain"] * scale_factor for r in summary_rows]
-        if use_percentile:
-            peak_pctl_vals = [
-                (r["peak_pctl_m1"] * scale_factor) if r["peak_pctl_m1"] is not None else float("nan")
-                for r in summary_rows
-            ]
-            peak_pctl_brain_vals = [
-                (r["peak_pctl_brain"] * scale_factor)
-                if r["peak_pctl_brain"] is not None
-                else float("nan")
-                for r in summary_rows
-            ]
-        diff_vals = [r["diff_fraction_m1"] for r in summary_rows]
+        mean_m1_vals = [r["mean_m1"] * scale_factor for r in summary_rows]
+        median_m1_vals = [r["median_m1"] * scale_factor for r in summary_rows]
+        mean_head_vals = [r["mean_head"] * scale_factor for r in summary_rows]
+        median_head_vals = [r["median_head"] * scale_factor for r in summary_rows]
         ti_source_desc = "TI: anat/SimNIBS/ti_brain_only.nii.gz (per repeat)"
-        label_source_desc = "Labels: TI_Volumetric_* (per repeat)"
-        plt.figure(figsize=(8, 4))
-        plt.plot(tags, peak_vals, marker="o")
-        plt.xticks(rotation=45, ha="right")
-        plt.title(f"Peak TI in M1 | {ti_source_desc}")
-        plt.ylabel("Peak TI in M1 (V/m)")
-        plt.tight_layout()
-        plt.savefig(output_dir / "peak_m1_by_repeat.png", dpi=150)
-        plt.close()
 
         plt.figure(figsize=(8, 4))
-        plt.plot(tags, peak_brain_vals, marker="o")
+        plt.plot(tags, mean_m1_vals, marker="o")
         plt.xticks(rotation=45, ha="right")
-        plt.title(f"Peak TI (whole brain) | {ti_source_desc}")
-        plt.ylabel("Peak TI (whole brain) (V/m)")
+        plt.title(f"Mean TI in ROI (M1) | {ti_source_desc}")
+        plt.ylabel("Mean TI in ROI (V/m)")
         plt.tight_layout()
-        plt.savefig(output_dir / "peak_brain_by_repeat.png", dpi=150)
+        plt.savefig(output_dir / "mean_m1_by_repeat.png", dpi=150)
         plt.close()
 
-        if use_percentile:
-            pctl_label = f"P{peak_percentile:g}"
-            plt.figure(figsize=(8, 4))
-            plt.plot(tags, peak_pctl_vals, marker="o")
-            plt.xticks(rotation=45, ha="right")
-            plt.title(f"{pctl_label} TI in M1 | {ti_source_desc}")
-            plt.ylabel(f"{pctl_label} TI in M1 (V/m)")
-            plt.tight_layout()
-            plt.savefig(output_dir / "peak_pctl_m1_by_repeat.png", dpi=150)
-            plt.close()
-
-            plt.figure(figsize=(8, 4))
-            plt.plot(tags, peak_pctl_brain_vals, marker="o")
-            plt.xticks(rotation=45, ha="right")
-            plt.title(f"{pctl_label} TI (whole brain) | {ti_source_desc}")
-            plt.ylabel(f"{pctl_label} TI (whole brain) (V/m)")
-            plt.tight_layout()
-            plt.savefig(output_dir / "peak_pctl_brain_by_repeat.png", dpi=150)
-            plt.close()
-
-        plt.figure(figsize=(5, 4))
-        plt.scatter(diff_vals, peak_vals, alpha=0.8)
-        plt.title(f"M1 peak vs label differences | {label_source_desc}")
-        plt.xlabel("M1 label diff fraction vs reference")
-        plt.ylabel("Peak TI in M1 (V/m)")
+        plt.figure(figsize=(8, 4))
+        plt.plot(tags, median_m1_vals, marker="o")
+        plt.xticks(rotation=45, ha="right")
+        plt.title(f"Median TI in ROI (M1) | {ti_source_desc}")
+        plt.ylabel("Median TI in ROI (V/m)")
         plt.tight_layout()
-        plt.savefig(output_dir / "peak_m1_vs_mesh_diff.png", dpi=150)
+        plt.savefig(output_dir / "median_m1_by_repeat.png", dpi=150)
         plt.close()
 
-        if use_percentile:
-            plt.figure(figsize=(5, 4))
-            plt.scatter(diff_vals, peak_pctl_vals, alpha=0.8)
-            plt.title(f"M1 {pctl_label} vs label differences | {label_source_desc}")
-            plt.xlabel("M1 label diff fraction vs reference")
-            plt.ylabel(f"{pctl_label} TI in M1 (V/m)")
-            plt.tight_layout()
-            plt.savefig(output_dir / "peak_pctl_m1_vs_mesh_diff.png", dpi=150)
-            plt.close()
+        plt.figure(figsize=(8, 4))
+        plt.plot(tags, mean_head_vals, marker="o")
+        plt.xticks(rotation=45, ha="right")
+        plt.title(f"Mean TI in whole head model | {ti_source_desc}")
+        plt.ylabel("Mean TI in whole head (V/m)")
+        plt.tight_layout()
+        plt.savefig(output_dir / "mean_head_by_repeat.png", dpi=150)
+        plt.close()
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(tags, median_head_vals, marker="o")
+        plt.xticks(rotation=45, ha="right")
+        plt.title(f"Median TI in whole head model | {ti_source_desc}")
+        plt.ylabel("Median TI in whole head (V/m)")
+        plt.tight_layout()
+        plt.savefig(output_dir / "median_head_by_repeat.png", dpi=150)
+        plt.close()
 
         # Mesh node counts by repeat
         node_vals = [r["mesh_nodes"] for r in summary_rows]

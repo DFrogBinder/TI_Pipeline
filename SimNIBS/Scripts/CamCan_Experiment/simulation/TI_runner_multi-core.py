@@ -28,6 +28,7 @@ from utils.sim_utils import (
     atomic_replace,
     img_info,
 )
+from utils.skin_filter import smooth_skin_segmentation
 import time
 
 
@@ -38,6 +39,14 @@ runMNI152 = False
 rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
 # Manual toggle: True -> direct replacement, False -> merge-based behavior.
 replaceCharmSegmentation = True
+# Deterministic skin smoothing before CHARM remeshing.
+applyDeterministicSkinFilter = True
+skinFilterLabelId = 5
+skinFilterBackgroundId = 0
+skinFilterClosingVoxels = 2
+skinFilterOpeningVoxels = 1
+skinFilterKeepLargestComponent = True
+saveSkinFilterPreview = True
 
 
 def log_event(event: str, **fields) -> None:
@@ -132,6 +141,36 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
             return nib.Nifti1Image(data, like.affine, like.header)
 
         custom_seg_map_int = to_int_img(custom_seg_map, custom_seg_map)
+        effective_custom_seg_source = custom_seg_map_path
+        if applyDeterministicSkinFilter:
+            smoothed_seg_path = (
+                os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_skin_smoothed.nii")
+                if saveSkinFilterPreview
+                else None
+            )
+            try:
+                custom_seg_map_int, skin_filter_debug = smooth_skin_segmentation(
+                    custom_seg_map_int,
+                    skin_label=skinFilterLabelId,
+                    background_label=skinFilterBackgroundId,
+                    closing_voxels=skinFilterClosingVoxels,
+                    opening_voxels=skinFilterOpeningVoxels,
+                    keep_largest_component=skinFilterKeepLargestComponent,
+                    output_path=smoothed_seg_path,
+                )
+                if smoothed_seg_path:
+                    effective_custom_seg_source = smoothed_seg_path
+                log_event(
+                    "skin_filter_applied",
+                    subject=subject,
+                    output_path=smoothed_seg_path,
+                    **skin_filter_debug,
+                )
+            except Exception as e:
+                log_event("error", stage="skin_filter", subject=subject, error=str(e))
+                return
+        else:
+            log_event("skin_filter_skipped", subject=subject)
 
         if replace_charm_segmentation:
             print("[INFO] Replacing CHARM segmentation directly with custom segmentation (merge disabled).")
@@ -142,7 +181,7 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
                 "segmentation_replaced",
                 subject=subject,
                 mode="direct_custom_replacement",
-                source=custom_seg_map_path,
+                source=effective_custom_seg_source,
                 target=charm_seg_map_path,
             )
         else:

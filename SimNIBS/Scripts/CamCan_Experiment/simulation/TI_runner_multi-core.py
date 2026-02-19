@@ -36,6 +36,8 @@ import time
 meshPresent = False
 runMNI152 = False
 rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
+# Manual toggle: True -> direct replacement, False -> merge-based behavior.
+replaceCharmSegmentation = True
 
 
 def log_event(event: str, **fields) -> None:
@@ -518,15 +520,6 @@ def main():
             "Ignored when --subject is given. Defaults to #CPUs (capped by #subjects)."
         ),
     )
-    parser.add_argument(
-        "--replace-charm-segmentation",
-        action="store_true",
-        help=(
-            "Use the custom segmentation map as a direct replacement for CHARM's "
-            "segmentation (no merge with CHARM labels)."
-        ),
-    )
-
     args = parser.parse_args()
     start = time.time()
 
@@ -536,7 +529,7 @@ def main():
         print(f"[INFO] Running TI pipeline for single subject: {subject_id}")
         duration = process_subject(
             subject_id,
-            replace_charm_segmentation=args.replace_charm_segmentation,
+            replace_charm_segmentation=replaceCharmSegmentation,
         )
         total_runtime = time.time() - start
 
@@ -549,7 +542,7 @@ def main():
         # ---------- Multi-subject / local mode ----------
         subject_durations = run_many_subjects(
             max_workers=args.max_workers,
-            replace_charm_segmentation=args.replace_charm_segmentation,
+            replace_charm_segmentation=replaceCharmSegmentation,
         )
         total_runtime = time.time() - start
 

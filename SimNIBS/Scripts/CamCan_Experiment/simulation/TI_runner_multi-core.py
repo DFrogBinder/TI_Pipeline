@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
+import shutil
 from pathlib import Path
 import argparse
 import concurrent.futures
@@ -40,7 +41,7 @@ rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
 # Manual toggle: True -> direct replacement, False -> merge-based behavior.
 replaceCharmSegmentation = True
 # Deterministic skin smoothing before CHARM remeshing.
-applyDeterministicSkinFilter = True
+applyDeterministicSkinFilter = False
 skinFilterLabelId = 5
 skinFilterBackgroundId = 0
 skinFilterClosingVoxels = 2
@@ -337,106 +338,77 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
     #endregion
     #region Saving Results
     volume_masks_path = os.path.join(S.pathfem,'Volume_Maks')
-    if not os.path.isdir(volume_masks_path):
-        os.mkdir(volume_masks_path)
-
     volume_base_path = os.path.join(S.pathfem,'Volume_Base')
-    if not os.path.isdir(volume_base_path):
-        os.mkdir(volume_base_path)
-
     volume_labels_path = os.path.join(S.pathfem,'Volume_Labels')
-    if not os.path.isdir(volume_labels_path):
-        os.mkdir(volume_labels_path)
+    for p in (volume_masks_path, volume_base_path, volume_labels_path):
+        os.makedirs(p, exist_ok=True)
+        for child in Path(p).iterdir():
+            if child.is_file() or child.is_symlink():
+                child.unlink()
+            elif child.is_dir():
+                shutil.rmtree(child)
 
-    labels_path = os.path.join(volume_labels_path, "TI_Volumetric_Labels")
-    masks_path = os.path.join(volume_masks_path, "TI_Volumetric_Masks")
-    ti_volume_path = os.path.join(volume_base_path, "TI_Volumetric_Base")
+    labels_prefix = os.path.join(volume_labels_path, "TI_Volumetric_Labels")
+    masks_prefix = os.path.join(volume_masks_path, "TI_Volumetric_Masks")
+    ti_volume_prefix = os.path.join(volume_base_path, "TI_Volumetric_Base")
+    if runMNI152:
+        t1_path = os.path.join(os.path.dirname(fnamehead), 'T1.nii.gz')
+    else:
+        t1_path = os.path.join(subject_dir, f'{subject}_T1w.nii')
 
     print('Exporting volumetric meshes...')
     try:
-        if runMNI152:
-            t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
-            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_path,"--create_label"], label="msh2nii_labels")
-        else:
-            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), labels_path,"--create_label"], label="msh2nii_labels")
+        run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, labels_prefix,"--create_label"], label="msh2nii_labels")
     except Exception as e:
         log_event("error", stage="msh2nii_labels", subject=subject, error=str(e))
 
     try:
-        if runMNI152:
-            t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
-            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_path,"--create_masks"], label="msh2nii_masks")
-        else:
-            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), masks_path,"--create_masks"], label="msh2nii_masks")
+        run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, masks_prefix,"--create_masks"], label="msh2nii_masks")
     except Exception as e:
         log_event("error", stage="msh2nii_masks", subject=subject, error=str(e))
 
     try:
-        if runMNI152:
-            t1_path = os.path.join(os.path.dirname(fnamehead),'T1.nii.gz')
-            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_path], label="msh2nii_volume")
-        else:
-            run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), os.path.join(f'{subject_dir}',f'{subject}_T1w.nii'), ti_volume_path], label="msh2nii_volume")
+        run_cmd(["msh2nii", os.path.join(output_root,'Output',subject,'TI.msh'), t1_path, ti_volume_prefix], label="msh2nii_volume")
     except Exception as e:
         log_event("error", stage="msh2nii_volume", subject=subject, error=str(e))
     #endregion
 
     #region Post-process
-    # Loads the label and TI volume files (prefer TI_Volumetric_* outputs)
-    label_candidates = sorted(
-        [f for f in os.listdir(volume_labels_path) if f.startswith("TI_Volumetric_")]
-        or os.listdir(volume_labels_path)
-    )
-    volume_candidates = sorted(
-        [f for f in os.listdir(volume_base_path) if f.startswith("TI_Volumetric_")]
-        or os.listdir(volume_base_path)
-    )
-    label_file_path = label_candidates[0]
-    ti_volume_path = volume_candidates[0]
+    def pick_latest_nifti(directory: str, prefix: str) -> str:
+        pattern = f"{prefix}*.nii*"
+        matches = [p for p in Path(directory).glob(pattern) if p.suffix in {".nii", ".gz"}]
+        if not matches:
+            raise FileNotFoundError(f"No NIfTI files found for pattern '{pattern}' in '{directory}'")
+        matches = sorted(matches, key=lambda p: p.stat().st_mtime, reverse=True)
+        return str(matches[0])
+
+    label_file_path = pick_latest_nifti(volume_labels_path, "TI_Volumetric_Labels")
+    ti_volume_file_path = pick_latest_nifti(volume_base_path, "TI_Volumetric_Base")
     log_event(
         "volume_selection",
         label_file=label_file_path,
-        ti_volume_file=ti_volume_path,
-        label_candidates=label_candidates,
-        volume_candidates=volume_candidates,
+        ti_volume_file=ti_volume_file_path,
     )
 
+    label_img = nib.load(label_file_path)
+    ti_img = nib.load(ti_volume_file_path)
+    t1_img = nib.load(t1_path)
 
-
-    # Check that the file is a nifti file
-    if not label_file_path.endswith('.nii') and not label_file_path.endswith('.nii.gz'):
-        raise ValueError("The label file is not a NIfTI file.")
-
-    label_img = nib.load(os.path.join(volume_labels_path,label_file_path))
-    data = label_img.get_fdata(dtype=np.float32)  # read into RAM as float32
-    affine = label_img.affine
-    hdr = label_img.header
-
-    #print(f'—— Label image info for: {label_file_path} ———')
-    #print("shape:", data.shape)
-    #print("voxel sizes (mm):", hdr.get_zooms()[:3])
-    #print("units:", hdr.get_xyzt_units())
-    #print(f'———'*19)
-
-    ti_img = nib.load(os.path.join(volume_base_path,ti_volume_path))
-    ti_data = ti_img.get_fdata(dtype=np.float32)  # read into RAM as float32
-    ti_affine = ti_img.affine
-    ti_hdr = ti_img.header
-
-    #print(f'—— TI image info for: {ti_volume_path} ———')
-    #print("shape:", ti_data.shape)
-    #print("voxel sizes (mm):", ti_hdr.get_zooms()[:3])
-    #print("units:", ti_hdr.get_xyzt_units())
-    #print(f'———'*19)
-
-    # Extract unique labels
-    labels = np.asarray(label_img.dataobj)  # lazy; no copy unless needed
-    labels = labels.astype(np.int32, copy=False)
-    codes, counts = np.unique(labels, return_counts=True)
-
-    GM_LABELS = {2}
-    WM_LABELS = {1}
-    brain_mask = np.isin(labels, list(GM_LABELS | WM_LABELS))
+    ti_t1_same_shape = ti_img.shape == t1_img.shape
+    ti_t1_same_affine = np.allclose(ti_img.affine, t1_img.affine, atol=1e-3)
+    log_event(
+        "ti_t1_grid_check",
+        same_shape=ti_t1_same_shape,
+        same_affine=ti_t1_same_affine,
+        ti_shape=ti_img.shape,
+        t1_shape=t1_img.shape,
+    )
+    if not (ti_t1_same_shape and ti_t1_same_affine):
+        print("[INFO] Resampling TI volume to T1w grid for strict alignment.")
+        ti_img = resample_from_to(ti_img, t1_img, order=1)
+    aligned_ti_path = os.path.join(output_root, "ti_efield_t1_aligned.nii.gz")
+    nib.save(ti_img, aligned_ti_path)
+    log_file_info("ti_efield_t1_aligned", aligned_ti_path)
 
     same_shape = ti_img.shape == label_img.shape
     same_affine = np.allclose(ti_img.affine, label_img.affine, atol=1e-3)
@@ -449,6 +421,11 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
     )
     if not (same_shape and same_affine):
         label_img = resample_from_to(label_img, ti_img, order=0)
+
+    labels = np.asarray(label_img.dataobj).astype(np.int32, copy=False)
+    GM_LABELS = {2}
+    WM_LABELS = {1}
+    brain_mask = np.isin(labels, list(GM_LABELS | WM_LABELS))
 
     ti_data = ti_img.get_fdata(dtype=np.float32)
     masked = np.where(brain_mask, ti_data, np.nan).astype(np.float32)

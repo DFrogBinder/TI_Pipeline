@@ -146,10 +146,10 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 if __name__ == "__main__":
     cfg = PipelineConfig(
         post=PostBatchConfig(
-            root="/home/boyan/sandbox/Jake_Data/MNI152-data",
-            t1_path='/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152/anat/MNI152_Hippocampus_T1.nii.gz',
+            root="/home/boyan/sandbox/Jake_Data/Workbench",
+            t1_path=None,
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
-            atlas_mode="mni",
+            atlas_mode="fastsurfer",
             fastsurfer_root='/home/boyan/sandbox/Jake_Data/atlases',
             fs_mri_path=None,
             plot_roi="Hippocampus",  # M1 (ctx-lh-precentral) / Hippocampus

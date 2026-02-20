@@ -127,6 +127,7 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
         custom_seg_map = nib.load(custom_seg_map_path)
 
         charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
+        charm_seg_map = nib.load(charm_seg_map_path)
         log_file_info("custom_seg_map", custom_seg_map_path)
         log_file_info("charm_seg_map", charm_seg_map_path)
 
@@ -172,10 +173,33 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
         else:
             log_event("skin_filter_skipped", subject=subject)
 
+        # Keep replacement/merge segmentation on CHARM grid to preserve alignment.
+        same_shape = custom_seg_map_int.shape == charm_seg_map.shape
+        same_affine = np.allclose(custom_seg_map_int.affine, charm_seg_map.affine, atol=1e-5)
+        log_event(
+            "segmentation_grid_check",
+            subject=subject,
+            same_shape=same_shape,
+            same_affine=same_affine,
+            custom_shape=custom_seg_map_int.shape,
+            charm_shape=charm_seg_map.shape,
+        )
+        if not (same_shape and same_affine):
+            print("[INFO] Resampling custom segmentation to CHARM label grid (nearest-neighbor).")
+            src_img_nn = nib.Nifti1Image(
+                np.rint(custom_seg_map_int.get_fdata()).astype(np.int16),
+                custom_seg_map_int.affine,
+                custom_seg_map_int.header,
+            )
+            custom_seg_on_charm_grid = resample_from_to(src_img_nn, charm_seg_map, order=0)
+            custom_seg_on_charm_grid = to_int_img(custom_seg_on_charm_grid, charm_seg_map)
+        else:
+            custom_seg_on_charm_grid = to_int_img(custom_seg_map_int, charm_seg_map)
+
         if replace_charm_segmentation:
             print("[INFO] Replacing CHARM segmentation directly with custom segmentation (merge disabled).")
             merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
-            nib.save(custom_seg_map_int, merged_seg_img_path)
+            nib.save(custom_seg_on_charm_grid, merged_seg_img_path)
             atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
             log_event(
                 "segmentation_replaced",
@@ -185,50 +209,7 @@ def process_subject(subject_entry, replace_charm_segmentation: bool = False):
                 target=charm_seg_map_path,
             )
         else:
-            charm_seg_map = nib.load(charm_seg_map_path)
-
-            # Resample to reference grid if needed
-            same_shape = custom_seg_map.shape == charm_seg_map.shape
-            same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
-
-        #? Low to high resampling is not recommended
-        # if not (same_shape and same_affine):
-
-        #     print("[INFO] Resampling custom segmentation to CHARM label grid (nearest-neighbor).")
-        #     # order=0 enforces nearest-neighbor to preserve labels
-        #     # src_img_nn = nib.Nifti1Image(
-        #     #     np.rint(custom_seg_map.get_fdata()).astype(np.int16), custom_seg_map.affine, custom_seg_map.header
-        #     # )
-        #     resampled = resample_from_to(custom_seg_map, charm_seg_map, order=0)
-        #     # rsmpl_custom_seg_map = to_int_img(resampled, charm_seg_map)
-
-        # else:
-        #     rsmpl_custom_seg_map = to_int_img(custom_seg_map, charm_seg_map)
-
-        #region Re-mesh
-        # merged_img, debug = merge_segmentation_maps(resampled, charm_seg_map,
-        #     manual_skin_id=5,          # scalp ID in custom segmentation
-        #     dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-        #     background_label=0,              # background ID in custom segmentation
-        #     output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-        #     save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-
-
-            #? High to low resampling
-            if not (same_shape and same_affine):
-
-                print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
-                # order=0 enforces nearest-neighbor to preserve labels
-                src_img_nn = nib.Nifti1Image(
-                    np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
-                )
-                resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
-                resampled = to_int_img(resampled, custom_seg_map)
-            else:
-                resampled = to_int_img(charm_seg_map, custom_seg_map)
-
-            #region Re-mesh
-            merged_img, debug = merge_segmentation_maps(custom_seg_map_int, resampled,
+            merged_img, debug = merge_segmentation_maps(custom_seg_on_charm_grid, charm_seg_map,
                 manual_skin_id=5,          # scalp ID in custom segmentation
                 dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
                 background_label=0,              # background ID in custom segmentation

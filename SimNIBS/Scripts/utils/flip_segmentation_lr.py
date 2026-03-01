@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create left-right flipped copies of NIfTI segmentation maps.
+"""Create left-right flipped NIfTI segmentation maps.
 
 Supports:
 1) Single-file mode: pass a .nii/.nii.gz file path.
@@ -17,15 +17,16 @@ import nibabel as nib
 import numpy as np
 
 
-def default_output_path(input_path: Path) -> Path:
-    name = input_path.name
+def temp_nifti_output_path(target_path: Path) -> Path:
+    """Build a temporary NIfTI path in the same directory as target_path."""
+    name = target_path.name
     if name.endswith(".nii.gz"):
         base = name[:-7]
-        return input_path.with_name(f"{base}_hflip.nii.gz")
+        return target_path.with_name(f".{base}.tmp.nii.gz")
     if name.endswith(".nii"):
         base = name[:-4]
-        return input_path.with_name(f"{base}_hflip.nii")
-    return input_path.with_name(f"{name}_hflip.nii")
+        return target_path.with_name(f".{base}.tmp.nii")
+    return target_path.with_name(f".{name}.tmp.nii")
 
 
 def find_nifti(stem: Path) -> Path | None:
@@ -52,12 +53,19 @@ def flip_lr(input_path: Path, output_path: Path, validate: bool = True) -> None:
     out_img = nib.Nifti1Image(flipped, img.affine, header=header)
     out_img.header.set_slope_inter(1, 0)
 
-    nib.save(out_img, str(output_path))
+    # Save to a temporary file in the destination directory, then atomically
+    # replace the destination. This keeps in-place replacement safe.
+    tmp_output = temp_nifti_output_path(output_path)
+    try:
+        tmp_output.unlink(missing_ok=True)
+        nib.save(out_img, str(tmp_output))
+        tmp_output.replace(output_path)
+    finally:
+        tmp_output.unlink(missing_ok=True)
 
     if validate:
-        orig = np.asanyarray(nib.load(str(input_path)).dataobj)
         new = np.asanyarray(nib.load(str(output_path)).dataobj)
-        if not np.array_equal(new, np.flip(orig, axis=0)):
+        if not np.array_equal(new, np.flip(data, axis=0)):
             raise RuntimeError("Validation failed: output is not an exact axis-0 mirror.")
 
 
@@ -84,11 +92,11 @@ def run_batch(root_dir: Path, validate: bool = True) -> int:
             skipped += 1
             continue
 
-        out_file = default_output_path(seg_file)
+        out_file = seg_file
         print(f"[{subject_id}] Flipping: {seg_file.name}")
         try:
             flip_lr(seg_file, out_file, validate=validate)
-            print(f"[{subject_id}] Wrote: {out_file}")
+            print(f"[{subject_id}] Replaced: {out_file}")
             success += 1
         except Exception as exc:
             print(f"[{subject_id}] Failed: {exc}")
@@ -107,7 +115,7 @@ def run_batch(root_dir: Path, validate: bool = True) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create exact left-right (axis 0) flipped copies of NIfTI segmentations. "
+            "Create exact left-right (axis 0) flipped NIfTI segmentations. "
             "Input can be a single file or a root directory for batch processing."
         )
     )
@@ -125,7 +133,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Output path for single-file mode (default: input with _hflip suffix). "
+            "Output path for single-file mode (default: replace input in-place). "
             "Not used in directory batch mode."
         ),
     )
@@ -147,9 +155,9 @@ def main() -> None:
         exit_code = run_batch(input_path, validate=not args.no_validate)
         sys.exit(exit_code)
 
-    output_path = args.output.resolve() if args.output else default_output_path(input_path)
+    output_path = args.output.resolve() if args.output else input_path
     flip_lr(input_path=input_path, output_path=output_path, validate=not args.no_validate)
-    print(f"Wrote: {output_path}")
+    print(f"Replaced: {output_path}")
 
 
 if __name__ == "__main__":

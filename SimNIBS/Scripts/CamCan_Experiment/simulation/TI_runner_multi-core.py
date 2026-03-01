@@ -199,13 +199,13 @@ def process_subject(subject_entry):
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
 
 
-    electrode_size        = [10, 1]       # [radius_mm, thickness_mm]
+    electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
     electrode_shape       = 'ellipse'
-    electrode_conductivity = 0.85
+    electrode_conductivity = 1.4
 
-    # Hippocampus montage
-    montage_right = ('Fp2', 2e-3, 'P8', -2e-3)
-    montage_left  = ('T7', 2e-3, 'P7',  -2e-3)
+    # Left Hippocampus montage
+    montage_right = ('F10', 2e-3, 'P8', -2e-3)
+    montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
     
     # M1 montage
     # montage_right = ('C1', 1.34e-3, 'Cz', -1.34e-3)

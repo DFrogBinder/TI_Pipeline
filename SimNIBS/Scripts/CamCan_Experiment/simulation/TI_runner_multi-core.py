@@ -225,9 +225,28 @@ def process_subject(subject_entry):
 
     # ———— DEFINE FIRST TDCS MONTAGE ————
     tdcs1 = S.add_tdcslist()
-    tdcs1.cond[2].value = electrode_conductivity
-    tdcs1.currents     = [montage_right[1], montage_right[3]]
+    
+    # -----------------------------
+    # Custom tissue conductivities
+    # -----------------------------
+    custom_conductivities = {
+        "WM": 0.126,        # white matter
+        "GM": 0.276,        # gray matter
+        "CSF": 1.65,
+        "Skull": 0.01,
+        "Scalp": 0.465,
+        "Eye": 0.5,        # adjust if present
+        "Muscle": 0.16,    # if present in your mesh
+        "Saline": electrode_conductivity  # electrode/saline region
+    }
 
+    # Apply to first montage
+    for c in tdcs1.cond:
+        if c.name in custom_conductivities:
+            c.value = float(custom_conductivities[c.name])
+            print(f"[COND] {c.name} set to {c.value} S/m")    
+    
+    tdcs1.currents     = [montage_right[1], montage_right[3]]
     el1 = tdcs1.add_electrode()
     el1.channelnr  = 1
     el1.centre     = montage_right[0]
@@ -261,7 +280,6 @@ def process_subject(subject_entry):
     m2 = mesh_io.read_msh(os.path.join(S.pathfem, f'{subject}_TDCS_2_scalar.msh'))
 
     # Define tissue tags (replace with actual IDs from your head model)
-    gray_tags  = [1002]   # e.g. cortical gray matter tag
     # white_tags = [1003]   # e.g. subcortical/white matter tag
 
     tags_keep = np.hstack((

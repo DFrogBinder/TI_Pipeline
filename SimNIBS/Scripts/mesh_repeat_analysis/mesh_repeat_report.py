@@ -592,6 +592,16 @@ def main() -> None:
             plt.xticks(rotation=45, ha="right")
             plt.title("Head mesh node count by repeat (bar)")
             plt.ylabel("Node count")
+            if valid_vals.size:
+                y_min = float(np.min(valid_vals))
+                y_max = float(np.max(valid_vals))
+                y_span = y_max - y_min
+                if y_span > 0:
+                    y_pad = 0.05 * y_span
+                else:
+                    # Keep a small visual margin when all values are identical.
+                    y_pad = max(1.0, 0.01 * max(abs(y_min), 1.0))
+                plt.ylim(max(0.0, y_min - y_pad), y_max + y_pad)
 
             if lower is not None and upper is not None:
                 inliers = node_arr[(node_arr >= lower) & (node_arr <= upper) & valid_mask]

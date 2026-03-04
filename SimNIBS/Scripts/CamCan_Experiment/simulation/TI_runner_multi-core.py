@@ -204,8 +204,8 @@ def process_subject(subject_entry):
     electrode_conductivity = 0.85
 
     # Hippocampus montage
-    montage_right = ('Fp2', 2e-3, 'P8', -2e-3)
-    montage_left  = ('T7', 2e-3, 'P7',  -2e-3)
+    montage_right = ('F10', 2e-3, 'P8', -2e-3)
+    montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
     
     # M1 montage
     # montage_right = ('C1', 1.34e-3, 'Cz', -1.34e-3)

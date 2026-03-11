@@ -5,8 +5,11 @@ Edit the config at the bottom to control the full pipeline from a single entrypo
 """
 from __future__ import annotations
 
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -34,6 +37,7 @@ def should_skip_subject(out_dir: Path, force: bool) -> bool:
 class PostBatchConfig:
     root: str
     subjects: Optional[List[str]] = None
+    max_workers: Optional[int] = 8
     atlas_mode: str = "auto"  # "auto" | "mni" | "fastsurfer"
     fastsurfer_root: Optional[str] = None
     fs_mri_path: Optional[str] = None
@@ -67,6 +71,43 @@ class PipelineConfig:
     population: PopulationConfig
 
 
+def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) -> PostProcessConfig:
+    return PostProcessConfig(
+        root_dir=str(root),
+        subject=subject,
+        atlas_mode=cfg.atlas_mode,
+        fastsurfer_root=cfg.fastsurfer_root,
+        fs_mri_path=cfg.fs_mri_path,
+        t1_path=cfg.t1_path,
+        plot_roi=cfg.plot_roi,
+        percentile=cfg.percentile,
+        hard_threshold=cfg.hard_threshold,
+        overlay_z_offset_mm=cfg.overlay_z_offset_mm,
+        overlay_full_field=cfg.overlay_full_field,
+        write_region_table=cfg.write_region_table,
+        region_percentile=cfg.region_percentile,
+        offtarget_threshold=cfg.offtarget_threshold,
+        verbose=cfg.verbose,
+    )
+
+
+def resolve_max_workers(cfg: PostBatchConfig, task_count: int) -> int:
+    if task_count <= 0:
+        return 0
+    if cfg.max_workers is None:
+        requested = os.cpu_count() or 1
+    else:
+        requested = cfg.max_workers
+    if requested < 1:
+        raise ValueError("max_workers must be at least 1.")
+    return min(task_count, requested)
+
+
+def process_subject(pp_cfg: PostProcessConfig) -> str:
+    run_post_process(pp_cfg)
+    return pp_cfg.subject
+
+
 def run_batch(cfg: PostBatchConfig) -> dict:
     root = Path(cfg.root).expanduser().resolve()
     if not root.is_dir():
@@ -79,35 +120,49 @@ def run_batch(cfg: PostBatchConfig) -> dict:
     processed = []
     skipped = []
     failed = []
+    pending = []
 
     for subj in subjects:
         out_dir = root / subj / "anat" / "post"
         if should_skip_subject(out_dir, cfg.force):
             skipped.append(subj)
             continue
+        pending.append(build_post_process_config(root, subj, cfg))
 
-        pp_cfg = PostProcessConfig(
-            root_dir=str(root),
-            subject=subj,
-            atlas_mode=cfg.atlas_mode,
-            fastsurfer_root=cfg.fastsurfer_root,
-            fs_mri_path=cfg.fs_mri_path,
-            t1_path=cfg.t1_path,
-            plot_roi=cfg.plot_roi,
-            percentile=cfg.percentile,
-            hard_threshold=cfg.hard_threshold,
-            overlay_z_offset_mm=cfg.overlay_z_offset_mm,
-            overlay_full_field=cfg.overlay_full_field,
-            write_region_table=cfg.write_region_table,
-            region_percentile=cfg.region_percentile,
-            offtarget_threshold=cfg.offtarget_threshold,
-            verbose=cfg.verbose,
+    max_workers = resolve_max_workers(cfg, len(pending))
+    if pending:
+        print(
+            f"[INFO] Running post-processing for {len(pending)} subject(s) "
+            f"with up to {max_workers} worker(s)."
         )
-        try:
-            run_post_process(pp_cfg)
-            processed.append(subj)
-        except Exception as exc:
-            failed.append((subj, str(exc)))
+
+    if max_workers <= 1:
+        for pp_cfg in pending:
+            try:
+                process_subject(pp_cfg)
+                processed.append(pp_cfg.subject)
+            except Exception as exc:
+                failed.append((pp_cfg.subject, f"{type(exc).__name__}: {exc}"))
+    else:
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=get_context("spawn"),
+        ) as executor:
+            future_to_subject = {
+                executor.submit(process_subject, pp_cfg): pp_cfg.subject
+                for pp_cfg in pending
+            }
+            for future in as_completed(future_to_subject):
+                subj = future_to_subject[future]
+                try:
+                    future.result()
+                    processed.append(subj)
+                except Exception as exc:
+                    failed.append((subj, f"{type(exc).__name__}: {exc}"))
+
+    processed.sort()
+    skipped.sort()
+    failed.sort(key=lambda item: item[0])
 
     print(f"[INFO] Processed {len(processed)} subject(s).")
     if skipped:
@@ -146,15 +201,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 if __name__ == "__main__":
     cfg = PipelineConfig(
         post=PostBatchConfig(
-            root="/home/boyan/sandbox/Jake_Data/Workbench",
+            root="/media/boyan/main/PhD/Left_Hippocampus_Data_test",
             t1_path=None,
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
+            max_workers=None,  # None -> use all detected CPU cores; lower this if memory is tight
             atlas_mode="fastsurfer",
             fastsurfer_root='/home/boyan/sandbox/Jake_Data/atlases',
             fs_mri_path=None,
             plot_roi="Hippocampus",  # M1 (ctx-lh-precentral) / Hippocampus
             percentile=95.0,
-            hard_threshold=200.0,
+            hard_threshold=0.2,
             write_region_table=True,
             region_percentile=95.0,
             offtarget_threshold=0.2,
@@ -169,7 +225,7 @@ if __name__ == "__main__":
             region_filename="region_stats_fastsurfer.csv",
             metrics_filename="subject_metrics.json",
             peak_threshold=0.2,
-            target_roi="ctx-lh-precentral",
+            target_roi="Hippocampus",
             template_region_csv=None,
         ),
     )

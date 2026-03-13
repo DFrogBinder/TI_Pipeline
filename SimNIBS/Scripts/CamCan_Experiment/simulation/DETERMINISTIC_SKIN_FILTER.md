@@ -7,16 +7,27 @@ That noise can propagate into CHARM remeshing and result in rough outer head sur
 This filter applies a deterministic morphology cleanup to the skin label before remeshing.
 
 ## Where it runs in the pipeline
-File: `simulation/TI_runner_multi-core.py`
+File: `simulation/TI_runner_multi-core_skin-filter.py`
 
-Order of operations in meshing mode:
+Meshing mode now has two exclusive workflows controlled by `mergeSegmentationMaps`.
+
+Replacement workflow (`mergeSegmentationMaps = False`):
 1. CHARM initial run creates baseline files.
 2. Custom segmentation is loaded and converted to integer labels.
-3. `smooth_skin_segmentation(...)` is applied (if enabled).
-4. Filtered segmentation is used for replacement/merge behavior.
-5. CHARM remeshing (`charm <subject> --mesh`) runs on the updated segmentation.
+3. `smooth_skin_segmentation(...)` is applied only if `applyDeterministicSkinFilter = True`.
+4. The resulting custom segmentation replaces CHARM's `tissue_labeling_upsampled.nii.gz`.
+5. CHARM remeshing (`charm <subject> --mesh`) runs on the replaced segmentation.
 
-So the filter affects the geometry used for final mesh generation.
+Merge workflow (`mergeSegmentationMaps = True`):
+1. CHARM initial run creates baseline files.
+2. Custom and CHARM segmentations are loaded.
+3. The custom segmentation is converted to integer labels.
+4. CHARM's segmentation is resampled to the custom grid if needed.
+5. `merge_segmentation_maps(...)` creates the merged segmentation.
+6. The merged segmentation replaces CHARM's `tissue_labeling_upsampled.nii.gz`.
+7. CHARM remeshing (`charm <subject> --mesh`) runs on the merged segmentation.
+
+So the deterministic skin filter affects final mesh geometry only in replacement mode. In merge mode it is ignored.
 
 ## Implementation location
 File: `utils/skin_filter.py`  
@@ -64,9 +75,10 @@ smooth_skin_segmentation(
 | `output_path` | Optional NIfTI save path | Useful for QA inspection |
 
 ## Current runner controls
-Top-of-file flags in `simulation/TI_runner_multi-core.py`:
+Top-of-file flags in `simulation/TI_runner_multi-core_skin-filter.py`:
 
 ```python
+mergeSegmentationMaps = False
 applyDeterministicSkinFilter = True
 skinFilterLabelId = 5
 skinFilterBackgroundId = 0
@@ -76,11 +88,21 @@ skinFilterKeepLargestComponent = True
 saveSkinFilterPreview = True
 ```
 
-If `saveSkinFilterPreview = True`, the filtered segmentation is written as:
-`<subject>_T1w_ras_1mm_T1andT2_masks_skin_smoothed.nii`
+Behavior:
+- If `mergeSegmentationMaps = True`, `applyDeterministicSkinFilter` is ignored and the merge path is used.
+- If `mergeSegmentationMaps = False` and `applyDeterministicSkinFilter = True`, the filtered segmentation is written as `<subject>_T1w_ras_1mm_T1andT2_masks_skin_smoothed.nii` when `saveSkinFilterPreview = True`.
+- If `mergeSegmentationMaps = False`, `applyDeterministicSkinFilter = True`, and `saveSkinFilterPreview = False`, the smoothed segmentation is written as `<subject>_T1w_ras_1mm_T1andT2_masks_replaced.nii` because that file is used for the CHARM replacement step.
+- If `mergeSegmentationMaps = False` and `applyDeterministicSkinFilter = False`, the unsmoothed custom segmentation is written as `<subject>_T1w_ras_1mm_T1andT2_masks_replaced.nii` before replacing CHARM's segmentation.
 
 ## Debug/log outputs
-The function returns a debug dictionary and the runner logs it via `skin_filter_applied`.
+The function returns a debug dictionary and the runner logs it via `skin_filter_applied` when replacement mode uses smoothing.
+
+Related runner events now include:
+- `segmentation_strategy`
+- `segmentation_merge_applied`
+- `skin_filter_applied`
+- `skin_filter_skipped`
+- `skin_filter_ignored`
 
 Returned metrics include:
 - `initial_skin_voxels`

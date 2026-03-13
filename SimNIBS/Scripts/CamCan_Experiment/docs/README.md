@@ -12,8 +12,9 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
   - Merges all per-subject region stats and robustness JSONs.
   - Reports variability/robustness/hotspot tables (fraction above threshold, IQR, CV, worst-case peaks, volume–intensity correlation).
 - Helper utilities (`post_functions.py`) gained atlas resampling and region summarization helpers to support the above.
+- FastSurfer ROI alias handling now lives in `utils/roi_registry.py`, so dataset roots such as `Left_Hippocampus_Data_test` or `rigth_m1_project` can be resolved automatically.
 
-- **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries).
+- **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries) and `utils/roi_registry.py` (FastSurfer ROI labels, aliases, dataset-name matching).
 - **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker, produces aparc.DKTatlas+aseg.deep.nii.gz).
 - **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject) and `simulation/TI_runner_single-core.py` (sequential) create meshes, run SimNIBS TDCS pairs, compute TImax, export TI volumes (`ti_brain_only.nii.gz`).
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
@@ -37,7 +38,11 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
    - `post.subjects`: list of subject IDs or `None` for all.
    - `post.atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
    - `post.fastsurfer_root` / `post.fs_mri_path`: where to find `aparc.DKTatlas+aseg.deep.nii.gz`.
+   - `post.plot_roi`: set to `None` to infer the ROI from `post.root`, or provide an alias/canonical FastSurfer ROI name directly.
+   - `population.target_roi`: set to `None` to reuse the resolved post ROI.
    - `population.enabled`: toggle population aggregation.
+   - FastSurfer alias matching expects snake_case names such as `left_hippocampus`, `right_m1`, or `ctx_rh_precentral`.
+   - If no alias can be resolved, the pipeline exits before any subject analysis starts for that dataset.
 2) Run:
 ```bash
 python post/run_post_processing.py
@@ -57,12 +62,12 @@ You can still run it directly:
 python post/post_population.py \
   --root /path/to/root \
   --peak-threshold 0.2 \
-  --target-roi Hippocampus \
+  --target-roi Left-Hippocampus \
   --template-region-csv /path/to/MNI152/region_stats_fastsurfer.csv
 ```
 
 ## Tests
-- Minimal smoke tests for utils: `pytest tests/test_ti_utils.py` (requires pytest + nibabel).
+- Minimal smoke tests for utils and ROI alias resolution: `pytest tests/test_ti_utils.py tests/test_roi_registry.py` (requires pytest + nibabel).
 Outputs in `/path/to/root/population_analysis/`:
 - `all_region_values.csv` (concatenated per-subject region stats).
 - `population_region_summary.csv` (variability/robustness per label).
@@ -86,5 +91,7 @@ flowchart TD
 
 ## Notes
 - `post_process.py` automatically chooses FastSurfer atlas when available (`atlas_mode=auto`); otherwise defaults to Harvard–Oxford (MNI).
+- `run_post_processing.py` can infer the target ROI from the dataset directory name via `utils/roi_registry.py`; use hemisphere-specific aliases for FastSurfer targets.
+- If a dataset directory name does not match any known ROI alias, the pipeline aborts early and does not process that dataset.
 - Thresholds are configurable: ROI overlap percentile (`percentile`), hard cutoff (`hard_threshold`), population peak threshold (`--peak-threshold`).
 - Keep outputs per subject under `<root>/<subject>/anat/post/` so population aggregation can auto-discover them.

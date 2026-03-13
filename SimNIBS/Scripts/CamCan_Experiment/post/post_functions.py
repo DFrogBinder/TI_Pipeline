@@ -29,6 +29,7 @@ from utils.ti_utils import (
     summarize_atlas_regions,
     extract_table,
 )
+from utils.roi_registry import FASTSURFER_DKT_LABELS, resolve_fastsurfer_roi_name
 
 
 
@@ -44,64 +45,13 @@ ROI_QUERIES_OXFORD = {
     "Hippocampus": {"atlas": "sub-maxprob-thr25-2mm",  "query": "hippocampus"},
 }
 
-# FastSurfer DKT+aseg (exact or substring match over our map values)
-ROI_QUERIES_FASTSURFER = {
-    "M1":          {"atlas": "fastsurfer", "query": "ctx-lh-precentral"},   # left M1
-    "Hippocampus": {"atlas": "fastsurfer", "query": "Left-Hippocampus"},
-}
+DEFAULT_FASTSURFER_ROI_NAMES = ("ctx-lh-precentral", "Left-Hippocampus")
 
 EFIELD_PERCENTILE   = 95
 WRITE_PER_VOXEL_CSV = True
 
 # ------------------ FastSurfer DKT labels ------------------
-
-fastsurfer_dkt_labels = {
-    # Subcortical
-    0: "Unknown", 2: "Left-Cerebral-White-Matter", 3: "Left-Cerebral-Cortex",
-    4: "Left-Lateral-Ventricle", 5: "Left-Inf-Lat-Vent", 7: "Left-Cerebellum-White-Matter",
-    8: "Left-Cerebellum-Cortex", 10: "Left-Thalamus-Proper", 11: "Left-Caudate",
-    12: "Left-Putamen", 13: "Left-Pallidum", 14: "3rd-Ventricle", 15: "4th-Ventricle",
-    16: "Brain-Stem", 17: "Left-Hippocampus", 18: "Left-Amygdala", 24: "CSF",
-    26: "Left-Accumbens-area", 28: "Left-VentralDC", 30: "Left-vessel", 31: "Left-choroid-plexus",
-    41: "Right-Cerebral-White-Matter", 42: "Right-Cerebral-Cortex",
-    43: "Right-Lateral-Ventricle", 44: "Right-Inf-Lat-Vent",
-    46: "Right-Cerebellum-White-Matter", 47: "Right-Cerebellum-Cortex",
-    49: "Right-Thalamus-Proper", 50: "Right-Caudate", 51: "Right-Putamen",
-    52: "Right-Pallidum", 53: "Right-Hippocampus", 54: "Right-Amygdala",
-    58: "Right-Accumbens-area", 60: "Right-VentralDC", 62: "Right-vessel", 63: "Right-choroid-plexus",
-
-    # Left cortex (DKT)
-    1000: "ctx-lh-bankssts", 1001: "ctx-lh-caudalanteriorcingulate",
-    1002: "ctx-lh-caudalmiddlefrontal", 1003: "ctx-lh-cuneus",
-    1004: "ctx-lh-entorhinal", 1005: "ctx-lh-fusiform", 1006: "ctx-lh-inferiorparietal",
-    1007: "ctx-lh-inferiortemporal", 1008: "ctx-lh-isthmuscingulate",
-    1009: "ctx-lh-lateraloccipital", 1010: "ctx-lh-lateralorbitofrontal",
-    1011: "ctx-lh-lingual", 1012: "ctx-lh-medialorbitofrontal", 1013: "ctx-lh-middletemporal",
-    1014: "ctx-lh-parahippocampal", 1015: "ctx-lh-paracentral", 1016: "ctx-lh-parsopercularis",
-    1017: "ctx-lh-parsorbitalis", 1018: "ctx-lh-parstriangularis", 1019: "ctx-lh-pericalcarine",
-    1020: "ctx-lh-postcentral", 1021: "ctx-lh-posteriorcingulate", 1022: "ctx-lh-precentral",
-    1023: "ctx-lh-precuneus", 1024: "ctx-lh-rostralanteriorcingulate",
-    1025: "ctx-lh-rostralmiddlefrontal", 1026: "ctx-lh-superiorfrontal",
-    1027: "ctx-lh-superiorparietal", 1028: "ctx-lh-superiortemporal",
-    1029: "ctx-lh-supramarginal", 1030: "ctx-lh-frontalpole",
-    1031: "ctx-lh-temporalpole", 1032: "ctx-lh-transversetemporal", 1033: "ctx-lh-insula",
-
-    # Right cortex (DKT)
-    2000: "ctx-rh-bankssts", 2001: "ctx-rh-caudalanteriorcingulate",
-    2002: "ctx-rh-caudalmiddlefrontal", 2003: "ctx-rh-cuneus",
-    2004: "ctx-rh-entorhinal", 2005: "ctx-rh-fusiform", 2006: "ctx-rh-inferiorparietal",
-    2007: "ctx-rh-inferiortemporal", 2008: "ctx-rh-isthmuscingulate",
-    2009: "ctx-rh-lateraloccipital", 2010: "ctx-rh-lateralorbitofrontal",
-    2011: "ctx-rh-lingual", 2012: "ctx-rh-medialorbitofrontal", 2013: "ctx-rh-middletemporal",
-    2014: "ctx-rh-parahippocampal", 2015: "ctx-rh-paracentral", 2016: "ctx-rh-parsopercularis",
-    2017: "ctx-rh-parsorbitalis", 2018: "ctx-rh-parstriangularis", 2019: "ctx-rh-pericalcarine",
-    2020: "ctx-rh-postcentral", 2021: "ctx-rh-posteriorcingulate", 2022: "ctx-rh-precentral",
-    2023: "ctx-rh-precuneus", 2024: "ctx-rh-rostralanteriorcingulate",
-    2025: "ctx-rh-rostralmiddlefrontal", 2026: "ctx-rh-superiorfrontal",
-    2027: "ctx-rh-superiorparietal", 2028: "ctx-rh-superiortemporal",
-    2029: "ctx-rh-supramarginal", 2030: "ctx-rh-frontalpole",
-    2031: "ctx-rh-temporalpole", 2032: "ctx-rh-transversetemporal", 2033: "ctx-rh-insula",
-}
+fastsurfer_dkt_labels = FASTSURFER_DKT_LABELS
 
 # ------------------ Overlay helpers ------------------
 
@@ -438,6 +388,7 @@ def roi_masks_on_ti_grid(
     subject: Optional[str] = None,
     fastsurfer_root: Optional[str] = None,
     fastsurfer_atlas_path: Optional[str] = None,
+    roi_names: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, nib.Nifti1Image]]:
     """
     Build ROI masks on the TI grid using either Harvard–Oxford (MNI) or subject FastSurfer atlas.
@@ -516,17 +467,15 @@ def roi_masks_on_ti_grid(
     id_to_name = fastsurfer_dkt_labels
     name_to_id = {v.lower(): k for k, v in id_to_name.items()}
 
-    ROI_Q = ROI_QUERIES_FASTSURFER
-    for roi_name, info in ROI_Q.items():
-        q = info["query"].lower()
+    requested_rois = roi_names or list(DEFAULT_FASTSURFER_ROI_NAMES)
+    for requested_roi in requested_rois:
+        resolved_roi = resolve_fastsurfer_roi_name(requested_roi)
+        roi_name = resolved_roi.canonical_name
+        roi_key = roi_name.lower()
 
-        # Try exact name match first, then substring over all names
-        if q in name_to_id:
-            ids = [name_to_id[q]]
-        else:
-            ids = [k for k, v in id_to_name.items() if q in v.lower()]
-        if not ids:
-            raise ValueError(f"No FastSurfer labels match query '{info['query']}'")
+        if roi_key not in name_to_id:
+            raise ValueError(f"No FastSurfer label matches '{roi_name}'.")
+        ids = [name_to_id[roi_key]]
 
         combined_mask = np.isin(atlas_data, ids).astype(np.uint8)
 

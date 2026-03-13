@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from post.post_process import PostProcessConfig, run_post_process
 from post.post_population import run_population
+from utils.roi_registry import match_fastsurfer_roi_from_directory, resolve_fastsurfer_roi_name
 
 
 def discover_subjects(root: Path, subjects: Optional[Iterable[str]]) -> List[str]:
@@ -42,7 +43,7 @@ class PostBatchConfig:
     fastsurfer_root: Optional[str] = None
     fs_mri_path: Optional[str] = None
     t1_path: Optional[str] = None
-    plot_roi: str = "Hippocampus"
+    plot_roi: Optional[str] = None
     percentile: float = 95.0
     hard_threshold: float = 200.0
     overlay_z_offset_mm: float = 0.0
@@ -61,7 +62,7 @@ class PopulationConfig:
     region_filename: str = "region_stats_fastsurfer.csv"
     metrics_filename: str = "subject_metrics.json"
     peak_threshold: float = 0.2
-    target_roi: str = "Hippocampus"
+    target_roi: Optional[str] = None
     template_region_csv: Optional[str] = None
 
 
@@ -79,7 +80,7 @@ def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) ->
         fastsurfer_root=cfg.fastsurfer_root,
         fs_mri_path=cfg.fs_mri_path,
         t1_path=cfg.t1_path,
-        plot_roi=cfg.plot_roi,
+        plot_roi=cfg.plot_roi or "ctx-lh-precentral",
         percentile=cfg.percentile,
         hard_threshold=cfg.hard_threshold,
         overlay_z_offset_mm=cfg.overlay_z_offset_mm,
@@ -108,6 +109,54 @@ def process_subject(pp_cfg: PostProcessConfig) -> str:
     return pp_cfg.subject
 
 
+def _uses_fastsurfer_aliases(cfg: PostBatchConfig) -> bool:
+    return cfg.atlas_mode in {"auto", "fastsurfer"}
+
+
+def _abort_unknown_roi(dataset_root: str, reason: str) -> None:
+    dataset_name = Path(dataset_root).name
+    raise SystemExit(
+        f"Unrecognized ROI for dataset '{dataset_name}': {reason} "
+        "No analysis was started for this dataset."
+    )
+
+
+def _resolve_pipeline_rois(cfg: PipelineConfig) -> None:
+    if _uses_fastsurfer_aliases(cfg.post):
+        try:
+            if cfg.post.plot_roi:
+                plot_match = resolve_fastsurfer_roi_name(cfg.post.plot_roi)
+                print(
+                    f"[INFO] Using configured ROI alias '{cfg.post.plot_roi}' -> "
+                    f"'{plot_match.canonical_name}'."
+                )
+            else:
+                plot_match = match_fastsurfer_roi_from_directory(cfg.post.root)
+                print(
+                    f"[INFO] Inferred ROI from directory '{Path(cfg.post.root).name}' via alias "
+                    f"'{plot_match.matched_alias}' -> '{plot_match.canonical_name}'."
+                )
+        except ValueError as exc:
+            _abort_unknown_roi(cfg.post.root, str(exc))
+        cfg.post.plot_roi = plot_match.canonical_name
+
+        if cfg.population.target_roi:
+            try:
+                target_match = resolve_fastsurfer_roi_name(cfg.population.target_roi)
+            except ValueError as exc:
+                _abort_unknown_roi(cfg.post.root, str(exc))
+            print(
+                f"[INFO] Using configured population ROI alias '{cfg.population.target_roi}' -> "
+                f"'{target_match.canonical_name}'."
+            )
+            cfg.population.target_roi = target_match.canonical_name
+        else:
+            cfg.population.target_roi = cfg.post.plot_roi
+    else:
+        if cfg.population.target_roi is None:
+            cfg.population.target_roi = cfg.post.plot_roi or "Hippocampus"
+
+
 def run_batch(cfg: PostBatchConfig) -> dict:
     root = Path(cfg.root).expanduser().resolve()
     if not root.is_dir():
@@ -129,7 +178,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
             continue
         pending.append(build_post_process_config(root, subj, cfg))
 
-    max_workers = resolve_max_workers(cfg, len(pending))
+    max_workers = resolve_max_workers(cfg, len(pending))-5
     if pending:
         print(
             f"[INFO] Running post-processing for {len(pending)} subject(s) "
@@ -176,6 +225,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
 
 
 def run_pipeline(cfg: PipelineConfig) -> None:
+    _resolve_pipeline_rois(cfg)
     batch_result = run_batch(cfg.post)
 
     if cfg.population.enabled:
@@ -189,7 +239,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             region_filename=cfg.population.region_filename,
             metrics_filename=cfg.population.metrics_filename,
             peak_threshold=cfg.population.peak_threshold,
-            target_roi=cfg.population.target_roi,
+            target_roi=cfg.population.target_roi or (cfg.post.plot_roi or "Hippocampus"),
             template_region_csv=Path(cfg.population.template_region_csv).expanduser()
             if cfg.population.template_region_csv
             else None,
@@ -201,14 +251,14 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 if __name__ == "__main__":
     cfg = PipelineConfig(
         post=PostBatchConfig(
-            root="/media/boyan/main/PhD/Left_Hippocampus_Data_test",
+            root="/media/boyan/main/PhD/Rigth_Hippocampus_data",
             t1_path=None,
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
             max_workers=None,  # None -> use all detected CPU cores; lower this if memory is tight
             atlas_mode="fastsurfer",
             fastsurfer_root='/home/boyan/sandbox/Jake_Data/atlases',
             fs_mri_path=None,
-            plot_roi="Hippocampus",  # M1 (ctx-lh-precentral) / Hippocampus
+            plot_roi=None,  # None -> infer from root dir, e.g. Left_Hippocampus_Data_test
             percentile=95.0,
             hard_threshold=0.2,
             write_region_table=True,
@@ -225,7 +275,7 @@ if __name__ == "__main__":
             region_filename="region_stats_fastsurfer.csv",
             metrics_filename="subject_metrics.json",
             peak_threshold=0.2,
-            target_roi="Hippocampus",
+            target_roi=None,  # None -> reuse resolved post ROI
             template_region_csv=None,
         ),
     )

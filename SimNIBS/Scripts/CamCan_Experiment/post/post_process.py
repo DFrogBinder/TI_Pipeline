@@ -103,7 +103,12 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         subject=cfg.subject,
         fastsurfer_root=cfg.fastsurfer_root,
         fastsurfer_atlas_path=cfg.fs_mri_path,
+        roi_names=[cfg.plot_roi] if cfg.plot_roi else None,
     )
+
+    selected_plot_roi = cfg.plot_roi
+    if selected_plot_roi not in roi_masks and len(roi_masks) == 1:
+        selected_plot_roi = next(iter(roi_masks))
 
     # Resolve full FastSurfer atlas if available (for full-region summary)
     fs_atlas_path = None
@@ -113,7 +118,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         # except Exception:
         #     fs_atlas_path = None
     
-    mask = roi_masks.get("Hippocampus")
+    mask = roi_masks.get(selected_plot_roi)
     print("[INFO]:MODE CHECK")
     print("[INFO]:subject:", cfg.subject, "| atlas_mode:", cfg.atlas_mode)
     print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, cfg.subject, "mri", "aparc.DKTatlas+aseg.deep.nii.gz")))
@@ -209,35 +214,37 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         hippo_label_path   = None
         hippo_boldmask_path = None
 
-        if roi_name.lower() == "hippocampus":
+        if "hippocampus" in roi_name.lower():
+            roi_stub = normalize_roi_name(roi_name)
             outline = make_outline(mask, iterations=1)  # increase to 2-3 if you want thicker edge
-            hippo_outline_path = os.path.join(out_dir, "atlas_Hippocampus_outline_mask.nii.gz")
+            hippo_outline_path = os.path.join(out_dir, f"atlas_{roi_stub}_outline_mask.nii.gz")
             nib.save(nib.Nifti1Image(outline, ti_img.affine), hippo_outline_path)
 
             # 2b) Make a "bold" (high intensity) filled mask for viewers that fade 0/1 overlays
             bold = (mask.astype(np.uint8) * 255)
-            hippo_boldmask_path = os.path.join(out_dir, "atlas_Hippocampus_mask_255.nii.gz")
+            hippo_boldmask_path = os.path.join(out_dir, f"atlas_{roi_stub}_mask_255.nii.gz")
             nib.save(nib.Nifti1Image(bold, ti_img.affine), hippo_boldmask_path)
 
             # 2c) Export a label-ID volume on the TI grid (17 for L, 53 for R; 0 elsewhere)
             #     This is often the easiest to color distinctly in Freeview/FSLEyes.
             #     We reconstruct it from the original atlas image on the TI grid:
-            ids = [17, 53]  # bilateral; change to [17] or [53] if you want unilateral
-            # Start from zeros, paint the mask with ID 17/53 depending on which side each voxel belongs to.
-            # If you don't need per-side split, you can just use e.g. 17 for all.
-            # Here’s a simple approach: put 77 for left, 88 for right (or keep 17/53 if preferred).
             label_vol = np.zeros(mask.shape, dtype=np.uint16)
-            # Heuristic split by x in world space (left/right). Feel free to skip and just set 17/53 both.
-            ijk = np.argwhere(mask)
-            xyz = nib.affines.apply_affine(ti_img.affine, ijk)
-            # Left hemisphere has x<0 in RAS (typical); adjust if your orientation differs.
-            left_idx  = (xyz[:, 0] < 0)
-            right_idx = ~left_idx
-            if ijk.size > 0:
-                if left_idx.any():  label_vol[tuple(ijk[left_idx].T)]  = 17
-                if right_idx.any(): label_vol[tuple(ijk[right_idx].T)] = 53
+            if roi_name.lower().startswith("left-hippocampus"):
+                label_vol[mask] = 17
+            elif roi_name.lower().startswith("right-hippocampus"):
+                label_vol[mask] = 53
+            else:
+                ijk = np.argwhere(mask)
+                xyz = nib.affines.apply_affine(ti_img.affine, ijk)
+                left_idx = xyz[:, 0] < 0
+                right_idx = ~left_idx
+                if ijk.size > 0:
+                    if left_idx.any():
+                        label_vol[tuple(ijk[left_idx].T)] = 17
+                    if right_idx.any():
+                        label_vol[tuple(ijk[right_idx].T)] = 53
 
-            hippo_label_path = os.path.join(out_dir, "atlas_Hippocampus_labels_on_TI.nii.gz")
+            hippo_label_path = os.path.join(out_dir, f"atlas_{roi_stub}_labels_on_TI.nii.gz")
             nib.save(nib.Nifti1Image(label_vol, ti_img.affine), hippo_label_path)
 
             # Track in the return dict
@@ -270,7 +277,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
-    sel = cfg.plot_roi
+    sel = selected_plot_roi
     sel_norm = normalize_roi_name(sel)
     if t1_img_full is not None and sel in roi_masks:
         roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)

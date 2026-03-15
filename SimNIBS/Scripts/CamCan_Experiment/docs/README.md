@@ -51,6 +51,19 @@ HPC launch (single-node parallel batch):
 ```bash
 sbatch HPC_scripts/run_post_processing.slurm
 ```
+On HPC, the job needs a Python environment with the post-processing stack installed.
+On Stanage, the Sheffield docs recommend loading an `Anaconda3` module and using
+`source activate` for your conda environment. One working pattern is:
+```bash
+module load Anaconda3/2022.05
+conda create -n ti-post python=3.11 numpy pandas nibabel scipy nilearn matplotlib
+source activate ti-post
+sbatch --export=ALL,POST_CONDA_ENV=ti-post HPC_scripts/run_post_processing.slurm
+```
+If you keep a personal miniconda install instead of the Stanage module, submit with
+`POST_CONDA_ENV=<name-or-prefix>` and `POST_CONDA_SH=/path/to/conda.sh`.
+If you prefer `venv`, create it first, install `requirements-post.txt`, then submit with
+`POST_VENV=/path/to/venv`.
 Outputs go to `<root>/<subject>/anat/post/`:
 - ROI masks/overlaps (`atlas_<ROI>_mask.nii.gz`, `<ROI>_overlap_topXXpct_mask.nii.gz`).
 - TI masked volumes (`TI_in_<ROI>.nii.gz`, `TI_in_<ROI>_TopXX.nii.gz`, `TI_in_TopXX.nii.gz`).

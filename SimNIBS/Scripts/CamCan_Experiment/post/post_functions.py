@@ -29,6 +29,7 @@ from utils.ti_utils import (
     summarize_atlas_regions,
     extract_table,
 )
+from utils.paths import fastsurfer_atlas_path
 from utils.roi_registry import FASTSURFER_DKT_LABELS, resolve_fastsurfer_roi_name
 
 
@@ -363,23 +364,11 @@ def load_custom_atlas(atlas_path: NiftiLike) -> nib.Nifti1Image:
 
 def _resolve_fastsurfer_atlas(subject: str, fastsurfer_root: Optional[str], explicit_path: Optional[str]) -> Optional[str]:
     """
-    Try several canonical locations for aparc.DKTatlas+aseg.deep.nii.gz.
-    Priority: explicit_path > {fastsurfer_root}/{subject}.nii.gz >
-              {fastsurfer_root}/{subject}/mri/... > env SUBJECTS_DIR.
+    Resolve the subject FastSurfer atlas from the supported flat-file layout.
+    Priority: explicit_path > {fastsurfer_root}/{subject}.nii.gz
     """
-    candidates: List[Path] = []
-    if explicit_path:
-        candidates.append(Path(explicit_path))
-    if fastsurfer_root:
-        candidates.append(Path(fastsurfer_root) / f"{subject}.nii.gz")
-    env_sd = os.environ.get("SUBJECTS_DIR")
-    if env_sd:
-        candidates.append(Path(env_sd) / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz")
-
-    for c in candidates:
-        if c.is_file():
-            return str(c)
-    return None
+    atlas_path = fastsurfer_atlas_path(fastsurfer_root, subject, explicit_path)
+    return str(atlas_path) if atlas_path else None
 
 def roi_masks_on_ti_grid(
     ti_img: nib.Nifti1Image,
@@ -399,8 +388,7 @@ def roi_masks_on_ti_grid(
       - "mni": always use Harvard–Oxford
 
     FastSurfer search order: fastsurfer_atlas_path (explicit) >
-                             {fastsurfer_root}/{subject}/mri/aparc.DKTatlas+aseg.deep.nii.gz >
-                             $SUBJECTS_DIR/{subject}/mri/aparc.DKTatlas+aseg.deep.nii.gz
+                             {fastsurfer_root}/{subject}.nii.gz
     """
     # Decide mode
     chosen_mode: AtlasMode = atlas_mode
@@ -418,7 +406,7 @@ def roi_masks_on_ti_grid(
         if not fs_atlas:
             raise FileNotFoundError(
                 "FastSurfer atlas not found. Provide --fs-mri-path OR --fastsurfer-root + --subject "
-                "or set $SUBJECTS_DIR. Expected 'aparc.DKTatlas+aseg.deep.nii.gz'."
+                "with atlases stored as '<fastsurfer_root>/<subject>.nii.gz'."
             )
 
     # Prepare outputs

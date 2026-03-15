@@ -5,7 +5,7 @@ Use this as a quick map from raw data to population summaries and where each ste
 ## 1) Atlases (optional but preferred)
 - **Script**: `atlas/make_atlas.sh` (Docker) or `atlas/run_atlasMaker.py` (parallel launcher).
 - **Input**: `<DATA_ROOT>/<sub>/anat/<sub>_T1w.nii.gz`.
-- **Output**: `<DATA_ROOT>/FastSurfer_out/<sub>/mri/aparc.DKTatlas+aseg.deep.nii.gz`.
+- **Output for post-processing**: `<ATLAS_ROOT>/<sub>.nii.gz` and pass `<ATLAS_ROOT>` as `fastsurfer_root`.
 - **When**: Run once per subject to enable FastSurfer-based ROIs.
 
 ## 2) Meshing & TI simulation

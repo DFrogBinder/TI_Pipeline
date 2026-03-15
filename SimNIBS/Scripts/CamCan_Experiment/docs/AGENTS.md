@@ -37,5 +37,5 @@
 
 ## Environment & Execution Tips
 - SimNIBS/Charm/msh2nii must be available in PATH (see Slurm scripts for module usage).
-- FastSurfer/FreeSurfer atlases expected at `<root>/FastSurfer_out/<sub>/mri/aparc.DKTatlas+aseg.deep.nii.gz` or via `--fs-mri-path`.
+- FastSurfer atlases for post-processing are expected at `<fastsurfer_root>/<sub>.nii.gz` or via `--fs-mri-path`.
 - Avoid destructive git commands; do not overwrite user outputs under subject folders without backups.***

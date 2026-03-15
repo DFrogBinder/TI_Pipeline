@@ -15,7 +15,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - FastSurfer ROI alias handling now lives in `utils/roi_registry.py`, so dataset roots such as `Left_Hippocampus_Data_test` or `rigth_m1_project` can be resolved automatically.
 
 - **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries) and `utils/roi_registry.py` (FastSurfer ROI labels, aliases, dataset-name matching).
-- **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker, produces aparc.DKTatlas+aseg.deep.nii.gz).
+- **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker; post-processing expects per-subject atlas files under `<fastsurfer_root>/<subject>.nii.gz`).
 - **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject) and `simulation/TI_runner_single-core.py` (sequential) create meshes, run SimNIBS TDCS pairs, compute TImax, export TI volumes (`ti_brain_only.nii.gz`).
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
@@ -37,7 +37,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
    - `post.root`: dataset root.
    - `post.subjects`: list of subject IDs or `None` for all.
    - `post.atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
-   - `post.fastsurfer_root` / `post.fs_mri_path`: where to find `aparc.DKTatlas+aseg.deep.nii.gz`.
+   - `post.fastsurfer_root` / `post.fs_mri_path`: where to find the subject atlas NIfTI. `fastsurfer_root` is resolved as `<fastsurfer_root>/<subject>.nii.gz`.
    - `post.plot_roi`: set to `None` to infer the ROI from `post.root`, or provide an alias/canonical FastSurfer ROI name directly.
    - `population.target_roi`: set to `None` to reuse the resolved post ROI.
    - `population.enabled`: toggle population aggregation.

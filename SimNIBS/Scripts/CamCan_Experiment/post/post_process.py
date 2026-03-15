@@ -45,7 +45,7 @@ class PostProcessConfig:
     # Atlas selection
     atlas_mode: str = "mni"          # "auto" | "mni" | "fastsurfer"
     fastsurfer_root: Optional[str] = None
-    fs_mri_path: Optional[str] = None # explicit path to aparc.DKTatlas+aseg.deep.nii.gz
+    fs_mri_path: Optional[str] = None # explicit path to the subject atlas NIfTI
 
     # Behavior
     out_dir: Optional[str] = None
@@ -121,7 +121,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     mask = roi_masks.get(selected_plot_roi)
     print("[INFO]:MODE CHECK")
     print("[INFO]:subject:", cfg.subject, "| atlas_mode:", cfg.atlas_mode)
-    print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, cfg.subject, "mri", "aparc.DKTatlas+aseg.deep.nii.gz")))
+    print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, f"{cfg.subject}.nii.gz")))
     print("[INFO]:mask dtype/shape:", mask.dtype, mask.shape if mask is not None else None)
     print("[INFO]:mask voxels >0:", int(mask.sum()) if mask is not None else 0)
 

@@ -4,6 +4,7 @@ FastSurfer ROI registry and alias resolution helpers.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Sequence, Set
@@ -134,6 +135,8 @@ _SPECIAL_REGION_ALIASES = {
     },
 }
 
+_OPTIONAL_TRAILING_REGION_TOKENS = {"proper", "area"}
+
 
 def _snake_case(value: str) -> str:
     value = re.sub(r"[^0-9a-zA-Z]+", "_", value.strip().lower())
@@ -141,9 +144,36 @@ def _snake_case(value: str) -> str:
     return value.strip("_")
 
 
+def _tokenize(value: str) -> tuple[str, ...]:
+    normalized = _snake_case(value)
+    return tuple(token for token in normalized.split("_") if token)
+
+
+def _join_tokens(tokens: Sequence[str]) -> str:
+    return "_".join(tokens)
+
+
 def _region_aliases(region_name: str) -> Set[str]:
-    aliases = {region_name}
-    aliases.update(_SPECIAL_REGION_ALIASES.get(region_name, set()))
+    pending = [_tokenize(region_name)]
+    aliases: Set[str] = set()
+
+    while pending:
+        tokens = pending.pop()
+        if not tokens:
+            continue
+
+        alias = _join_tokens(tokens)
+        if alias in aliases:
+            continue
+
+        aliases.add(alias)
+
+        for special_alias in _SPECIAL_REGION_ALIASES.get(alias, set()):
+            pending.append(_tokenize(special_alias))
+
+        if tokens[-1] in _OPTIONAL_TRAILING_REGION_TOKENS:
+            pending.append(tokens[:-1])
+
     return aliases
 
 
@@ -196,17 +226,19 @@ class FastsurferRoiMatch:
     matched_alias: str
 
 
-def _normalize_tokens(value: str | Path) -> tuple[str, ...]:
-    normalized = _snake_case(str(Path(value).name))
-    return tuple(token for token in normalized.split("_") if token)
+def _normalize_name(value: str | Path) -> str:
+    return _snake_case(str(Path(value).name))
 
 
-def _contains_alias(tokens: Sequence[str], alias: str) -> bool:
-    alias_tokens = tuple(token for token in alias.split("_") if token)
-    if not alias_tokens or len(alias_tokens) > len(tokens):
+@lru_cache(maxsize=None)
+def _alias_pattern(alias: str) -> re.Pattern[str]:
+    return re.compile(rf"(?:^|_){re.escape(alias)}(?:_|$)")
+
+
+def _contains_alias(normalized_name: str, alias: str) -> bool:
+    if not normalized_name or not alias:
         return False
-    width = len(alias_tokens)
-    return any(tuple(tokens[idx : idx + width]) == alias_tokens for idx in range(len(tokens) - width + 1))
+    return bool(_alias_pattern(alias).search(normalized_name))
 
 
 def _format_ambiguity(alias: str, canonical_names: Iterable[str]) -> str:
@@ -225,10 +257,10 @@ def resolve_fastsurfer_roi_name(name: str) -> FastsurferRoiMatch:
 
 
 def match_fastsurfer_roi_from_directory(directory_name: str | Path) -> FastsurferRoiMatch:
-    tokens = _normalize_tokens(directory_name)
+    normalized_name = _normalize_name(directory_name)
     matches: list[tuple[int, int, str, tuple[str, ...]]] = []
     for alias, canonical_names in FASTSURFER_ALIAS_INDEX.items():
-        if _contains_alias(tokens, alias):
+        if _contains_alias(normalized_name, alias):
             alias_width = len(alias.split("_"))
             matches.append((alias_width, len(alias), alias, canonical_names))
 

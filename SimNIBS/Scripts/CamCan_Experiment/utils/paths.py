@@ -37,9 +37,12 @@ def post_root(root: str, subject: str) -> Path:
 
 def fastsurfer_atlas_path(root: Optional[str], subject: str, override: Optional[str]) -> Optional[Path]:
     if override:
-        return Path(override)
+        candidate = Path(override).expanduser()
+        if candidate.is_file():
+            return candidate
+        return None
     if root:
-        candidate = Path(root).expanduser() / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz"
+        candidate = Path(root).expanduser() / f"{subject}.nii.gz"
         if candidate.is_file():
             return candidate
     return None

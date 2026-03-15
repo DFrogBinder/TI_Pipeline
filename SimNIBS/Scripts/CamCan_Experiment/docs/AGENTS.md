@@ -10,7 +10,7 @@
 - `utils/sim_utils.py`: simulation helpers (segmentation merge, atomic replace, directory formatting).
 - `make_atlas.sh`, `run_atlasMaker.py`: FastSurfer/FreeSurfer atlas generation.
 - `create3dmesh.py`: convert TI volumes + masks to VTK/PLY/STL.
-- Slurm wrappers: `my_jobArray.slurm`, `ti_multi.slurm`.
+- Slurm wrappers: `my_jobArray.slurm`, `ti_multi.slurm`, `run_post_processing.slurm`.
 - Docs/diagrams: `README.md`, `Updated_TI_Pipeline.drawio`.
 
 ## Build, Test, and Development Commands

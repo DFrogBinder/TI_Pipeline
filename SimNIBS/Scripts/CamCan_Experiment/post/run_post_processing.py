@@ -11,15 +11,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import TYPE_CHECKING, Iterable, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from post.post_process import PostProcessConfig, run_post_process
-from post.post_population import run_population
 from utils.roi_registry import match_fastsurfer_roi_from_directory, resolve_fastsurfer_roi_name
+
+if TYPE_CHECKING:
+    from post.post_process import PostProcessConfig
 
 
 def discover_subjects(root: Path, subjects: Optional[Iterable[str]]) -> List[str]:
@@ -73,6 +74,8 @@ class PipelineConfig:
 
 
 def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) -> PostProcessConfig:
+    from post.post_process import PostProcessConfig
+
     return PostProcessConfig(
         root_dir=str(root),
         subject=subject,
@@ -95,16 +98,40 @@ def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) ->
 def resolve_max_workers(cfg: PostBatchConfig, task_count: int) -> int:
     if task_count <= 0:
         return 0
-    if cfg.max_workers is None:
-        requested = os.cpu_count() or 1
-    else:
+
+    if cfg.max_workers is not None:
         requested = cfg.max_workers
+    else:
+        requested = _read_positive_int_env("POST_MAX_WORKERS")
+        if requested is None:
+            requested = _read_positive_int_env("SLURM_CPUS_PER_TASK")
+        if requested is None:
+            requested = os.cpu_count() or 1
+
     if requested < 1:
         raise ValueError("max_workers must be at least 1.")
     return min(task_count, requested)
 
 
+def _read_positive_int_env(name: str) -> Optional[int]:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}.") from exc
+
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1, got {value}.")
+
+    return value
+
+
 def process_subject(pp_cfg: PostProcessConfig) -> str:
+    from post.post_process import run_post_process
+
     run_post_process(pp_cfg)
     return pp_cfg.subject
 
@@ -178,7 +205,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
             continue
         pending.append(build_post_process_config(root, subj, cfg))
 
-    max_workers = resolve_max_workers(cfg, len(pending))-5
+    max_workers = resolve_max_workers(cfg, len(pending))
     if pending:
         print(
             f"[INFO] Running post-processing for {len(pending)} subject(s) "
@@ -229,6 +256,8 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     batch_result = run_batch(cfg.post)
 
     if cfg.population.enabled:
+        from post.post_population import run_population
+
         root = Path(cfg.post.root).expanduser().resolve()
         run_population(
             root=root,

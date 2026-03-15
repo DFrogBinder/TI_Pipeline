@@ -21,7 +21,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
 - **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
 - **Mesh export**: `viz/create3dmesh.py` converts TI volumes + masks to VTK/PLY/STL for visualization.
-- **Job wrappers**: `my_jobArray.slurm`, `ti_multi.slurm` submit simulations on HPC.
+- **Job wrappers**: `my_jobArray.slurm`, `ti_multi.slurm`, and `run_post_processing.slurm` help launch simulation/post-processing steps on HPC.
 - **Docs/diagrams**: `README.md`, `PIPELINE_OVERVIEW.md`, `Updated_TI_Pipeline.drawio`.
 
 ## Directory layout
@@ -46,6 +46,10 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 2) Run:
 ```bash
 python post/run_post_processing.py
+```
+HPC launch (single-node parallel batch):
+```bash
+sbatch HPC_scripts/run_post_processing.slurm
 ```
 Outputs go to `<root>/<subject>/anat/post/`:
 - ROI masks/overlaps (`atlas_<ROI>_mask.nii.gz`, `<ROI>_overlap_topXXpct_mask.nii.gz`).

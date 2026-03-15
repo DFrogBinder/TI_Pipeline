@@ -22,10 +22,14 @@ Use this as a quick map from raw data to population summaries and where each ste
 
 ## 3) Subject post-processing
 - **Script**: `post_process.py` (configure `PostProcessConfig` at bottom or import) with helpers in `post_functions.py` / `ti_utils.py`.
+- **Batch entrypoint**: `post/run_post_processing.py`
 - **Inputs**: `ti_brain_only.nii.gz`, T1, atlas (FastSurfer if present, else Harvard–Oxford).
 - **ROI selection**: `post/run_post_processing.py` can infer the FastSurfer target ROI from the dataset root name via `utils/roi_registry.py`.
   Use snake_case aliases such as `left_hippocampus`, `right_m1`, or canonical names such as `Left-Hippocampus`.
   If no ROI alias is recognized, the batch runner exits before starting analysis for that dataset.
+- **Launch examples**:
+  - Local: `python post/run_post_processing.py`
+  - HPC (single node): `sbatch HPC_scripts/run_post_processing.slurm`
 - **Outputs** (in `<root>/<sub>/anat/post/`):
   - ROI masks/overlaps: `atlas_<ROI>_mask.nii.gz`, `<ROI>_overlap_topXXpct_mask.nii.gz`
   - TI masked volumes: `TI_in_<ROI>.nii.gz`, `TI_in_TopXX.nii.gz`

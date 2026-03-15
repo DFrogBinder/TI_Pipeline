@@ -23,7 +23,9 @@ echo
 # Before submitting:
 #   1) Edit the config block at the bottom of post/run_post_processing.py
 #      so post.root / fastsurfer_root / population settings point at HPC paths.
-#   2) Point the job at a Python environment that contains the post-processing
+#   2) One-time cluster-side setup option:
+#        sbatch HPC_scripts/bootstrap_post_conda.slurm
+#   3) Point the job at a Python environment that contains the post-processing
 #      stack, using one of:
 #        - POST_CONDA_ENV=<name-or-prefix> (Stanage docs path; optionally set
 #          POST_ANACONDA_MODULE, defaults to Anaconda3/2022.05)

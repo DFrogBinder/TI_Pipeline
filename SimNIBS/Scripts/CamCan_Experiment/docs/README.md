@@ -52,8 +52,18 @@ HPC launch (single-node parallel batch):
 sbatch HPC_scripts/run_post_processing.slurm
 ```
 On HPC, the job needs a Python environment with the post-processing stack installed.
+If interactive setup is inconvenient, do the one-time setup itself via Slurm:
+```bash
+sbatch HPC_scripts/bootstrap_post_conda.slurm
+```
+That job creates or repairs a `ti-post` conda env by default. After it completes,
+launch the actual post-processing job with:
+```bash
+sbatch --export=ALL,POST_CONDA_ENV=ti-post HPC_scripts/run_post_processing.slurm
+```
 On Stanage, the Sheffield docs recommend loading an `Anaconda3` module and using
-`source activate` for your conda environment. One working pattern is:
+`source activate` for your conda environment. The bootstrap script follows that
+pattern. If you still want to set the env up manually, one working pattern is:
 ```bash
 module load Anaconda3/2022.05
 conda create -n ti-post python=3.11 numpy pandas nibabel scipy nilearn matplotlib

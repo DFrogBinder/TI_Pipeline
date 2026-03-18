@@ -203,13 +203,22 @@ def process_subject(subject_entry):
     electrode_shape       = 'ellipse'
     electrode_conductivity = 1.4
 
+    
+    # Left_Pallidum
+    montage_right = ('Fpz', 2e-3, 'AF8', -2e-3) 
+    montage_left  = ('TP7', 1.261915e-3, 'PO9', -1.261915e-3)
+    
+    # Right_Pallidum
+    # montage_right = ('F8', 2e-3, 'F10', -2e-3) 
+    # montage_left  = ('FT7', 1.261915e-3, 'C3', -1.261915e-3)
+    
     # Left Thalamus 
     # montage_right = ('F7', 1.588656e-3, 'P7', -1.588656e-3) 
     # montage_left  = ('F8', 2e-3, 'P8', -2e-3)
     
     # Right Thalamus 
-    montage_right = ('AF7', 2e-3, 'TP7', -2e-3) 
-    montage_left  = ('T8', 2e-3, 'PO8', -2e-3)
+    # montage_right = ('AF7', 2e-3, 'TP7', -2e-3) 
+    # montage_left  = ('T8', 2e-3, 'PO8', -2e-3)
     
     # Hippocampus montage
     # montage_right = ('F10', 2e-3, 'P8', -2e-3)

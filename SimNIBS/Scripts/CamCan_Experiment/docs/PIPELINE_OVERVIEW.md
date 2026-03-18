@@ -24,6 +24,7 @@ Use this as a quick map from raw data to population summaries and where each ste
 - **Script**: `post_process.py` (configure `PostProcessConfig` at bottom or import) with helpers in `post_functions.py` / `ti_utils.py`.
 - **Batch entrypoint**: `post/run_post_processing.py`
 - **Inputs**: `ti_brain_only.nii.gz`, T1, atlas (FastSurfer if present, else Harvard–Oxford).
+- **Atlas override**: `python post/run_post_processing.py --atlas-filename /path/to/shared_atlas.nii.gz` reuses one atlas for every subject, while `python post/run_post_processing.py --atlas-filename mri/aparc.DKTatlas+aseg.deep.nii.gz` looks for each atlas at `<fastsurfer_root>/<subject>/mri/aparc.DKTatlas+aseg.deep.nii.gz`.
 - **ROI selection**: `post/run_post_processing.py` can infer the FastSurfer target ROI from the dataset root name via `utils/roi_registry.py`.
   Use snake_case aliases such as `left_hippocampus`, `right_m1`, or canonical names such as `Left-Hippocampus`.
   If no ROI alias is recognized, the batch runner exits before starting analysis for that dataset.

@@ -5,13 +5,14 @@ Edit the config at the bottom to control the full pipeline from a single entrypo
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, List, Optional
+from typing import TYPE_CHECKING, Iterable, List, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -43,6 +44,7 @@ class PostBatchConfig:
     atlas_mode: str = "auto"  # "auto" | "mni" | "fastsurfer"
     fastsurfer_root: Optional[str] = None
     fs_mri_path: Optional[str] = None
+    fastsurfer_atlas_filename: Optional[str] = None
     t1_path: Optional[str] = None
     plot_roi: Optional[str] = None
     percentile: float = 95.0
@@ -73,6 +75,22 @@ class PipelineConfig:
     population: PopulationConfig
 
 
+def resolve_subject_fastsurfer_atlas_path(cfg: PostBatchConfig, subject: str) -> Optional[str]:
+    if not cfg.fastsurfer_atlas_filename:
+        return cfg.fs_mri_path
+
+    atlas_filename = Path(cfg.fastsurfer_atlas_filename).expanduser()
+    if atlas_filename.is_absolute():
+        return str(atlas_filename)
+
+    if not cfg.fastsurfer_root:
+        raise ValueError(
+            "A relative atlas filename override requires fastsurfer_root to be set."
+        )
+
+    return str(Path(cfg.fastsurfer_root).expanduser() / subject / atlas_filename)
+
+
 def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) -> PostProcessConfig:
     from post.post_process import PostProcessConfig
 
@@ -81,7 +99,7 @@ def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) ->
         subject=subject,
         atlas_mode=cfg.atlas_mode,
         fastsurfer_root=cfg.fastsurfer_root,
-        fs_mri_path=cfg.fs_mri_path,
+        fs_mri_path=resolve_subject_fastsurfer_atlas_path(cfg, subject),
         t1_path=cfg.t1_path,
         plot_roi=cfg.plot_roi or "ctx-lh-precentral",
         percentile=cfg.percentile,
@@ -277,16 +295,33 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         raise SystemExit("Some subjects failed during post-processing.")
 
 
-if __name__ == "__main__":
-    cfg = PipelineConfig(
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.strip())
+    parser.add_argument(
+        "--atlas-filename",
+        "--fastsurfer-atlas-filename",
+        dest="fastsurfer_atlas_filename",
+        help=(
+            "Atlas override for all subjects. Use either an absolute atlas path "
+            "shared by every subject, or a relative path under each subject "
+            "directory inside fastsurfer_root, for example "
+            "'mri/aparc.DKTatlas+aseg.deep.nii.gz'."
+        ),
+    )
+    return parser
+
+
+def make_default_config() -> PipelineConfig:
+    return PipelineConfig(
         post=PostBatchConfig(
-            root="/media/boyan/main/PhD/Rigth_Hippocampus_data",
+            root="/home/boyan/sandbox/Jake_Data/Left_Thalamus/",
             t1_path=None,
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
             max_workers=None,  # None -> use all detected CPU cores; lower this if memory is tight
             atlas_mode="fastsurfer",
-            fastsurfer_root='/home/boyan/sandbox/Jake_Data/atlases',
+            fastsurfer_root="/home/boyan/sandbox/Jake_Data/atlases",
             fs_mri_path=None,
+            fastsurfer_atlas_filename='/home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz',  # e.g. "mri/aparc.DKTatlas+aseg.deep.nii.gz"
             plot_roi=None,  # None -> infer from root dir, e.g. Left_Hippocampus_Data_test
             percentile=95.0,
             hard_threshold=0.2,
@@ -308,4 +343,19 @@ if __name__ == "__main__":
             template_region_csv=None,
         ),
     )
+
+
+def apply_cli_overrides(cfg: PipelineConfig, args: argparse.Namespace) -> None:
+    if args.fastsurfer_atlas_filename is not None:
+        cfg.post.fastsurfer_atlas_filename = args.fastsurfer_atlas_filename
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    cfg = make_default_config()
+    args = build_arg_parser().parse_args(argv)
+    apply_cli_overrides(cfg, args)
     run_pipeline(cfg)
+
+
+if __name__ == "__main__":
+    main()

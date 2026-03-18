@@ -38,6 +38,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
    - `post.subjects`: list of subject IDs or `None` for all.
    - `post.atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
    - `post.fastsurfer_root` / `post.fs_mri_path`: where to find the subject atlas NIfTI. `fastsurfer_root` is resolved as `<fastsurfer_root>/<subject>.nii.gz`.
+   - `--atlas-filename` or `post.fastsurfer_atlas_filename`: optional atlas override for all subjects. Use an absolute atlas path to reuse one atlas for every subject, or a relative path such as `mri/aparc.DKTatlas+aseg.deep.nii.gz` to resolve `<fastsurfer_root>/<subject>/mri/aparc.DKTatlas+aseg.deep.nii.gz`.
    - `post.plot_roi`: set to `None` to infer the ROI from `post.root`, or provide an alias/canonical FastSurfer ROI name directly.
    - `population.target_roi`: set to `None` to reuse the resolved post ROI.
    - `population.enabled`: toggle population aggregation.
@@ -46,6 +47,10 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 2) Run:
 ```bash
 python post/run_post_processing.py
+```
+Example with per-subject atlas filename override:
+```bash
+python post/run_post_processing.py --atlas-filename mri/aparc.DKTatlas+aseg.deep.nii.gz
 ```
 HPC launch (single-node parallel batch):
 ```bash

@@ -62,21 +62,67 @@ class PostProcessConfig:
     verbose: bool = True
 
 
-def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str]]:
+def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str], str]:
     subj = cfg.subject
     root = os.path.abspath(cfg.root_dir)
     out_root = cfg.out_dir or str(post_root(root, subj))
 
     ti_path = cfg.ti_path or str(ti_brain_path(root, subj))
     if cfg.t1_path:
-        t1_file = cfg.t1_path
+        t1_file = str(Path(cfg.t1_path).expanduser())
+        t1_source = "cfg.t1_path"
     else:
         if subj.upper() == "MNI152":
             t1_file = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
+            t1_source = "built-in MNI152 template fallback"
         else:
             t1_file = str(t1_path(root, subj))
+            t1_source = f"derived from utils.paths.t1_path(root={root!r}, subject={subj!r})"
 
-    return out_root, ti_path, t1_file
+    return out_root, ti_path, t1_file, t1_source
+
+
+def _nearby_t1_candidates(t1_candidate: Path) -> Tuple[Path, ...]:
+    candidates = []
+    name = t1_candidate.name
+
+    if name.endswith(".nii.gz"):
+        candidates.append(t1_candidate.with_name(name[:-3]))
+    elif t1_candidate.suffix == ".nii":
+        candidates.append(t1_candidate.with_name(f"{name}.gz"))
+
+    return tuple(candidates)
+
+
+def _log_t1_lookup_details(
+    cfg: PostProcessConfig,
+    t1_candidate: Optional[str],
+    t1_source: str,
+    *,
+    error: Optional[Exception] = None,
+) -> None:
+    if not cfg.verbose:
+        return
+
+    print(f"[INFO] Overlay T1 source: {t1_source}")
+    if not t1_candidate:
+        print("[WARN] Overlay T1 path is empty; overlays that need T1 will be skipped.")
+        return
+
+    expanded = Path(t1_candidate).expanduser()
+    resolved = expanded.resolve()
+    print(f"[INFO] Overlay T1 candidate: {t1_candidate}")
+    print(f"[INFO] Overlay T1 resolved path: {resolved}")
+    print(f"[INFO] Overlay T1 exists={resolved.exists()} is_file={resolved.is_file()}")
+
+    nearby_existing = [str(path) for path in _nearby_t1_candidates(resolved) if path.is_file()]
+    if nearby_existing:
+        print(f"[INFO] Nearby existing T1 candidate(s): {', '.join(nearby_existing)}")
+
+    if error is not None:
+        print(f"[WARN] Failed loading T1 for overlays: {type(error).__name__}: {error}")
+    elif not resolved.is_file():
+        print("[WARN] T1 file for overlays was not found at the resolved path above.")
 
 
 def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
@@ -85,11 +131,12 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     Set breakpoints inside to step through.
     """
     # ---- Paths & IO ----
-    out_dir, ti_path, t1_path = _infer_paths(cfg)
+    out_dir, ti_path, t1_path, t1_path_source = _infer_paths(cfg)
     if cfg.verbose:
         print(f"[cfg] subject={cfg.subject} | atlas_mode={cfg.atlas_mode}")
         print(f"[cfg] ti_path={ti_path}")
         print(f"[cfg] t1_path={t1_path}")
+        print(f"[cfg] t1_path_source={t1_path_source}")
         print(f"[cfg] out_dir={out_dir}")
 
     ensure_dir(out_dir)
@@ -136,12 +183,15 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # Background for overlays (resampled to TI grid if available)
     t1_img_full = None
-    if t1_path and os.path.exists(t1_path):
+    if t1_path:
         try:
-            t1_img_full = nib.load(t1_path)
+            t1_resolved = Path(t1_path).expanduser()
+            if t1_resolved.is_file():
+                t1_img_full = nib.load(str(t1_resolved))
+            else:
+                _log_t1_lookup_details(cfg, t1_path, t1_path_source)
         except Exception as e:
-            if cfg.verbose:
-                print(f"[WARN] Failed loading T1 ({t1_path}): {e}")
+            _log_t1_lookup_details(cfg, t1_path, t1_path_source, error=e)
 
     # Save global masks
     vox_vol = vol_mm3(ti_img)
@@ -310,7 +360,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         ]
     elif t1_img_full is None:
         if cfg.verbose:
-            print("[INFO] Skipping overlays (T1 not found).")
+            print("[INFO] Skipping overlays because no T1 background image could be loaded.")
 
     # ---- Subject-level robustness metrics ----
     subject_metrics = dict(

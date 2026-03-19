@@ -319,9 +319,9 @@ def make_default_config() -> PipelineConfig:
             subjects=None,  # list like ["sub-CC110056", "sub-CC110087"] or None for all
             max_workers=None,  # None -> use all detected CPU cores; lower this if memory is tight
             atlas_mode="fastsurfer",
-            fastsurfer_root="/home/boyan/sandbox/Jake_Data/atlases",
+            fastsurfer_root="/mnt/parscratch/users/cop23bi/ZIPs/atlases",
             fs_mri_path=None,
-            fastsurfer_atlas_filename='/home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz',  # e.g. "mri/aparc.DKTatlas+aseg.deep.nii.gz"
+            fastsurfer_atlas_filename=None,  # e.g. "mri/aparc.DKTatlas+aseg.deep.nii.gz"
             plot_roi=None,  # None -> infer from root dir, e.g. Left_Hippocampus_Data_test
             percentile=95.0,
             hard_threshold=0.2,

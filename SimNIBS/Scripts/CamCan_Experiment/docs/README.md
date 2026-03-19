@@ -7,7 +7,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
   - Builds ROI masks on the TI grid (Harvard–Oxford or FastSurfer) and saves per-ROI masks/TI volumes/overlap CSVs.
   - Writes full FastSurfer region stats (`region_stats_fastsurfer.csv`) with mean/median/max/pXX/CV/volume per label.
   - Emits per-subject robustness metrics (`subject_metrics.json`) including ROI overlap fractions vs top-percentile TI voxels.
-  - Generates overlay PNGs for a chosen ROI.
+  - Generates seven overlay PNGs per chosen ROI by default when a T1 is available: three `context` views, three `roi_focus` views, and one true whole-brain-max reference view.
 - Population aggregation (`post_population.py`) now:
   - Merges all per-subject region stats and robustness JSONs.
   - Reports variability/robustness/hotspot tables (fraction above threshold, IQR, CV, worst-case peaks, volume–intensity correlation).
@@ -40,6 +40,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
    - `post.fastsurfer_root` / `post.fs_mri_path`: where to find the subject atlas NIfTI. `fastsurfer_root` is resolved as `<fastsurfer_root>/<subject>.nii.gz`.
    - `--atlas-filename` or `post.fastsurfer_atlas_filename`: optional atlas override for all subjects. Use an absolute atlas path to reuse one atlas for every subject, or a relative path such as `mri/aparc.DKTatlas+aseg.deep.nii.gz` to resolve `<fastsurfer_root>/<subject>/mri/aparc.DKTatlas+aseg.deep.nii.gz`.
    - `post.plot_roi`: set to `None` to infer the ROI from `post.root`, or provide an alias/canonical FastSurfer ROI name directly.
+   - `post.overlay_full_field`: defaults to `True`, so each subject now gets `full`, `topXX`, and `aboveHHH` overlays for both scale modes, plus one whole-brain reference full-field overlay.
    - `population.target_roi`: set to `None` to reuse the resolved post ROI.
    - `population.enabled`: toggle population aggregation.
    - FastSurfer alias matching expects snake_case names such as `left_hippocampus`, `right_m1`, or `ctx_rh_precentral`.
@@ -85,7 +86,13 @@ Outputs go to `<root>/<subject>/anat/post/`:
 - CSVs of voxel values (`<ROI>_values.csv`, `TopXX_values.csv`, `<ROI>_TopXX_overlap_values.csv`).
 - FastSurfer region stats (`region_stats_fastsurfer.csv`).
 - Subject metrics (`subject_metrics.json`).
-- Overlays for selected ROI (`<ROI>_TI_overlay_topXX.png`, `..._aboveHHH.png` if T1 available).
+- Overlays for selected ROI when T1 is available:
+  - Context scale: `<ROI>_TI_overlay_context_<subject>_full.png`, `<ROI>_TI_overlay_context_<subject>_topXX.png`, `<ROI>_TI_overlay_context_<subject>_aboveHHH.png`
+  - ROI-focus scale: `<ROI>_TI_overlay_roi_focus_<subject>_full.png`, `<ROI>_TI_overlay_roi_focus_<subject>_topXX.png`, `<ROI>_TI_overlay_roi_focus_<subject>_aboveHHH.png`
+  - Whole-brain reference: `<ROI>_TI_overlay_whole_brain_reference_<subject>_full.png`
+  - `context` uses a robust upper colorbar limit from labeled non-CSF / non-ventricular tissue when a FastSurfer atlas is available, which reduces distortion from small CSF hotspots.
+  - `roi_focus` uses a robust upper colorbar limit computed from voxels inside the selected ROI, which improves contrast within the target.
+  - `whole_brain_reference` uses the true maximum positive TI value across the whole brain, giving you the old unscaled reference view alongside the two robustly scaled modes.
 
 ## Population aggregation
 Population aggregation runs from `post/run_post_processing.py` when `population.enabled=True`.
@@ -126,4 +133,5 @@ flowchart TD
 - `run_post_processing.py` can infer the target ROI from the dataset directory name via `utils/roi_registry.py`; use hemisphere-specific aliases for FastSurfer targets.
 - If a dataset directory name does not match any known ROI alias, the pipeline aborts early and does not process that dataset.
 - Thresholds are configurable: ROI overlap percentile (`percentile`), hard cutoff (`hard_threshold`), population peak threshold (`--peak-threshold`).
+- Overlay scaling is separate from thresholding: the percentile and hard cutoff decide which voxels are shown in the thresholded views, while the `context` and `roi_focus` modes decide how the colorbar is scaled.
 - Keep outputs per subject under `<root>/<subject>/anat/post/` so population aggregation can auto-discover them.

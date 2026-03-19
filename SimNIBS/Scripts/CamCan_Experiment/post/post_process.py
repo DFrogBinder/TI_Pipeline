@@ -1,4 +1,5 @@
 # post_process.py
+import gzip
 import os
 import sys
 from pathlib import Path
@@ -15,8 +16,10 @@ if str(ROOT) not in sys.path:
 
 from post.post_functions import (
     _resolve_fastsurfer_atlas,
+    build_context_scale_mask_from_fastsurfer,
     fastsurfer_dkt_labels,
     make_outline,
+    overlay_ti_full_field_true_vmax_reference_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi_individual_scale,
     roi_masks_on_ti_grid,
@@ -53,7 +56,7 @@ class PostProcessConfig:
     percentile: float = 95.0
     hard_threshold: float = 200.0
     overlay_z_offset_mm: float = 0.0
-    overlay_full_field: bool = False
+    overlay_full_field: bool = True
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2  # V/m threshold for focality checks
@@ -92,6 +95,39 @@ def _nearby_t1_candidates(t1_candidate: Path) -> Tuple[Path, ...]:
         candidates.append(t1_candidate.with_name(f"{name}.gz"))
 
     return tuple(candidates)
+
+
+def _looks_like_nifti_bytes(payload: bytes) -> bool:
+    if len(payload) < 348:
+        return False
+
+    sizeof_hdr = int.from_bytes(payload[:4], byteorder="little", signed=False)
+    magic = payload[344:348]
+    return sizeof_hdr == 348 and magic in {b"n+1\x00", b"ni1\x00"}
+
+
+def _load_t1_image(t1_path: Path, cfg: PostProcessConfig) -> nib.spatialimages.SpatialImage:
+    try:
+        return nib.load(str(t1_path))
+    except Exception:
+        if not t1_path.name.endswith(".nii.gz"):
+            raise
+
+        outer_payload = gzip.open(t1_path, "rb").read()
+        if not outer_payload.startswith(b"\x1f\x8b"):
+            raise
+
+        inner_payload = gzip.decompress(outer_payload)
+        if not _looks_like_nifti_bytes(inner_payload):
+            raise
+
+        if cfg.verbose:
+            print(
+                f"[WARN] Detected double-gzipped T1 at {t1_path}; "
+                "loading after one extra decompression."
+            )
+
+        return nib.Nifti1Image.from_bytes(inner_payload)
 
 
 def _log_t1_lookup_details(
@@ -187,7 +223,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         try:
             t1_resolved = Path(t1_path).expanduser()
             if t1_resolved.is_file():
-                t1_img_full = nib.load(str(t1_resolved))
+                t1_img_full = _load_t1_image(t1_resolved, cfg)
             else:
                 _log_t1_lookup_details(cfg, t1_path, t1_path_source)
         except Exception as e:
@@ -307,6 +343,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     # ---- Full atlas region summaries (FastSurfer only) ----
     region_table_path = None
     region_df = None
+    fs_atlas_img = None
     if cfg.write_region_table and fs_atlas_path:
         try:
             fs_atlas_img = resample_atlas_to_ti_grid(nib.load(fs_atlas_path), ti_img)
@@ -323,6 +360,12 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         except Exception as e:
             if cfg.verbose:
                 print(f"[WARN] Skipped region table: {e}")
+    elif fs_atlas_path:
+        try:
+            fs_atlas_img = resample_atlas_to_ti_grid(nib.load(fs_atlas_path), ti_img)
+        except Exception as e:
+            if cfg.verbose:
+                print(f"[WARN] Failed loading FastSurfer atlas for overlay scaling: {e}")
 
 
     # ---- Pretty overlays for selected ROI (optional) ----
@@ -331,32 +374,48 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     sel_norm = normalize_roi_name(sel)
     if t1_img_full is not None and sel in roi_masks:
         roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)
+        context_scale_mask_img = (
+            build_context_scale_mask_from_fastsurfer(fs_atlas_img)
+            if fs_atlas_img is not None
+            else None
+        )
         out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
         png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
             ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
             t1_img=t1_img_full,
             roi_mask_img=roi_mask_img,
-            out_prefix=out_base,
+            out_prefix=f"{out_base}_context",
             subject=cfg.subject,
             z_offset_mm=cfg.overlay_z_offset_mm,
             include_full_field=cfg.overlay_full_field,
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
+            scale_mask_img=context_scale_mask_img,
         )
-        dyn_base = f"{out_base}_dynamic"
-        dyn_95, dyn_02, dyn_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
+        roi_base = f"{out_base}_roi_focus"
+        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
             ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
             t1_img=t1_img_full,
             roi_mask_img=roi_mask_img,
-            out_prefix=dyn_base,
+            out_prefix=roi_base,
             subject=cfg.subject,
             z_offset_mm=cfg.overlay_z_offset_mm,
             include_full_field=cfg.overlay_full_field,
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
         )
+        reference_full = overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=f"{out_base}_whole_brain_reference",
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+        )
         overlay_paths[sel] = [
-            p for p in (png_95, png_02, png_full, dyn_95, dyn_02, dyn_full) if p is not None
+            p
+            for p in (png_full, png_95, png_02, roi_full, roi_95, roi_02, reference_full)
+            if p is not None
         ]
     elif t1_img_full is None:
         if cfg.verbose:

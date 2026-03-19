@@ -37,7 +37,13 @@ Use this as a quick map from raw data to population summaries and where each ste
   - CSVs: `<ROI>_values.csv`, `TopXX_values.csv`, `<ROI>_TopXX_overlap_values.csv`
   - Region stats: `region_stats_fastsurfer.csv`
   - Metrics: `subject_metrics.json`
-  - Overlays: `<ROI>_TI_overlay_topXX.png`, `<ROI>_TI_overlay_aboveHHH.png`
+  - Overlays: seven PNGs per subject by default when a T1 is available:
+    - Context scale: `<ROI>_TI_overlay_context_<subject>_full.png`, `<ROI>_TI_overlay_context_<subject>_topXX.png`, `<ROI>_TI_overlay_context_<subject>_aboveHHH.png`
+    - ROI-focus scale: `<ROI>_TI_overlay_roi_focus_<subject>_full.png`, `<ROI>_TI_overlay_roi_focus_<subject>_topXX.png`, `<ROI>_TI_overlay_roi_focus_<subject>_aboveHHH.png`
+    - Whole-brain reference: `<ROI>_TI_overlay_whole_brain_reference_<subject>_full.png`
+  - Context scale uses a robust upper colorbar limit from labeled non-CSF / non-ventricular FastSurfer tissue when available, so small CSF hotspots do not dominate the display.
+  - ROI-focus scale uses a robust upper colorbar limit from voxels inside the selected ROI, making local structure within the target easier to see.
+  - Whole-brain reference uses the true maximum positive TI value across the whole brain, matching the old unscaled display for comparison.
 
 ## 4) Population aggregation
 - **Script**: `post_population.py`

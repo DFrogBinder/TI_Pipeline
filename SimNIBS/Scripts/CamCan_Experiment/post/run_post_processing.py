@@ -50,7 +50,7 @@ class PostBatchConfig:
     percentile: float = 95.0
     hard_threshold: float = 200.0
     overlay_z_offset_mm: float = 0.0
-    overlay_full_field: bool = False
+    overlay_full_field: bool = True
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2

@@ -1,6 +1,8 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import os
+import shutil
+import signal
 import sys
 from pathlib import Path
 import argparse
@@ -36,6 +38,9 @@ import time
 meshPresent = False
 runMNI152 = False
 rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
+DEFAULT_MESH_TIMEOUT_HOURS = 4.0
+MESH_STEP_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
+MESH_TIMEOUT_EXIT_CODE = 124
 
 
 def log_event(event: str, **fields) -> None:
@@ -54,9 +59,106 @@ def log_file_info(label: str, path: str) -> None:
     )
 
 
-def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
-    log_event("run_cmd", label=label, cmd=cmd, cwd=cwd)
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+class MeshTimeoutError(RuntimeError):
+    def __init__(self, *, label: str, cmd: list[str], timeout_sec: float):
+        super().__init__(f"{label} timed out after {timeout_sec:.0f} seconds")
+        self.label = label
+        self.cmd = cmd
+        self.timeout_sec = timeout_sec
+
+
+def _kill_process_group(process: subprocess.Popen, *, label: str, sig: int, name: str) -> None:
+    if process.poll() is not None:
+        return
+
+    try:
+        os.killpg(process.pid, sig)
+        log_event("cmd_signal", label=label, signal=name, pid=process.pid)
+    except ProcessLookupError:
+        pass
+    except Exception as exc:
+        log_event("cmd_signal_error", label=label, signal=name, pid=process.pid, error=str(exc))
+
+
+def cleanup_subject_mesh_outputs(subject_dir: str, subject: str) -> None:
+    subject_path = Path(subject_dir)
+    suffix = subject.split("-")[-1].upper()
+    dir_candidates = [
+        subject_path / f"m2m_{subject}",
+        subject_path / f"m2m_sub-{suffix}",
+    ]
+    file_candidates = [
+        subject_path / f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii",
+        subject_path / f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii",
+        subject_path / "skin_mask.nii.gz",
+    ]
+
+    seen: set[Path] = set()
+    for path in dir_candidates:
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        try:
+            shutil.rmtree(path, ignore_errors=False)
+            log_event("mesh_cleanup", kind="dir", path=str(path))
+        except Exception as exc:
+            log_event("mesh_cleanup_error", kind="dir", path=str(path), error=str(exc))
+
+    for path in file_candidates:
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        try:
+            path.unlink()
+            log_event("mesh_cleanup", kind="file", path=str(path))
+        except Exception as exc:
+            log_event("mesh_cleanup_error", kind="file", path=str(path), error=str(exc))
+
+
+def run_cmd(
+    cmd: list[str],
+    *,
+    cwd: str | None = None,
+    label: str = "cmd",
+    timeout_sec: float | None = None,
+) -> None:
+    log_event("run_cmd", label=label, cmd=cmd, cwd=cwd, timeout_sec=timeout_sec)
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_sec)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        _kill_process_group(process, label=label, sig=signal.SIGTERM, name="SIGTERM")
+        try:
+            extra_stdout, extra_stderr = process.communicate(timeout=30)
+            stdout += extra_stdout or ""
+            stderr += extra_stderr or ""
+        except subprocess.TimeoutExpired:
+            _kill_process_group(process, label=label, sig=signal.SIGKILL, name="SIGKILL")
+            extra_stdout, extra_stderr = process.communicate()
+            stdout += extra_stdout or ""
+            stderr += extra_stderr or ""
+
+        log_event(
+            "cmd_timeout",
+            label=label,
+            timeout_sec=timeout_sec,
+            returncode=process.returncode,
+            stdout_tail=stdout[-2000:] if stdout else "",
+            stderr_tail=stderr[-2000:] if stderr else "",
+        )
+        raise MeshTimeoutError(label=label, cmd=cmd, timeout_sec=timeout_sec) from exc
+
+    result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
     log_event(
         "cmd_result",
         label=label,
@@ -106,10 +208,19 @@ def process_subject(subject_entry):
             ]
 
         try:
-            run_cmd(cmd, cwd=str(subject_dir), label="charm_init")
+            run_cmd(
+                cmd,
+                cwd=str(subject_dir),
+                label="charm_init",
+                timeout_sec=MESH_STEP_TIMEOUT_SECONDS,
+            )
+        except MeshTimeoutError as e:
+            log_event("error", stage="charm_init", subject=subject, error=str(e))
+            cleanup_subject_mesh_outputs(subject_dir, subject)
+            raise
         except Exception as e:
             log_event("error", stage="charm_init", subject=subject, error=str(e))
-            return
+            raise
 
         # Load images
         custom_seg_map_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii")
@@ -166,6 +277,8 @@ def process_subject(subject_entry):
                 np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
             )
             resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
+        else:
+            resampled = to_int_img(charm_seg_map, custom_seg_map)
 
         #region Re-mesh
         merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
@@ -194,9 +307,19 @@ def process_subject(subject_entry):
         ]
 
         try:
-            run_cmd(remesh_cmd, cwd=str(subject_dir), label="charm_remesh")
+            run_cmd(
+                remesh_cmd,
+                cwd=str(subject_dir),
+                label="charm_remesh",
+                timeout_sec=MESH_STEP_TIMEOUT_SECONDS,
+            )
+        except MeshTimeoutError as e:
+            log_event("error", stage="charm_remesh", subject=subject, error=str(e))
+            cleanup_subject_mesh_outputs(subject_dir, subject)
+            raise
         except Exception as e:
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
+            raise
 
 
     electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
@@ -538,15 +661,50 @@ def main():
             "Ignored when --subject is given. Defaults to #CPUs (capped by #subjects)."
         ),
     )
+    parser.add_argument(
+        "--mesh-timeout-hours",
+        type=float,
+        default=DEFAULT_MESH_TIMEOUT_HOURS,
+        help=(
+            "Per-mesh-step timeout in hours for CHARM meshing/remeshing. "
+            "Set to 0 or a negative value to disable the timeout."
+        ),
+    )
 
     args = parser.parse_args()
     start = time.time()
+    global MESH_STEP_TIMEOUT_SECONDS
+    MESH_STEP_TIMEOUT_SECONDS = (
+        args.mesh_timeout_hours * 60 * 60 if args.mesh_timeout_hours > 0 else None
+    )
+    log_event(
+        "mesh_timeout_config",
+        mesh_timeout_hours=args.mesh_timeout_hours,
+        mesh_timeout_seconds=MESH_STEP_TIMEOUT_SECONDS,
+        mesh_timeout_exit_code=MESH_TIMEOUT_EXIT_CODE,
+    )
 
     if args.subject:
         # ---------- Single-subject (Slurm array) mode ----------
         subject_id = args.subject.strip()
         print(f"[INFO] Running TI pipeline for single subject: {subject_id}")
-        duration = process_subject(subject_id)
+        try:
+            duration = process_subject(subject_id)
+        except MeshTimeoutError as exc:
+            total_runtime = time.time() - start
+            log_event(
+                "subject_mesh_timeout",
+                subject=subject_id,
+                stage=exc.label,
+                timeout_sec=exc.timeout_sec,
+                total_runtime_sec=total_runtime,
+                exit_code=MESH_TIMEOUT_EXIT_CODE,
+            )
+            print(
+                f"[ERROR] Mesh step '{exc.label}' timed out after "
+                f"{exc.timeout_sec / 3600:.2f} hour(s) for {subject_id}."
+            )
+            sys.exit(MESH_TIMEOUT_EXIT_CODE)
         total_runtime = time.time() - start
 
         print("Done.")

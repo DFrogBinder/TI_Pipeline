@@ -1,4 +1,5 @@
 #!/bin/bash
+set -o pipefail
 #BATCH --job-name=ti_array
 #SBATCH --partition=sheffield
 #SBATCH --cpus-per-task=8             # per-subject threads (tune if needed)
@@ -10,6 +11,17 @@
 # -------------------------
 # 1) Environment
 # -------------------------
+
+DEFAULT_SCRIPT_PATH="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/HPC_scripts/my_jobArray.slurm"
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
+SCRIPT_PATH="${TI_JOB_ARRAY_SCRIPT:-$DEFAULT_SCRIPT_PATH}"
+if [ ! -f "$SCRIPT_PATH" ]; then
+    SCRIPT_PATH="$(readlink -f "$SCRIPT_SOURCE" 2>/dev/null || realpath "$SCRIPT_SOURCE" 2>/dev/null || echo "$SCRIPT_SOURCE")"
+fi
+MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
+MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-1}"
+MESH_RETRY_COUNT="${TI_MESH_RETRY_COUNT:-0}"
+MESH_TIMEOUT_EXIT_CODE=124
 
 module purge
 module use "$HOME/modules"
@@ -94,6 +106,8 @@ echo "[INFO] Array index: ${SLURM_ARRAY_TASK_ID}"
 echo "[INFO] Subject ID:  ${SUBJECT}"
 echo "[INFO] CPUs:        ${SLURM_CPUS_PER_TASK}"
 echo "[INFO] Mem per task:${SLURM_MEM_PER_NODE:-${SLURM_MEM_PER_TASK}} MB"
+echo "[INFO] Mesh timeout: ${MESH_TIMEOUT_HOURS} hour(s) per CHARM step"
+echo "[INFO] Mesh retry:   ${MESH_RETRY_COUNT}/${MESH_MAX_RETRIES}"
 
 # -------------------------
 # 3) Run TI pipeline for ONE subject
@@ -104,5 +118,31 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/${SUBJECT}.log"
 
 python -u /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py \
-    --subject "$SUBJECT" 2>&1 | tee "$LOG_FILE"
+    --subject "$SUBJECT" \
+    --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
+PY_EXIT=$?
 
+if [ "$PY_EXIT" -eq "$MESH_TIMEOUT_EXIT_CODE" ]; then
+    if [ "$MESH_RETRY_COUNT" -lt "$MESH_MAX_RETRIES" ]; then
+        NEXT_RETRY_COUNT=$((MESH_RETRY_COUNT + 1))
+        echo "[WARN] Mesh timeout detected for ${SUBJECT}; resubmitting array index ${SLURM_ARRAY_TASK_ID} (retry ${NEXT_RETRY_COUNT}/${MESH_MAX_RETRIES})."
+
+        RESUBMIT_OUTPUT=$(sbatch \
+            --array="${SLURM_ARRAY_TASK_ID}" \
+            --export=ALL,TI_MESH_TIMEOUT_HOURS="${MESH_TIMEOUT_HOURS}",TI_MESH_MAX_RETRIES="${MESH_MAX_RETRIES}",TI_MESH_RETRY_COUNT="${NEXT_RETRY_COUNT}" \
+            "$SCRIPT_PATH" 2>&1)
+        RESUBMIT_EXIT=$?
+        echo "$RESUBMIT_OUTPUT"
+
+        if [ "$RESUBMIT_EXIT" -ne 0 ]; then
+            echo "[ERROR] Failed to resubmit timed-out subject ${SUBJECT}."
+            exit "$RESUBMIT_EXIT"
+        fi
+
+        exit 0
+    fi
+
+    echo "[ERROR] Mesh timeout retries exhausted for ${SUBJECT} after ${MESH_RETRY_COUNT} retry/retries."
+fi
+
+exit "$PY_EXIT"

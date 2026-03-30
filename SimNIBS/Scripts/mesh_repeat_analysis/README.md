@@ -31,7 +31,7 @@ Each repeat writes to:
 1) Discover repeat folders under `rootdir/repeats/repeat_###/sub-*/anat`.
 2) Load or generate `TI_Volumetric_*` label/base volumes from `TI.msh`.
 3) Resample all volumes to the subject T1 grid.
-4) Build the ROI mask from the subject atlas (for left precentral / M1, use `ctx-lh-precentral`, label `1022`).
+4) Build the ROI mask from the subject atlas using the explicitly selected ROI labels (for example left hippocampus `17`, right hippocampus `53`, or left M1 / `ctx-lh-precentral` `1022`).
 5) Compute (using `anat/SimNIBS/ti_brain_only.nii.gz` for TI):
    - Label difference fraction vs a reference repeat.
    - ROI label difference fraction.
@@ -84,7 +84,6 @@ python mesh_repeat_report.py \
 The script will auto-resolve, when possible:
 - the repeatability root from known dataset locations
 - the atlas from `~/sandbox/Jake_Data/atlases/<subject>.nii.gz`
-- the ROI labels from common ROI names such as `ctx-lh-precentral` (`1022`), `Left-Hippocampus` (`17`), and `Right-Hippocampus` (`53`)
 - the output directory as `repeats/_analysis/<subject>/`
 
 In batch mode, the same ROI settings are reused for every subject and outputs go under:
@@ -94,7 +93,8 @@ In batch mode, the same ROI settings are reused for every subject and outputs go
 ```
 
 Useful batch options:
-- `--roi-name ...` and optionally `--roi-labels ...` to apply the same ROI to every study
+- `--roi-preset left-hippocampus` or `--roi-preset right-hippocampus` to apply a common ROI to every study
+- `--roi-name ... --roi-labels ...` for a fully manual ROI definition
 - `--output-dir /path/to/out` to choose a different batch output root
 - `--max-subjects N` to test batch mode on only the first `N` discovered subjects
 
@@ -103,6 +103,7 @@ Explicit invocation:
 ```
 python mesh_repeat_report.py \
   --subject sub-CC110056 \
+  --roi-preset left-hippocampus \
   --rootdir /media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/simulation-data
 ```
 
@@ -119,7 +120,7 @@ Optional logging (JSONL file; stdout is human-readable with timestamps):
 ```
 python mesh_repeat_report.py \
   --subject sub-CC110056 \
-  --roi-name ctx-lh-precentral \
+  --roi-preset left-hippocampus \
   --log-file /path/to/mesh_repeat_report.log
 ```
 
@@ -128,10 +129,10 @@ With cohort comparison:
 python mesh_repeat_report.py \
   --subject sub-CC721888 \
   --rootdir /media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/new_params \
-  --roi-name ctx-lh-precentral \
+  --roi-preset left-hippocampus \
   --compare-cohort-root /media/boyan/main/PhD/Left_Hippocampus_Data \
-  --cohort-region-name ctx-lh-precentral \
-  --cohort-region-label 1022 \
+  --cohort-region-name Left-Hippocampus \
+  --cohort-region-label 17 \
   --output-dir /tmp/mesh_repeat_report/sub-CC721888
 ```
 
@@ -154,6 +155,7 @@ Key outputs now include:
 - Use T1 as the reference grid to keep all repeats comparable.
 - Label resampling uses nearest-neighbor; TI volumes use linear interpolation.
 - If node counts differ across repeats, voxel comparison avoids topology mismatch.
+- ROI selection is now explicit. Use `--roi-preset left-hippocampus`, `--roi-preset right-hippocampus`, or `--roi-name ... --roi-labels ...`.
 - `--atlas`, `--atlas-dir`, and `--roi-labels` remain available as overrides when auto-resolution is not sufficient.
 - `--atlas` is single-subject only. In batch mode, use `--atlas-dir` or rely on atlas auto-resolution.
 - `--m1-labels` is still accepted for backward compatibility, but `--roi-labels` is the preferred argument.

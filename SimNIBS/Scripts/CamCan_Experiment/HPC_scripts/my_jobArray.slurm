@@ -1,12 +1,13 @@
 #!/bin/bash
-set -o pipefail
-#BATCH --job-name=ti_array
+#SBATCH --job-name=ti_array
 #SBATCH --partition=sheffield
 #SBATCH --cpus-per-task=8             # per-subject threads (tune if needed)
 #SBATCH --mem=32G                     # per-subject RAM (tune if needed)
 #SBATCH --time=08:00:00
 #SBATCH --array=0-175%8              # 176 subjects, max 8 running at once
 #SBATCH --output=slurm-%A_%a.out
+
+set -o pipefail
 
 # -------------------------
 # 1) Environment

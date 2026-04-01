@@ -39,7 +39,7 @@ meshPresent = False
 runMNI152 = False
 rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
 DEFAULT_MESH_TIMEOUT_HOURS = 4.0
-MESH_STEP_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
+MESH_TOTAL_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
 MESH_TIMEOUT_EXIT_CODE = 124
 
 
@@ -65,6 +65,14 @@ class MeshTimeoutError(RuntimeError):
         self.label = label
         self.cmd = cmd
         self.timeout_sec = timeout_sec
+
+
+def _ensure_text(data: str | bytes | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode(errors="replace")
+    return data
 
 
 def _kill_process_group(process: subprocess.Popen, *, label: str, sig: int, name: str) -> None:
@@ -115,6 +123,27 @@ def cleanup_subject_mesh_outputs(subject_dir: str, subject: str) -> None:
             log_event("mesh_cleanup_error", kind="file", path=str(path), error=str(exc))
 
 
+def _remaining_timeout(deadline: float | None) -> float | None:
+    if deadline is None:
+        return None
+    return max(0.0, deadline - time.monotonic())
+
+
+def run_mesh_cmd(
+    cmd: list[str],
+    *,
+    cwd: str,
+    label: str,
+    mesh_deadline: float | None,
+) -> None:
+    timeout_sec = _remaining_timeout(mesh_deadline)
+    if timeout_sec is not None and timeout_sec <= 0:
+        log_event("mesh_timeout_budget_exhausted", label=label, timeout_sec=MESH_TOTAL_TIMEOUT_SECONDS)
+        raise MeshTimeoutError(label=label, cmd=cmd, timeout_sec=MESH_TOTAL_TIMEOUT_SECONDS)
+
+    run_cmd(cmd, cwd=cwd, label=label, timeout_sec=timeout_sec)
+
+
 def run_cmd(
     cmd: list[str],
     *,
@@ -135,18 +164,18 @@ def run_cmd(
     try:
         stdout, stderr = process.communicate(timeout=timeout_sec)
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
+        stdout = _ensure_text(exc.stdout)
+        stderr = _ensure_text(exc.stderr)
         _kill_process_group(process, label=label, sig=signal.SIGTERM, name="SIGTERM")
         try:
             extra_stdout, extra_stderr = process.communicate(timeout=30)
-            stdout += extra_stdout or ""
-            stderr += extra_stderr or ""
+            stdout += _ensure_text(extra_stdout)
+            stderr += _ensure_text(extra_stderr)
         except subprocess.TimeoutExpired:
             _kill_process_group(process, label=label, sig=signal.SIGKILL, name="SIGKILL")
             extra_stdout, extra_stderr = process.communicate()
-            stdout += extra_stdout or ""
-            stderr += extra_stderr or ""
+            stdout += _ensure_text(extra_stdout)
+            stderr += _ensure_text(extra_stderr)
 
         log_event(
             "cmd_timeout",
@@ -198,6 +227,10 @@ def process_subject(subject_entry):
     if meshPresent:
         print(f"[INFO] ({subject_source}) Mesh present, skipping meshing step.")
     else:
+        mesh_deadline = (
+            time.monotonic() + MESH_TOTAL_TIMEOUT_SECONDS
+            if MESH_TOTAL_TIMEOUT_SECONDS is not None else None
+        )
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
@@ -208,11 +241,11 @@ def process_subject(subject_entry):
             ]
 
         try:
-            run_cmd(
+            run_mesh_cmd(
                 cmd,
                 cwd=str(subject_dir),
                 label="charm_init",
-                timeout_sec=MESH_STEP_TIMEOUT_SECONDS,
+                mesh_deadline=mesh_deadline,
             )
         except MeshTimeoutError as e:
             log_event("error", stage="charm_init", subject=subject, error=str(e))
@@ -220,7 +253,7 @@ def process_subject(subject_entry):
             raise
         except Exception as e:
             log_event("error", stage="charm_init", subject=subject, error=str(e))
-            raise
+            return
 
         # Load images
         custom_seg_map_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii")
@@ -307,11 +340,11 @@ def process_subject(subject_entry):
         ]
 
         try:
-            run_cmd(
+            run_mesh_cmd(
                 remesh_cmd,
                 cwd=str(subject_dir),
                 label="charm_remesh",
-                timeout_sec=MESH_STEP_TIMEOUT_SECONDS,
+                mesh_deadline=mesh_deadline,
             )
         except MeshTimeoutError as e:
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
@@ -319,7 +352,6 @@ def process_subject(subject_entry):
             raise
         except Exception as e:
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
-            raise
 
 
     electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
@@ -666,21 +698,22 @@ def main():
         type=float,
         default=DEFAULT_MESH_TIMEOUT_HOURS,
         help=(
-            "Per-mesh-step timeout in hours for CHARM meshing/remeshing. "
+            "Total timeout in hours across all meshing/remeshing work for one subject. "
             "Set to 0 or a negative value to disable the timeout."
         ),
     )
 
     args = parser.parse_args()
     start = time.time()
-    global MESH_STEP_TIMEOUT_SECONDS
-    MESH_STEP_TIMEOUT_SECONDS = (
+    global MESH_TOTAL_TIMEOUT_SECONDS
+    MESH_TOTAL_TIMEOUT_SECONDS = (
         args.mesh_timeout_hours * 60 * 60 if args.mesh_timeout_hours > 0 else None
     )
     log_event(
         "mesh_timeout_config",
         mesh_timeout_hours=args.mesh_timeout_hours,
-        mesh_timeout_seconds=MESH_STEP_TIMEOUT_SECONDS,
+        mesh_timeout_scope="total_meshing_phase",
+        mesh_timeout_seconds=MESH_TOTAL_TIMEOUT_SECONDS,
         mesh_timeout_exit_code=MESH_TIMEOUT_EXIT_CODE,
     )
 

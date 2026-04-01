@@ -4,24 +4,23 @@
 #SBATCH --cpus-per-task=8             # per-subject threads (tune if needed)
 #SBATCH --mem=32G                     # per-subject RAM (tune if needed)
 #SBATCH --time=08:00:00
-#SBATCH --array=0-175%8              # 176 subjects, max 8 running at once
 #SBATCH --output=slurm-%A_%a.out
+#SBATCH --requeue
 
 set -o pipefail
+
+if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    echo "[ERROR] This script must be submitted as a Slurm array."
+    echo "[ERROR] Use submit_my_jobArray.sh or pass --array to sbatch."
+    exit 1
+fi
 
 # -------------------------
 # 1) Environment
 # -------------------------
 
-DEFAULT_SCRIPT_PATH="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/HPC_scripts/my_jobArray.slurm"
-SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
-SCRIPT_PATH="${TI_JOB_ARRAY_SCRIPT:-$DEFAULT_SCRIPT_PATH}"
-if [ ! -f "$SCRIPT_PATH" ]; then
-    SCRIPT_PATH="$(readlink -f "$SCRIPT_SOURCE" 2>/dev/null || realpath "$SCRIPT_SOURCE" 2>/dev/null || echo "$SCRIPT_SOURCE")"
-fi
 MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
 MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-1}"
-MESH_RETRY_COUNT="${TI_MESH_RETRY_COUNT:-0}"
 MESH_TIMEOUT_EXIT_CODE=124
 
 module purge
@@ -92,10 +91,29 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
 
 cd /users/cop23bi/scripts
 
-SUBJECTS_FILE="subjects.txt"
+SUBJECTS_FILE="${TI_SUBJECTS_FILE:-subjects.txt}"
+STATE_DIR="/users/cop23bi/scripts/logs/retry_state"
+mkdir -p "$STATE_DIR"
+
+TASK_KEY="${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}"
+RETRY_FILE="${STATE_DIR}/${TASK_KEY}.retry"
+SUBJECT_FILE="${STATE_DIR}/${TASK_KEY}.subject"
+
+if [ -f "$RETRY_FILE" ]; then
+    MESH_RETRY_COUNT=$(cat "$RETRY_FILE")
+else
+    MESH_RETRY_COUNT=0
+fi
 
 # SLURM_ARRAY_TASK_ID is 0-based; sed is 1-based
-SUBJECT=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$SUBJECTS_FILE")
+if [ -f "$SUBJECT_FILE" ]; then
+    SUBJECT=$(cat "$SUBJECT_FILE")
+else
+    SUBJECT=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$SUBJECTS_FILE")
+    if [ -n "$SUBJECT" ]; then
+        printf '%s\n' "$SUBJECT" > "$SUBJECT_FILE"
+    fi
+fi
 
 if [ -z "$SUBJECT" ]; then
     echo "[ERROR] No subject found for array index ${SLURM_ARRAY_TASK_ID} in ${SUBJECTS_FILE}."
@@ -105,9 +123,10 @@ fi
 echo "[INFO] Job ID:      ${SLURM_JOB_ID}"
 echo "[INFO] Array index: ${SLURM_ARRAY_TASK_ID}"
 echo "[INFO] Subject ID:  ${SUBJECT}"
+echo "[INFO] Subjects file:${SUBJECTS_FILE}"
 echo "[INFO] CPUs:        ${SLURM_CPUS_PER_TASK}"
 echo "[INFO] Mem per task:${SLURM_MEM_PER_NODE:-${SLURM_MEM_PER_TASK}} MB"
-echo "[INFO] Mesh timeout: ${MESH_TIMEOUT_HOURS} hour(s) per CHARM step"
+echo "[INFO] Mesh timeout: ${MESH_TIMEOUT_HOURS} hour(s) total across meshing/remeshing"
 echo "[INFO] Mesh retry:   ${MESH_RETRY_COUNT}/${MESH_MAX_RETRIES}"
 
 # -------------------------
@@ -126,18 +145,16 @@ PY_EXIT=$?
 if [ "$PY_EXIT" -eq "$MESH_TIMEOUT_EXIT_CODE" ]; then
     if [ "$MESH_RETRY_COUNT" -lt "$MESH_MAX_RETRIES" ]; then
         NEXT_RETRY_COUNT=$((MESH_RETRY_COUNT + 1))
-        echo "[WARN] Mesh timeout detected for ${SUBJECT}; resubmitting array index ${SLURM_ARRAY_TASK_ID} (retry ${NEXT_RETRY_COUNT}/${MESH_MAX_RETRIES})."
+        printf '%s\n' "$NEXT_RETRY_COUNT" > "$RETRY_FILE"
+        echo "[WARN] Mesh timeout detected for ${SUBJECT}; requeueing array index ${SLURM_ARRAY_TASK_ID} (retry ${NEXT_RETRY_COUNT}/${MESH_MAX_RETRIES})."
 
-        RESUBMIT_OUTPUT=$(sbatch \
-            --array="${SLURM_ARRAY_TASK_ID}" \
-            --export=ALL,TI_MESH_TIMEOUT_HOURS="${MESH_TIMEOUT_HOURS}",TI_MESH_MAX_RETRIES="${MESH_MAX_RETRIES}",TI_MESH_RETRY_COUNT="${NEXT_RETRY_COUNT}" \
-            "$SCRIPT_PATH" 2>&1)
-        RESUBMIT_EXIT=$?
-        echo "$RESUBMIT_OUTPUT"
+        REQUEUE_OUTPUT=$(scontrol requeue "${SLURM_JOB_ID}" 2>&1)
+        REQUEUE_EXIT=$?
+        echo "$REQUEUE_OUTPUT"
 
-        if [ "$RESUBMIT_EXIT" -ne 0 ]; then
-            echo "[ERROR] Failed to resubmit timed-out subject ${SUBJECT}."
-            exit "$RESUBMIT_EXIT"
+        if [ "$REQUEUE_EXIT" -ne 0 ]; then
+            echo "[ERROR] Failed to requeue timed-out subject ${SUBJECT}."
+            exit "$REQUEUE_EXIT"
         fi
 
         exit 0
@@ -145,5 +162,7 @@ if [ "$PY_EXIT" -eq "$MESH_TIMEOUT_EXIT_CODE" ]; then
 
     echo "[ERROR] Mesh timeout retries exhausted for ${SUBJECT} after ${MESH_RETRY_COUNT} retry/retries."
 fi
+
+rm -f "$RETRY_FILE" "$SUBJECT_FILE"
 
 exit "$PY_EXIT"

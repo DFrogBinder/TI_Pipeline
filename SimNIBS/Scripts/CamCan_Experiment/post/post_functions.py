@@ -492,7 +492,7 @@ def load_custom_atlas(atlas_path: NiftiLike) -> nib.Nifti1Image:
 def _resolve_fastsurfer_atlas(subject: str, fastsurfer_root: Optional[str], explicit_path: Optional[str]) -> Optional[str]:
     """
     Resolve the subject FastSurfer atlas from the supported flat-file layout.
-    Priority: explicit_path > {fastsurfer_root}/{subject}.nii.gz
+    Priority: explicit_path > {fastsurfer_root}/{subject}.nii > {fastsurfer_root}/{subject}.nii.gz
     """
     atlas_path = fastsurfer_atlas_path(fastsurfer_root, subject, explicit_path)
     return str(atlas_path) if atlas_path else None
@@ -515,6 +515,7 @@ def roi_masks_on_ti_grid(
       - "mni": always use Harvard–Oxford
 
     FastSurfer search order: fastsurfer_atlas_path (explicit) >
+                             {fastsurfer_root}/{subject}.nii >
                              {fastsurfer_root}/{subject}.nii.gz
     """
     # Decide mode
@@ -533,7 +534,8 @@ def roi_masks_on_ti_grid(
         if not fs_atlas:
             raise FileNotFoundError(
                 "FastSurfer atlas not found. Provide --fs-mri-path OR --fastsurfer-root + --subject "
-                "with atlases stored as '<fastsurfer_root>/<subject>.nii.gz'."
+                "with atlases stored as '<fastsurfer_root>/<subject>.nii' or "
+                "'<fastsurfer_root>/<subject>.nii.gz'."
             )
 
     # Prepare outputs

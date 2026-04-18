@@ -240,7 +240,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def make_default_pipeline_template() -> PipelineConfig:
     cfg = make_default_config()
     cfg.post.root = "/path/to/rootDIR/Example_Target_Data_01"
-    cfg.post.fastsurfer_root = "/path/to/fastsurfer_root"
+    cfg.post.fastsurfer_root = "/mnt/parscratch/users/cop23bi/ZIPs/atlases"
     cfg.post.plot_roi = None
     cfg.population.target_roi = None
     return cfg

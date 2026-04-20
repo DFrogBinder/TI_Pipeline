@@ -9,6 +9,10 @@ analysis compares those outputs on a common T1 grid.
 - `my_jobArray.slurm`: Slurm array job for per-repeat runs.
 - `TI_runner_multi-core_repeat.py`: Runs the full pipeline per repeat, writing
   outputs under `.../repeats/repeat_###/sub-*/anat`.
+- `TI_runner_batch_reuse_mesh.py`: Scans all subject folders under a dataset
+  root, builds each mesh once, then reuses that mesh across repeat simulations.
+- `batch_reuse_mesh.slurm`: Single Slurm batch job wrapper for the mesh-reuse
+  runner.
 - `mesh_repeat_report.py`: Repeatability analysis and reporting.
 - `mesh_repeat_flowchart.drawio`: Flowchart of the pipeline and analysis.
 
@@ -140,6 +144,36 @@ Outputs are written to:
 ```
 /mnt/parscratch/users/cop23bi/repeatability-ti-dataset/repeats/_analysis/sub-CC110056/
 ```
+
+## Mesh-Reuse Batch Mode
+
+If you want to run all subjects under a dataset root while reusing each
+subject's generated mesh across repeats, use:
+
+```bash
+python simulation_runners/TI_runner_batch_reuse_mesh.py \
+  --rootdir /mnt/parscratch/users/cop23bi/repeatability-ti-dataset \
+  --repeats 40
+```
+
+This runner:
+- discovers every top-level folder that contains `anat/`
+- generates `m2m_<subject>/<subject>.msh` once per subject if missing
+- creates repeat workspaces under `repeats/repeat_###/<subject>/anat/`
+- symlinks the original T1, T2, segmentation, and `m2m_<subject>` mesh folder
+- writes each repeat's outputs into its own `anat/SimNIBS/` folder without
+  rebuilding the mesh
+
+Cluster wrapper:
+
+```bash
+sbatch hpc_scripts/batch_reuse_mesh.slurm
+```
+
+Useful environment overrides:
+- `DATASET_ROOT=/path/to/dataset`
+- `REPEAT_COUNT=40`
+- `PIPELINE_DIR=/path/to/mesh_repeat_analysis`
 
 Key outputs now include:
 - `summary.csv/json`: per-repeat metrics.

@@ -51,7 +51,9 @@ def fastsurfer_atlas_path(root: Optional[str], subject: str, override: Optional[
             return candidate
         return None
     if root:
-        candidate = Path(root).expanduser() / f"{subject}.nii.gz"
-        if candidate.is_file():
-            return candidate
+        atlas_root = Path(root).expanduser()
+        for suffix in (".nii", ".nii.gz"):
+            candidate = atlas_root / f"{subject}{suffix}"
+            if candidate.is_file():
+                return candidate
     return None

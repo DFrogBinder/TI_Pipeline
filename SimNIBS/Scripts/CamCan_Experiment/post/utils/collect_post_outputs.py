@@ -13,7 +13,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence
 
 from rich.console import Console
 from rich.progress import (
@@ -150,6 +150,7 @@ def build_copy_manifest(
     items: Sequence[ExportItem],
     *,
     dest: Path,
+    on_item_processed: Optional[Callable[[], None]] = None,
 ) -> tuple[List[Path], List[tuple[Path, Path]]]:
     directories: set[Path] = set()
     file_copies: List[tuple[Path, Path]] = []
@@ -158,6 +159,8 @@ def build_copy_manifest(
         item_directories, item_file_copies = _expand_export_item(item, dest=dest)
         directories.update(item_directories)
         file_copies.extend(item_file_copies)
+        if on_item_processed is not None:
+            on_item_processed()
 
     return sorted(directories), file_copies
 
@@ -172,7 +175,33 @@ def execute_export_plan(
         console.log("[INFO] No post-processing outputs found.")
         return
 
-    directories, file_copies = build_copy_manifest(items, dest=dest)
+    console.log(f"[INFO] Found {len(items)} top-level export item(s).")
+    console.log("[INFO] Building file manifest...")
+
+    manifest_progress = Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+    with manifest_progress:
+        manifest_task = manifest_progress.add_task(
+            "Scanning export directories",
+            total=len(items),
+        )
+        directories, file_copies = build_copy_manifest(
+            items,
+            dest=dest,
+            on_item_processed=lambda: manifest_progress.advance(manifest_task),
+        )
+
+    console.log(
+        f"[INFO] Planned {len(file_copies)} file copy operation(s) "
+        f"across {len(directories)} directorie(s)."
+    )
 
     if not dry_run:
         dest.mkdir(parents=True, exist_ok=True)

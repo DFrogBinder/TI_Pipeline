@@ -31,6 +31,7 @@ from post.run_post_processing import (
     make_default_config,
     run_pipeline,
 )
+from utils.ti_utils import normalize_roi_name
 
 REPEAT_DATASET_PATTERN = re.compile(r"^(?P<roi_prefix>.+)_Data_(?P<repeat>\d+)$")
 
@@ -50,6 +51,9 @@ class RepeatBatchConfig:
     repeats: Optional[List[str]] = None
     continue_on_error: bool = True
     summary_filename: Optional[str] = "post_processing_batch_summary.json"
+    run_repeatability: bool = True
+    repeatability_output_dir: Optional[str] = "repeatability_analysis"
+    repeatability_logs_root: Optional[str] = None
 
 
 def _parse_repeat_value(value: str | int) -> int:
@@ -120,6 +124,72 @@ def _resolve_summary_path(cfg: RepeatBatchConfig, batch_root: Path) -> Optional[
     return summary_path
 
 
+def _resolve_repeatability_output_root(cfg: RepeatBatchConfig, batch_root: Path) -> Optional[Path]:
+    if not cfg.repeatability_output_dir:
+        return None
+    output_root = Path(cfg.repeatability_output_dir).expanduser()
+    if not output_root.is_absolute():
+        output_root = batch_root / output_root
+    return output_root
+
+
+def _run_repeatability_stage(
+    *,
+    batch_root: Path,
+    cfg: RepeatBatchConfig,
+    results: List[dict],
+) -> List[dict]:
+    if not cfg.run_repeatability:
+        return []
+
+    from post.repeatability.analyze_subject_metrics import run_analysis
+
+    by_roi: dict[str, list[dict]] = {}
+    for result in results:
+        if result["status"] != "ok":
+            continue
+        roi_name = result.get("resolved_target_roi")
+        if not roi_name:
+            continue
+        by_roi.setdefault(str(roi_name), []).append(result)
+
+    if not by_roi:
+        return []
+
+    output_root = _resolve_repeatability_output_root(cfg, batch_root)
+    repeatability_results = []
+    for roi_name, roi_results in sorted(by_roi.items()):
+        roi_output_dir = None
+        if output_root is not None:
+            roi_output_dir = output_root / normalize_roi_name(roi_name)
+        try:
+            analysis_result = run_analysis(
+                dataset_root=batch_root,
+                roi=roi_name,
+                output_dir=roi_output_dir,
+                logs_root=cfg.repeatability_logs_root,
+            )
+            repeatability_results.append(
+                {
+                    "roi_name": roi_name,
+                    "dataset_count": len(roi_results),
+                    "status": "ok",
+                    **analysis_result,
+                }
+            )
+        except Exception as exc:
+            repeatability_results.append(
+                {
+                    "roi_name": roi_name,
+                    "dataset_count": len(roi_results),
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return repeatability_results
+
+
 def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) -> dict:
     batch_root = Path(cfg.batch_root).expanduser().resolve()
     if not batch_root.is_dir():
@@ -182,6 +252,11 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
         "failed_datasets": len(failed),
         "results": results,
     }
+    summary["repeatability_results"] = _run_repeatability_stage(
+        batch_root=batch_root,
+        cfg=cfg,
+        results=results,
+    )
 
     summary_path = _resolve_summary_path(cfg, batch_root)
     if summary_path is not None:
@@ -224,6 +299,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Stop after the first dataset failure instead of continuing through the batch.",
     )
     parser.add_argument(
+        "--skip-repeatability",
+        action="store_true",
+        help="Skip the final across-repeat analysis stage.",
+    )
+    parser.add_argument(
+        "--repeatability-output-dir",
+        default=None,
+        help=(
+            "Optional output directory root for repeatability analysis. "
+            "A per-ROI subdirectory will be created under this path."
+        ),
+    )
+    parser.add_argument(
+        "--repeatability-logs-root",
+        default=None,
+        help="Optional logs root for the repeatability analysis stage.",
+    )
+    parser.add_argument(
         "--atlas-filename",
         "--fastsurfer-atlas-filename",
         dest="fastsurfer_atlas_filename",
@@ -253,6 +346,9 @@ def make_default_batch_config() -> RepeatBatchConfig:
         repeats=[f"{idx:02d}" for idx in range(1, 11)],
         continue_on_error=True,
         summary_filename="post_processing_batch_summary.json",
+        run_repeatability=True,
+        repeatability_output_dir="repeatability_analysis",
+        repeatability_logs_root=None,
     )
 
 
@@ -267,6 +363,12 @@ def apply_batch_cli_overrides(cfg: RepeatBatchConfig, args: argparse.Namespace) 
         cfg.summary_filename = args.summary_filename or None
     if args.stop_on_error:
         cfg.continue_on_error = False
+    if args.skip_repeatability:
+        cfg.run_repeatability = False
+    if args.repeatability_output_dir is not None:
+        cfg.repeatability_output_dir = args.repeatability_output_dir or None
+    if args.repeatability_logs_root is not None:
+        cfg.repeatability_logs_root = args.repeatability_logs_root or None
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

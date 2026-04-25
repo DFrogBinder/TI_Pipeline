@@ -9,6 +9,7 @@ import argparse
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import json
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
@@ -34,7 +35,13 @@ def should_skip_subject(out_dir: Path, force: bool) -> bool:
     if force:
         return False
     metrics_path = out_dir / "subject_metrics.json"
-    return metrics_path.is_file()
+    if not metrics_path.is_file():
+        return False
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(payload.get("extended_metrics"), dict)
 
 @dataclass
 class PostBatchConfig:
@@ -54,6 +61,16 @@ class PostBatchConfig:
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2
+    mni_baseline_root: Optional[str] = None
+    mni_fixed_atlas_path: Optional[str] = None
+    neighbor_dilation_iter: int = 1
+    csf_labels: Optional[List[int]] = None
+    skull_labels: Optional[List[int]] = None
+    electrode_csv: Optional[str] = None
+    electrode_names: Optional[List[str]] = None
+    eeg_positions_path_template: Optional[str] = None
+    write_neighbor_table: bool = True
+    write_electrode_table: bool = True
     force: bool = False
     verbose: bool = True
 
@@ -109,6 +126,16 @@ def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) ->
         write_region_table=cfg.write_region_table,
         region_percentile=cfg.region_percentile,
         offtarget_threshold=cfg.offtarget_threshold,
+        mni_baseline_root=cfg.mni_baseline_root,
+        mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+        neighbor_dilation_iter=cfg.neighbor_dilation_iter,
+        csf_labels=cfg.csf_labels,
+        skull_labels=cfg.skull_labels,
+        electrode_csv=cfg.electrode_csv,
+        electrode_names=cfg.electrode_names,
+        eeg_positions_path_template=cfg.eeg_positions_path_template,
+        write_neighbor_table=cfg.write_neighbor_table,
+        write_electrode_table=cfg.write_electrode_table,
         verbose=cfg.verbose,
     )
 
@@ -328,6 +355,16 @@ def make_default_config() -> PipelineConfig:
             write_region_table=True,
             region_percentile=95.0,
             offtarget_threshold=0.2,
+            mni_baseline_root=None,
+            mni_fixed_atlas_path=None,
+            neighbor_dilation_iter=1,
+            csf_labels=[24],
+            skull_labels=None,
+            electrode_csv=None,
+            electrode_names=None,
+            eeg_positions_path_template=None,
+            write_neighbor_table=True,
+            write_electrode_table=True,
             force=False,
             verbose=True,
             overlay_z_offset_mm=0,

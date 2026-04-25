@@ -57,6 +57,13 @@ HPC launch (single-node parallel batch):
 ```bash
 sbatch HPC_scripts/run_post_processing.slurm
 ```
+Interactive worker shell with matching default resources:
+```bash
+./HPC_scripts/start_interactive_post.sh
+```
+You can override the defaults with environment variables such as
+`SLURM_INTERACTIVE_TIME=02:00:00` or pass extra `srun` flags like
+`./HPC_scripts/start_interactive_post.sh --account=<account>`.
 On HPC, the job needs a Python environment with the post-processing stack installed.
 If interactive setup is inconvenient, do the one-time setup itself via Slurm:
 ```bash

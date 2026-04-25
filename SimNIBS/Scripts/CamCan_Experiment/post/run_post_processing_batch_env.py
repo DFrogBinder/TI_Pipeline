@@ -110,6 +110,28 @@ def build_configs():
         "PIPELINE_OFFTARGET_THRESHOLD",
         default=pipeline_cfg.post.offtarget_threshold,
     )
+    pipeline_cfg.post.mni_baseline_root = read_optional_text("PIPELINE_MNI_BASELINE_ROOT")
+    pipeline_cfg.post.mni_fixed_atlas_path = read_optional_text("PIPELINE_MNI_FIXED_ATLAS_PATH")
+    pipeline_cfg.post.neighbor_dilation_iter = read_optional_int("PIPELINE_NEIGHBOR_DILATION_ITER") or pipeline_cfg.post.neighbor_dilation_iter
+    pipeline_cfg.post.csf_labels = [
+        int(value) for value in read_optional_list("PIPELINE_CSF_LABELS") or pipeline_cfg.post.csf_labels or []
+    ] or None
+    pipeline_cfg.post.skull_labels = [
+        int(value) for value in read_optional_list("PIPELINE_SKULL_LABELS") or []
+    ] or None
+    pipeline_cfg.post.electrode_csv = read_optional_text("PIPELINE_ELECTRODE_CSV")
+    pipeline_cfg.post.electrode_names = read_optional_list("PIPELINE_ELECTRODE_NAMES")
+    pipeline_cfg.post.eeg_positions_path_template = read_optional_text(
+        "PIPELINE_EEG_POSITIONS_PATH_TEMPLATE"
+    )
+    pipeline_cfg.post.write_neighbor_table = read_bool(
+        "PIPELINE_WRITE_NEIGHBOR_TABLE",
+        default=pipeline_cfg.post.write_neighbor_table,
+    )
+    pipeline_cfg.post.write_electrode_table = read_bool(
+        "PIPELINE_WRITE_ELECTRODE_TABLE",
+        default=pipeline_cfg.post.write_electrode_table,
+    )
     pipeline_cfg.post.force = read_bool("PIPELINE_FORCE", default=pipeline_cfg.post.force)
     pipeline_cfg.post.verbose = read_bool("PIPELINE_VERBOSE", default=pipeline_cfg.post.verbose)
 
@@ -141,6 +163,10 @@ def build_configs():
         repeats=read_optional_list("BATCH_REPEATS"),
         continue_on_error=not read_bool("BATCH_STOP_ON_ERROR", default=False),
         summary_filename=read_optional_text("BATCH_SUMMARY_FILENAME"),
+        run_repeatability=read_bool("PIPELINE_REPEATABILITY_ENABLED", default=True),
+        repeatability_output_dir=read_optional_text("PIPELINE_REPEATABILITY_OUTPUT_DIR")
+        or "repeatability_analysis",
+        repeatability_logs_root=read_optional_text("PIPELINE_REPEATABILITY_LOGS_ROOT"),
     )
     return batch_cfg, pipeline_cfg
 

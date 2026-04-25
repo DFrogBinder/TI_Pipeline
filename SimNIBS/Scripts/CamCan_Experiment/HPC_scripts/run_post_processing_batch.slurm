@@ -33,16 +33,17 @@ PYTHON=""  # set to an explicit interpreter to skip activation logic
 POST_ANACONDA_MODULE="Anaconda3/2022.05"
 
 # Batch discovery
-BATCH_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/Raw-Data/Left_Hippocampus_Runs"
+# Example below is configured for the local left-hippocampus repeatability dataset.
+BATCH_ROOT="/home/boyan/sandbox/Jake_Data/Simulation-Target-Data/Left-Hoppocampus-Post-Data"
 BATCH_DATASET_GLOB="*_Data_*"
-BATCH_REPEATS=""  # blank -> process every matched repeat
+BATCH_REPEATS="01 02 03 04 05 06 07 08 09 10"
 BATCH_SUMMARY_FILENAME="post_processing_batch_summary.json"  # blank -> disable summary
 BATCH_STOP_ON_ERROR="0"
 
 # Subject-level pipeline template
 PIPELINE_ATLAS_MODE="fastsurfer"
-PIPELINE_FASTSURFER_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/atlases"  # update only if your atlas folder differs
-PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # e.g. mri/aparc.DKTatlas+aseg.deep.nii.gz
+PIPELINE_FASTSURFER_ROOT="/home/boyan/sandbox/Jake_Data/atlases"
+PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # blank -> flat <FASTSURFER_ROOT>/<subject>.nii(.gz); set a relative path like mri/aparc.DKTatlas+aseg.deep.nii.gz for nested per-subject layouts
 PIPELINE_FS_MRI_PATH=""  # shared atlas path reused for every subject
 PIPELINE_T1_PATH=""  # blank -> infer T1 per subject
 PIPELINE_SUBJECTS=""  # blank -> all subjects in each dataset
@@ -55,17 +56,32 @@ PIPELINE_OVERLAY_FULL_FIELD="1"
 PIPELINE_WRITE_REGION_TABLE="1"
 PIPELINE_REGION_PERCENTILE="95.0"
 PIPELINE_OFFTARGET_THRESHOLD="0.2"
+PIPELINE_MNI_BASELINE_ROOT="/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152_Hippocampus"
+PIPELINE_MNI_FIXED_ATLAS_PATH="/home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz"
+PIPELINE_NEIGHBOR_DILATION_ITER="1"
+PIPELINE_CSF_LABELS="24"  # space-separated label ids
+PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric
+PIPELINE_ELECTRODE_CSV=""  # optional CSV with columns subject,electrode,x,y,z; leave blank until a study-specific table is available
+PIPELINE_ELECTRODE_NAMES=""  # optional space-separated EEG position names
+PIPELINE_EEG_POSITIONS_PATH_TEMPLATE=""  # optional template, e.g. /path/{subject}/eeg_positions.csv
+PIPELINE_WRITE_NEIGHBOR_TABLE="1"
+PIPELINE_WRITE_ELECTRODE_TABLE="1"
 PIPELINE_FORCE="0"
 PIPELINE_VERBOSE="1"
 
 # Population aggregation
-PIPELINE_POPULATION_ENABLED="0"
+PIPELINE_POPULATION_ENABLED="1"
 PIPELINE_POPULATION_OUT_DIR=""  # blank -> default population_analysis under each dataset
 PIPELINE_POPULATION_REGION_FILENAME="region_stats_fastsurfer.csv"
 PIPELINE_POPULATION_METRICS_FILENAME="subject_metrics.json"
 PIPELINE_POPULATION_PEAK_THRESHOLD="0.2"
 PIPELINE_POPULATION_TARGET_ROI=""  # blank -> reuse resolved post ROI
 PIPELINE_POPULATION_TEMPLATE_REGION_CSV=""
+
+# Across-repeat repeatability
+PIPELINE_REPEATABILITY_ENABLED="1"
+PIPELINE_REPEATABILITY_OUTPUT_DIR="repeatability_analysis"
+PIPELINE_REPEATABILITY_LOGS_ROOT=""  # optional directory containing slurm-*.out files for the failure audit
 
 if [[ $# -gt 0 ]]; then
     echo "[ERROR] This wrapper now reads configuration from the top of the file." >&2
@@ -130,6 +146,16 @@ export PIPELINE_OVERLAY_FULL_FIELD
 export PIPELINE_WRITE_REGION_TABLE
 export PIPELINE_REGION_PERCENTILE
 export PIPELINE_OFFTARGET_THRESHOLD
+export PIPELINE_MNI_BASELINE_ROOT
+export PIPELINE_MNI_FIXED_ATLAS_PATH
+export PIPELINE_NEIGHBOR_DILATION_ITER
+export PIPELINE_CSF_LABELS
+export PIPELINE_SKULL_LABELS
+export PIPELINE_ELECTRODE_CSV
+export PIPELINE_ELECTRODE_NAMES
+export PIPELINE_EEG_POSITIONS_PATH_TEMPLATE
+export PIPELINE_WRITE_NEIGHBOR_TABLE
+export PIPELINE_WRITE_ELECTRODE_TABLE
 export PIPELINE_FORCE
 export PIPELINE_VERBOSE
 export PIPELINE_POPULATION_ENABLED
@@ -139,6 +165,9 @@ export PIPELINE_POPULATION_METRICS_FILENAME
 export PIPELINE_POPULATION_PEAK_THRESHOLD
 export PIPELINE_POPULATION_TARGET_ROI
 export PIPELINE_POPULATION_TEMPLATE_REGION_CSV
+export PIPELINE_REPEATABILITY_ENABLED
+export PIPELINE_REPEATABILITY_OUTPUT_DIR
+export PIPELINE_REPEATABILITY_LOGS_ROOT
 
 echo "[INFO] Host: $(hostname)"
 echo "[INFO] JobID: ${SLURM_JOB_ID}"
@@ -234,7 +263,13 @@ echo "[INFO] Atlas mode:          ${PIPELINE_ATLAS_MODE}"
 echo "[INFO] FastSurfer root:     ${PIPELINE_FASTSURFER_ROOT:-<none>}"
 echo "[INFO] Atlas filename:      ${PIPELINE_FASTSURFER_ATLAS_FILENAME:-<none>}"
 echo "[INFO] Explicit atlas path: ${PIPELINE_FS_MRI_PATH:-<none>}"
+echo "[INFO] MNI baseline root:   ${PIPELINE_MNI_BASELINE_ROOT:-<none>}"
+echo "[INFO] Fixed MNI atlas:     ${PIPELINE_MNI_FIXED_ATLAS_PATH:-<none>}"
+echo "[INFO] Electrode CSV:       ${PIPELINE_ELECTRODE_CSV:-<none>}"
 echo "[INFO] Population enabled:  ${PIPELINE_POPULATION_ENABLED}"
+echo "[INFO] Repeatability:       ${PIPELINE_REPEATABILITY_ENABLED}"
+echo "[INFO] Repeatability out:   ${PIPELINE_REPEATABILITY_OUTPUT_DIR:-<default>}"
+echo "[INFO] Repeatability logs:  ${PIPELINE_REPEATABILITY_LOGS_ROOT:-<none>}"
 echo "[INFO] Workers:             ${POST_MAX_WORKERS}"
 echo
 

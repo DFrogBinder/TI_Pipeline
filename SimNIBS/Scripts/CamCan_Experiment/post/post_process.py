@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Sequence
 
 import numpy as np
 import json
@@ -25,6 +25,7 @@ from post.post_functions import (
     roi_masks_on_ti_grid,
     write_csv,
 )
+from post.metric_extensions import compute_extended_subject_metrics
 from utils.paths import post_root, ti_brain_path, t1_path
 from utils.ti_utils import (
     ensure_dir,
@@ -60,6 +61,16 @@ class PostProcessConfig:
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2  # V/m threshold for focality checks
+    mni_baseline_root: Optional[str] = None
+    mni_fixed_atlas_path: Optional[str] = None
+    neighbor_dilation_iter: int = 1
+    csf_labels: Optional[Sequence[int]] = None
+    skull_labels: Optional[Sequence[int]] = None
+    electrode_csv: Optional[str] = None
+    electrode_names: Optional[Sequence[str]] = None
+    eeg_positions_path_template: Optional[str] = None
+    write_neighbor_table: bool = True
+    write_electrode_table: bool = True
 
     # Debug/logging
     verbose: bool = True
@@ -368,9 +379,49 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
                 print(f"[WARN] Failed loading FastSurfer atlas for overlay scaling: {e}")
 
 
+    sel = selected_plot_roi
+
+    # ---- Extended per-repeat metrics for downstream repeatability analysis ----
+    extended_metrics = {}
+    neighbor_table_path = None
+    electrode_table_path = None
+    if sel in roi_masks:
+        try:
+            extended_metrics = compute_extended_subject_metrics(
+                root_dir=cfg.root_dir,
+                subject=cfg.subject,
+                roi_name=sel,
+                ti_img=ti_img,
+                ti_data=ti_data,
+                roi_mask=roi_masks[sel],
+                finite_mask=finite,
+                subject_fastsurfer_atlas_path=fs_atlas_path,
+                mni_baseline_root=cfg.mni_baseline_root,
+                mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+                focality_threshold=cfg.offtarget_threshold,
+                neighbor_dilation_iter=cfg.neighbor_dilation_iter,
+                csf_labels=cfg.csf_labels or [24],
+                skull_labels=cfg.skull_labels,
+                electrode_csv=cfg.electrode_csv,
+                electrode_names=cfg.electrode_names,
+                eeg_positions_path_template=cfg.eeg_positions_path_template,
+            )
+            if cfg.write_neighbor_table and extended_metrics.get("neighbors"):
+                roi_stub = normalize_roi_name(sel)
+                neighbor_table_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbors.json")
+                with open(neighbor_table_path, "w", encoding="utf-8") as handle:
+                    json.dump(extended_metrics["neighbors"], handle, indent=2)
+            if cfg.write_electrode_table and extended_metrics.get("electrode_distances"):
+                roi_stub = normalize_roi_name(sel)
+                electrode_table_path = os.path.join(out_dir, f"{roi_stub}_electrode_distances.json")
+                with open(electrode_table_path, "w", encoding="utf-8") as handle:
+                    json.dump(extended_metrics["electrode_distances"], handle, indent=2)
+        except Exception as e:
+            if cfg.verbose:
+                print(f"[WARN] Skipped extended subject metrics for {cfg.subject}: {e}")
+
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
-    sel = selected_plot_roi
     sel_norm = normalize_roi_name(sel)
     if t1_img_full is not None and sel in roi_masks:
         roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)
@@ -423,12 +474,15 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # ---- Subject-level robustness metrics ----
     subject_metrics = dict(
+        schema_version=2,
         subject=cfg.subject,
+        target_roi=sel,
         percentile=cfg.percentile,
         percentile_value=float(thr),
         voxel_volume_mm3=vox_vol,
         top_percentile_voxels=int(topP_mask.sum()),
         rois=per_roi_metrics,
+        extended_metrics=extended_metrics,
     )
 
     metrics_path = os.path.join(out_dir, "subject_metrics.json")
@@ -449,6 +503,9 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         region_table=region_table_path,
         region_df=region_df,
         metrics_path=metrics_path,
+        extended_metrics=extended_metrics,
+        neighbor_table_path=neighbor_table_path,
+        electrode_table_path=electrode_table_path,
     )
 
 if __name__ == "__main__":

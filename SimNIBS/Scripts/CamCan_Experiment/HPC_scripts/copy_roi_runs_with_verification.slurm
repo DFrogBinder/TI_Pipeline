@@ -240,7 +240,10 @@ echo
 echo "[INFO] Copying source tree on worker-node storage path..."
 mkdir -p "$DEST_ROOT"
 
-mapfile -d '' -t TOP_LEVEL_DIRS < <(find "$SOURCE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\0' | LC_ALL=C sort -z)
+TOP_LEVEL_DIRS=()
+while IFS= read -r -d '' entry; do
+    TOP_LEVEL_DIRS+=("$entry")
+done < <(find "$SOURCE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\0' | LC_ALL=C sort -z)
 
 {
     echo "[INFO] Parallel copy started at $(date)"

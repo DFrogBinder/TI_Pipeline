@@ -16,7 +16,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 
 - **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries) and `utils/roi_registry.py` (FastSurfer ROI labels, aliases, dataset-name matching).
 - **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker; post-processing expects per-subject atlas files under `<fastsurfer_root>/<subject>.nii.gz`).
-- **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject) and `simulation/TI_runner_single-core.py` (sequential) create meshes, run SimNIBS TDCS pairs, compute TImax, export TI volumes (`ti_brain_only.nii.gz`).
+- **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject), `simulation/TI_runner_single-core.py` (sequential/local debug), and `simulation/TI_runner_MNI152.py` (dedicated MNI152 template runner) create meshes or use the built-in MNI mesh, run SimNIBS TDCS pairs, compute TImax, and export TI volumes (`ti_brain_only.nii.gz`).
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
 - **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
@@ -26,11 +26,47 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 
 ## Directory layout
 - `atlas/`: FastSurfer/FreeSurfer atlas scripts.
-- `simulation/`: SimNIBS TI runners (single/multi-subject).
+- `simulation/`: SimNIBS TI runners (single-subject, multi-subject, and dedicated MNI152 template).
 - `post/`: Subject and population post-processing.
 - `utils/`: Shared helpers (TI/atlas utilities, simulation helpers).
 - `viz/`: Geometry export utilities.
 - Root: Slurm wrappers, legacy `functions.py`, docs/diagrams.
+
+## MNI152 template simulation
+Use `simulation/TI_runner_MNI152.py` when you want to run only the built-in SimNIBS `MNI152` head model without toggling `runMNI152` inside the subject-oriented runners.
+
+The script:
+- uses the built-in SimNIBS MNI152 mesh and reference T1 by default
+- writes outputs to `<root>/MNI152/anat/SimNIBS/`
+- exposes named montage presets such as `left-thalamus`, `right-thalamus`, `hippocampus`, `m1`, `left-pallidum`, and `right-pallidum`
+- lets you override electrode centres, current amplitudes, size, thickness, conductivity, and mesh element size from the CLI
+
+List the available presets:
+```bash
+/home/boyan/SimNIBS-4.5/bin/simnibs_python simulation/TI_runner_MNI152.py --list-presets
+```
+
+Run one MNI152 simulation:
+```bash
+/home/boyan/SimNIBS-4.5/bin/simnibs_python simulation/TI_runner_MNI152.py \
+  --root-dir /path/to/experiment_root \
+  --preset left-thalamus
+```
+
+Optional overrides:
+```bash
+/home/boyan/SimNIBS-4.5/bin/simnibs_python simulation/TI_runner_MNI152.py \
+  --root-dir /path/to/experiment_root \
+  --preset hippocampus \
+  --pair1-anode F10 \
+  --pair1-cathode P8 \
+  --pair1-current-a 0.002 \
+  --pair2-anode T7 \
+  --pair2-cathode P7 \
+  --pair2-current-a 0.001588656
+```
+
+The MNI152 runner does not perform subject-specific CHARM meshing or segmentation replacement. It is intended for fast switching between template-only montage configurations while keeping the same downstream output layout expected by the post-processing code.
 
 ## Post-processing pipeline
 1) Edit the pipeline config in `post/run_post_processing.py`:
@@ -126,7 +162,7 @@ flowchart TD
     A[CamCan T1/T2 + manual corrections] --> B[FastSurfer + FreeSurfer atlases\n(make_atlas.sh / run_atlasMaker.py)]
     A --> C[Subject CHARM mesh + manual seg merge\n(TI_runner_*)]
     T[MNI152 template TI montage optimization] --> C
-    C --> D[SimNIBS TI simulations per subject\n(TI_runner_multi-core/single-core)]
+    C --> D[SimNIBS TI simulations per subject or MNI152 template\n(TI_runner_multi-core/single-core/MNI152)]
     D --> E[TI volumes + labels (msh2nii)\n ti_brain_only.nii.gz]
     E --> F[Subject post-processing\n(post_process.py)]
     F --> G[ROI masks, CSVs, overlays,\nregion_stats_fastsurfer.csv,\nsubject_metrics.json]

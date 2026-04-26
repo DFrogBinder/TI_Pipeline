@@ -53,25 +53,29 @@ echo
 #/path/to/copy_roi_runs_with_verification.slurm
 # ------------------------------------------------------------------
 
-DEFAULT_SOURCE_ROOT="/path/to/ROI_root_with_all_10_runs"
-DEFAULT_DEST_PARENT="/path/to/destination_parent"
-DEFAULT_DEST_NAME=""
-DEFAULT_LOG_ROOT=""
+PLACEHOLDER_SOURCE_ROOT="/path/to/ROI_root_with_all_10_runs"
+PLACEHOLDER_DEST_PARENT="/path/to/destination_parent"
+
+# Edit these if you want file-based defaults.
+SOURCE_ROOT_DEFAULT="$PLACEHOLDER_SOURCE_ROOT"
+DEST_PARENT_DEFAULT="$PLACEHOLDER_DEST_PARENT"
+DEST_NAME_DEFAULT=""
+LOG_ROOT_DEFAULT=""
 
 # Copy / verification behavior
-DEFAULT_VERIFY_WITH_CHECKSUM="1"   # 1 -> checksum-based rsync dry-run verification after copy
-DEFAULT_GENERATE_SUBJECT_REPORT="1"  # 1 -> per-run/per-subject presence + file-count report
-DEFAULT_ALLOW_EXISTING_DEST="1"    # 1 -> allow merge into an existing destination root, still verify strictly
-DEFAULT_PARALLEL_TOP_LEVEL_JOBS="4"  # parallel rsync jobs for immediate child run directories
+VERIFY_WITH_CHECKSUM_DEFAULT="1"   # 1 -> checksum-based rsync dry-run verification after copy
+GENERATE_SUBJECT_REPORT_DEFAULT="1"  # 1 -> per-run/per-subject presence + file-count report
+ALLOW_EXISTING_DEST_DEFAULT="1"    # 1 -> allow merge into an existing destination root, still verify strictly
+PARALLEL_TOP_LEVEL_JOBS_DEFAULT="4"  # parallel rsync jobs for immediate child run directories
 
-SOURCE_ROOT="${SOURCE_ROOT:-$DEFAULT_SOURCE_ROOT}"
-DEST_PARENT="${DEST_PARENT:-$DEFAULT_DEST_PARENT}"
-DEST_NAME="${DEST_NAME:-$DEFAULT_DEST_NAME}"
-LOG_ROOT="${LOG_ROOT:-$DEFAULT_LOG_ROOT}"
-VERIFY_WITH_CHECKSUM="${VERIFY_WITH_CHECKSUM:-$DEFAULT_VERIFY_WITH_CHECKSUM}"
-GENERATE_SUBJECT_REPORT="${GENERATE_SUBJECT_REPORT:-$DEFAULT_GENERATE_SUBJECT_REPORT}"
-ALLOW_EXISTING_DEST="${ALLOW_EXISTING_DEST:-$DEFAULT_ALLOW_EXISTING_DEST}"
-PARALLEL_TOP_LEVEL_JOBS="${PARALLEL_TOP_LEVEL_JOBS:-$DEFAULT_PARALLEL_TOP_LEVEL_JOBS}"
+SOURCE_ROOT="${SOURCE_ROOT:-$SOURCE_ROOT_DEFAULT}"
+DEST_PARENT="${DEST_PARENT:-$DEST_PARENT_DEFAULT}"
+DEST_NAME="${DEST_NAME:-$DEST_NAME_DEFAULT}"
+LOG_ROOT="${LOG_ROOT:-$LOG_ROOT_DEFAULT}"
+VERIFY_WITH_CHECKSUM="${VERIFY_WITH_CHECKSUM:-$VERIFY_WITH_CHECKSUM_DEFAULT}"
+GENERATE_SUBJECT_REPORT="${GENERATE_SUBJECT_REPORT:-$GENERATE_SUBJECT_REPORT_DEFAULT}"
+ALLOW_EXISTING_DEST="${ALLOW_EXISTING_DEST:-$ALLOW_EXISTING_DEST_DEFAULT}"
+PARALLEL_TOP_LEVEL_JOBS="${PARALLEL_TOP_LEVEL_JOBS:-$PARALLEL_TOP_LEVEL_JOBS_DEFAULT}"
 
 module purge || true
 
@@ -149,15 +153,15 @@ write_dir_manifest() {
 echo "[INFO] rsync: $(rsync --version | head -n 1 || true)"
 echo
 
-if [[ "$SOURCE_ROOT" == "$DEFAULT_SOURCE_ROOT" ]]; then
+if [[ "$SOURCE_ROOT" == "$PLACEHOLDER_SOURCE_ROOT" ]]; then
     echo "[ERROR] SOURCE_ROOT is still the placeholder value." >&2
-    echo "[ERROR] Edit the script or submit with --export=ALL,SOURCE_ROOT=/real/path,DEST_PARENT=/real/path" >&2
+    echo "[ERROR] Edit SOURCE_ROOT_DEFAULT in this script or submit with --export=ALL,SOURCE_ROOT=/real/path,DEST_PARENT=/real/path" >&2
     exit 2
 fi
 
-if [[ "$DEST_PARENT" == "$DEFAULT_DEST_PARENT" ]]; then
+if [[ "$DEST_PARENT" == "$PLACEHOLDER_DEST_PARENT" ]]; then
     echo "[ERROR] DEST_PARENT is still the placeholder value." >&2
-    echo "[ERROR] Edit the script or submit with --export=ALL,SOURCE_ROOT=/real/path,DEST_PARENT=/real/path" >&2
+    echo "[ERROR] Edit DEST_PARENT_DEFAULT in this script or submit with --export=ALL,SOURCE_ROOT=/real/path,DEST_PARENT=/real/path" >&2
     exit 2
 fi
 

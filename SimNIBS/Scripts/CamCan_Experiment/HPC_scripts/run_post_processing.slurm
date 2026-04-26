@@ -17,28 +17,83 @@ echo "[INFO] Start: $(date)"
 echo
 
 # ------------------------------------------------------------------
-# This wrapper launches the config-driven batch runner in
-# post/run_post_processing.py on a single node.
+# User config
 #
-# Before submitting:
-#   1) Edit the config block at the bottom of post/run_post_processing.py
-#      so post.root / fastsurfer_root / population settings point at HPC paths.
-#   2) One-time cluster-side setup option:
-#        sbatch HPC_scripts/bootstrap_post_conda.slurm
-#   3) Point the job at a Python environment that contains the post-processing
-#      stack, using one of:
-#        - POST_CONDA_ENV=<name-or-prefix> (Stanage docs path; optionally set
-#          POST_ANACONDA_MODULE, defaults to Anaconda3/2022.05)
-#        - POST_VENV=/path/to/venv
-#        - POST_CONDA_ENV=<name-or-prefix> and POST_CONDA_SH=/path/to/conda.sh
-#          for a personal miniconda install
-#        - PYTHON=/path/to/env/bin/python
+# Edit the #SBATCH lines above for queue, CPU, memory, and walltime.
+# Edit the variables below for repo/data/env/pipeline settings.
+#
+# This wrapper can be submitted from anywhere. It can also live outside the
+# repository as long as REPO_DIR points at the CamCan_Experiment checkout.
 # ------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-RUNNER="${REPO_DIR}/post/run_post_processing.py"
-POST_REQUIREMENTS_FILE="${POST_REQUIREMENTS_FILE:-${REPO_DIR}/requirements-post.txt}"
+
+# Repository / environment
+REPO_DIR="/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"
+POST_REQUIREMENTS_FILE=""  # blank -> use <REPO_DIR>/requirements-post.txt
+POST_CONDA_ENV="ti-post"
+POST_CONDA_SH=""  # set when using a personal conda install
+POST_VENV=""  # set instead of POST_CONDA_ENV when using venv
+PYTHON=""  # set to an explicit interpreter to skip activation logic
+POST_ANACONDA_MODULE="Anaconda3/2022.05"
+
+# Single-dataset discovery
+# Example below is configured for one local left-hippocampus repeat.
+DATASET_ROOT="/home/boyan/sandbox/Jake_Data/Simulation-Target-Data/Left-Hoppocampus-Post-Data/Left_Hippocampus_Data_01"
+
+# Subject-level pipeline template
+PIPELINE_MODE="single"
+PIPELINE_FASTSURFER_ROOT="/home/boyan/sandbox/Jake_Data/atlases"
+PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # blank -> flat <FASTSURFER_ROOT>/<subject>.nii(.gz); set a relative path like mri/aparc.DKTatlas+aseg.deep.nii.gz for nested per-subject layouts
+PIPELINE_ATLAS_MODE="fastsurfer"
+PIPELINE_T1_PATH=""  # blank -> infer T1 per subject
+PIPELINE_SUBJECTS=""  # blank -> all subjects in the dataset
+PIPELINE_MAX_WORKERS=""  # blank -> use POST_MAX_WORKERS / SLURM_CPUS_PER_TASK
+PIPELINE_PLOT_ROI=""  # blank -> infer ROI from the dataset name
+PIPELINE_PERCENTILE="95.0"
+PIPELINE_HARD_THRESHOLD="0.2"
+PIPELINE_OFFTARGET_THRESHOLD="0.2"
+PIPELINE_MNI_BASELINE_ROOT="/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152_Hippocampus"
+PIPELINE_MNI_FIXED_ATLAS_PATH="/home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz"
+PIPELINE_NEIGHBOR_DILATION_ITER="1"
+PIPELINE_CSF_LABELS="24"  # space-separated label ids
+PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric
+PIPELINE_ELECTRODE_CSV=""  # optional CSV with columns subject,electrode,x,y,z
+PIPELINE_ELECTRODE_NAMES=""  # optional space-separated EEG position names
+PIPELINE_EEG_POSITIONS_PATH_TEMPLATE=""  # optional template, e.g. /path/{subject}/eeg_positions.csv
+PIPELINE_FORCE="0"
+PIPELINE_QUIET="0"
+
+# Within-run population aggregation
+PIPELINE_POPULATION_ENABLED="1"
+PIPELINE_POPULATION_OUT_DIR=""  # blank -> default population_analysis under the dataset
+PIPELINE_POPULATION_TEMPLATE_REGION_CSV=""
+
+if [[ $# -gt 0 ]]; then
+    echo "[ERROR] This wrapper now reads configuration from the top of the file." >&2
+    echo "[ERROR] Remove script arguments and edit the config block instead." >&2
+    exit 2
+fi
+
+if [[ -z "${REPO_DIR}" ]]; then
+    REPO_DIR="${SCRIPT_DIR}/.."
+elif [[ "${REPO_DIR}" != /* ]]; then
+    REPO_DIR="${SCRIPT_DIR}/${REPO_DIR}"
+fi
+
+if [[ ! -d "${REPO_DIR}" ]]; then
+    echo "[ERROR] REPO_DIR does not exist: ${REPO_DIR}" >&2
+    exit 2
+fi
+
+REPO_DIR="$(cd "${REPO_DIR}" && pwd)"
+RUNNER="${REPO_DIR}/post/run_full_post_pipeline.py"
+
+if [[ -z "${POST_REQUIREMENTS_FILE}" ]]; then
+    POST_REQUIREMENTS_FILE="${REPO_DIR}/requirements-post.txt"
+elif [[ "${POST_REQUIREMENTS_FILE}" != /* ]]; then
+    POST_REQUIREMENTS_FILE="${REPO_DIR}/${POST_REQUIREMENTS_FILE}"
+fi
 
 # ----------------------------
 # Environment setup
@@ -114,7 +169,7 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-# run_post_processing.py will use this when post.max_workers is None.
+# run_full_post_pipeline.py will use this when max_workers is unset.
 export POST_MAX_WORKERS="${POST_MAX_WORKERS:-${SLURM_CPUS_PER_TASK}}"
 
 echo "[INFO] Repository: ${REPO_DIR}"
@@ -123,6 +178,14 @@ echo "[INFO] Python:     $(${PYTHON} --version 2>&1 || true)"
 echo "[INFO] Python exe: $(${PYTHON} -c 'import sys; print(sys.executable)' 2>/dev/null || true)"
 echo "[INFO] Virtualenv: ${VIRTUAL_ENV:-<none>}"
 echo "[INFO] Conda env:  ${CONDA_PREFIX:-<none>}"
+echo "[INFO] Dataset root: ${DATASET_ROOT}"
+echo "[INFO] ROI:          ${PIPELINE_PLOT_ROI:-<infer from dataset>}"
+echo "[INFO] Atlas mode:   ${PIPELINE_ATLAS_MODE}"
+echo "[INFO] FastSurfer:   ${PIPELINE_FASTSURFER_ROOT:-<none>}"
+echo "[INFO] Atlas file:   ${PIPELINE_FASTSURFER_ATLAS_FILENAME:-<flat subject atlas lookup>}"
+echo "[INFO] MNI root:     ${PIPELINE_MNI_BASELINE_ROOT:-<none>}"
+echo "[INFO] MNI atlas:    ${PIPELINE_MNI_FIXED_ATLAS_PATH:-<none>}"
+echo "[INFO] Population:   ${PIPELINE_POPULATION_ENABLED}"
 echo "[INFO] Workers:    ${POST_MAX_WORKERS}"
 echo
 
@@ -158,10 +221,86 @@ if missing:
 print("[INFO] Python dependency check passed.")
 PY
 
+if [[ ! -d "${DATASET_ROOT}" ]]; then
+    echo "[ERROR] DATASET_ROOT does not exist: ${DATASET_ROOT}" >&2
+    exit 2
+fi
+
+declare -a CMD
+CMD=(
+    "${PYTHON}" -u "${RUNNER}"
+    --root "${DATASET_ROOT}"
+    --mode "${PIPELINE_MODE}"
+    --atlas-mode "${PIPELINE_ATLAS_MODE}"
+    --percentile "${PIPELINE_PERCENTILE}"
+    --hard-threshold "${PIPELINE_HARD_THRESHOLD}"
+    --offtarget-threshold "${PIPELINE_OFFTARGET_THRESHOLD}"
+    --mni-baseline-root "${PIPELINE_MNI_BASELINE_ROOT}"
+    --mni-fixed-atlas-path "${PIPELINE_MNI_FIXED_ATLAS_PATH}"
+    --neighbor-dilation-iter "${PIPELINE_NEIGHBOR_DILATION_ITER}"
+)
+
+if [[ -n "${PIPELINE_FASTSURFER_ROOT}" ]]; then
+    CMD+=(--fastsurfer-root "${PIPELINE_FASTSURFER_ROOT}")
+fi
+if [[ -n "${PIPELINE_FASTSURFER_ATLAS_FILENAME}" ]]; then
+    CMD+=(--atlas-filename "${PIPELINE_FASTSURFER_ATLAS_FILENAME}")
+fi
+if [[ -n "${PIPELINE_T1_PATH}" ]]; then
+    CMD+=(--t1-path "${PIPELINE_T1_PATH}")
+fi
+if [[ -n "${PIPELINE_MAX_WORKERS}" ]]; then
+    CMD+=(--max-workers "${PIPELINE_MAX_WORKERS}")
+fi
+if [[ -n "${PIPELINE_PLOT_ROI}" ]]; then
+    CMD+=(--roi "${PIPELINE_PLOT_ROI}")
+fi
+if [[ -n "${PIPELINE_SUBJECTS}" ]]; then
+    # shellcheck disable=SC2206
+    SUBJECT_ARGS=(${PIPELINE_SUBJECTS})
+    CMD+=(--subjects "${SUBJECT_ARGS[@]}")
+fi
+if [[ -n "${PIPELINE_CSF_LABELS}" ]]; then
+    # shellcheck disable=SC2206
+    CSF_ARGS=(${PIPELINE_CSF_LABELS})
+    CMD+=(--csf-labels "${CSF_ARGS[@]}")
+fi
+if [[ -n "${PIPELINE_SKULL_LABELS}" ]]; then
+    # shellcheck disable=SC2206
+    SKULL_ARGS=(${PIPELINE_SKULL_LABELS})
+    CMD+=(--skull-labels "${SKULL_ARGS[@]}")
+fi
+if [[ -n "${PIPELINE_ELECTRODE_CSV}" ]]; then
+    CMD+=(--electrode-csv "${PIPELINE_ELECTRODE_CSV}")
+fi
+if [[ -n "${PIPELINE_ELECTRODE_NAMES}" ]]; then
+    # shellcheck disable=SC2206
+    ELECTRODE_ARGS=(${PIPELINE_ELECTRODE_NAMES})
+    CMD+=(--electrode-names "${ELECTRODE_ARGS[@]}")
+fi
+if [[ -n "${PIPELINE_EEG_POSITIONS_PATH_TEMPLATE}" ]]; then
+    CMD+=(--eeg-positions-path-template "${PIPELINE_EEG_POSITIONS_PATH_TEMPLATE}")
+fi
+if [[ "${PIPELINE_POPULATION_ENABLED}" == "0" ]]; then
+    CMD+=(--no-population)
+fi
+if [[ -n "${PIPELINE_POPULATION_OUT_DIR}" ]]; then
+    CMD+=(--population-output-dir "${PIPELINE_POPULATION_OUT_DIR}")
+fi
+if [[ -n "${PIPELINE_POPULATION_TEMPLATE_REGION_CSV}" ]]; then
+    CMD+=(--template-region-csv "${PIPELINE_POPULATION_TEMPLATE_REGION_CSV}")
+fi
+if [[ "${PIPELINE_FORCE}" == "1" ]]; then
+    CMD+=(--force)
+fi
+if [[ "${PIPELINE_QUIET}" == "1" ]]; then
+    CMD+=(--quiet)
+fi
+
 echo
-echo "[INFO] Using pipeline config embedded in post/run_post_processing.py"
+echo "[INFO] Running single-dataset pipeline via run_full_post_pipeline.py"
 cd "${REPO_DIR}"
-"${PYTHON}" -u "${RUNNER}"
+"${CMD[@]}"
 
 echo
 echo "[INFO] Finished: $(date)"

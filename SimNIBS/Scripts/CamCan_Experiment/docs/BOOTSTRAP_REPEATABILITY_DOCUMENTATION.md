@@ -46,10 +46,11 @@ Also, per your instruction, the final recommendation here is based on `mean_roi`
 
 ## Dataset Used
 
-The repeatability data were read from:
+The repeatability data were read from an external repeatability-data root. The
+machine-specific absolute path is omitted here; the effective layout was:
 
 ```text
-/media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/new_params/_analysis
+<repeatability_input_root>/_analysis
 ```
 
 For each subject, the input file was:
@@ -289,7 +290,7 @@ The two final runs used for the current recommendation were:
 
 ```bash
 python simulation/bootstrap_repeatability.py \
-  --input-root /media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/new_params \
+  --input-root <repeatability_input_root> \
   --metric mean_roi \
   --estimator mean \
   --criterion ci_half_width \
@@ -301,7 +302,7 @@ python simulation/bootstrap_repeatability.py \
 
 ```bash
 python simulation/bootstrap_repeatability.py \
-  --input-root /media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/new_params \
+  --input-root <repeatability_input_root> \
   --metric median_roi \
   --estimator mean \
   --criterion ci_half_width \

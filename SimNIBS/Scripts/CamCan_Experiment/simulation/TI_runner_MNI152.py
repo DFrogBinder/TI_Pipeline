@@ -26,7 +26,7 @@ from utils.sim_utils import format_output_dir
 
 
 SUBJECT = "MNI152"
-DEFAULT_ROOT_DIR = "/home/boyan/sandbox/Jake_Data/tmp"
+DEFAULT_ROOT_DIR = "/home/boyan/sandbox/Jake_Data/MNI152-data"
 DEFAULT_MNI_MESH_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/MNI152.msh"
 DEFAULT_REFERENCE_T1_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
 DEFAULT_ELEMENT_SIZE = 0.1
@@ -52,46 +52,30 @@ class MontageSpec:
 
 
 MONTAGE_PRESETS: dict[str, MontageSpec] = {
-    "left-thalamus": MontageSpec(
-        name="left-thalamus",
-        description="Matches the active MNI152 configuration in TI_runner_single-core.py.",
-        pair1=PairSpec("F7", "P7", 1.588656e-3),
-        pair2=PairSpec("F8", "P8", 2e-3),
-    ),
     "right-thalamus": MontageSpec(
         name="right-thalamus",
         description="Right-thalamus preset from the existing commented MNI152 montage block.",
         pair1=PairSpec("AF7", "TP7", 2e-3),
         pair2=PairSpec("T8", "PO8", 2e-3),
     ),
-    "hippocampus": MontageSpec(
-        name="hippocampus",
-        description="Hippocampus preset from the existing MNI152 runner.",
+    "left-hippocampus": MontageSpec(
+        name="left-hippocampus",
+        description="Left-hippocampus preset from the existing MNI152 runner.",
         pair1=PairSpec("F10", "P8", 2e-3),
         pair2=PairSpec("T7", "P7", 1.588656e-3),
     ),
-    "m1": MontageSpec(
-        name="m1",
+    "left-m1": MontageSpec(
+        name="left-m1",
         description="Primary motor cortex preset from the existing MNI152 runner.",
-        pair1=PairSpec("C1", "Cz", 1.34e-3),
-        pair2=PairSpec("C3", "CP5", 2.66e-3),
+        pair1=PairSpec("FC1", "FCz", 1.34e-3),
+        pair2=PairSpec("C3", "P5", 2.66e-3),
     ),
-    "left-pallidum": MontageSpec(
-        name="left-pallidum",
-        description="Matches the active montage block in TI_runner_multi-core.py.",
-        pair1=PairSpec("Fpz", "AF8", 2e-3),
-        pair2=PairSpec("TP7", "PO9", 1.261915e-3),
-        electrode_thickness_mm=2.0,
-        electrode_conductivity=1.4,
-    ),
-    "right-pallidum": MontageSpec(
-        name="right-pallidum",
-        description="Right-pallidum preset from the multi-core runner comments.",
-        pair1=PairSpec("F8", "F10", 2e-3),
-        pair2=PairSpec("FT7", "C3", 1.261915e-3),
-        electrode_thickness_mm=2.0,
-        electrode_conductivity=1.4,
-    ),
+    "right-dlpc": MontageSpec(
+        name="right-dlpc",
+        description="Right-dlpc preset from the existing MNI152 runner.",
+        pair1=PairSpec("AF4", "F4", 0.796214e-3),
+        pair2=PairSpec("C2", "CP1", 2e-3),
+    )
 }
 
 

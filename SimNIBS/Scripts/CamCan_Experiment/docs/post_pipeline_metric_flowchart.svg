@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1880" viewBox="0 0 1900 1880">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="#F8FAFC"/></linearGradient>
+<marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L12,6 L0,12 z" fill="#334155"/></marker>
+</defs>
+<rect width="1900" height="1880" fill="url(#bg)"/>
+<text x="950" y="60" font-size="40" font-weight="800" fill="#0F172A" text-anchor="middle">Post-Processing Pipeline: Subject-Level and Population-Level Metrics</text>
+<text x="950" y="95" font-size="20" font-weight="500" fill="#334155" text-anchor="middle">SimNIBS TI workflow for one ROI, showing what is collected per subject and what is computed across subjects and repeats</text>
+<text x="565" y="842" font-size="20" font-weight="700" fill="#334155" text-anchor="start">Subject-level repeated measurements feed both population analyses</text>
+<text x="1430" y="842" font-size="16" font-weight="700" fill="#475569" text-anchor="middle">split</text>
+<g class="box">
+<rect x="70" y="180" width="360" height="250" rx="26" ry="26" fill="#F8FAFC" stroke="#1E293B" stroke-width="1.8"/>
+<rect x="70" y="180" width="360" height="48" rx="26" ry="26" fill="#334155"/>
+<rect x="70" y="202" width="360" height="26" fill="#334155"/>
+<text x="94" y="213" font-size="24" font-weight="700" fill="white">1. Analysis Inputs</text>
+<text x="94" y="258" font-size="18" fill="#0F172A">
+<tspan x="94" dy="0">• TI field on the subject TI grid</tspan>
+<tspan x="94" dy="28">• Target ROI mask on the TI grid</tspan>
+<tspan x="94" dy="28">• MNI baseline field for the same ROI</tspan>
+<tspan x="94" dy="28">• Fixed MNI neighboring-region template</tspan>
+<tspan x="94" dy="28">• Anatomical and electrode geometry</tspan>
+<tspan x="94" dy="28">• Repeat identity within the ROI batch</tspan>
+</text></g>
+<g class="box">
+<rect x="500" y="130" width="1320" height="590" rx="26" ry="26" fill="#F5F9FF" stroke="#1E293B" stroke-width="1.8"/>
+<rect x="500" y="130" width="1320" height="48" rx="26" ry="26" fill="#2563EB"/>
+<rect x="500" y="152" width="1320" height="26" fill="#2563EB"/>
+<text x="524" y="163" font-size="24" font-weight="700" fill="white">2. Subject-Level Metrics (Per Subject × Per Repeat)</text>
+<text x="524" y="208" font-size="18" fill="#0F172A">
+<tspan x="524" dy="0">Whole-brain threshold metrics:</tspan>
+<tspan x="524" dy="28">• percentile_value, top_percentile_voxels</tspan>
+<tspan x="524" dy="28">ROI overlap metrics:</tspan>
+<tspan x="524" dy="28">• roi_voxels, overlap_top_voxels, roi_volume_mm3, overlap_volume_mm3, overlap_fraction, roi_percentile_value</tspan>
+<tspan x="524" dy="28">ROI intensity and MNI-comparison metrics:</tspan>
+<tspan x="524" dy="28">• roi_peak, roi_mean, roi_peak_abs_delta_mni, roi_mean_abs_delta_mni</tspan>
+<tspan x="524" dy="28">Focality metrics:</tspan>
+<tspan x="524" dy="28">• focality_voxels_gt_threshold, focality_volume_mm3_gt_threshold, focality_voxels_abs_delta_mni, focality_volume_mm3_abs_delta_mni</tspan>
+<tspan x="524" dy="28">Neighbor-exposure metrics:</tspan>
+<tspan x="524" dy="28">• neighbor_mean_of_means, neighbor_max_of_max, neighbor_min_of_max</tspan>
+<tspan x="524" dy="28">Anatomical context metrics:</tspan>
+<tspan x="524" dy="28">• csf_distance_mm, skull_distance_mm, electrode_distance_mean_mm, electrode_distance_min_mm, electrode_distance_max_mm</tspan>
+</text></g>
+<g class="box">
+<rect x="90" y="880" width="800" height="590" rx="26" ry="26" fill="#F7FEE7" stroke="#1E293B" stroke-width="1.8"/>
+<rect x="90" y="880" width="800" height="48" rx="26" ry="26" fill="#4D7C0F"/>
+<rect x="90" y="902" width="800" height="26" fill="#4D7C0F"/>
+<text x="114" y="913" font-size="22" font-weight="700" fill="white">3A. Within-Run Population Metrics (All Subjects in One Repeat)</text>
+<text x="114" y="958" font-size="18" fill="#0F172A">
+<tspan x="114" dy="0">Across subjects within one repeat:</tspan>
+<tspan x="114" dy="28">• atlas-region mean and peak distributions</tspan>
+<tspan x="114" dy="28">• mean, median, IQR, SD, CV, min, max</tspan>
+<tspan x="114" dy="28">• fraction above threshold for regional peak fields</tspan>
+<tspan x="114" dy="28">• neighbor-region summaries across subjects</tspan>
+<tspan x="114" dy="28">• subject-level ROI intensity and focality distributions</tspan>
+<tspan x="114" dy="28">• anatomy-to-performance correlations</tspan>
+<tspan x="114" dy="28">• worst-case subjects: lowest ROI peak, largest absolute delta, and broadest focality</tspan>
+</text></g>
+<g class="box">
+<rect x="1010" y="880" width="810" height="650" rx="26" ry="26" fill="#FFF7ED" stroke="#1E293B" stroke-width="1.8"/>
+<rect x="1010" y="880" width="810" height="48" rx="26" ry="26" fill="#C2410C"/>
+<rect x="1010" y="902" width="810" height="26" fill="#C2410C"/>
+<text x="1034" y="913" font-size="22" font-weight="700" fill="white">3B. Across-Repeat Repeatability Metrics (All Repeats for One ROI)</text>
+<text x="1034" y="958" font-size="18" fill="#0F172A">
+<tspan x="1034" dy="0">Across the 10 repeats for one ROI:</tspan>
+<tspan x="1034" dy="28">• complete-case subject cohort</tspan>
+<tspan x="1034" dy="28">Repeat-level population summaries:</tspan>
+<tspan x="1034" dy="28">• per-run n, mean, SD, SEM, 95% CI, median, IQR, min, max, CV</tspan>
+<tspan x="1034" dy="28">Experiment-level repeatability metrics:</tspan>
+<tspan x="1034" dy="28">• SD of run means, mean absolute pairwise difference</tspan>
+<tspan x="1034" dy="28">• pooled within-subject SD, SEM, coefficient of repeatability</tspan>
+<tspan x="1034" dy="28">• pooled within-subject CV and ICC(A,1)</tspan>
+<tspan x="1034" dy="28">• Friedman p value and Kendall&#x27;s W</tspan>
+<tspan x="1034" dy="28">• drift slope, drift p value, drift R²</tspan>
+<tspan x="1034" dy="28">• subject / repeat / residual variance fractions</tspan>
+<tspan x="1034" dy="28">Subject-level repeat summaries:</tspan>
+<tspan x="1034" dy="28">• subject mean across repeats</tspan>
+<tspan x="1034" dy="28">• subject SD, CV, mean absolute pairwise difference</tspan>
+<tspan x="1034" dy="28">• SD relative to pooled repeatability</tspan>
+<tspan x="1034" dy="28">• subject-specific drift slope and R²</tspan>
+</text></g>
+<g class="box">
+<rect x="60" y="1700" width="1780" height="170" rx="26" ry="26" fill="#F8FAFC" stroke="#1E293B" stroke-width="1.8"/>
+<rect x="60" y="1700" width="1780" height="48" rx="26" ry="26" fill="#475569"/>
+<rect x="60" y="1722" width="1780" height="26" fill="#475569"/>
+<text x="84" y="1733" font-size="24" font-weight="700" fill="white">Definitions and Interpretation Notes</text>
+<text x="84" y="1778" font-size="17" fill="#0F172A">
+<tspan x="84" dy="0">• ROI = region of interest. MNI = Montreal Neurological Institute template. IQR = interquartile range. CV = coefficient of variation.</tspan>
+<tspan x="84" dy="28">• ICC(A,1) = absolute-agreement intraclass correlation. SEM = standard error of measurement. CSF = cerebrospinal fluid.</tspan>
+<tspan x="84" dy="28">• percentile_value is the whole-brain percentile cutoff used to define the top-field mask, whereas roi_percentile_value is the same percentile computed only inside the target ROI.</tspan>
+</text></g>
+<polyline points="430,300 500,300" fill="none" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowhead)"/>
+<text x="430" y="282" font-size="15" font-weight="600" fill="#334155">subject-level inputs</text>
+<polyline points="1450,720 1450,815" fill="none" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowhead)"/>
+<circle cx="1450" cy="815" r="7" fill="#334155"/>
+<polyline points="1450,815 490,815 490,880" fill="none" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowhead)"/>
+<text x="620" y="800" font-size="15" font-weight="600" fill="#334155">all subjects within one repeat</text>
+<polyline points="1450,815 1415,815 1415,880" fill="none" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowhead)"/>
+<text x="1515" y="800" font-size="15" font-weight="600" fill="#334155">all repeats for one ROI</text>
+</svg>

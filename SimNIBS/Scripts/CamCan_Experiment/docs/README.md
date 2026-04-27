@@ -43,20 +43,20 @@ The script:
 
 List the available presets:
 ```bash
-/home/boyan/SimNIBS-4.5/bin/simnibs_python simulation/TI_runner_MNI152.py --list-presets
+simnibs_python simulation/TI_runner_MNI152.py --list-presets
 ```
 
 Run one MNI152 simulation:
 ```bash
-/home/boyan/SimNIBS-4.5/bin/simnibs_python simulation/TI_runner_MNI152.py \
-  --root-dir /path/to/experiment_root \
+simnibs_python simulation/TI_runner_MNI152.py \
+  --root-dir simulation/example_experiment_root \
   --preset left-thalamus
 ```
 
 Optional overrides:
 ```bash
-/home/boyan/SimNIBS-4.5/bin/simnibs_python simulation/TI_runner_MNI152.py \
-  --root-dir /path/to/experiment_root \
+simnibs_python simulation/TI_runner_MNI152.py \
+  --root-dir simulation/example_experiment_root \
   --preset hippocampus \
   --pair1-anode F10 \
   --pair1-cathode P8 \

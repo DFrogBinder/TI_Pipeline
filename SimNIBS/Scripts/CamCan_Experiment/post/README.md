@@ -46,7 +46,7 @@ The pipeline has four layers.
 
 ### 1. Per-subject post-processing
 
-Implemented in [post_process.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/post_process.py:1).
+Implemented in [post_process.py](./post_process.py).
 
 This stage:
 
@@ -58,7 +58,7 @@ This stage:
 
 ### 2. Within-run population aggregation
 
-Implemented in [post_population.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/post_population.py:1).
+Implemented in [post_population.py](./post_population.py).
 
 This stage:
 
@@ -70,7 +70,7 @@ This stage:
 
 ### 3. Repeat-batch orchestration
 
-Implemented in [run_post_processing_batch.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_post_processing_batch.py:1) and [run_post_processing_batch_env.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_post_processing_batch_env.py:1).
+Implemented in [run_post_processing_batch.py](./run_post_processing_batch.py) and [run_post_processing_batch_env.py](./run_post_processing_batch_env.py).
 
 This stage:
 
@@ -80,7 +80,7 @@ This stage:
 
 ### 4. Across-repeat repeatability analysis
 
-Implemented in [repeatability/analyze_subject_metrics.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/repeatability/analyze_subject_metrics.py:1).
+Implemented in [repeatability/analyze_subject_metrics.py](./repeatability/analyze_subject_metrics.py).
 
 This stage:
 
@@ -128,11 +128,16 @@ Per-subject post-processing outputs are written beneath:
 
 The most important file in that directory is `subject_metrics.json`.
 
+Visual overview:
+
+- [Editable draw.io flowchart](../docs/post_pipeline_metric_flowchart.drawio)
+- [Static SVG export](../docs/post_pipeline_metric_flowchart.svg)
+
 ## What Is Measured
 
 The pipeline currently measures five analysis families.
 
-### 1. Overlap metrics
+### 1. Overlap and percentile metrics
 
 These are the original post-processing metrics and remain the core compatibility layer for the pipeline.
 
@@ -141,18 +146,22 @@ They quantify how the top field distribution overlaps the target ROI.
 Main fields:
 
 - `percentile_value`
+- `region_percentile`
 - `top_percentile_voxels`
 - `rois[ROI].roi_voxels`
 - `rois[ROI].overlap_top_voxels`
 - `rois[ROI].roi_volume_mm3`
 - `rois[ROI].overlap_volume_mm3`
 - `rois[ROI].overlap_fraction`
+- `rois[ROI].roi_percentile_value`
 
 Interpretation:
 
-- `percentile_value` is the threshold used to define the top field mask
+- `percentile_value` is the whole-brain threshold used to define the top field mask
 - `top_percentile_voxels` is the size of that high-field mask
 - `overlap_fraction` is the fraction of the target ROI occupied by the top field
+- `roi_percentile_value` is the same percentile computed only inside the target ROI for one subject and one repeat
+- `region_percentile` records which percentile level was used for the ROI-internal percentile calculation
 
 ### 2. Target ROI intensity metrics
 
@@ -318,9 +327,10 @@ Shared helper module for the new metrics.
 
 Responsibilities:
 
-- load MNI baseline metrics from JSON or CSV
+- derive MNI baseline metrics from the configured MNI simulation root
 - derive fixed neighbor templates from the configured MNI atlas
 - compute ROI peak/mean metrics
+- compute the ROI-internal percentile value written to `rois[ROI].roi_percentile_value`
 - compute focality metrics
 - compute anatomy-linked distances
 - compute electrode distance summaries
@@ -410,6 +420,7 @@ Responsibilities:
 - read all `subject_metrics.json` files for one ROI across repeats
 - flatten overlap and extended metrics into a long table
 - compute complete-case cohorts
+- optionally restrict the analysis to the complete-case cohort present in every selected repeat
 - compute per-run and experiment-level statistics
 - compute subject-level repeat variation
 - compute mean and SD across repeats per subject
@@ -428,6 +439,7 @@ Simplified shape:
   "target_roi": "Left-Hippocampus",
   "percentile": 95.0,
   "percentile_value": 0.214,
+  "region_percentile": 95.0,
   "voxel_volume_mm3": 1.0,
   "top_percentile_voxels": 53100,
   "rois": {
@@ -436,7 +448,9 @@ Simplified shape:
       "overlap_top_voxels": 1700,
       "roi_volume_mm3": 4200.0,
       "overlap_volume_mm3": 1700.0,
-      "overlap_fraction": 0.40
+      "overlap_fraction": 0.40,
+      "roi_percentile": 95.0,
+      "roi_percentile_value": 0.267
     }
   },
   "extended_metrics": {
@@ -489,6 +503,7 @@ Typical files in `<batch_root>/repeatability_analysis/<roi>/` or `<dataset_root>
 
 - `subject_metrics_long.csv`
 - `repeat_level_population_statistics.csv`
+- `repeat_level_population_statistics_complete_subjects.csv`
 - `experiment_level_population_statistics.csv`
 - `within_subject_repeatability.csv`
 - `subject_repeat_metric_means.csv`
@@ -499,19 +514,27 @@ Typical files in `<batch_root>/repeatability_analysis/<roi>/` or `<dataset_root>
 
 ## Repeatability Logic
 
-The repeatability stage uses all available repeats for the chosen ROI.
+The repeatability stage always uses all available repeats for the chosen ROI.
 
 The main ideas are:
 
 - each `subject_metrics.json` contributes one row for one subject in one repeat
 - a complete-case cohort is built from subjects that are present in every repeat
-- repeat-level summaries compare run means and distributions
+- by default, repeat-level summaries are restricted to that complete-case cohort
+- experiment-level summaries always use the complete-case cohort for subject-matched repeated measures
 - experiment-level summaries quantify run-to-run variability relative to subject-to-subject variability
 - subject-level summaries identify which subjects are especially unstable across repeats
+- within-run population summaries in batch mode are rerun on the complete-case cohort after all repeats finish
+
+Important defaults:
+
+- batch mode now discards subjects that do not complete all selected repeats when it produces within-run population summaries and repeatability outputs
+- the strict cohort can be relaxed only when you explicitly opt in with `--allow-incomplete-repeat-subjects`, `--allow-incomplete-subjects`, or `PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY=0`
 
 Important consequence:
 
 - the per-subject final repeatability summaries, such as the mean ROI peak across the 10 reruns, are computed downstream from the repeated measurements
+- the batch root also receives one complete-case subject manifest per ROI so the exact analysis cohort is auditable
 
 ## Configuration
 
@@ -561,6 +584,7 @@ Useful environment variables in `run_post_processing_batch_env.py`:
 - `PIPELINE_REPEATABILITY_ENABLED`
 - `PIPELINE_REPEATABILITY_OUTPUT_DIR`
 - `PIPELINE_REPEATABILITY_LOGS_ROOT`
+- `PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY`
 
 ## Quick Start
 
@@ -573,7 +597,7 @@ Replace the placeholder paths before running them.
 This is the best choice when you want to test subject-level processing and optional within-run aggregation on a single dataset such as `Left_Hippocampus_Data_01`.
 
 ```bash
-python3 /home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_full_post_pipeline.py \
+python3 post/run_full_post_pipeline.py \
   --root /path/to/Left_Hippocampus_Data_01 \
   --mode single \
   --fastsurfer-root /path/to/subject_atlases \
@@ -595,7 +619,7 @@ Use this mode when you want:
 This is the main end-to-end test path for the repeatability study.
 
 ```bash
-python3 /home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_full_post_pipeline.py \
+python3 post/run_full_post_pipeline.py \
   --root /path/to/repeat_batch_root \
   --mode batch \
   --dataset-glob '*_Data_*' \
@@ -611,16 +635,17 @@ python3 /home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/r
 Use this mode when you want:
 
 - every repeat dataset processed
-- per-run `population_analysis/` outputs
+- per-run `population_analysis/` outputs restricted to subjects that complete all selected repeats
 - one batch summary JSON
 - automatic across-repeat analysis after the batch finishes
+- one complete-case subject manifest per ROI
 
 ### 3. Run repeatability analysis only
 
 Use this when all subject-level outputs already exist and you only want the cross-repeat statistics and figures.
 
 ```bash
-python3 /home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/repeatability/analyze_subject_metrics.py \
+python3 post/repeatability/analyze_subject_metrics.py \
   /path/to/repeat_batch_root \
   --roi Left-Hippocampus \
   --output-dir /path/to/repeat_batch_root/repeatability_analysis/left_hippocampus
@@ -631,14 +656,15 @@ Use this mode when you want:
 - repeat-level and experiment-level summary tables
 - subject-level mean and SD tables across repeats
 - repeatability figures and narrative reports
+- complete-case-only outputs by default
 
 ## Typical Execution Modes
 
 ### 1. Process one dataset run
 
-Use [run_full_post_pipeline.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_full_post_pipeline.py:1) when you want a single command.
+Use [run_full_post_pipeline.py](./run_full_post_pipeline.py) when you want a single command.
 
-Use [run_post_processing.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_post_processing.py:1) when you want direct Python-level control.
+Use [run_post_processing.py](./run_post_processing.py) when you want direct Python-level control.
 
 Typical goals:
 
@@ -647,9 +673,9 @@ Typical goals:
 
 ### 2. Process a full repeat batch
 
-Use [run_full_post_pipeline.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_full_post_pipeline.py:1) when you want a single command.
+Use [run_full_post_pipeline.py](./run_full_post_pipeline.py) when you want a single command.
 
-Use [run_post_processing_batch.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_post_processing_batch.py:1) when you want the lower-level batch orchestration directly.
+Use [run_post_processing_batch.py](./run_post_processing_batch.py) when you want the lower-level batch orchestration directly.
 
 Typical goals:
 
@@ -659,14 +685,24 @@ Typical goals:
 
 ### 3. Run on HPC
 
-Use [run_post_processing_batch_env.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/run_post_processing_batch_env.py:1) when:
+Use [run_post_processing.slurm](../HPC_scripts/run_post_processing.slurm) when:
+
+- you want to process one dataset root on Slurm
+- config should live in the Slurm file, not in Python defaults
+
+Use [run_post_processing_batch.slurm](../HPC_scripts/run_post_processing_batch.slurm) when:
+
+- you want to process a repeat batch on Slurm
+- the repeatability stage should run automatically after the batch
+
+Use [run_post_processing_batch_env.py](./run_post_processing_batch_env.py) when:
 
 - the batch is launched from Slurm
 - config is provided via exported environment variables
 
 ### 4. Run repeatability analysis only
 
-Use [repeatability/analyze_subject_metrics.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/repeatability/analyze_subject_metrics.py:1) when:
+Use [repeatability/analyze_subject_metrics.py](./repeatability/analyze_subject_metrics.py) when:
 
 - subject-level `subject_metrics.json` files already exist
 - you want only the cross-repeat statistical analysis
@@ -683,7 +719,7 @@ Keeping the extended metrics in the same JSON as the overlap metrics makes downs
 
 ### Why the extended computations were moved into a shared helper
 
-Without [metric_extensions.py](/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/metric_extensions.py:1), the code would have duplicated the same metric logic in:
+Without [metric_extensions.py](./metric_extensions.py), the code would have duplicated the same metric logic in:
 
 - subject-level post-processing
 - robustness analysis

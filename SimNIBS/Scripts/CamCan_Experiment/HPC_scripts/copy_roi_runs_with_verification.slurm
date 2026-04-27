@@ -332,26 +332,30 @@ if [[ "$VERIFY_WITH_CHECKSUM" == "1" ]]; then
         --out-format='%i %n%L' \
         "$SOURCE_ROOT/" "$DEST_ROOT/" | tee "$VERIFY_LOG"
 
-    grep -v '^[[:space:]]*$' "$VERIFY_LOG" > "$VERIFY_MISMATCHES" || true
+    # Ignore a lone root-directory timestamp delta. It does not indicate a file-content
+    # mismatch and can appear after a successful copy when only "./" metadata drifted.
+    awk 'NF && $0 != ".d..t...... ./" { print }' "$VERIFY_LOG" > "$VERIFY_MISMATCHES"
     if [[ -s "$VERIFY_MISMATCHES" ]]; then
         VERIFY_OK="0"
-        awk '
-            {
-                path = $2
-                gsub(/^\.\//, "", path)
-                n = split(path, parts, "/")
-                run = (n >= 1 && parts[1] != "" ? parts[1] : "<root>")
-                subject = (n >= 2 && parts[2] != "" ? parts[2] : "<root>")
-                key = run "\t" subject
-                count[key] += 1
-            }
-            END {
-                print "run\tsubject\tmismatch_entries"
-                for (k in count) {
-                    print k "\t" count[k]
+        {
+            printf "run\tsubject\tmismatch_entries\n"
+            awk '
+                {
+                    path = $2
+                    gsub(/^\.\//, "", path)
+                    n = split(path, parts, "/")
+                    run = (n >= 1 && parts[1] != "" ? parts[1] : "<root>")
+                    subject = (n >= 2 && parts[2] != "" ? parts[2] : "<root>")
+                    key = run "\t" subject
+                    count[key] += 1
                 }
-            }
-        ' "$VERIFY_MISMATCHES" | LC_ALL=C sort > "$VERIFY_MISMATCH_SUMMARY"
+                END {
+                    for (k in count) {
+                        print k "\t" count[k]
+                    }
+                }
+            ' "$VERIFY_MISMATCHES" | LC_ALL=C sort
+        } > "$VERIFY_MISMATCH_SUMMARY"
     else
         printf "run\tsubject\tmismatch_entries\n" > "$VERIFY_MISMATCH_SUMMARY"
     fi

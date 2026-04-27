@@ -518,6 +518,7 @@ def flatten_subject_metric_payload(payload: Dict[str, Any], roi_key: str) -> Dic
                 "roi_volume_mm3": roi_metrics.get("roi_volume_mm3"),
                 "overlap_volume_mm3": roi_metrics.get("overlap_volume_mm3"),
                 "overlap_fraction": roi_metrics.get("overlap_fraction"),
+                "roi_percentile_value": roi_metrics.get("roi_percentile_value"),
             }
         )
 

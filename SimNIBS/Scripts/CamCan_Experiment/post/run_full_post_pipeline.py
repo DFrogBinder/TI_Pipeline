@@ -199,6 +199,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Optional logs directory for the repeatability analysis stage.",
     )
     parser.add_argument(
+        "--allow-incomplete-repeat-subjects",
+        action="store_true",
+        help=(
+            "Batch mode only: allow within-run population analysis to use subjects that are not present "
+            "in every selected repeat. By default, only the complete-case cohort across repeats is used."
+        ),
+    )
+    parser.add_argument(
         "--summary-filename",
         default="post_processing_batch_summary.json",
         help="Batch-mode summary filename. Use an empty string to disable summary writing.",
@@ -273,6 +281,7 @@ def build_batch_config(args: argparse.Namespace, root: Path) -> RepeatBatchConfi
         run_repeatability=not args.no_repeatability,
         repeatability_output_dir=repeatability_output_dir,
         repeatability_logs_root=args.repeatability_logs_root,
+        complete_repeat_subjects_only=not args.allow_incomplete_repeat_subjects,
     )
 
 

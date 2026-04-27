@@ -299,12 +299,21 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             ti_in_roi_topP=ti_in_roi_topP_path,
         )
 
+        roi_finite_mask = mask & finite
+        roi_percentile_value = (
+            float(np.nanpercentile(ti_data[roi_finite_mask], cfg.region_percentile))
+            if np.any(roi_finite_mask)
+            else float("nan")
+        )
+
         per_roi_metrics[roi_name] = dict(
             roi_voxels=int(mask.sum()),
             overlap_top_voxels=int(overlap_mask.sum()),
             roi_volume_mm3=float(mask.sum() * vox_vol),
             overlap_volume_mm3=float(overlap_mask.sum() * vox_vol),
             overlap_fraction=float(overlap_mask.sum() / mask.sum()) if mask.sum() else 0.0,
+            roi_percentile=cfg.region_percentile,
+            roi_percentile_value=roi_percentile_value,
         )
         
         hippo_outline_path = None
@@ -479,6 +488,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         target_roi=sel,
         percentile=cfg.percentile,
         percentile_value=float(thr),
+        region_percentile=cfg.region_percentile,
         voxel_volume_mm3=vox_vol,
         top_percentile_voxels=int(topP_mask.sum()),
         rois=per_roi_metrics,

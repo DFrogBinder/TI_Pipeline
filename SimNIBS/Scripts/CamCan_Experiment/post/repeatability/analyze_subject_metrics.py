@@ -158,6 +158,14 @@ def parse_args() -> argparse.Namespace:
             "If omitted, the script will look for a sibling folder named Left-Hippocapus_logs."
         ),
     )
+    parser.add_argument(
+        "--allow-incomplete-subjects",
+        action="store_true",
+        help=(
+            "Use all available subjects in repeat-level descriptive outputs. By default, the analysis "
+            "is restricted to the complete-case cohort present in every repeat."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1834,6 +1842,7 @@ def write_report(
     complete_case_frame: pd.DataFrame,
     coverage: pd.DataFrame,
     experiment_stats: pd.DataFrame,
+    complete_case_only: bool = False,
 ) -> Path:
     unique_subjects = all_frame["subject"].nunique()
     complete_subjects = complete_case_frame["subject"].nunique()
@@ -1864,13 +1873,17 @@ def write_report(
         f"- Repeats analysed: **{run_count}** (`R01` to `R{run_count:02d}`).",
         f"- Subjects per repeat ranged from **{min_subjects}** to **{max_subjects}**.",
         (
-            f"- Complete-case population for paired between-run comparisons: "
+            f"- Complete-case population {'used throughout the analysis' if complete_case_only else 'for paired between-run comparisons'}: "
             f"**{complete_subjects}** subjects present in every repeat."
         ),
         "",
         "## Definitions",
         "",
-        "- Repeat level: population statistics are computed separately inside each repeat across all available subjects.",
+        (
+            "- Repeat level: population statistics are computed separately inside each repeat on the complete-case cohort only."
+            if complete_case_only
+            else "- Repeat level: population statistics are computed separately inside each repeat across all available subjects."
+        ),
         (
             "- Experiment level: the repeat-level population means are treated as the run-to-run series, "
             "and paired comparisons are computed on the complete-case subject set so repeats remain directly comparable."
@@ -1924,8 +1937,16 @@ def write_report(
         "",
         "- `subject_metrics_long.csv`: flattened subject_metrics records used in the analysis.",
         "- `run_subject_coverage.csv`: subject availability per repeat.",
-        "- `repeat_level_population_statistics.csv`: per-repeat population summaries using all available subjects.",
-        "- `repeat_level_population_statistics_complete_subjects.csv`: per-repeat summaries restricted to the complete-case population.",
+        (
+            "- `repeat_level_population_statistics.csv`: per-repeat population summaries restricted to the complete-case population."
+            if complete_case_only
+            else "- `repeat_level_population_statistics.csv`: per-repeat population summaries using all available subjects."
+        ),
+        (
+            "- `repeat_level_population_statistics_complete_subjects.csv`: compatibility copy of the same complete-case per-repeat summaries."
+            if complete_case_only
+            else "- `repeat_level_population_statistics_complete_subjects.csv`: per-repeat summaries restricted to the complete-case population."
+        ),
         "- `experiment_level_population_statistics.csv`: across-run experiment summaries plus repeated-measures stability metrics.",
         "- `variation_analysis_metrics.csv`: concise experiment-level repeatability and drift metrics for the primary endpoints.",
         "- `pairwise_run_differences.csv`: paired repeat-to-repeat differences on complete-case subjects.",
@@ -1951,6 +1972,7 @@ def write_methodology_documentation(
     coverage: pd.DataFrame,
     repeat_level_available: pd.DataFrame,
     experiment_stats: pd.DataFrame,
+    complete_case_only: bool = False,
 ) -> Path:
     unique_subjects = int(all_frame["subject"].nunique())
     complete_subjects = int(complete_case_frame["subject"].nunique())
@@ -2026,7 +2048,11 @@ def write_methodology_documentation(
         f"- Total subject-run observations loaded: `{len(all_frame):,}`",
         f"- Unique subjects present in at least one repeat: `{unique_subjects}`",
         f"- Subjects per repeat ranged from `{min_subjects}` to `{max_subjects}`",
-        f"- Complete-case population used for paired between-run analysis: `{complete_subjects}` subjects",
+        (
+            f"- Complete-case population used throughout the repeatability analysis: `{complete_subjects}` subjects"
+            if complete_case_only
+            else f"- Complete-case population used for paired between-run analysis: `{complete_subjects}` subjects"
+        ),
         "",
         "## What Data Were Read",
         "",
@@ -2216,7 +2242,11 @@ def write_methodology_documentation(
             "most defensible design is:"
         ),
         "",
-        "- Use all available subjects when describing each run independently.",
+        (
+            "- Use the same complete-case subjects for both within-run and between-run summaries."
+            if complete_case_only
+            else "- Use all available subjects when describing each run independently."
+        ),
         "- Use only complete-case subjects when comparing runs against each other.",
         "- Report both descriptive statistics and repeatability metrics, because a low run-to-run drift can coexist with meaningful subject-level variability.",
         "",
@@ -2308,6 +2338,7 @@ def write_results_interpretation(
     coverage: pd.DataFrame,
     repeat_level_available: pd.DataFrame,
     experiment_stats: pd.DataFrame,
+    complete_case_only: bool = False,
 ) -> Path:
     primary_stats = experiment_stats[experiment_stats["metric"].isin(PLOT_METRICS)].copy()
     coverage_range = int(coverage["n_subjects"].max() - coverage["n_subjects"].min())
@@ -2354,7 +2385,10 @@ def write_results_interpretation(
         "## What This Means Overall",
         "",
         (
-            f"Subject coverage was very similar across repeats, varying by only `{coverage_range}` subjects "
+            f"The interpretation below is restricted to the complete-case cohort of `{int(coverage['n_subjects'].max())}` subjects "
+            "present in every repeat, so each run is being compared on exactly the same population."
+            if complete_case_only
+            else f"Subject coverage was very similar across repeats, varying by only `{coverage_range}` subjects "
             f"(`{int(coverage['n_subjects'].min())}` to `{int(coverage['n_subjects'].max())}`). "
             "That means the runs were based on almost the same population and can be compared with confidence."
         ),
@@ -2880,6 +2914,7 @@ def run_analysis(
     roi: str | None = None,
     output_dir: str | Path | None = None,
     logs_root: str | Path | None = None,
+    complete_case_only: bool = True,
 ) -> dict[str, object]:
     dataset_root = Path(dataset_root).resolve()
     logs_root_path = resolve_logs_root(dataset_root, str(logs_root) if logs_root else None)
@@ -2896,6 +2931,15 @@ def run_analysis(
 
     coverage, _all_subjects, complete_subjects = compute_coverage(frame)
     complete_case_frame = frame[frame["subject"].isin(complete_subjects)].copy()
+    analysis_frame = complete_case_frame if complete_case_only else frame
+    analysis_coverage = (
+        compute_coverage(analysis_frame)[0] if complete_case_only else coverage
+    )
+    coverage_subjects = (
+        sorted(analysis_frame["subject"].unique())
+        if complete_case_only
+        else complete_subjects
+    )
     subject_repeat_means = (
         complete_case_frame.groupby("subject", sort=True)[metrics].mean(numeric_only=True).reset_index()
     )
@@ -2903,7 +2947,7 @@ def run_analysis(
         complete_case_frame.groupby("subject", sort=True)[metrics].std(numeric_only=True).reset_index()
     )
 
-    repeat_level_available = compute_repeat_level_stats(frame, metrics)
+    repeat_level_available = compute_repeat_level_stats(analysis_frame, metrics)
     repeat_level_complete = compute_repeat_level_stats(complete_case_frame, metrics)
     pairwise_differences = compute_pairwise_differences(complete_case_frame, metrics)
     within_subject_repeatability = compute_within_subject_repeatability(complete_case_frame, metrics)
@@ -2958,7 +3002,7 @@ def run_analysis(
     if logs_root_path is not None:
         log_detail_frame, log_summary_frame, log_transition_frame = load_log_analysis(
             logs_root_path,
-            set(frame["subject"].unique()),
+            set(analysis_frame["subject"].unique()),
         )
         failed_only = log_detail_frame[log_detail_frame["final_status"] == "failed"].copy()
         failure_category_by_run = (
@@ -2976,8 +3020,8 @@ def run_analysis(
             .reset_index(drop=True)
         )
 
-    frame.to_csv(output_dir / "subject_metrics_long.csv", index=False)
-    coverage.to_csv(output_dir / "run_subject_coverage.csv", index=False)
+    analysis_frame.to_csv(output_dir / "subject_metrics_long.csv", index=False)
+    analysis_coverage.to_csv(output_dir / "run_subject_coverage.csv", index=False)
     repeat_level_available.to_csv(output_dir / "repeat_level_population_statistics.csv", index=False)
     repeat_level_complete.to_csv(
         output_dir / "repeat_level_population_statistics_complete_subjects.csv", index=False
@@ -3000,8 +3044,8 @@ def run_analysis(
         log_transition_frame.to_csv(output_dir / "log_run_transition_summary.csv", index=False)
 
     setup_plotting()
-    save_coverage_plot(coverage, complete_subjects, figures_dir / "01_subject_coverage.png")
-    save_repeat_distribution_plot(frame, figures_dir / "02_repeat_level_distributions.png")
+    save_coverage_plot(analysis_coverage, coverage_subjects, figures_dir / "01_subject_coverage.png")
+    save_repeat_distribution_plot(analysis_frame, figures_dir / "02_repeat_level_distributions.png")
     save_repeat_mean_ci_plot(repeat_level_available, figures_dir / "03_repeat_level_mean_ci.png")
     save_pairwise_heatmap_plot(pairwise_differences, figures_dir / "04_pairwise_run_differences.png")
     save_variation_summary_plot(experiment_level_stats, figures_dir / "05_variation_summary.png")
@@ -3020,20 +3064,22 @@ def run_analysis(
         dataset_root=dataset_root,
         output_dir=output_dir,
         roi_name=roi_name,
-        all_frame=frame,
+        all_frame=analysis_frame,
         complete_case_frame=complete_case_frame,
-        coverage=coverage,
+        coverage=analysis_coverage,
         experiment_stats=experiment_level_stats,
+        complete_case_only=complete_case_only,
     )
     methodology_path = write_methodology_documentation(
         dataset_root=dataset_root,
         output_dir=output_dir,
         roi_name=roi_name,
-        all_frame=frame,
+        all_frame=analysis_frame,
         complete_case_frame=complete_case_frame,
-        coverage=coverage,
+        coverage=analysis_coverage,
         repeat_level_available=repeat_level_available,
         experiment_stats=experiment_level_stats,
+        complete_case_only=complete_case_only,
     )
     subject_variation_report_path = write_subject_variation_report(
         output_dir=output_dir,
@@ -3045,9 +3091,10 @@ def run_analysis(
     interpretation_path = write_results_interpretation(
         output_dir=output_dir,
         roi_name=roi_name,
-        coverage=coverage,
+        coverage=analysis_coverage,
         repeat_level_available=repeat_level_available,
         experiment_stats=experiment_level_stats,
+        complete_case_only=complete_case_only,
     )
     failure_report_path = None
     if logs_root_path is not None:
@@ -3057,12 +3104,12 @@ def run_analysis(
             log_detail_frame=log_detail_frame,
             log_summary_frame=log_summary_frame,
             log_transition_frame=log_transition_frame,
-            post_metric_subjects=set(frame["subject"].unique()),
+            post_metric_subjects=set(analysis_frame["subject"].unique()),
         )
 
     print(f"ROI: {roi_name}")
-    print(f"Rows analysed: {len(frame):,}")
-    print(f"Unique subjects: {frame['subject'].nunique()}")
+    print(f"Rows analysed: {len(analysis_frame):,}")
+    print(f"Unique subjects: {analysis_frame['subject'].nunique()}")
     print(f"Complete-case subjects: {len(complete_subjects)}")
     print(f"Output directory: {output_dir}")
     print(f"Report: {report_path}")
@@ -3074,9 +3121,10 @@ def run_analysis(
 
     return {
         "roi_name": roi_name,
-        "rows_analysed": len(frame),
-        "unique_subjects": int(frame["subject"].nunique()),
+        "rows_analysed": len(analysis_frame),
+        "unique_subjects": int(analysis_frame["subject"].nunique()),
         "complete_case_subjects": len(complete_subjects),
+        "complete_case_only": complete_case_only,
         "output_dir": str(output_dir),
         "report_path": str(report_path),
         "methodology_path": str(methodology_path),
@@ -3093,6 +3141,7 @@ def main() -> None:
         roi=args.roi,
         output_dir=args.output_dir,
         logs_root=args.logs_root,
+        complete_case_only=not args.allow_incomplete_subjects,
     )
 
 

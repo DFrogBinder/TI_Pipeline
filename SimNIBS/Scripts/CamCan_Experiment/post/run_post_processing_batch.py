@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 from post.run_post_processing import (
     PipelineConfig,
     apply_cli_overrides,
+    discover_subjects as discover_dataset_subjects,
     make_default_config,
     run_pipeline,
 )
@@ -54,6 +55,7 @@ class RepeatBatchConfig:
     run_repeatability: bool = True
     repeatability_output_dir: Optional[str] = "repeatability_analysis"
     repeatability_logs_root: Optional[str] = None
+    complete_repeat_subjects_only: bool = True
 
 
 def _parse_repeat_value(value: str | int) -> int:
@@ -133,6 +135,138 @@ def _resolve_repeatability_output_root(cfg: RepeatBatchConfig, batch_root: Path)
     return output_root
 
 
+def _resolve_population_output_root(pipeline_template: PipelineConfig) -> Optional[Path]:
+    if not pipeline_template.population.out_dir:
+        return None
+    return Path(pipeline_template.population.out_dir).expanduser()
+
+
+def _subject_has_required_outputs(
+    dataset_root: Path,
+    subject: str,
+    *,
+    region_filename: str,
+    metrics_filename: str,
+) -> bool:
+    post_root = dataset_root / subject / "anat" / "post"
+    return (post_root / region_filename).is_file() and (post_root / metrics_filename).is_file()
+
+
+def _collect_complete_repeat_subjects(
+    *,
+    results: list[dict],
+    pipeline_template: PipelineConfig,
+) -> dict[str, list[str]]:
+    by_roi: dict[str, list[set[str]]] = {}
+    for result in results:
+        if result["status"] != "ok":
+            continue
+        roi_name = result.get("resolved_target_roi")
+        if not roi_name:
+            continue
+        dataset_root = Path(str(result["dataset_root"])).expanduser().resolve()
+        subject_candidates = discover_dataset_subjects(dataset_root, pipeline_template.post.subjects)
+        eligible_subjects = {
+            subject
+            for subject in subject_candidates
+            if _subject_has_required_outputs(
+                dataset_root,
+                subject,
+                region_filename=pipeline_template.population.region_filename,
+                metrics_filename=pipeline_template.population.metrics_filename,
+            )
+        }
+        by_roi.setdefault(str(roi_name), []).append(eligible_subjects)
+
+    complete_subjects_by_roi: dict[str, list[str]] = {}
+    for roi_name, subject_sets in by_roi.items():
+        if not subject_sets:
+            complete_subjects_by_roi[roi_name] = []
+            continue
+        complete_subjects_by_roi[roi_name] = sorted(set.intersection(*subject_sets))
+    return complete_subjects_by_roi
+
+
+def _write_complete_subject_manifest(
+    *,
+    batch_root: Path,
+    roi_name: str,
+    subjects: Sequence[str],
+) -> Path:
+    manifest_path = batch_root / f"complete_repeat_subjects__{normalize_roi_name(roi_name)}.txt"
+    manifest_path.write_text("\n".join(subjects) + ("\n" if subjects else ""), encoding="utf-8")
+    return manifest_path
+
+
+def _rerun_population_for_complete_subjects(
+    *,
+    results: list[dict],
+    pipeline_template: PipelineConfig,
+    complete_subjects_by_roi: dict[str, list[str]],
+) -> list[dict]:
+    from post.post_population import run_population
+
+    population_results: list[dict] = []
+    population_out_dir = _resolve_population_output_root(pipeline_template)
+    template_region_csv = (
+        Path(pipeline_template.population.template_region_csv).expanduser()
+        if pipeline_template.population.template_region_csv
+        else None
+    )
+
+    for result in results:
+        if result["status"] != "ok":
+            continue
+
+        roi_name = str(result.get("resolved_target_roi") or "")
+        dataset_root = Path(str(result["dataset_root"])).expanduser().resolve()
+        subjects = complete_subjects_by_roi.get(roi_name, [])
+
+        if not subjects:
+            population_results.append(
+                {
+                    "dataset_root": str(dataset_root),
+                    "roi_name": roi_name,
+                    "status": "skipped",
+                    "reason": "No complete-case subjects were available across all selected repeats.",
+                }
+            )
+            continue
+
+        try:
+            output_path = run_population(
+                root=dataset_root,
+                subjects=subjects,
+                out_dir=population_out_dir,
+                region_filename=pipeline_template.population.region_filename,
+                metrics_filename=pipeline_template.population.metrics_filename,
+                peak_threshold=pipeline_template.population.peak_threshold,
+                target_roi=roi_name or (pipeline_template.population.target_roi or "Hippocampus"),
+                template_region_csv=template_region_csv,
+            )
+            population_results.append(
+                {
+                    "dataset_root": str(dataset_root),
+                    "roi_name": roi_name,
+                    "status": "ok",
+                    "subjects_used": len(subjects),
+                    "output_dir": str(output_path),
+                }
+            )
+        except Exception as exc:
+            population_results.append(
+                {
+                    "dataset_root": str(dataset_root),
+                    "roi_name": roi_name,
+                    "status": "failed",
+                    "subjects_used": len(subjects),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return population_results
+
+
 def _run_repeatability_stage(
     *,
     batch_root: Path,
@@ -168,6 +302,7 @@ def _run_repeatability_stage(
                 roi=roi_name,
                 output_dir=roi_output_dir,
                 logs_root=cfg.repeatability_logs_root,
+                complete_case_only=cfg.complete_repeat_subjects_only,
             )
             repeatability_results.append(
                 {
@@ -210,10 +345,15 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
 
     results = []
     failed = []
+    defer_population_until_complete_case = (
+        cfg.complete_repeat_subjects_only and pipeline_template.population.enabled
+    )
 
     for index, dataset in enumerate(datasets, start=1):
         print(f"[INFO] Dataset {index}/{len(datasets)}: {dataset.name}")
         dataset_cfg = build_dataset_pipeline_config(dataset.root, pipeline_template)
+        if defer_population_until_complete_case:
+            dataset_cfg.population.enabled = False
 
         status = "ok"
         error = None
@@ -250,8 +390,39 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
         "total_datasets": len(datasets),
         "processed_datasets": sum(1 for item in results if item["status"] == "ok"),
         "failed_datasets": len(failed),
+        "complete_repeat_subjects_only": cfg.complete_repeat_subjects_only,
         "results": results,
     }
+
+    complete_subjects_by_roi = (
+        _collect_complete_repeat_subjects(results=results, pipeline_template=pipeline_template)
+        if cfg.complete_repeat_subjects_only
+        else {}
+    )
+    if complete_subjects_by_roi:
+        manifest_rows = []
+        for roi_name, subjects in sorted(complete_subjects_by_roi.items()):
+            manifest_path = _write_complete_subject_manifest(
+                batch_root=batch_root,
+                roi_name=roi_name,
+                subjects=subjects,
+            )
+            manifest_rows.append(
+                {
+                    "roi_name": roi_name,
+                    "n_subjects": len(subjects),
+                    "manifest_path": str(manifest_path),
+                }
+            )
+        summary["complete_repeat_subjects"] = manifest_rows
+
+    if defer_population_until_complete_case:
+        summary["population_results"] = _rerun_population_for_complete_subjects(
+            results=results,
+            pipeline_template=pipeline_template,
+            complete_subjects_by_roi=complete_subjects_by_roi,
+        )
+
     summary["repeatability_results"] = _run_repeatability_stage(
         batch_root=batch_root,
         cfg=cfg,
@@ -317,6 +488,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional logs root for the repeatability analysis stage.",
     )
     parser.add_argument(
+        "--allow-incomplete-repeat-subjects",
+        action="store_true",
+        help=(
+            "Allow within-run population summaries and repeatability descriptive outputs to include "
+            "subjects that are not present in every selected repeat. By default, only the complete-case "
+            "cohort shared across all selected repeats is used."
+        ),
+    )
+    parser.add_argument(
         "--atlas-filename",
         "--fastsurfer-atlas-filename",
         dest="fastsurfer_atlas_filename",
@@ -369,6 +549,8 @@ def apply_batch_cli_overrides(cfg: RepeatBatchConfig, args: argparse.Namespace) 
         cfg.repeatability_output_dir = args.repeatability_output_dir or None
     if args.repeatability_logs_root is not None:
         cfg.repeatability_logs_root = args.repeatability_logs_root or None
+    if args.allow_incomplete_repeat_subjects:
+        cfg.complete_repeat_subjects_only = False
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

@@ -167,6 +167,10 @@ def build_configs():
         repeatability_output_dir=read_optional_text("PIPELINE_REPEATABILITY_OUTPUT_DIR")
         or "repeatability_analysis",
         repeatability_logs_root=read_optional_text("PIPELINE_REPEATABILITY_LOGS_ROOT"),
+        complete_repeat_subjects_only=read_bool(
+            "PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY",
+            default=True,
+        ),
     )
     return batch_cfg, pipeline_cfg
 

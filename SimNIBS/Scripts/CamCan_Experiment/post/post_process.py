@@ -22,6 +22,7 @@ from post.post_functions import (
     overlay_ti_full_field_true_vmax_reference_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi_individual_scale,
+    overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale,
     roi_masks_on_ti_grid,
     write_csv,
 )
@@ -170,6 +171,93 @@ def _log_t1_lookup_details(
         print(f"[WARN] Failed loading T1 for overlays: {type(error).__name__}: {error}")
     elif not resolved.is_file():
         print("[WARN] T1 file for overlays was not found at the resolved path above.")
+
+
+def _generate_selected_roi_overlays(
+    *,
+    cfg: PostProcessConfig,
+    ti_img: nib.spatialimages.SpatialImage,
+    ti_data: np.ndarray,
+    t1_img_full: nib.spatialimages.SpatialImage,
+    roi_mask: np.ndarray,
+    fs_atlas_img: Optional[nib.Nifti1Image],
+    out_dir: str,
+    roi_name: str,
+) -> tuple[list[str], str]:
+    roi_mask_img = nib.Nifti1Image(roi_mask.astype(np.uint8), ti_img.affine, ti_img.header)
+    context_scale_mask_img = (
+        build_context_scale_mask_from_fastsurfer(fs_atlas_img)
+        if fs_atlas_img is not None
+        else None
+    )
+    sel_norm = normalize_roi_name(roi_name)
+    out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
+
+    png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
+        ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+        t1_img=t1_img_full,
+        roi_mask_img=roi_mask_img,
+        out_prefix=f"{out_base}_context",
+        subject=cfg.subject,
+        z_offset_mm=cfg.overlay_z_offset_mm,
+        include_full_field=cfg.overlay_full_field,
+        percentile=cfg.percentile,
+        hard_threshold=cfg.hard_threshold,
+        scale_mask_img=context_scale_mask_img,
+    )
+
+    roi_base = f"{out_base}_roi_focus"
+    roi_overlay_mode = "roi_focus"
+    try:
+        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=roi_base,
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+        )
+    except Exception as exc:
+        roi_overlay_mode = "whole_brain_fallback"
+        if cfg.verbose:
+            print(
+                f"[WARN] ROI-focused overlays failed for {cfg.subject}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            print(
+                f"[INFO] Retrying ROI-focused overlays for {cfg.subject} "
+                "with whole-brain display scaling."
+            )
+        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=roi_base,
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+        )
+
+    reference_full = overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
+        ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+        t1_img=t1_img_full,
+        roi_mask_img=roi_mask_img,
+        out_prefix=f"{out_base}_whole_brain_reference",
+        subject=cfg.subject,
+        z_offset_mm=cfg.overlay_z_offset_mm,
+    )
+
+    overlay_paths = [
+        path
+        for path in (png_full, png_95, png_02, roi_full, roi_95, roi_02, reference_full)
+        if path is not None
+    ]
+    return overlay_paths, roi_overlay_mode
 
 
 def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
@@ -431,52 +519,18 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
-    sel_norm = normalize_roi_name(sel)
+    overlay_strategy = None
     if t1_img_full is not None and sel in roi_masks:
-        roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)
-        context_scale_mask_img = (
-            build_context_scale_mask_from_fastsurfer(fs_atlas_img)
-            if fs_atlas_img is not None
-            else None
+        overlay_paths[sel], overlay_strategy = _generate_selected_roi_overlays(
+            cfg=cfg,
+            ti_img=ti_img,
+            ti_data=ti_data,
+            t1_img_full=t1_img_full,
+            roi_mask=roi_masks[sel],
+            fs_atlas_img=fs_atlas_img,
+            out_dir=out_dir,
+            roi_name=sel,
         )
-        out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
-        png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
-            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-            t1_img=t1_img_full,
-            roi_mask_img=roi_mask_img,
-            out_prefix=f"{out_base}_context",
-            subject=cfg.subject,
-            z_offset_mm=cfg.overlay_z_offset_mm,
-            include_full_field=cfg.overlay_full_field,
-            percentile=cfg.percentile,
-            hard_threshold=cfg.hard_threshold,
-            scale_mask_img=context_scale_mask_img,
-        )
-        roi_base = f"{out_base}_roi_focus"
-        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
-            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-            t1_img=t1_img_full,
-            roi_mask_img=roi_mask_img,
-            out_prefix=roi_base,
-            subject=cfg.subject,
-            z_offset_mm=cfg.overlay_z_offset_mm,
-            include_full_field=cfg.overlay_full_field,
-            percentile=cfg.percentile,
-            hard_threshold=cfg.hard_threshold,
-        )
-        reference_full = overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
-            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-            t1_img=t1_img_full,
-            roi_mask_img=roi_mask_img,
-            out_prefix=f"{out_base}_whole_brain_reference",
-            subject=cfg.subject,
-            z_offset_mm=cfg.overlay_z_offset_mm,
-        )
-        overlay_paths[sel] = [
-            p
-            for p in (png_full, png_95, png_02, roi_full, roi_95, roi_02, reference_full)
-            if p is not None
-        ]
     elif t1_img_full is None:
         if cfg.verbose:
             print("[INFO] Skipping overlays because no T1 background image could be loaded.")
@@ -516,6 +570,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         extended_metrics=extended_metrics,
         neighbor_table_path=neighbor_table_path,
         electrode_table_path=electrode_table_path,
+        overlay_strategy=overlay_strategy,
     )
 
 if __name__ == "__main__":

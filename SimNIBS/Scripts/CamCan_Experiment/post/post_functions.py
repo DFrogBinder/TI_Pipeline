@@ -167,6 +167,27 @@ def _robust_vmax(values: np.ndarray, upper_percentile: float) -> float:
     return vmax
 
 
+def _coerce_display_bounds(vmin: float, vmax: float) -> tuple[float, float]:
+    if not np.isfinite(vmin):
+        vmin = 0.0
+    if not np.isfinite(vmax):
+        vmax = vmin
+    if vmax <= vmin:
+        vmax = float(np.nextafter(vmin, np.inf))
+    return vmin, vmax
+
+
+def _prepare_overlay_data(arr: np.ndarray, thr_value: Optional[float]) -> tuple[np.ndarray, np.ndarray]:
+    finite = np.isfinite(arr)
+    if thr_value is None:
+        overlay_data = np.where(finite, arr, 0.0)
+    else:
+        overlay_data = np.where(finite & (arr >= thr_value), arr, 0.0)
+
+    subset = overlay_data[overlay_data > 0]
+    return overlay_data, subset
+
+
 def _overlay_ti_thresholds_on_t1_with_roi(
     *,
     ti_img: nib.Nifti1Image,
@@ -218,6 +239,9 @@ def _overlay_ti_thresholds_on_t1_with_roi(
     if scale_mode == "roi_focus":
         scale_mask = roi_data
         scale_title = "ROI focus"
+    elif scale_mode == "whole_brain":
+        scale_mask = np.ones(arr.shape, dtype=bool)
+        scale_title = "Whole-brain"
     elif scale_on_ti is not None:
         scale_mask = np.asarray(scale_on_ti.dataobj) > 0
         scale_title = "Context"
@@ -231,13 +255,10 @@ def _overlay_ti_thresholds_on_t1_with_roi(
     vmax = _robust_vmax(scale_values, scale_upper_percentile)
 
     def _plot_overlay(thr_value: Optional[float], label: str):
-        if thr_value is None:
-            overlay_data = arr
-            subset = arr[finite_pos]
-        else:
-            overlay_data = np.where(arr >= thr_value, arr, 0.0)
-            subset = overlay_data[overlay_data > 0]
+        overlay_data, subset = _prepare_overlay_data(arr, thr_value)
         vmin = float(np.nanmin(subset)) if subset.size else 0.0
+        local_vmax = max(vmax, float(np.nanmax(subset))) if subset.size else vmax
+        vmin, local_vmax = _coerce_display_bounds(vmin, local_vmax)
         overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
 
         display = plot_anat(
@@ -256,7 +277,7 @@ def _overlay_ti_thresholds_on_t1_with_roi(
             ),
         )
         display.add_overlay(
-            overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap=cmap
+            overlay_img, colorbar=True, vmin=vmin, vmax=local_vmax, cmap=cmap
         )
         display.add_contours(
             roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
@@ -410,6 +431,45 @@ def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
     )
 
 
+def overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    out_prefix: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    include_full_field: bool = False,
+    percentile: float = 95.0,
+    hard_threshold: float = 200.0,
+    contour_color: str = "red",
+    contour_linewidth: float = 0.5,
+    cmap: str = "viridis",
+    dpi: int = 150,
+    scale_upper_percentile: float = 99.5,
+) -> tuple[str, str, Optional[str]]:
+    """
+    Overlay TI on T1 with ROI contour using a robust whole-brain display scale.
+    """
+    return _overlay_ti_thresholds_on_t1_with_roi(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        out_prefix=out_prefix,
+        scale_mode="whole_brain",
+        scale_upper_percentile=scale_upper_percentile,
+        subject=subject,
+        z_offset_mm=z_offset_mm,
+        include_full_field=include_full_field,
+        percentile=percentile,
+        hard_threshold=hard_threshold,
+        contour_color=contour_color,
+        contour_linewidth=contour_linewidth,
+        cmap=cmap,
+        dpi=dpi,
+    )
+
+
 def overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
     *,
     ti_img: nib.Nifti1Image,
@@ -449,9 +509,11 @@ def overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
     else:
         cut_coords = (0.0, 0.0, 0.0)
 
-    overlay_img = nib.Nifti1Image(arr, ti_img.affine, ti_img.header)
-    vmin = float(np.nanmin(arr[finite_pos]))
-    vmax = float(np.nanmax(arr[finite_pos]))
+    overlay_data, subset = _prepare_overlay_data(arr, None)
+    overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
+    vmin = float(np.nanmin(subset)) if subset.size else 0.0
+    vmax = float(np.nanmax(subset)) if subset.size else 0.0
+    vmin, vmax = _coerce_display_bounds(vmin, vmax)
 
     display = plot_anat(
         t1_on_ti,

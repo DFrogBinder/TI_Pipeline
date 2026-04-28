@@ -389,6 +389,8 @@ SimNIBS/Outputs/
 *.csv 
 *.nii.gz
 *.nii
+*.svg
+*.png
 
 # User-specific stuff
 .idea/**/workspace.xml

@@ -130,8 +130,11 @@ The most important file in that directory is `subject_metrics.json`.
 
 Visual overview:
 
-- [Editable draw.io flowchart](../docs/post_pipeline_metric_flowchart.drawio)
-- [Static SVG export](../docs/post_pipeline_metric_flowchart.svg)
+- Summary structure: [draw.io](../docs/post_pipeline_metric_flowchart.drawio), [SVG](../docs/post_pipeline_metric_flowchart.svg)
+- Inputs and subject-level metrics: [draw.io](../docs/post_pipeline_metric_flowchart_inputs_subject_level.drawio), [SVG](../docs/post_pipeline_metric_flowchart_inputs_subject_level.svg)
+- Cohort definition across repeats: [draw.io](../docs/post_pipeline_metric_flowchart_cohort_definition_across_repeats.drawio), [SVG](../docs/post_pipeline_metric_flowchart_cohort_definition_across_repeats.svg)
+- Within-run population metrics: [draw.io](../docs/post_pipeline_metric_flowchart_within_run_population_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_within_run_population_metrics.svg)
+- Across-repeat repeatability metrics: [draw.io](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg)
 
 ## What Is Measured
 
@@ -423,6 +426,8 @@ Responsibilities:
 - optionally restrict the analysis to the complete-case cohort present in every selected repeat
 - compute per-run and experiment-level statistics
 - compute subject-level repeat variation
+- compute image-level repeatability on saved ROI masks, top-5% masks, overlap masks, and within-ROI field images
+- quantify hotspot localization stability from peak displacement and overlap-mask center of mass
 - compute mean and SD across repeats per subject
 - generate figures and reports
 
@@ -509,6 +514,14 @@ Typical files in `<batch_root>/repeatability_analysis/<roi>/` or `<dataset_root>
 - `subject_repeat_metric_means.csv`
 - `subject_repeat_metric_sds.csv`
 - `subject_level_variation.csv`
+- `image_repeatability_run_level.csv`
+- `image_repeatability_pairwise_subject_run_pairs.csv`
+- `image_repeatability_subject_level.csv`
+- `image_repeatability_pairwise_run_summary.csv`
+- `image_repeatability_cohort_summary.csv`
+- `image_repeatability_issues.csv`
+- `image_repeatability_report.md`
+- `image_repeatability_methodology.md`
 - figures
 - Markdown interpretation and methodology reports
 
@@ -655,6 +668,8 @@ Use this mode when you want:
 
 - repeat-level and experiment-level summary tables
 - subject-level mean and SD tables across repeats
+- ROI-mask, top-5% mask, overlap-mask, and within-ROI field repeatability metrics
+- hotspot localization stability metrics from peak and overlap center-of-mass displacement
 - repeatability figures and narrative reports
 - complete-case-only outputs by default
 

@@ -12,8 +12,9 @@ analysed.
   Compares `subject_metrics.json` outputs across repeated dataset runs such as
   `Left_Hippocampus_Data_01` to `Left_Hippocampus_Data_10`.
   It performs repeat-level summaries, experiment-level repeatability analysis,
-  subject-level variation analysis, figure generation, optional log-based
-  failure auditing, and complete-case cohort filtering.
+  subject-level variation analysis, image-level repeatability analysis on the
+  saved NIfTI masks and ROI field volumes, figure generation, optional
+  log-based failure auditing, and complete-case cohort filtering.
 
 ## How this differs from the rest of `post/`
 
@@ -50,6 +51,8 @@ analysed.
   repeatability outputs are restricted to that complete-case cohort.
 - In batch mode, within-run population summaries are rerun on that same
   complete-case cohort after all repeats finish.
+- The image-level repeatability layer always uses the complete-case cohort so
+  the same subject and ROI support are compared across all repeated runs.
 
 The default can be relaxed only when explicitly requested:
 
@@ -72,3 +75,11 @@ python3 repeatability/analyze_subject_metrics.py /path/to/Left_Hippocampus_Post_
 
 If matching execution logs exist, the script can also audit failure patterns and
 paired run transitions.
+
+To disable the image-level layer and run only the scalar `subject_metrics.json`
+analysis:
+
+```bash
+python3 repeatability/analyze_subject_metrics.py /path/to/Left_Hippocampus_Post_Data \
+  --skip-image-repeatability
+```

@@ -22,6 +22,11 @@ from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import blended_transform_factory
 from scipy import stats
 
+try:
+    import nibabel as nib
+except ImportError:  # pragma: no cover - optional runtime dependency
+    nib = None
+
 from post.metric_extensions import flatten_subject_metric_payload
 
 
@@ -87,6 +92,32 @@ PLOT_METRICS = [
     "overlap_top_voxels",
     "overlap_fraction",
 ]
+
+IMAGE_MASK_METRIC_LABELS = {
+    "roi_mask_dice": "ROI Mask Dice",
+    "roi_mask_jaccard": "ROI Mask Jaccard",
+    "top95_mask_dice": "Top-5% Mask Dice",
+    "top95_mask_jaccard": "Top-5% Mask Jaccard",
+    "overlap_mask_dice": "Overlap Mask Dice",
+    "overlap_mask_jaccard": "Overlap Mask Jaccard",
+}
+
+IMAGE_PAIRWISE_METRIC_LABELS = {
+    **IMAGE_MASK_METRIC_LABELS,
+    "within_roi_field_correlation": "Within-ROI Field Correlation",
+    "peak_displacement_mm": "Peak Displacement (mm)",
+    "overlap_com_displacement_mm": "Overlap COM Displacement (mm)",
+    "roi_mean_field_abs_diff": "ROI Mean |Δ|",
+    "roi_p95_field_abs_diff": "ROI P95 |Δ|",
+    "roi_peak_field_abs_diff": "ROI Peak |Δ|",
+}
+
+IMAGE_FILE_KINDS = {
+    "roi_mask": "atlas_{roi_name}_mask.nii.gz",
+    "top95_mask": "efield_top95pct_mask.nii.gz",
+    "overlap_mask": "{roi_name}_overlap_top95pct_mask.nii.gz",
+    "roi_field": "TI_in_{roi_name}.nii.gz",
+}
 
 
 def format_metric_value(metric: str, value: float | int | None) -> str:
@@ -164,6 +195,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Use all available subjects in repeat-level descriptive outputs. By default, the analysis "
             "is restricted to the complete-case cohort present in every repeat."
+        ),
+    )
+    parser.add_argument(
+        "--skip-image-repeatability",
+        action="store_true",
+        help=(
+            "Skip the image-level repeatability analysis that uses saved NIfTI masks and "
+            "within-ROI field volumes."
         ),
     )
     return parser.parse_args()
@@ -280,6 +319,131 @@ def numeric_metrics(frame: pd.DataFrame) -> list[str]:
         for column in frame.columns
         if column not in excluded and column not in static_metrics
     ]
+
+
+def roi_name_variants(roi_name: str) -> list[str]:
+    candidates = [
+        roi_name,
+        roi_name.replace(" ", "-"),
+        roi_name.replace(" ", "_"),
+        roi_name.replace("-", "_"),
+        roi_name.replace("_", "-"),
+    ]
+    seen: set[str] = set()
+    variants: list[str] = []
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            variants.append(candidate)
+    return variants
+
+
+def resolve_image_repeatability_path(post_dir: Path, roi_name: str, kind: str) -> Path:
+    template = IMAGE_FILE_KINDS[kind]
+    if "{roi_name}" not in template:
+        candidate = post_dir / template
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"Missing required image `{candidate.name}` in {post_dir}")
+
+    for variant in roi_name_variants(roi_name):
+        candidate = post_dir / template.format(roi_name=variant)
+        if candidate.exists():
+            return candidate
+
+    expected = [template.format(roi_name=variant) for variant in roi_name_variants(roi_name)]
+    raise FileNotFoundError(
+        f"Missing required image for `{kind}` in {post_dir}. Tried: {', '.join(expected)}"
+    )
+
+
+def headers_match(reference_shape: tuple[int, ...], reference_affine: np.ndarray, image: object) -> bool:
+    return tuple(image.shape) == tuple(reference_shape) and np.allclose(
+        np.asarray(image.affine),
+        np.asarray(reference_affine),
+        atol=1e-6,
+    )
+
+
+def to_bool_array(image: object) -> np.ndarray:
+    return np.asarray(image.dataobj) > 0
+
+
+def to_float_array(image: object) -> np.ndarray:
+    return np.asarray(image.dataobj, dtype=np.float32)
+
+
+def dice_coefficient(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
+    count_a = int(np.count_nonzero(mask_a))
+    count_b = int(np.count_nonzero(mask_b))
+    total = count_a + count_b
+    if total == 0:
+        return 1.0
+    intersection = int(np.count_nonzero(mask_a & mask_b))
+    return (2.0 * intersection) / total
+
+
+def jaccard_index(mask_a: np.ndarray, mask_b: np.ndarray) -> float:
+    union = int(np.count_nonzero(mask_a | mask_b))
+    if union == 0:
+        return 1.0
+    intersection = int(np.count_nonzero(mask_a & mask_b))
+    return intersection / union
+
+
+def safe_pearson_correlation(values_a: np.ndarray, values_b: np.ndarray) -> float:
+    finite = np.isfinite(values_a) & np.isfinite(values_b)
+    if int(np.count_nonzero(finite)) < 2:
+        return math.nan
+    subset_a = values_a[finite]
+    subset_b = values_b[finite]
+    if float(np.std(subset_a)) == 0.0 or float(np.std(subset_b)) == 0.0:
+        return math.nan
+    return float(np.corrcoef(subset_a, subset_b)[0, 1])
+
+
+def euclidean_distance_mm(point_a: np.ndarray, point_b: np.ndarray) -> float:
+    if np.isnan(point_a).any() or np.isnan(point_b).any():
+        return math.nan
+    return float(np.linalg.norm(point_b - point_a))
+
+
+def pairwise_absolute_differences(values: np.ndarray) -> np.ndarray:
+    diffs = [abs(float(values[b] - values[a])) for a, b in combinations(range(len(values)), 2)]
+    return np.asarray(diffs, dtype=float)
+
+
+def summarise_quantiles(values: np.ndarray | list[float]) -> dict[str, float]:
+    series = pd.to_numeric(pd.Series(values), errors="coerce").dropna()
+    if series.empty:
+        return {
+            "mean": math.nan,
+            "median": math.nan,
+            "p95": math.nan,
+            "max": math.nan,
+        }
+    return {
+        "mean": float(series.mean()),
+        "median": float(series.median()),
+        "p95": float(series.quantile(0.95)),
+        "max": float(series.max()),
+    }
+
+
+def summarise_repeat_vector(prefix: str, values: np.ndarray) -> dict[str, float]:
+    summary = summarise_series(pd.Series(values))
+    diffs = pairwise_absolute_differences(values)
+    diff_summary = summarise_series(pd.Series(diffs))
+    return {
+        f"{prefix}_mean": summary["mean"],
+        f"{prefix}_sd": summary["std"],
+        f"{prefix}_cv_percent": summary["cv_percent"],
+        f"{prefix}_min": summary["min"],
+        f"{prefix}_max": summary["max"],
+        f"{prefix}_range": summary["max"] - summary["min"],
+        f"{prefix}_mean_abs_pairwise_diff": diff_summary["mean"],
+        f"{prefix}_max_abs_pairwise_diff": diff_summary["max"],
+    }
 
 
 def t_interval(mean: float, sem: float, n: int, confidence: float = 0.95) -> tuple[float, float]:
@@ -503,6 +667,344 @@ def compute_mean_pairwise_correlation(pivot: pd.DataFrame) -> float:
     if upper.size == 0:
         return math.nan
     return float(upper.mean())
+
+
+def compute_image_repeatability(
+    dataset_root: Path,
+    roi_name: str,
+    complete_case_frame: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if nib is None:
+        raise RuntimeError(
+            "nibabel is required for image-level repeatability analysis but is not installed."
+        )
+
+    unique_runs = (
+        complete_case_frame.loc[:, ["subject", "repeat_id", "run_label", "run_short", "source_path"]]
+        .drop_duplicates()
+        .sort_values(["subject", "repeat_id"])
+        .reset_index(drop=True)
+    )
+
+    run_level_rows: list[dict[str, object]] = []
+    pairwise_rows: list[dict[str, object]] = []
+    subject_rows: list[dict[str, object]] = []
+    issue_rows: list[dict[str, object]] = []
+
+    for subject, subject_runs in unique_runs.groupby("subject", sort=True):
+        subject_runs = subject_runs.sort_values("repeat_id").reset_index(drop=True)
+        try:
+            post_dirs = [dataset_root / Path(path).parent for path in subject_runs["source_path"]]
+            run_descriptors = [
+                {
+                    "repeat_id": int(row.repeat_id),
+                    "run_label": str(row.run_label),
+                    "run_short": str(row.run_short),
+                    "post_dir": post_dir,
+                }
+                for row, post_dir in zip(subject_runs.itertuples(index=False), post_dirs)
+            ]
+
+            reference_paths = {
+                kind: resolve_image_repeatability_path(run_descriptors[0]["post_dir"], roi_name, kind)
+                for kind in IMAGE_FILE_KINDS
+            }
+            reference_roi_img = nib.load(str(reference_paths["roi_mask"]))
+            reference_shape = tuple(reference_roi_img.shape)
+            reference_affine = np.asarray(reference_roi_img.affine, dtype=float)
+            reference_roi_mask = to_bool_array(reference_roi_img)
+            if int(np.count_nonzero(reference_roi_mask)) == 0:
+                raise ValueError("Reference ROI mask is empty.")
+            reference_roi_indices = np.where(reference_roi_mask)
+
+            roi_masks: list[np.ndarray] = []
+            top_masks: list[np.ndarray] = []
+            overlap_masks: list[np.ndarray] = []
+            roi_field_vectors: list[np.ndarray] = []
+            peak_points_mm: list[np.ndarray] = []
+            overlap_com_points_mm: list[np.ndarray] = []
+            roi_mean_fields: list[float] = []
+            roi_p95_fields: list[float] = []
+            roi_peak_fields: list[float] = []
+            grid_consistent_all_runs = True
+            same_roi_mask_all_runs = True
+
+            for descriptor in run_descriptors:
+                image_paths = {
+                    kind: resolve_image_repeatability_path(descriptor["post_dir"], roi_name, kind)
+                    for kind in IMAGE_FILE_KINDS
+                }
+                images = {kind: nib.load(str(path)) for kind, path in image_paths.items()}
+                if not all(
+                    headers_match(reference_shape, reference_affine, image)
+                    for image in images.values()
+                ):
+                    grid_consistent_all_runs = False
+                    raise ValueError(
+                        f"Image header mismatch for {subject} in {descriptor['run_label']}"
+                    )
+
+                roi_mask = to_bool_array(images["roi_mask"])
+                top_mask = to_bool_array(images["top95_mask"])
+                overlap_mask = to_bool_array(images["overlap_mask"])
+                roi_field = to_float_array(images["roi_field"])
+                roi_values = roi_field[reference_roi_indices]
+                finite_run_mask = np.isfinite(roi_values)
+                if not finite_run_mask.any():
+                    raise ValueError(
+                        f"No finite ROI field values detected for {subject} in {descriptor['run_label']}"
+                    )
+                finite_indices = tuple(axis[finite_run_mask] for axis in reference_roi_indices)
+                finite_values = roi_values[finite_run_mask]
+
+                roi_masks.append(roi_mask)
+                top_masks.append(top_mask)
+                overlap_masks.append(overlap_mask)
+                roi_field_vectors.append(roi_values)
+                same_roi_mask_all_runs = same_roi_mask_all_runs and np.array_equal(
+                    reference_roi_mask,
+                    roi_mask,
+                )
+
+                roi_mean_field = float(np.nanmean(roi_values))
+                roi_p95_field = float(np.nanquantile(roi_values, 0.95))
+                roi_peak_field = float(np.nanmax(roi_values))
+                roi_mean_fields.append(roi_mean_field)
+                roi_p95_fields.append(roi_p95_field)
+                roi_peak_fields.append(roi_peak_field)
+
+                peak_flat_index = int(np.argmax(finite_values))
+                peak_voxel = np.asarray(
+                    [axis[peak_flat_index] for axis in finite_indices],
+                    dtype=float,
+                )
+                peak_point_mm = nib.affines.apply_affine(reference_affine, peak_voxel)
+                peak_points_mm.append(np.asarray(peak_point_mm, dtype=float))
+
+                if int(np.count_nonzero(overlap_mask)) > 0:
+                    overlap_coordinates = np.argwhere(overlap_mask)
+                    overlap_center_voxel = overlap_coordinates.mean(axis=0)
+                    overlap_center_mm = nib.affines.apply_affine(
+                        reference_affine,
+                        overlap_center_voxel,
+                    )
+                    overlap_com_points_mm.append(np.asarray(overlap_center_mm, dtype=float))
+                else:
+                    overlap_com_points_mm.append(np.full(3, math.nan))
+
+                run_level_rows.append(
+                    {
+                        "subject": subject,
+                        "repeat_id": descriptor["repeat_id"],
+                        "run_label": descriptor["run_label"],
+                        "run_short": descriptor["run_short"],
+                        "post_dir": str(descriptor["post_dir"].relative_to(dataset_root)),
+                        "same_grid_as_reference": True,
+                        "same_roi_mask_as_reference": np.array_equal(reference_roi_mask, roi_mask),
+                        "roi_mask_voxels": int(np.count_nonzero(roi_mask)),
+                        "roi_field_finite_voxels": int(np.count_nonzero(finite_run_mask)),
+                        "top95_mask_voxels": int(np.count_nonzero(top_mask)),
+                        "overlap_mask_voxels": int(np.count_nonzero(overlap_mask)),
+                        "roi_mean_field": roi_mean_field,
+                        "roi_p95_field": roi_p95_field,
+                        "roi_peak_field": roi_peak_field,
+                        "peak_x_mm": float(peak_points_mm[-1][0]),
+                        "peak_y_mm": float(peak_points_mm[-1][1]),
+                        "peak_z_mm": float(peak_points_mm[-1][2]),
+                        "overlap_com_x_mm": float(overlap_com_points_mm[-1][0]),
+                        "overlap_com_y_mm": float(overlap_com_points_mm[-1][1]),
+                        "overlap_com_z_mm": float(overlap_com_points_mm[-1][2]),
+                    }
+                )
+
+            field_matrix_raw = np.vstack(roi_field_vectors)
+            finite_support = np.all(np.isfinite(field_matrix_raw), axis=0)
+            if not finite_support.any():
+                raise ValueError(f"No common finite ROI support across all runs for {subject}")
+            field_matrix = field_matrix_raw[:, finite_support]
+            roi_field_vectors = [field_matrix[index, :] for index in range(field_matrix.shape[0])]
+            voxel_sd = np.std(field_matrix, axis=0, ddof=1)
+            voxel_mean = np.mean(field_matrix, axis=0)
+            voxel_cv = np.divide(
+                voxel_sd,
+                voxel_mean,
+                out=np.full_like(voxel_sd, np.nan, dtype=float),
+                where=voxel_mean != 0,
+            ) * 100.0
+            voxel_sd_summary = summarise_quantiles(voxel_sd)
+            voxel_cv_summary = summarise_quantiles(voxel_cv)
+
+            for index_a, index_b in combinations(range(len(run_descriptors)), 2):
+                descriptor_a = run_descriptors[index_a]
+                descriptor_b = run_descriptors[index_b]
+                pairwise_rows.append(
+                    {
+                        "subject": subject,
+                        "repeat_a": descriptor_a["repeat_id"],
+                        "repeat_b": descriptor_b["repeat_id"],
+                        "run_a": descriptor_a["run_short"],
+                        "run_b": descriptor_b["run_short"],
+                        "roi_mask_dice": dice_coefficient(roi_masks[index_a], roi_masks[index_b]),
+                        "roi_mask_jaccard": jaccard_index(roi_masks[index_a], roi_masks[index_b]),
+                        "top95_mask_dice": dice_coefficient(top_masks[index_a], top_masks[index_b]),
+                        "top95_mask_jaccard": jaccard_index(top_masks[index_a], top_masks[index_b]),
+                        "overlap_mask_dice": dice_coefficient(
+                            overlap_masks[index_a],
+                            overlap_masks[index_b],
+                        ),
+                        "overlap_mask_jaccard": jaccard_index(
+                            overlap_masks[index_a],
+                            overlap_masks[index_b],
+                        ),
+                        "within_roi_field_correlation": safe_pearson_correlation(
+                            roi_field_vectors[index_a],
+                            roi_field_vectors[index_b],
+                        ),
+                        "peak_displacement_mm": euclidean_distance_mm(
+                            peak_points_mm[index_a],
+                            peak_points_mm[index_b],
+                        ),
+                        "overlap_com_displacement_mm": euclidean_distance_mm(
+                            overlap_com_points_mm[index_a],
+                            overlap_com_points_mm[index_b],
+                        ),
+                        "roi_mean_field_abs_diff": abs(
+                            roi_mean_fields[index_b] - roi_mean_fields[index_a]
+                        ),
+                        "roi_p95_field_abs_diff": abs(
+                            roi_p95_fields[index_b] - roi_p95_fields[index_a]
+                        ),
+                        "roi_peak_field_abs_diff": abs(
+                            roi_peak_fields[index_b] - roi_peak_fields[index_a]
+                        ),
+                    }
+                )
+
+            subject_pairwise = pd.DataFrame(
+                [row for row in pairwise_rows if row["subject"] == subject]
+            )
+            subject_row: dict[str, object] = {
+                "subject": subject,
+                "n_runs": len(run_descriptors),
+                "grid_consistent_all_runs": grid_consistent_all_runs,
+                "roi_mask_identical_all_runs": same_roi_mask_all_runs,
+                "reference_roi_voxels": int(np.count_nonzero(reference_roi_mask)),
+                "reference_roi_voxels_common_finite_support": int(np.count_nonzero(finite_support)),
+                "reference_roi_voxels_excluded_nonfinite": int(
+                    np.count_nonzero(reference_roi_mask) - np.count_nonzero(finite_support)
+                ),
+                "within_roi_voxel_sd_mean": voxel_sd_summary["mean"],
+                "within_roi_voxel_sd_median": voxel_sd_summary["median"],
+                "within_roi_voxel_sd_p95": voxel_sd_summary["p95"],
+                "within_roi_voxel_sd_max": voxel_sd_summary["max"],
+                "within_roi_voxel_cv_percent_mean": voxel_cv_summary["mean"],
+                "within_roi_voxel_cv_percent_median": voxel_cv_summary["median"],
+                "within_roi_voxel_cv_percent_p95": voxel_cv_summary["p95"],
+                "within_roi_voxel_cv_percent_max": voxel_cv_summary["max"],
+            }
+
+            for metric in IMAGE_PAIRWISE_METRIC_LABELS:
+                subset = subject_pairwise[metric]
+                stats_row = summarise_series(subset)
+                subject_row.update(
+                    {
+                        f"{metric}_mean": stats_row["mean"],
+                        f"{metric}_median": stats_row["median"],
+                        f"{metric}_min": stats_row["min"],
+                        f"{metric}_max": stats_row["max"],
+                    }
+                )
+
+            subject_row.update(summarise_repeat_vector("roi_mean_field", np.asarray(roi_mean_fields)))
+            subject_row.update(summarise_repeat_vector("roi_p95_field", np.asarray(roi_p95_fields)))
+            subject_row.update(summarise_repeat_vector("roi_peak_field", np.asarray(roi_peak_fields)))
+            subject_rows.append(subject_row)
+
+        except Exception as exc:
+            issue_rows.append(
+                {
+                    "subject": subject,
+                    "issue_type": type(exc).__name__,
+                    "details": str(exc),
+                }
+            )
+
+    return (
+        (
+            pd.DataFrame(run_level_rows).sort_values(["subject", "repeat_id"]).reset_index(drop=True)
+            if run_level_rows
+            else pd.DataFrame()
+        ),
+        (
+            pd.DataFrame(pairwise_rows)
+            .sort_values(["subject", "repeat_a", "repeat_b"])
+            .reset_index(drop=True)
+            if pairwise_rows
+            else pd.DataFrame()
+        ),
+        (
+            pd.DataFrame(subject_rows).sort_values("subject").reset_index(drop=True)
+            if subject_rows
+            else pd.DataFrame()
+        ),
+        (
+            pd.DataFrame(issue_rows).sort_values("subject").reset_index(drop=True)
+            if issue_rows
+            else pd.DataFrame(columns=["subject", "issue_type", "details"])
+        ),
+    )
+
+
+def compute_image_repeatability_cohort_summary(subject_summary: pd.DataFrame) -> pd.DataFrame:
+    if subject_summary.empty:
+        return pd.DataFrame()
+
+    excluded = {
+        "subject",
+        "n_runs",
+        "grid_consistent_all_runs",
+        "roi_mask_identical_all_runs",
+    }
+    metric_columns = [column for column in subject_summary.columns if column not in excluded]
+    rows: list[dict[str, object]] = []
+    for metric in metric_columns:
+        stats_row = summarise_series(subject_summary[metric])
+        numeric_values = pd.to_numeric(subject_summary[metric], errors="coerce").dropna()
+        p95 = float(numeric_values.quantile(0.95)) if not numeric_values.empty else math.nan
+        rows.append(
+            {
+                "metric": metric,
+                "metric_label": humanize_label(metric),
+                **stats_row,
+                "p95": p95,
+            }
+        )
+    return pd.DataFrame(rows).sort_values("metric").reset_index(drop=True)
+
+
+def compute_image_repeatability_pairwise_run_summary(pairwise_frame: pd.DataFrame) -> pd.DataFrame:
+    if pairwise_frame.empty:
+        return pd.DataFrame()
+
+    rows: list[dict[str, object]] = []
+    for metric, label in IMAGE_PAIRWISE_METRIC_LABELS.items():
+        for (repeat_a, repeat_b, run_a, run_b), subset in pairwise_frame.groupby(
+            ["repeat_a", "repeat_b", "run_a", "run_b"],
+            sort=True,
+        ):
+            stats_row = summarise_series(subset[metric])
+            rows.append(
+                {
+                    "metric": metric,
+                    "metric_label": label,
+                    "repeat_a": repeat_a,
+                    "repeat_b": repeat_b,
+                    "run_a": run_a,
+                    "run_b": run_b,
+                    **stats_row,
+                }
+            )
+    return pd.DataFrame(rows).sort_values(["metric", "repeat_a", "repeat_b"]).reset_index(drop=True)
 
 
 def compute_experiment_level_stats(
@@ -1834,6 +2336,441 @@ def save_failure_summary_plot(
     plt.close(fig)
 
 
+def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Path) -> None:
+    if subject_summary.empty:
+        return
+
+    fig, axes = plt.subplots(3, 2, figsize=(16, 14))
+    axes = axes.ravel()
+
+    dice_frame = subject_summary.melt(
+        id_vars="subject",
+        value_vars=[
+            "roi_mask_dice_mean",
+            "top95_mask_dice_mean",
+            "overlap_mask_dice_mean",
+        ],
+        var_name="metric",
+        value_name="value",
+    )
+    dice_frame["metric_label"] = dice_frame["metric"].map(
+        {
+            "roi_mask_dice_mean": "ROI Mask",
+            "top95_mask_dice_mean": "Top-5% Mask",
+            "overlap_mask_dice_mean": "Overlap Mask",
+        }
+    )
+    sns.boxplot(
+        data=dice_frame,
+        x="metric_label",
+        y="value",
+        hue="metric_label",
+        order=["ROI Mask", "Top-5% Mask", "Overlap Mask"],
+        palette=["#5B8FF9", "#61DDAA", "#F6BD16"],
+        dodge=False,
+        legend=False,
+        width=0.55,
+        ax=axes[0],
+    )
+    axes[0].set_title("Mean Pairwise Dice Across Subjects")
+    axes[0].set_xlabel("")
+    axes[0].set_ylabel("Dice")
+
+    jaccard_frame = subject_summary.melt(
+        id_vars="subject",
+        value_vars=[
+            "roi_mask_jaccard_mean",
+            "top95_mask_jaccard_mean",
+            "overlap_mask_jaccard_mean",
+        ],
+        var_name="metric",
+        value_name="value",
+    )
+    jaccard_frame["metric_label"] = jaccard_frame["metric"].map(
+        {
+            "roi_mask_jaccard_mean": "ROI Mask",
+            "top95_mask_jaccard_mean": "Top-5% Mask",
+            "overlap_mask_jaccard_mean": "Overlap Mask",
+        }
+    )
+    sns.boxplot(
+        data=jaccard_frame,
+        x="metric_label",
+        y="value",
+        hue="metric_label",
+        order=["ROI Mask", "Top-5% Mask", "Overlap Mask"],
+        palette=["#5B8FF9", "#61DDAA", "#F6BD16"],
+        dodge=False,
+        legend=False,
+        width=0.55,
+        ax=axes[1],
+    )
+    axes[1].set_title("Mean Pairwise Jaccard Across Subjects")
+    axes[1].set_xlabel("")
+    axes[1].set_ylabel("Jaccard")
+
+    correlation_frame = subject_summary.melt(
+        id_vars="subject",
+        value_vars=["within_roi_field_correlation_mean"],
+        var_name="metric",
+        value_name="value",
+    )
+    correlation_frame["metric_label"] = "ROI Field"
+    sns.boxplot(
+        data=correlation_frame,
+        x="metric_label",
+        y="value",
+        color="#7C3AED",
+        width=0.45,
+        ax=axes[2],
+    )
+    axes[2].set_title("Mean Pairwise Within-ROI Field Correlation")
+    axes[2].set_xlabel("")
+    axes[2].set_ylabel("Pearson r")
+
+    field_cv_frame = subject_summary.melt(
+        id_vars="subject",
+        value_vars=[
+            "roi_mean_field_cv_percent",
+            "roi_p95_field_cv_percent",
+            "roi_peak_field_cv_percent",
+        ],
+        var_name="metric",
+        value_name="value",
+    )
+    field_cv_frame["metric_label"] = field_cv_frame["metric"].map(
+        {
+            "roi_mean_field_cv_percent": "ROI Mean",
+            "roi_p95_field_cv_percent": "ROI P95",
+            "roi_peak_field_cv_percent": "ROI Peak",
+        }
+    )
+    sns.boxplot(
+        data=field_cv_frame,
+        x="metric_label",
+        y="value",
+        hue="metric_label",
+        order=["ROI Mean", "ROI P95", "ROI Peak"],
+        palette=["#4C78A8", "#F58518", "#E45756"],
+        dodge=False,
+        legend=False,
+        width=0.55,
+        ax=axes[3],
+    )
+    axes[3].set_title("ROI Field Repeatability (CV Across Runs)")
+    axes[3].set_xlabel("")
+    axes[3].set_ylabel("CV (%)")
+
+    voxel_cv_frame = subject_summary.melt(
+        id_vars="subject",
+        value_vars=[
+            "within_roi_voxel_cv_percent_mean",
+            "within_roi_voxel_cv_percent_p95",
+        ],
+        var_name="metric",
+        value_name="value",
+    )
+    voxel_cv_frame["metric_label"] = voxel_cv_frame["metric"].map(
+        {
+            "within_roi_voxel_cv_percent_mean": "Mean ROI Voxel CV",
+            "within_roi_voxel_cv_percent_p95": "ROI Voxel CV P95",
+        }
+    )
+    sns.boxplot(
+        data=voxel_cv_frame,
+        x="metric_label",
+        y="value",
+        hue="metric_label",
+        order=["Mean ROI Voxel CV", "ROI Voxel CV P95"],
+        palette=["#72B7B2", "#54A24B"],
+        dodge=False,
+        legend=False,
+        width=0.55,
+        ax=axes[4],
+    )
+    axes[4].set_title("Voxelwise Within-ROI Variation")
+    axes[4].set_xlabel("")
+    axes[4].set_ylabel("CV (%)")
+    axes[4].tick_params(axis="x", rotation=10)
+
+    hotspot_frame = subject_summary.melt(
+        id_vars="subject",
+        value_vars=[
+            "peak_displacement_mm_mean",
+            "overlap_com_displacement_mm_mean",
+        ],
+        var_name="metric",
+        value_name="value",
+    )
+    hotspot_frame["metric_label"] = hotspot_frame["metric"].map(
+        {
+            "peak_displacement_mm_mean": "Peak",
+            "overlap_com_displacement_mm_mean": "Overlap COM",
+        }
+    )
+    sns.boxplot(
+        data=hotspot_frame,
+        x="metric_label",
+        y="value",
+        hue="metric_label",
+        order=["Peak", "Overlap COM"],
+        palette=["#E45756", "#72B7B2"],
+        dodge=False,
+        legend=False,
+        width=0.45,
+        ax=axes[5],
+    )
+    axes[5].set_title("Hotspot Localization Displacement")
+    axes[5].set_xlabel("")
+    axes[5].set_ylabel("Mean Pairwise Displacement (mm)")
+
+    for axis in axes:
+        axis.grid(axis="y", alpha=0.18)
+
+    apply_multi_panel_layout(fig, top=0.93, bottom=0.10, left=0.08, right=0.985, wspace=0.28, hspace=0.30)
+    fig.suptitle(
+        "Image-Level Repeatability Across Repeated Runs",
+        fontsize=17,
+        fontweight="bold",
+        y=0.98,
+    )
+    add_figure_note(
+        fig,
+        "Dice/Jaccard summarise mask overlap across all run pairs per subject. "
+        "Field CV metrics use the reference ROI mask from the first successful repeat for each subject.",
+    )
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def write_image_repeatability_methodology(
+    output_dir: Path,
+    roi_name: str,
+    subject_summary: pd.DataFrame,
+    issue_frame: pd.DataFrame,
+) -> Path:
+    analysed_subjects = int(subject_summary["subject"].nunique()) if not subject_summary.empty else 0
+    skipped_subjects = int(issue_frame["subject"].nunique()) if not issue_frame.empty else 0
+    lines = [
+        "# Image-Level Repeatability Methodology",
+        "",
+        "## Purpose",
+        "",
+        (
+            "This layer extends the scalar `subject_metrics.json` analysis into the saved NIfTI outputs so that "
+            "repeatability can be measured directly on ROI masks, top-5% masks, overlap masks, within-ROI field values, "
+            "and hotspot localization."
+        ),
+        "",
+        "## Inputs",
+        "",
+        f"- ROI analysed: `{roi_name}`",
+        f"- Subjects successfully analysed at the image level: `{analysed_subjects}`",
+        f"- Subjects skipped due to missing files or incompatible headers: `{skipped_subjects}`",
+        "",
+        "For each successful subject-run, the analysis reads:",
+        "",
+        f"- `atlas_{roi_name}_mask.nii.gz` as the ROI mask",
+        "- `efield_top95pct_mask.nii.gz` as the whole-volume top-5% mask",
+        f"- `{roi_name}_overlap_top95pct_mask.nii.gz` as the target-overlap mask",
+        f"- `TI_in_{roi_name}.nii.gz` as the within-ROI field image",
+        "",
+        "## Core Rules",
+        "",
+        "- The complete-case subject set is used so that all repeated runs are directly comparable.",
+        "- All images for a subject must have identical voxel grids and affines across runs; otherwise the subject is skipped.",
+        (
+            "- Within-ROI field repeatability is evaluated on the reference ROI mask from the first successful run for that subject. "
+            "This avoids conflating field variability with a changing ROI support if ROI masks were ever to differ."
+        ),
+        (
+            "- Voxelwise field comparisons use only the voxel support that is finite in every run for a subject. "
+            "This avoids conflating field repeatability with run-to-run changes in non-finite voxel support."
+        ),
+        "",
+        "## Metrics Computed",
+        "",
+        "### 1. Mask Repeatability",
+        "",
+        "- Pairwise Dice and Jaccard for the ROI mask across all run pairs.",
+        "- Pairwise Dice and Jaccard for the top-5% mask across all run pairs.",
+        "- Pairwise Dice and Jaccard for the overlap mask across all run pairs.",
+        "",
+        "### 2. Within-ROI Field Repeatability",
+        "",
+        "- Pairwise Pearson correlation of within-ROI voxel vectors across all run pairs.",
+        "- Voxelwise SD across runs within the ROI, summarized by mean, median, 95th percentile, and maximum.",
+        "- Voxelwise CV (%) across runs within the ROI, summarized by mean, median, 95th percentile, and maximum.",
+        "",
+        "### 3. ROI Summary-Field Repeatability",
+        "",
+        "- Per-run ROI mean field, ROI 95th percentile, and ROI peak field.",
+        "- Across-run SD, CV, mean absolute pairwise difference, and maximum absolute pairwise difference for each summary metric.",
+        "",
+        "### 4. Hotspot Localization Stability",
+        "",
+        "- Peak-field voxel location inside the reference ROI, converted to millimeter coordinates.",
+        "- Center of mass of the overlap mask, converted to millimeter coordinates.",
+        "- Pairwise Euclidean displacement for peak location and overlap-mask center of mass across all run pairs.",
+        "",
+        "## Outputs",
+        "",
+        "- `image_repeatability_run_level.csv`",
+        "- `image_repeatability_pairwise_subject_run_pairs.csv`",
+        "- `image_repeatability_subject_level.csv`",
+        "- `image_repeatability_pairwise_run_summary.csv`",
+        "- `image_repeatability_cohort_summary.csv`",
+        "- `image_repeatability_issues.csv`",
+        "- `image_repeatability_report.md`",
+        "- `figures/08_image_repeatability_summary.png`",
+        "",
+    ]
+    path = output_dir / "image_repeatability_methodology.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def write_image_repeatability_report(
+    output_dir: Path,
+    roi_name: str,
+    subject_summary: pd.DataFrame,
+    issue_frame: pd.DataFrame,
+) -> Path:
+    analysed_subjects = int(subject_summary["subject"].nunique()) if not subject_summary.empty else 0
+    skipped_subjects = int(issue_frame["subject"].nunique()) if not issue_frame.empty else 0
+    grid_consistent = int(subject_summary["grid_consistent_all_runs"].sum()) if analysed_subjects else 0
+    roi_identical = int(subject_summary["roi_mask_identical_all_runs"].sum()) if analysed_subjects else 0
+
+    def cohort_mean(column: str) -> float:
+        series = pd.to_numeric(subject_summary[column], errors="coerce").dropna()
+        return float(series.mean()) if not series.empty else math.nan
+
+    def cohort_median(column: str) -> float:
+        series = pd.to_numeric(subject_summary[column], errors="coerce").dropna()
+        return float(series.median()) if not series.empty else math.nan
+
+    lines = [
+        "# Image-Level Repeatability Report",
+        "",
+        "## Scope",
+        "",
+        f"- ROI analysed: `{roi_name}`",
+        f"- Subjects analysed at image level: `{analysed_subjects}`",
+        f"- Subjects skipped: `{skipped_subjects}`",
+        f"- Subjects with grid/affine consistency across all runs: `{grid_consistent}` of `{analysed_subjects}`",
+        f"- Subjects with binary-identical ROI masks across all runs: `{roi_identical}` of `{analysed_subjects}`",
+        "",
+    ]
+
+    if analysed_subjects:
+        lines.extend(
+            [
+                "## ROI Mask Repeatability",
+                "",
+                (
+                    f"- Mean subject-level pairwise Dice: `{cohort_mean('roi_mask_dice_mean'):.6f}` "
+                    f"(median `{cohort_median('roi_mask_dice_mean'):.6f}`)"
+                ),
+                (
+                    f"- Mean subject-level pairwise Jaccard: `{cohort_mean('roi_mask_jaccard_mean'):.6f}` "
+                    f"(median `{cohort_median('roi_mask_jaccard_mean'):.6f}`)"
+                ),
+                (
+                    "Interpretation: this quantifies whether the ROI definition itself moves across repeats. "
+                    "Values near 1.0 indicate that downstream field variability is not being driven by ROI-mask drift."
+                ),
+                "",
+                "## Top-5% And Overlap Mask Repeatability",
+                "",
+                (
+                    f"- Top-5% mask mean pairwise Dice: `{cohort_mean('top95_mask_dice_mean'):.6f}`; "
+                    f"Jaccard: `{cohort_mean('top95_mask_jaccard_mean'):.6f}`"
+                ),
+                (
+                    f"- Overlap mask mean pairwise Dice: `{cohort_mean('overlap_mask_dice_mean'):.6f}`; "
+                    f"Jaccard: `{cohort_mean('overlap_mask_jaccard_mean'):.6f}`"
+                ),
+                (
+                    "Interpretation: these are the spatial-repeatability metrics for the actual strong-field region and the "
+                    "target-engagement region, not just their voxel counts."
+                ),
+                "",
+                "## Within-ROI Field Repeatability",
+                "",
+                (
+                    f"- Mean subject-level pairwise within-ROI field correlation: "
+                    f"`{cohort_mean('within_roi_field_correlation_mean'):.6f}`"
+                ),
+                (
+                    f"- Mean voxelwise ROI SD across runs: `{cohort_mean('within_roi_voxel_sd_mean'):.6f}`"
+                ),
+                (
+                    f"- Mean voxelwise ROI CV across runs: `{cohort_mean('within_roi_voxel_cv_percent_mean'):.3f}%`; "
+                    f"95th-percentile voxelwise CV: `{cohort_mean('within_roi_voxel_cv_percent_p95'):.3f}%`"
+                ),
+                "",
+                "## ROI Summary-Field Repeatability",
+                "",
+                (
+                    f"- ROI mean field CV across runs: `{cohort_mean('roi_mean_field_cv_percent'):.3f}%`; "
+                    f"mean absolute pairwise difference: `{cohort_mean('roi_mean_field_mean_abs_pairwise_diff'):.6f}`"
+                ),
+                (
+                    f"- ROI P95 field CV across runs: `{cohort_mean('roi_p95_field_cv_percent'):.3f}%`; "
+                    f"mean absolute pairwise difference: `{cohort_mean('roi_p95_field_mean_abs_pairwise_diff'):.6f}`"
+                ),
+                (
+                    f"- ROI peak field CV across runs: `{cohort_mean('roi_peak_field_cv_percent'):.3f}%`; "
+                    f"mean absolute pairwise difference: `{cohort_mean('roi_peak_field_mean_abs_pairwise_diff'):.6f}`"
+                ),
+                "",
+                "## Hotspot Localization Stability",
+                "",
+                (
+                    f"- Mean pairwise peak-voxel displacement: `{cohort_mean('peak_displacement_mm_mean'):.3f}` mm"
+                ),
+                (
+                    f"- Mean pairwise overlap-mask center-of-mass displacement: "
+                    f"`{cohort_mean('overlap_com_displacement_mm_mean'):.3f}` mm"
+                ),
+                (
+                    "Interpretation: these displacement metrics answer whether the location of the hotspot is stable, even when "
+                    "the overall overlap fraction or peak value remains similar."
+                ),
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "## No Successful Image-Level Subjects",
+                "",
+                (
+                    "No subjects completed the image-level repeatability analysis successfully. Inspect "
+                    "`image_repeatability_issues.csv` for the per-subject failure reasons."
+                ),
+                "",
+            ]
+        )
+
+    if not issue_frame.empty:
+        lines.extend(
+            [
+                "## Skipped Subjects",
+                "",
+                "These subjects were excluded from the image-level layer due to missing files or incompatible headers:",
+                "",
+            ]
+        )
+        for row in issue_frame.itertuples(index=False):
+            lines.append(f"- `{row.subject}`: `{row.issue_type}`. {row.details}")
+        lines.append("")
+
+    path = output_dir / "image_repeatability_report.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def write_report(
     dataset_root: Path,
     output_dir: Path,
@@ -1842,6 +2779,7 @@ def write_report(
     complete_case_frame: pd.DataFrame,
     coverage: pd.DataFrame,
     experiment_stats: pd.DataFrame,
+    image_repeatability_subject_summary: pd.DataFrame | None = None,
     complete_case_only: bool = False,
 ) -> Path:
     unique_subjects = all_frame["subject"].nunique()
@@ -1858,6 +2796,10 @@ def write_report(
     icc_min = plot_rows["icc_absolute_agreement"].min()
     icc_max = plot_rows["icc_absolute_agreement"].max()
     repeat_effect_max = plot_rows["run_variance_fraction_percent"].max()
+    image_repeatability_available = (
+        image_repeatability_subject_summary is not None
+        and not image_repeatability_subject_summary.empty
+    )
 
     report_lines = [
         "# Subject Metrics Analysis",
@@ -1958,6 +2900,42 @@ def write_report(
         "",
     ]
 
+    if image_repeatability_available:
+        def cohort_mean(column: str) -> float:
+            series = pd.to_numeric(image_repeatability_subject_summary[column], errors="coerce").dropna()
+            return float(series.mean()) if not series.empty else math.nan
+
+        outputs_index = report_lines.index("## Outputs")
+        report_lines[outputs_index:outputs_index] = [
+            (
+                f"- The image-level repeatability layer confirmed that ROI support was stable. Mean ROI-mask Dice was "
+                f"**{cohort_mean('roi_mask_dice_mean'):.3f}**, while Top-5% and overlap-mask Dice were "
+                f"**{cohort_mean('top95_mask_dice_mean'):.3f}** and **{cohort_mean('overlap_mask_dice_mean'):.3f}**."
+            ),
+            (
+                f"- Within-ROI field repeatability was high. The mean pairwise voxelwise field correlation was "
+                f"**{cohort_mean('within_roi_field_correlation_mean'):.3f}**, with a mean voxelwise ROI CV of "
+                f"**{cohort_mean('within_roi_voxel_cv_percent_mean'):.2f}%**."
+            ),
+            (
+                f"- Hotspot localization drift was limited relative to ROI size. Mean pairwise peak displacement was "
+                f"**{cohort_mean('peak_displacement_mm_mean'):.2f} mm**, and overlap-mask center-of-mass displacement was "
+                f"**{cohort_mean('overlap_com_displacement_mm_mean'):.2f} mm**."
+            ),
+            "",
+        ]
+        figure_line_index = report_lines.index(
+            "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, and the failure audit."
+        )
+        report_lines[figure_line_index:figure_line_index] = [
+            "- `image_repeatability_run_level.csv`, `image_repeatability_pairwise_subject_run_pairs.csv`, `image_repeatability_subject_level.csv`, `image_repeatability_pairwise_run_summary.csv`, and `image_repeatability_cohort_summary.csv`: image-level repeatability tables for masks, within-ROI fields, and hotspot localization.",
+            "- `image_repeatability_issues.csv`, `image_repeatability_methodology.md`, and `image_repeatability_report.md`: image-level audit outputs and narrative interpretation.",
+            "",
+        ]
+        report_lines[figure_line_index + 3] = (
+            "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, the failure audit, and image-level repeatability."
+        )
+
     report_path = output_dir / "analysis_summary.md"
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
     return report_path
@@ -1972,6 +2950,7 @@ def write_methodology_documentation(
     coverage: pd.DataFrame,
     repeat_level_available: pd.DataFrame,
     experiment_stats: pd.DataFrame,
+    include_image_repeatability: bool = False,
     complete_case_only: bool = False,
 ) -> Path:
     unique_subjects = int(all_frame["subject"].nunique())
@@ -2058,7 +3037,8 @@ def write_methodology_documentation(
         "",
         (
             "Each `subject_metrics.json` file was flattened into one subject-run record containing the run label, "
-            "subject identifier, and the ROI metrics stored under `rois[\"Left-Hippocampus\"]`."
+            "subject identifier, the scalar ROI metrics stored under `rois[\"Left-Hippocampus\"]`, and the flattened "
+            "`extended_metrics` payload when present."
         ),
         "",
         "The analysis used these fields:",
@@ -2326,6 +3306,40 @@ def write_methodology_documentation(
         ),
         "",
     ]
+
+    if include_image_repeatability:
+        image_section_index = methodology_lines.index("### H. Failure Audit Of Logged Runs")
+        methodology_lines[image_section_index] = "### I. Failure Audit Of Logged Runs"
+        methodology_lines[image_section_index:image_section_index] = [
+            "### H. Image-Level Repeatability Layer",
+            "",
+            (
+                "A third repeatability layer was added for the saved NIfTI outputs so the pipeline can compare the actual "
+                "ROI support, top-5% mask, overlap mask, within-ROI field map, and hotspot location across repeated runs "
+                "of the same subject."
+            ),
+            "",
+            "For each complete-case subject, this layer reads:",
+            "",
+            f"- `atlas_{roi_name}_mask.nii.gz`",
+            "- `efield_top95pct_mask.nii.gz`",
+            f"- `{roi_name}_overlap_top95pct_mask.nii.gz`",
+            f"- `TI_in_{roi_name}.nii.gz`",
+            "",
+            "It then computes:",
+            "",
+            "- pairwise Dice and Jaccard for the ROI mask, top-5% mask, and overlap mask",
+            "- pairwise within-ROI voxelwise field correlation across run pairs",
+            "- voxelwise within-ROI SD and CV summaries across runs",
+            "- across-run repeatability summaries for ROI mean, ROI P95, and ROI peak field",
+            "- pairwise peak-location displacement and overlap-mask center-of-mass displacement in millimeters",
+            "",
+            (
+                "Voxelwise field comparisons are restricted to the common finite voxel support across all runs for each "
+                "subject, so non-finite voxels do not masquerade as repeatability error."
+            ),
+            "",
+        ]
 
     methodology_path = output_dir / "analysis_methodology.md"
     methodology_path.write_text("\n".join(methodology_lines), encoding="utf-8")
@@ -2914,6 +3928,7 @@ def run_analysis(
     roi: str | None = None,
     output_dir: str | Path | None = None,
     logs_root: str | Path | None = None,
+    skip_image_repeatability: bool = False,
     complete_case_only: bool = True,
 ) -> dict[str, object]:
     dataset_root = Path(dataset_root).resolve()
@@ -2999,6 +4014,12 @@ def run_analysis(
     log_transition_frame = pd.DataFrame()
     failure_category_by_run = pd.DataFrame()
     failure_stage_by_run = pd.DataFrame()
+    image_run_level = pd.DataFrame()
+    image_pairwise = pd.DataFrame()
+    image_subject_summary = pd.DataFrame()
+    image_issue_frame = pd.DataFrame(columns=["subject", "issue_type", "details"])
+    image_pairwise_run_summary = pd.DataFrame()
+    image_cohort_summary = pd.DataFrame()
     if logs_root_path is not None:
         log_detail_frame, log_summary_frame, log_transition_frame = load_log_analysis(
             logs_root_path,
@@ -3019,6 +4040,16 @@ def run_analysis(
             .sort_values(["count", "failure_stage"], ascending=[False, True])
             .reset_index(drop=True)
         )
+    if not skip_image_repeatability:
+        image_run_level, image_pairwise, image_subject_summary, image_issue_frame = (
+            compute_image_repeatability(
+                dataset_root=dataset_root,
+                roi_name=roi_name,
+                complete_case_frame=complete_case_frame,
+            )
+        )
+        image_pairwise_run_summary = compute_image_repeatability_pairwise_run_summary(image_pairwise)
+        image_cohort_summary = compute_image_repeatability_cohort_summary(image_subject_summary)
 
     analysis_frame.to_csv(output_dir / "subject_metrics_long.csv", index=False)
     analysis_coverage.to_csv(output_dir / "run_subject_coverage.csv", index=False)
@@ -3042,6 +4073,25 @@ def run_analysis(
         failure_category_by_run.to_csv(output_dir / "log_failure_category_by_run.csv", index=False)
         failure_stage_by_run.to_csv(output_dir / "log_failure_stage_by_run.csv", index=False)
         log_transition_frame.to_csv(output_dir / "log_run_transition_summary.csv", index=False)
+    if not skip_image_repeatability:
+        image_run_level.to_csv(output_dir / "image_repeatability_run_level.csv", index=False)
+        image_pairwise.to_csv(
+            output_dir / "image_repeatability_pairwise_subject_run_pairs.csv",
+            index=False,
+        )
+        image_subject_summary.to_csv(
+            output_dir / "image_repeatability_subject_level.csv",
+            index=False,
+        )
+        image_pairwise_run_summary.to_csv(
+            output_dir / "image_repeatability_pairwise_run_summary.csv",
+            index=False,
+        )
+        image_cohort_summary.to_csv(
+            output_dir / "image_repeatability_cohort_summary.csv",
+            index=False,
+        )
+        image_issue_frame.to_csv(output_dir / "image_repeatability_issues.csv", index=False)
 
     setup_plotting()
     save_coverage_plot(analysis_coverage, coverage_subjects, figures_dir / "01_subject_coverage.png")
@@ -3060,6 +4110,11 @@ def run_analysis(
             log_transition_frame,
             figures_dir / "07_failure_summary.png",
         )
+    if not skip_image_repeatability and not image_subject_summary.empty:
+        save_image_repeatability_plot(
+            image_subject_summary,
+            figures_dir / "08_image_repeatability_summary.png",
+        )
     report_path = write_report(
         dataset_root=dataset_root,
         output_dir=output_dir,
@@ -3068,6 +4123,7 @@ def run_analysis(
         complete_case_frame=complete_case_frame,
         coverage=analysis_coverage,
         experiment_stats=experiment_level_stats,
+        image_repeatability_subject_summary=image_subject_summary,
         complete_case_only=complete_case_only,
     )
     methodology_path = write_methodology_documentation(
@@ -3079,8 +4135,24 @@ def run_analysis(
         coverage=analysis_coverage,
         repeat_level_available=repeat_level_available,
         experiment_stats=experiment_level_stats,
+        include_image_repeatability=(not skip_image_repeatability),
         complete_case_only=complete_case_only,
     )
+    image_repeatability_methodology_path = None
+    image_repeatability_report_path = None
+    if not skip_image_repeatability:
+        image_repeatability_methodology_path = write_image_repeatability_methodology(
+            output_dir=output_dir,
+            roi_name=roi_name,
+            subject_summary=image_subject_summary,
+            issue_frame=image_issue_frame,
+        )
+        image_repeatability_report_path = write_image_repeatability_report(
+            output_dir=output_dir,
+            roi_name=roi_name,
+            subject_summary=image_subject_summary,
+            issue_frame=image_issue_frame,
+        )
     subject_variation_report_path = write_subject_variation_report(
         output_dir=output_dir,
         roi_name=roi_name,
@@ -3114,6 +4186,10 @@ def run_analysis(
     print(f"Output directory: {output_dir}")
     print(f"Report: {report_path}")
     print(f"Methodology: {methodology_path}")
+    if image_repeatability_methodology_path is not None:
+        print(f"Image repeatability methodology: {image_repeatability_methodology_path}")
+    if image_repeatability_report_path is not None:
+        print(f"Image repeatability report: {image_repeatability_report_path}")
     print(f"Subject variation report: {subject_variation_report_path}")
     print(f"Interpretation: {interpretation_path}")
     if failure_report_path is not None:
@@ -3128,6 +4204,16 @@ def run_analysis(
         "output_dir": str(output_dir),
         "report_path": str(report_path),
         "methodology_path": str(methodology_path),
+        "image_repeatability_methodology_path": (
+            str(image_repeatability_methodology_path)
+            if image_repeatability_methodology_path is not None
+            else None
+        ),
+        "image_repeatability_report_path": (
+            str(image_repeatability_report_path)
+            if image_repeatability_report_path is not None
+            else None
+        ),
         "subject_variation_report_path": str(subject_variation_report_path),
         "interpretation_path": str(interpretation_path),
         "failure_report_path": str(failure_report_path) if failure_report_path is not None else None,
@@ -3141,6 +4227,7 @@ def main() -> None:
         roi=args.roi,
         output_dir=args.output_dir,
         logs_root=args.logs_root,
+        skip_image_repeatability=args.skip_image_repeatability,
         complete_case_only=not args.allow_incomplete_subjects,
     )
 

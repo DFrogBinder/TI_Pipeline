@@ -1,0 +1,58 @@
+<mxfile host="app.diagrams.net" modified="2026-04-29T00:00:00.000000+00:00" agent="Codex" version="24.7.17" type="device">
+  <diagram id="post_pipeline_metric_flowchart_cohort_definition_across_repeats" name="Page-1">
+    <mxGraphModel dx="1820" dy="1720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="4320" pageHeight="1180" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" value="Cohort Definition Across Repeats" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=72;fontStyle=1;fontColor=#0F172A;" vertex="1">
+          <mxGeometry as="geometry" x="320" y="30" width="3680" height="96" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" value="How the live pipeline chooses the subject set that is retained for downstream repeatability analysis" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=36;fontColor=#334155;" vertex="1">
+          <mxGeometry as="geometry" x="220" y="122" width="3880" height="56" />
+        </mxCell>
+        <mxCell id="box_10" parent="1" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#1E293B;" vertex="1">
+          <mxGeometry as="geometry" x="120" y="320" width="980" height="340" />
+        </mxCell>
+        <mxCell id="box_10_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;" vertex="1">
+          <mxGeometry as="geometry" x="121" y="321" width="978" height="96" />
+        </mxCell>
+        <mxCell id="box_10_title" parent="1" value="Per-Repeat Subject Outputs" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=30;fontSize=46;fontStyle=1;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry as="geometry" x="130" y="338" width="960" height="60" />
+        </mxCell>
+        <mxCell id="box_10_body" parent="1" value="&lt;div style='font-size:36px;line-height:1.24;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 22px;padding-left:24px;'&gt;&lt;li style='margin:0 0 8px 0;'&gt;Subject has a valid region summary table&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Subject has a valid subject metrics file&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Subject belongs to the selected ROI repeat batch&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=24;spacingRight=24;spacingTop=14;strokeColor=none;fillColor=none;fontSize=36;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry as="geometry" x="121" y="424" width="978" height="234" />
+        </mxCell>
+        <mxCell id="box_11" parent="1" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#1E293B;" vertex="1">
+          <mxGeometry as="geometry" x="1280" y="250" width="2860" height="350" />
+        </mxCell>
+        <mxCell id="box_11_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#475569;" vertex="1">
+          <mxGeometry as="geometry" x="1281" y="251" width="2858" height="96" />
+        </mxCell>
+        <mxCell id="box_11_title" parent="1" value="3. Cohort Definition Across Repeats" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=30;fontSize=46;fontStyle=1;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry as="geometry" x="1290" y="268" width="2840" height="60" />
+        </mxCell>
+        <mxCell id="box_11_body" parent="1" value="&lt;div style='font-size:36px;line-height:1.24;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 22px;padding-left:24px;'&gt;&lt;li style='margin:0 0 8px 0;'&gt;Discover subject outputs in each selected repeat for the ROI&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Keep only subjects with valid outputs in every repeat&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Intersect those subject sets to form the complete-case cohort&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Write one auditable complete-case manifest per ROI&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=24;spacingRight=24;spacingTop=14;strokeColor=none;fillColor=none;fontSize=36;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry as="geometry" x="1281" y="354" width="2858" height="244" />
+        </mxCell>
+        <mxCell id="box_12" parent="1" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#F5F9FF;strokeColor=#1E293B;" vertex="1">
+          <mxGeometry as="geometry" x="760" y="790" width="2700" height="300" />
+        </mxCell>
+        <mxCell id="box_12_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;" vertex="1">
+          <mxGeometry as="geometry" x="761" y="791" width="2698" height="96" />
+        </mxCell>
+        <mxCell id="box_12_title" parent="1" value="Cohort Outputs and Effects" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=30;fontSize=46;fontStyle=1;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry as="geometry" x="770" y="808" width="2680" height="60" />
+        </mxCell>
+        <mxCell id="box_12_body" parent="1" value="&lt;div style='font-size:36px;line-height:1.24;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 22px;padding-left:24px;'&gt;&lt;li style='margin:0 0 8px 0;'&gt;Batch mode reruns within-run population summaries on the complete-case cohort&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Across-repeat scalar repeatability defaults to the same complete-case cohort&lt;/li&gt;&lt;li style='margin:0 0 8px 0;'&gt;Across-repeat image-level repeatability uses the same complete-case cohort and saved ROI NIfTI outputs&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=24;spacingRight=24;spacingTop=14;strokeColor=none;fillColor=none;fontSize=36;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry as="geometry" x="761" y="894" width="2698" height="194" />
+        </mxCell>
+        <mxCell id="edge_300" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=5;endArrow=block;endFill=1;exitX=1.0;exitY=0.5;entryX=0.0;entryY=0.5;" edge="1" source="box_10" target="box_11">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="edge_301" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=5;endArrow=block;endFill=1;exitX=0.5;exitY=1.0;entryX=0.5;entryY=0.0;" edge="1" source="box_11" target="box_12">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -49,6 +49,7 @@ echo
 #SOURCE_ROOT=/path/to/Left_Hippocampus_Post_Data,\
 #DEST_PARENT=/path/to/new/location,\
 #DEST_NAME=Left_Hippocampus_Post_Data_copy,\
+#VERIFY_MODE=checksum,\
 #PARALLEL_TOP_LEVEL_JOBS=8 \
 #/path/to/copy_roi_runs_with_verification.slurm
 # ------------------------------------------------------------------
@@ -63,7 +64,11 @@ DEST_NAME_DEFAULT=""
 LOG_ROOT_DEFAULT=""
 
 # Copy / verification behavior
-VERIFY_WITH_CHECKSUM_DEFAULT="1"   # 1 -> checksum-based rsync dry-run verification after copy
+# VERIFY_MODE:
+#   metadata -> fast rsync quick-check verification (size + mtime)
+#   checksum -> full-content checksum verification
+#   none     -> skip the post-copy rsync verification pass
+VERIFY_MODE_DEFAULT="metadata"
 GENERATE_SUBJECT_REPORT_DEFAULT="1"  # 1 -> per-run/per-subject presence + file-count report
 ALLOW_EXISTING_DEST_DEFAULT="1"    # 1 -> allow merge into an existing destination root, still verify strictly
 PARALLEL_TOP_LEVEL_JOBS_DEFAULT="4"  # parallel rsync jobs for immediate child run directories
@@ -72,7 +77,20 @@ SOURCE_ROOT="${SOURCE_ROOT:-$SOURCE_ROOT_DEFAULT}"
 DEST_PARENT="${DEST_PARENT:-$DEST_PARENT_DEFAULT}"
 DEST_NAME="${DEST_NAME:-$DEST_NAME_DEFAULT}"
 LOG_ROOT="${LOG_ROOT:-$LOG_ROOT_DEFAULT}"
-VERIFY_WITH_CHECKSUM="${VERIFY_WITH_CHECKSUM:-$VERIFY_WITH_CHECKSUM_DEFAULT}"
+if [[ -n "${VERIFY_MODE:-}" ]]; then
+    VERIFY_MODE="$VERIFY_MODE"
+elif [[ -n "${VERIFY_WITH_CHECKSUM:-}" ]]; then
+    case "$VERIFY_WITH_CHECKSUM" in
+        1) VERIFY_MODE="checksum" ;;
+        0) VERIFY_MODE="metadata" ;;
+        *)
+            echo "[ERROR] Legacy VERIFY_WITH_CHECKSUM must be 0 or 1, got: ${VERIFY_WITH_CHECKSUM}" >&2
+            exit 2
+            ;;
+    esac
+else
+    VERIFY_MODE="$VERIFY_MODE_DEFAULT"
+fi
 GENERATE_SUBJECT_REPORT="${GENERATE_SUBJECT_REPORT:-$GENERATE_SUBJECT_REPORT_DEFAULT}"
 ALLOW_EXISTING_DEST="${ALLOW_EXISTING_DEST:-$ALLOW_EXISTING_DEST_DEFAULT}"
 PARALLEL_TOP_LEVEL_JOBS="${PARALLEL_TOP_LEVEL_JOBS:-$PARALLEL_TOP_LEVEL_JOBS_DEFAULT}"
@@ -101,6 +119,17 @@ require_positive_int() {
         echo "[ERROR] ${name} must be a positive integer, got: ${value}" >&2
         exit 2
     fi
+}
+
+require_verify_mode() {
+    local value="$1"
+    case "$value" in
+        metadata|checksum|none) ;;
+        *)
+            echo "[ERROR] VERIFY_MODE must be one of: metadata, checksum, none. Got: ${value}" >&2
+            exit 2
+            ;;
+    esac
 }
 
 abs_existing_dir() {
@@ -171,6 +200,7 @@ if [[ ! -d "$SOURCE_ROOT" ]]; then
 fi
 
 require_positive_int "PARALLEL_TOP_LEVEL_JOBS" "$PARALLEL_TOP_LEVEL_JOBS"
+require_verify_mode "$VERIFY_MODE"
 
 SOURCE_ROOT="$(abs_existing_dir "$SOURCE_ROOT")"
 SOURCE_BASENAME="$(basename "$SOURCE_ROOT")"
@@ -210,7 +240,7 @@ echo "[INFO] Source root:        $SOURCE_ROOT"
 echo "[INFO] Destination parent: $DEST_PARENT"
 echo "[INFO] Destination root:   $DEST_ROOT"
 echo "[INFO] Log directory:      $RUN_LOG_DIR"
-echo "[INFO] Verify checksum:    $VERIFY_WITH_CHECKSUM"
+echo "[INFO] Verify mode:        $VERIFY_MODE"
 echo "[INFO] Parallel jobs:      $PARALLEL_TOP_LEVEL_JOBS"
 echo
 
@@ -323,10 +353,17 @@ if ! diff -u "$SOURCE_FILES_MANIFEST" "$DEST_FILES_MANIFEST" >> "$MANIFEST_DIFF"
 fi
 
 VERIFY_OK="1"
-if [[ "$VERIFY_WITH_CHECKSUM" == "1" ]]; then
-    echo "[INFO] Running checksum-based verification..."
+if [[ "$VERIFY_MODE" == "checksum" || "$VERIFY_MODE" == "metadata" ]]; then
+    if [[ "$VERIFY_MODE" == "checksum" ]]; then
+        echo "[INFO] Running checksum-based verification..."
+        VERIFY_RSYNC_ARGS=(-anrcH)
+    else
+        echo "[INFO] Running metadata-based verification (size + mtime)..."
+        VERIFY_RSYNC_ARGS=(-anrH)
+    fi
+
     rsync \
-        -anrcH \
+        "${VERIFY_RSYNC_ARGS[@]}" \
         --delete \
         --itemize-changes \
         --out-format='%i %n%L' \
@@ -360,6 +397,7 @@ if [[ "$VERIFY_WITH_CHECKSUM" == "1" ]]; then
         printf "run\tsubject\tmismatch_entries\n" > "$VERIFY_MISMATCH_SUMMARY"
     fi
 else
+    echo "[INFO] Post-copy rsync verification skipped (VERIFY_MODE=none)."
     printf "run\tsubject\tmismatch_entries\n" > "$VERIFY_MISMATCH_SUMMARY"
 fi
 
@@ -422,8 +460,9 @@ fi
     echo "source_total_bytes=$SOURCE_TOTAL_BYTES"
     echo "destination_total_bytes=$DEST_TOTAL_BYTES"
     echo "manifest_ok=$MANIFEST_OK"
-    echo "checksum_verify_enabled=$VERIFY_WITH_CHECKSUM"
-    echo "checksum_verify_ok=$VERIFY_OK"
+    echo "verify_mode=$VERIFY_MODE"
+    echo "checksum_verify_enabled=$([[ "$VERIFY_MODE" == "checksum" ]] && echo 1 || echo 0)"
+    echo "verify_ok=$VERIFY_OK"
     echo "subject_report=$SUBJECT_REPORT"
     echo "copy_log=$COPY_LOG"
     echo "verify_log=$VERIFY_LOG"

@@ -134,7 +134,7 @@ Visual overview:
 - Inputs and subject-level metrics: [draw.io](../docs/post_pipeline_metric_flowchart_inputs_subject_level.drawio), [SVG](../docs/post_pipeline_metric_flowchart_inputs_subject_level.svg)
 - Cohort definition across repeats: [draw.io](../docs/post_pipeline_metric_flowchart_cohort_definition_across_repeats.drawio), [SVG](../docs/post_pipeline_metric_flowchart_cohort_definition_across_repeats.svg)
 - Within-run population metrics: [draw.io](../docs/post_pipeline_metric_flowchart_within_run_population_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_within_run_population_metrics.svg)
-- Across-repeat repeatability metrics: [draw.io](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg)
+- Across-repeat analysis outputs: [draw.io](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg)
 
 ## What Is Measured
 
@@ -504,7 +504,7 @@ Typical files in `<dataset>/population_analysis/`:
 
 ### Across-repeat outputs
 
-Typical files in `<batch_root>/repeatability_analysis/<roi>/` or `<dataset_root>/subject_metrics_analysis/`:
+Typical files in `<batch_root>/subject_metrics_analysis/` for the normal single-ROI batch case, or under an explicit repeatability output root when you override it:
 
 - `subject_metrics_long.csv`
 - `repeat_level_population_statistics.csv`
@@ -595,7 +595,7 @@ Useful environment variables in `run_post_processing_batch_env.py`:
 - `PIPELINE_EEG_POSITIONS_PATH_TEMPLATE`
 - `PIPELINE_POPULATION_ENABLED`
 - `PIPELINE_REPEATABILITY_ENABLED`
-- `PIPELINE_REPEATABILITY_OUTPUT_DIR`
+- `PIPELINE_REPEATABILITY_OUTPUT_DIR` (optional override; blank keeps the inline default)
 - `PIPELINE_REPEATABILITY_LOGS_ROOT`
 - `PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY`
 
@@ -641,8 +641,7 @@ python3 post/run_full_post_pipeline.py \
   --atlas-filename mri/aparc.DKTatlas+aseg.deep.nii.gz \
   --mni-baseline-root /path/to/MNI152_Hippocampus \
   --mni-fixed-atlas-path /path/to/mni_fastsurfer_atlas.nii.gz \
-  --electrode-csv /path/to/electrode_centers.csv \
-  --repeatability-output-dir repeatability_analysis
+  --electrode-csv /path/to/electrode_centers.csv
 ```
 
 Use this mode when you want:
@@ -650,7 +649,7 @@ Use this mode when you want:
 - every repeat dataset processed
 - per-run `population_analysis/` outputs restricted to subjects that complete all selected repeats
 - one batch summary JSON
-- automatic across-repeat analysis after the batch finishes
+- automatic across-repeat analysis after the batch finishes, written to `<batch_root>/subject_metrics_analysis/` by default
 - one complete-case subject manifest per ROI
 
 ### 3. Run repeatability analysis only
@@ -660,8 +659,7 @@ Use this when all subject-level outputs already exist and you only want the cros
 ```bash
 python3 post/repeatability/analyze_subject_metrics.py \
   /path/to/repeat_batch_root \
-  --roi Left-Hippocampus \
-  --output-dir /path/to/repeat_batch_root/repeatability_analysis/left_hippocampus
+  --roi Left-Hippocampus
 ```
 
 Use this mode when you want:

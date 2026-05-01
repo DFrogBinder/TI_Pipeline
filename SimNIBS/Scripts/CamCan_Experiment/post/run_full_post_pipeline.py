@@ -190,8 +190,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--repeatability-output-dir",
-        default="repeatability_analysis",
-        help="Batch-mode repeatability output directory root. Default: repeatability_analysis",
+        default=None,
+        help=(
+            "Optional batch-mode repeatability output directory root. "
+            "By default, single-ROI repeat batches write directly to <batch_root>/subject_metrics_analysis. "
+            "If multiple ROIs are discovered under one batch root, the pipeline falls back to "
+            "<batch_root>/repeatability_analysis/<roi> unless you override this path."
+        ),
     )
     parser.add_argument(
         "--repeatability-logs-root",

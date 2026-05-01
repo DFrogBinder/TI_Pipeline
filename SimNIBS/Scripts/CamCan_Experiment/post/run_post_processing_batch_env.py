@@ -164,8 +164,7 @@ def build_configs():
         continue_on_error=not read_bool("BATCH_STOP_ON_ERROR", default=False),
         summary_filename=read_optional_text("BATCH_SUMMARY_FILENAME"),
         run_repeatability=read_bool("PIPELINE_REPEATABILITY_ENABLED", default=True),
-        repeatability_output_dir=read_optional_text("PIPELINE_REPEATABILITY_OUTPUT_DIR")
-        or "repeatability_analysis",
+        repeatability_output_dir=read_optional_text("PIPELINE_REPEATABILITY_OUTPUT_DIR"),
         repeatability_logs_root=read_optional_text("PIPELINE_REPEATABILITY_LOGS_ROOT"),
         complete_repeat_subjects_only=read_bool(
             "PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY",

@@ -53,7 +53,7 @@ class RepeatBatchConfig:
     continue_on_error: bool = True
     summary_filename: Optional[str] = "post_processing_batch_summary.json"
     run_repeatability: bool = True
-    repeatability_output_dir: Optional[str] = "repeatability_analysis"
+    repeatability_output_dir: Optional[str] = None
     repeatability_logs_root: Optional[str] = None
     complete_repeat_subjects_only: bool = True
 
@@ -133,6 +133,34 @@ def _resolve_repeatability_output_root(cfg: RepeatBatchConfig, batch_root: Path)
     if not output_root.is_absolute():
         output_root = batch_root / output_root
     return output_root
+
+
+def _default_repeatability_output_dir(
+    *,
+    batch_root: Path,
+    roi_name: str,
+    roi_count: int,
+) -> Path:
+    if roi_count <= 1:
+        return batch_root / "subject_metrics_analysis"
+    return batch_root / "repeatability_analysis" / normalize_roi_name(roi_name)
+
+
+def _resolve_repeatability_output_dir_for_roi(
+    *,
+    cfg: RepeatBatchConfig,
+    batch_root: Path,
+    roi_name: str,
+    roi_count: int,
+) -> Path:
+    output_root = _resolve_repeatability_output_root(cfg, batch_root)
+    if output_root is not None:
+        return output_root / normalize_roi_name(roi_name)
+    return _default_repeatability_output_dir(
+        batch_root=batch_root,
+        roi_name=roi_name,
+        roi_count=roi_count,
+    )
 
 
 def _resolve_population_output_root(pipeline_template: PipelineConfig) -> Optional[Path]:
@@ -290,12 +318,15 @@ def _run_repeatability_stage(
     if not by_roi:
         return []
 
-    output_root = _resolve_repeatability_output_root(cfg, batch_root)
+    roi_count = len(by_roi)
     repeatability_results = []
     for roi_name, roi_results in sorted(by_roi.items()):
-        roi_output_dir = None
-        if output_root is not None:
-            roi_output_dir = output_root / normalize_roi_name(roi_name)
+        roi_output_dir = _resolve_repeatability_output_dir_for_roi(
+            cfg=cfg,
+            batch_root=batch_root,
+            roi_name=roi_name,
+            roi_count=roi_count,
+        )
         try:
             analysis_result = run_analysis(
                 dataset_root=batch_root,
@@ -479,7 +510,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional output directory root for repeatability analysis. "
-            "A per-ROI subdirectory will be created under this path."
+            "A per-ROI subdirectory will be created under this path. "
+            "If omitted, a single-ROI batch writes directly to <batch_root>/subject_metrics_analysis, "
+            "while a mixed-ROI batch falls back to <batch_root>/repeatability_analysis/<roi>."
         ),
     )
     parser.add_argument(
@@ -527,7 +560,7 @@ def make_default_batch_config() -> RepeatBatchConfig:
         continue_on_error=True,
         summary_filename="post_processing_batch_summary.json",
         run_repeatability=True,
-        repeatability_output_dir="repeatability_analysis",
+        repeatability_output_dir=None,
         repeatability_logs_root=None,
     )
 

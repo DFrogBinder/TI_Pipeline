@@ -80,7 +80,7 @@ PIPELINE_POPULATION_TEMPLATE_REGION_CSV=""
 
 # Across-repeat repeatability
 PIPELINE_REPEATABILITY_ENABLED="1"
-PIPELINE_REPEATABILITY_OUTPUT_DIR="repeatability_analysis"
+PIPELINE_REPEATABILITY_OUTPUT_DIR=""  # blank -> default to <BATCH_ROOT>/subject_metrics_analysis for a single-ROI batch; set a custom root to override
 PIPELINE_REPEATABILITY_LOGS_ROOT=""  # optional directory containing slurm-*.out files for the failure audit
 
 if [[ $# -gt 0 ]]; then

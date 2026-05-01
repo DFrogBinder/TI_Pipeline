@@ -2,6 +2,7 @@ from pathlib import Path
 
 from post.run_post_processing_batch import (
     RepeatBatchConfig,
+    _resolve_repeatability_output_dir_for_roi,
     discover_repeat_datasets,
     make_default_pipeline_template,
     run_repeat_batch,
@@ -70,6 +71,7 @@ def test_run_repeat_batch_uses_fresh_pipeline_template_per_dataset(tmp_path, mon
             batch_root=str(tmp_path),
             repeats=["01", "02"],
             summary_filename=None,
+            run_repeatability=False,
         ),
         template,
     )
@@ -81,3 +83,45 @@ def test_run_repeat_batch_uses_fresh_pipeline_template_per_dataset(tmp_path, mon
     assert template.population.target_roi is None
     assert summary["processed_datasets"] == 2
     assert summary["failed_datasets"] == 0
+
+
+def test_default_repeatability_output_dir_is_inline_for_single_roi_batch(tmp_path):
+    cfg = RepeatBatchConfig(batch_root=str(tmp_path), repeatability_output_dir=None)
+
+    output_dir = _resolve_repeatability_output_dir_for_roi(
+        cfg=cfg,
+        batch_root=tmp_path,
+        roi_name="Left-Hippocampus",
+        roi_count=1,
+    )
+
+    assert output_dir == tmp_path / "subject_metrics_analysis"
+
+
+def test_default_repeatability_output_dir_uses_per_roi_subdir_for_multi_roi_batch(tmp_path):
+    cfg = RepeatBatchConfig(batch_root=str(tmp_path), repeatability_output_dir=None)
+
+    output_dir = _resolve_repeatability_output_dir_for_roi(
+        cfg=cfg,
+        batch_root=tmp_path,
+        roi_name="Left-Hippocampus",
+        roi_count=2,
+    )
+
+    assert output_dir == tmp_path / "repeatability_analysis" / "Left_Hippocampus"
+
+
+def test_explicit_repeatability_output_root_still_creates_per_roi_subdir(tmp_path):
+    cfg = RepeatBatchConfig(
+        batch_root=str(tmp_path),
+        repeatability_output_dir="custom_repeatability_outputs",
+    )
+
+    output_dir = _resolve_repeatability_output_dir_for_roi(
+        cfg=cfg,
+        batch_root=tmp_path,
+        roi_name="Left-Hippocampus",
+        roi_count=1,
+    )
+
+    assert output_dir == tmp_path / "custom_repeatability_outputs" / "Left_Hippocampus"

@@ -85,8 +85,14 @@ echo "[INFO] Array index:       ${SLURM_ARRAY_TASK_ID}"
 echo "[INFO] CPUs:              ${SLURM_CPUS_PER_TASK}"
 echo "[INFO] Log file:          ${LOG_FILE}"
 
-python -u "${SCRIPT_DIR}/simulation_runners/repeatability_experiment.py" \
-    run-task \
-    --config "${EXPERIMENT_CONFIG}" \
-    --task-index "${SLURM_ARRAY_TASK_ID}" \
-    "${EXTRA_ARGS[@]}" 2>&1 | tee "${LOG_FILE}"
+PYTHON_CMD=(
+    python -u "${SCRIPT_DIR}/simulation_runners/repeatability_experiment.py"
+    run-task
+    --config "${EXPERIMENT_CONFIG}"
+    --task-index "${SLURM_ARRAY_TASK_ID}"
+)
+if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
+    PYTHON_CMD+=("${EXTRA_ARGS[@]}")
+fi
+
+"${PYTHON_CMD[@]}" 2>&1 | tee "${LOG_FILE}"

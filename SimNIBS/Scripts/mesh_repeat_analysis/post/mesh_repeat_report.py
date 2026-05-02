@@ -1044,12 +1044,14 @@ def _run_subject_analysis(
     roi_name: str,
     roi_labels: list[int],
     rootdir_override: Path | None = None,
+    repeats_dir_override: Path | None = None,
     output_dir_override: Path | None = None,
+    condition_name: str | None = None,
 ) -> dict[str, object]:
     rootdir, repeats_root = _resolve_rootdir_and_repeats(
         subject,
         str(rootdir_override) if rootdir_override is not None else args.rootdir,
-        args.repeats_dir,
+        str(repeats_dir_override) if repeats_dir_override is not None else args.repeats_dir,
     )
 
     log_event("repeat_root", subject=subject, path=str(repeats_root))
@@ -1547,6 +1549,7 @@ def _run_subject_analysis(
 
     result = {
         "subject": subject,
+        "condition": condition_name,
         "output_dir": str(output_dir),
         "repeats": len(summary_rows),
         "discovered_repeats": len(repeat_anat_dirs),
@@ -1559,6 +1562,13 @@ def _run_subject_analysis(
         "median_roi_cv_percent": metric_stats_map["median_roi"]["cv_percent"],
         "peak_roi_cv_percent": metric_stats_map["peak_roi"]["cv_percent"],
         "mean_roi_mean": metric_stats_map["mean_roi"]["mean"],
+        "summary_csv": str(summary_csv),
+        "summary_json": str(summary_json),
+        "repeatability_csv": str(repeatability_csv),
+        "repeatability_json": str(repeatability_json),
+        "repeatability_report": str(output_dir / "repeatability_report.md"),
+        "parameter_consistency_json": str(parameter_json),
+        "metric_stats_map": metric_stats_map,
         "cohort_sd_ratio": (
             cohort_comparison["between_to_within_sd_ratio"] if cohort_comparison is not None else float("nan")
         ),

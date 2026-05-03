@@ -5,12 +5,15 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
+import socket
 import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +80,8 @@ SIM_MODULE = None
 SIM_MESH_IO = None
 SIM_STRUCT = None
 SIM_TI = None
+MESH_LOCK_TIMEOUT_SEC = 12 * 60 * 60
+MESH_LOCK_POLL_SEC = 5.0
 
 
 @dataclass(frozen=True)
@@ -125,6 +130,58 @@ def log_file_info(label: str, path: Path) -> None:
         exists=path.exists(),
         size_bytes=path.stat().st_size if path.exists() else None,
     )
+
+
+@contextmanager
+def _exclusive_lock(
+    lock_path: Path,
+    *,
+    timeout_sec: float = MESH_LOCK_TIMEOUT_SEC,
+    poll_interval_sec: float = MESH_LOCK_POLL_SEC,
+):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    start = time.time()
+    last_wait_log_sec = -60.0
+    acquired = False
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                waited_sec = time.time() - start
+                handle.seek(0)
+                handle.truncate()
+                handle.write(
+                    json.dumps(
+                        {
+                            "pid": os.getpid(),
+                            "host": socket.gethostname(),
+                            "acquired_at": time.time(),
+                            "waited_sec": waited_sec,
+                        }
+                    )
+                    + "\n"
+                )
+                handle.flush()
+                os.fsync(handle.fileno())
+                log_event("lock_acquired", lock_path=str(lock_path), waited_sec=round(waited_sec, 3))
+                break
+            except BlockingIOError:
+                waited_sec = time.time() - start
+                if waited_sec - last_wait_log_sec >= 60.0:
+                    log_event("lock_wait", lock_path=str(lock_path), waited_sec=round(waited_sec, 3))
+                    last_wait_log_sec = waited_sec
+                if waited_sec >= timeout_sec:
+                    raise TimeoutError(
+                        f"Timed out waiting for lock {lock_path} after {waited_sec:.1f} sec"
+                    )
+                time.sleep(poll_interval_sec)
+        try:
+            yield
+        finally:
+            if acquired:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                log_event("lock_released", lock_path=str(lock_path))
 
 
 def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
@@ -223,6 +280,10 @@ def _workspace_from_anat_dir(anat_dir: Path, subject: str) -> WorkspacePaths:
     )
 
 
+def _mesh_ready_marker(workspace: WorkspacePaths) -> Path:
+    return workspace.anat_dir / ".mesh_ready.json"
+
+
 def _prepare_repeat_workspace(
     source_paths: SourceSubjectPaths,
     *,
@@ -263,6 +324,9 @@ def _mesh_workspace(
     subject: str,
     force_mesh: bool,
 ) -> Path:
+    ready_marker = _mesh_ready_marker(workspace)
+    lock_path = workspace.anat_dir / ".mesh_build.lock"
+
     log_file_info("workspace_t1", workspace.anat_dir / f"{subject}_T1w.nii")
     log_file_info("workspace_t2", workspace.anat_dir / f"{subject}_T2w.nii")
     log_file_info(
@@ -271,62 +335,89 @@ def _mesh_workspace(
     )
     log_file_info("workspace_mesh", workspace.mesh_path)
 
-    if workspace.mesh_path.exists() and not force_mesh:
+    if workspace.mesh_path.exists() and ready_marker.exists() and not force_mesh:
         log_event("mesh_reuse", subject=subject, mesh_path=str(workspace.mesh_path))
         return workspace.mesh_path
 
-    run_cmd(
-        [
-            "charm",
-            subject,
-            str(workspace.anat_dir / f"{subject}_T1w.nii"),
-            str(workspace.anat_dir / f"{subject}_T2w.nii"),
-            "--forcerun",
-            "--forceqform",
-        ],
-        cwd=str(workspace.anat_dir),
-        label="charm_init",
-    )
+    with _exclusive_lock(lock_path):
+        if workspace.mesh_path.exists() and not force_mesh:
+            if not ready_marker.exists():
+                _write_json(
+                    ready_marker,
+                    {
+                        "subject": subject,
+                        "mesh_path": str(workspace.mesh_path),
+                        "status": "adopted_existing_mesh",
+                        "created_at": time.time(),
+                    },
+                )
+            log_event("mesh_reuse", subject=subject, mesh_path=str(workspace.mesh_path))
+            return workspace.mesh_path
 
-    custom_seg_map = nib.load(str(workspace.anat_dir / f"{subject}_T1w_ras_1mm_T1andT2_masks.nii"))
-    charm_seg_map_path = (
-        workspace.anat_dir
-        / f"m2m_sub-{subject.split('-')[-1].upper()}"
-        / "label_prep"
-        / "tissue_labeling_upsampled.nii.gz"
-    )
-    log_file_info("charm_seg_map", charm_seg_map_path)
+        if force_mesh and ready_marker.exists():
+            ready_marker.unlink()
 
-    data = custom_seg_map.get_fdata(dtype=np.float32)
-    if not np.allclose(data, np.round(data)):
-        log_event(
-            "segmentation_rounding_warning",
-            subject=subject,
-            note="Custom segmentation contained non-integer values; rounding to nearest integers.",
+        run_cmd(
+            [
+                "charm",
+                subject,
+                str(workspace.anat_dir / f"{subject}_T1w.nii"),
+                str(workspace.anat_dir / f"{subject}_T2w.nii"),
+                "--forcerun",
+                "--forceqform",
+            ],
+            cwd=str(workspace.anat_dir),
+            label="charm_init",
         )
-    data = np.rint(data).astype(np.int16)
-    if USE_CUSTOM_LABELS_ONLY and SMOOTH_SCALP:
-        data = _smooth_scalp_labels(data)
 
-    merged_seg_img_path = workspace.anat_dir / f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii"
-    out_img = nib.Nifti1Image(data.astype(np.uint16), custom_seg_map.affine, custom_seg_map.header)
-    nib.save(out_img, str(merged_seg_img_path))
-    atomic_replace(
-        str(merged_seg_img_path),
-        str(charm_seg_map_path),
-        force_int=True,
-        int_dtype="uint16",
-    )
+        custom_seg_map = nib.load(str(workspace.anat_dir / f"{subject}_T1w_ras_1mm_T1andT2_masks.nii"))
+        charm_seg_map_path = (
+            workspace.anat_dir
+            / f"m2m_sub-{subject.split('-')[-1].upper()}"
+            / "label_prep"
+            / "tissue_labeling_upsampled.nii.gz"
+        )
+        log_file_info("charm_seg_map", charm_seg_map_path)
 
-    run_cmd(
-        ["charm", subject, "--mesh"],
-        cwd=str(workspace.anat_dir),
-        label="charm_remesh",
-    )
+        data = custom_seg_map.get_fdata(dtype=np.float32)
+        if not np.allclose(data, np.round(data)):
+            log_event(
+                "segmentation_rounding_warning",
+                subject=subject,
+                note="Custom segmentation contained non-integer values; rounding to nearest integers.",
+            )
+        data = np.rint(data).astype(np.int16)
+        if USE_CUSTOM_LABELS_ONLY and SMOOTH_SCALP:
+            data = _smooth_scalp_labels(data)
 
-    if not workspace.mesh_path.exists():
-        raise FileNotFoundError(f"Expected mesh was not created: {workspace.mesh_path}")
-    return workspace.mesh_path
+        merged_seg_img_path = workspace.anat_dir / f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii"
+        out_img = nib.Nifti1Image(data.astype(np.uint16), custom_seg_map.affine, custom_seg_map.header)
+        nib.save(out_img, str(merged_seg_img_path))
+        atomic_replace(
+            str(merged_seg_img_path),
+            str(charm_seg_map_path),
+            force_int=True,
+            int_dtype="uint16",
+        )
+
+        run_cmd(
+            ["charm", subject, "--mesh"],
+            cwd=str(workspace.anat_dir),
+            label="charm_remesh",
+        )
+
+        if not workspace.mesh_path.exists():
+            raise FileNotFoundError(f"Expected mesh was not created: {workspace.mesh_path}")
+        _write_json(
+            ready_marker,
+            {
+                "subject": subject,
+                "mesh_path": str(workspace.mesh_path),
+                "status": "mesh_ready",
+                "created_at": time.time(),
+            },
+        )
+        return workspace.mesh_path
 
 
 def _run_ti_pipeline(

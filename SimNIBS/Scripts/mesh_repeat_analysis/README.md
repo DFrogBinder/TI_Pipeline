@@ -46,6 +46,11 @@ The condition-specific behavior is:
 
 That means the only intended difference between the two conditions is the mesh strategy.
 
+Implementation note:
+
+- `fixed_mesh` now uses a filesystem lock around shared mesh-cache creation, so concurrent array tasks for the same subject cannot try to build the same mesh at the same time.
+- Repeat outputs are still isolated per repeat, so missing fixed-mesh repeats indicate task failures or incomplete runs, not cross-repeat overwrites.
+
 ## New Experiment Layout
 
 With the new paired runner, outputs are written like this:

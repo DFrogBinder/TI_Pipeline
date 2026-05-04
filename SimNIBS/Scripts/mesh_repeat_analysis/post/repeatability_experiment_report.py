@@ -10,6 +10,7 @@ import csv
 import json
 import math
 import sys
+import traceback
 from pathlib import Path
 
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]
@@ -304,6 +305,103 @@ def _build_single_condition_args(args: argparse.Namespace, config) -> argparse.N
     return single_args
 
 
+def _subject_summary_row(
+    *,
+    subject: str,
+    subject_output_root: Path,
+    result: dict[str, object] | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "subject": subject,
+        "status": "complete" if result is not None else "failed",
+        "analysis_root": str(subject_output_root),
+        "baseline_condition": None,
+        "comparison_condition": None,
+        "compare_metric": None,
+        "baseline_std": None,
+        "comparison_std": None,
+        "std_ratio_comparison_over_baseline": None,
+        "std_reduction_percent": None,
+        "baseline_cv_percent": None,
+        "comparison_cv_percent": None,
+        "cv_reduction_percent": None,
+        "error_type": error_type,
+        "error_message": error_message,
+    }
+    if result is None or "metric_rows" not in result:
+        return row
+
+    primary_metric = result["compare_metric"]
+    primary_row = next(row_ for row_ in result["metric_rows"] if row_["metric"] == primary_metric)
+    row.update(
+        {
+            "baseline_condition": result["baseline_condition"],
+            "comparison_condition": result["comparison_condition"],
+            "compare_metric": primary_metric,
+            "baseline_std": primary_row["baseline_std"],
+            "comparison_std": primary_row["comparison_std"],
+            "std_ratio_comparison_over_baseline": primary_row["std_ratio_comparison_over_baseline"],
+            "std_reduction_percent": primary_row["std_reduction_percent"],
+            "baseline_cv_percent": primary_row["baseline_cv_percent"],
+            "comparison_cv_percent": primary_row["comparison_cv_percent"],
+            "cv_reduction_percent": primary_row["cv_reduction_percent"],
+        }
+    )
+    return row
+
+
+def _write_batch_outputs(
+    *,
+    batch_output_root: Path,
+    config_path: Path,
+    condition_names: list[str],
+    subject_rows: list[dict[str, object]],
+    failures: list[dict[str, object]],
+) -> None:
+    batch_output_root.mkdir(parents=True, exist_ok=True)
+    summary_payload = {
+        "config_path": str(config_path),
+        "condition_names": condition_names,
+        "subjects_total": len(subject_rows),
+        "subjects_succeeded": sum(1 for row in subject_rows if row["status"] == "complete"),
+        "subjects_failed": sum(1 for row in subject_rows if row["status"] != "complete"),
+        "subjects": subject_rows,
+        "failures": failures,
+    }
+    with (batch_output_root / "paired_condition_summary.json").open("w", encoding="utf-8") as fh:
+        json.dump(summary_payload, fh, indent=2)
+        fh.write("\n")
+
+    if subject_rows:
+        fieldnames = [
+            "subject",
+            "status",
+            "analysis_root",
+            "baseline_condition",
+            "comparison_condition",
+            "compare_metric",
+            "baseline_std",
+            "comparison_std",
+            "std_ratio_comparison_over_baseline",
+            "std_reduction_percent",
+            "baseline_cv_percent",
+            "comparison_cv_percent",
+            "cv_reduction_percent",
+            "error_type",
+            "error_message",
+        ]
+        with (batch_output_root / "paired_condition_summary.csv").open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(subject_rows)
+
+    with (batch_output_root / "paired_condition_failures.json").open("w", encoding="utf-8") as fh:
+        json.dump(failures, fh, indent=2)
+        fh.write("\n")
+
+
 def analyze_subject(
     *,
     args: argparse.Namespace,
@@ -474,51 +572,99 @@ def main() -> None:
     else:
         subjects = config.subjects[: args.max_subjects] if args.max_subjects is not None else config.subjects
 
-    batch_rows: list[dict[str, object]] = []
-    for subject in subjects:
-        result = analyze_subject(
-            args=args,
-            config=config,
-            subject=subject,
-            condition_names=condition_names,
-            roi_name=roi_name,
-            roi_labels=roi_labels,
-        )
-        row = {"subject": subject}
-        if "metric_rows" in result:
-            primary_metric = result["compare_metric"]
-            primary_row = next(row_ for row_ in result["metric_rows"] if row_["metric"] == primary_metric)
-            row.update(
-                {
-                    "baseline_condition": result["baseline_condition"],
-                    "comparison_condition": result["comparison_condition"],
-                    "compare_metric": primary_metric,
-                    "baseline_std": primary_row["baseline_std"],
-                    "comparison_std": primary_row["comparison_std"],
-                    "std_ratio_comparison_over_baseline": primary_row["std_ratio_comparison_over_baseline"],
-                    "std_reduction_percent": primary_row["std_reduction_percent"],
-                    "baseline_cv_percent": primary_row["baseline_cv_percent"],
-                    "comparison_cv_percent": primary_row["comparison_cv_percent"],
-                    "cv_reduction_percent": primary_row["cv_reduction_percent"],
-                }
-            )
-        batch_rows.append(row)
-
     batch_output_root = (
         Path(args.output_dir).expanduser().resolve()
         if args.output_dir
         else config.experiment_root / "_analysis"
     )
-    batch_output_root.mkdir(parents=True, exist_ok=True)
-    with (batch_output_root / "paired_condition_summary.json").open("w", encoding="utf-8") as fh:
-        json.dump(batch_rows, fh, indent=2)
-        fh.write("\n")
-    if batch_rows:
-        with (batch_output_root / "paired_condition_summary.csv").open("w", encoding="utf-8", newline="") as fh:
-            fieldnames = list(batch_rows[0].keys())
-            writer = csv.DictWriter(fh, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(batch_rows)
+    batch_rows: list[dict[str, object]] = []
+    failures: list[dict[str, object]] = []
+    for subject in subjects:
+        subject_output_root = (
+            batch_output_root / subject
+            if args.output_dir
+            else subject_analysis_root(config, subject)
+        )
+        try:
+            result = analyze_subject(
+                args=args,
+                config=config,
+                subject=subject,
+                condition_names=condition_names,
+                roi_name=roi_name,
+                roi_labels=roi_labels,
+            )
+            batch_rows.append(
+                _subject_summary_row(
+                    subject=subject,
+                    subject_output_root=subject_output_root,
+                    result=result,
+                )
+            )
+            base_report.log_event("subject_done", subject=subject, output_dir=str(subject_output_root))
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            error_type = type(exc).__name__
+            error_message = str(exc)
+            failure = {
+                "subject": subject,
+                "analysis_root": str(subject_output_root),
+                "condition_names": condition_names,
+                "error_type": error_type,
+                "error_message": error_message,
+                "traceback": traceback.format_exc(),
+            }
+            failures.append(failure)
+            batch_rows.append(
+                _subject_summary_row(
+                    subject=subject,
+                    subject_output_root=subject_output_root,
+                    error_type=error_type,
+                    error_message=error_message,
+                )
+            )
+            base_report.log_event(
+                "subject_error",
+                subject=subject,
+                error_type=error_type,
+                error_message=error_message,
+                output_dir=str(subject_output_root),
+            )
+
+    _write_batch_outputs(
+        batch_output_root=batch_output_root,
+        config_path=config.config_path,
+        condition_names=condition_names,
+        subject_rows=batch_rows,
+        failures=failures,
+    )
+
+    base_report.log_event(
+        "batch_done",
+        output_dir=str(batch_output_root),
+        subjects_total=len(batch_rows),
+        subjects_succeeded=sum(1 for row in batch_rows if row["status"] == "complete"),
+        subjects_failed=len(failures),
+    )
+
+    if not any(row["status"] == "complete" for row in batch_rows):
+        raise SystemExit("Post-processing did not complete successfully for any subject.")
+
+    if failures:
+        print(
+            json.dumps(
+                {
+                    "status": "partial_success",
+                    "subjects_total": len(batch_rows),
+                    "subjects_succeeded": sum(1 for row in batch_rows if row["status"] == "complete"),
+                    "subjects_failed": len(failures),
+                    "summary_json": str(batch_output_root / "paired_condition_summary.json"),
+                    "failures_json": str(batch_output_root / "paired_condition_failures.json"),
+                },
+                indent=2,
+            )
+        )
 
 
 if __name__ == "__main__":

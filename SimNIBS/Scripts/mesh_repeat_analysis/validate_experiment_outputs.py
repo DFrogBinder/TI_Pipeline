@@ -50,13 +50,15 @@ def _load_json(path: Path) -> dict[str, object] | None:
 def _repeat_paths(config: ExperimentConfig, subject: str, condition_name: str, repeat_index: int) -> dict[str, Path]:
     tag = repeat_tag(repeat_index)
     repeat_root = subject_condition_repeats_root(config, subject, condition_name) / tag
-    anat_dir = repeat_root / subject / "anat"
+    subject_root = repeat_root / subject
+    anat_dir = subject_root / "anat"
     sim_root = anat_dir / "SimNIBS"
     output_root = sim_root / "Output" / subject
     mesh_dir = anat_dir / f"m2m_{subject}"
     return {
         "repeat_root": repeat_root,
-        "task_manifest": repeat_root / "task_manifest.json",
+        "subject_root": subject_root,
+        "task_manifest": subject_root / "task_manifest.json",
         "anat_dir": anat_dir,
         "mesh_dir": mesh_dir,
         "head_mesh": mesh_dir / f"{subject}.msh",
@@ -123,6 +125,7 @@ def _check_repeat(
 
     required_paths = {
         "repeat_root": paths["repeat_root"],
+        "subject_root": paths["subject_root"],
         "task_manifest": paths["task_manifest"],
         "anat_dir": paths["anat_dir"],
         "head_mesh": paths["head_mesh"],
@@ -150,10 +153,12 @@ def _check_repeat(
     if sim_mat is None:
         warnings.append("simulation_mat_missing")
 
-    manifest = _load_json(paths["task_manifest"])
-    if manifest is None:
-        warnings.append("task_manifest_unreadable")
-    else:
+    manifest = None
+    if "task_manifest" not in missing:
+        manifest = _load_json(paths["task_manifest"])
+        if manifest is None:
+            warnings.append("task_manifest_unreadable")
+    if manifest is not None:
         if manifest.get("repeat_tag") != tag:
             warnings.append("task_manifest_repeat_mismatch")
         if manifest.get("condition") != condition_name:

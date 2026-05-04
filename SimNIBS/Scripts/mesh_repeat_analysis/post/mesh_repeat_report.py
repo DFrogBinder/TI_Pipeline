@@ -108,8 +108,16 @@ def _find_volume_candidate(parent: Path, prefix: str) -> Path | None:
     return candidates[0] if candidates else None
 
 
-def _run_msh2nii(ti_msh: Path, t1_path: Path, out_base: Path, *, mode: str) -> None:
-    cmd = ["msh2nii", str(ti_msh), str(t1_path), str(out_base), mode]
+def _run_msh2nii(
+    ti_msh: Path,
+    t1_path: Path,
+    out_base: Path,
+    *,
+    mode: str | None,
+) -> None:
+    cmd = ["msh2nii", str(ti_msh), str(t1_path), str(out_base)]
+    if mode:
+        cmd.append(mode)
     log_event("run_cmd", label="msh2nii", cmd=cmd, cwd=str(out_base.parent))
     result = subprocess.run(cmd, cwd=str(out_base.parent), capture_output=True, text=True)
     log_event(
@@ -160,7 +168,9 @@ def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tupl
         _run_msh2nii(ti_msh, t1_path, label_base, mode="--create_label")
         label_file = _find_volume_candidate(labels_dir, "TI_Volumetric_")
     if not base_file:
-        _run_msh2nii(ti_msh, t1_path, base_base, mode="--create_base")
+        # Match the simulation runner: base TI volumes are created without an
+        # extra msh2nii mode flag.
+        _run_msh2nii(ti_msh, t1_path, base_base, mode=None)
         base_file = _find_volume_candidate(base_dir, "TI_Volumetric_")
 
     if not label_file or not base_file:

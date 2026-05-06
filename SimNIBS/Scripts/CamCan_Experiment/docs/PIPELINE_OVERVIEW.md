@@ -68,6 +68,31 @@ Use this as a quick map from raw data to population summaries and where each ste
   - `population_anatomy_correlations.csv`
   - `worst_case_subjects.csv`
 
-## 5) Optional geometry exports
+## 5) Across-repeat repeatability
+- **Script**: `post/repeatability/analyze_subject_metrics.py`
+- **Batch orchestration**: `post/run_post_processing_batch.py`
+- **Inputs**: Repeat dataset folders containing complete `subject_metrics.json` files and saved image masks/field volumes.
+- **Command**:
+```bash
+  python post/repeatability/analyze_subject_metrics.py \
+    <batch_root> \
+    --roi Left-Hippocampus
+  ```
+- **Outputs** (typically in `<batch_root>/subject_metrics_analysis/`):
+  - `subject_metrics_long.csv`
+  - `run_subject_coverage.csv`
+  - `repeat_level_population_statistics.csv`
+  - `repeat_level_population_statistics_complete_subjects.csv`
+  - `experiment_level_population_statistics.csv`
+  - `variation_analysis_metrics.csv`
+  - `pairwise_run_differences.csv`
+  - `within_subject_repeatability.csv`
+  - `subject_repeat_metric_means.csv` and `subject_repeat_metric_sds.csv`
+  - `subject_level_variation.csv`, `subject_level_variation_summary.csv`, `subject_level_top_variable_subjects.csv`, and `subject_cross_metric_instability.csv`
+  - image repeatability CSVs and reports unless `--skip-image-repeatability` is used
+  - optional log-audit CSVs and `failure_report.md` when logs are provided
+  - `analysis_summary.md`, `analysis_methodology.md`, `results_interpretation.md`, `subject_level_variation_report.md`, and `figures/*.png`
+
+## 6) Optional geometry exports
 - **Script**: `create3dmesh.py`
 - **Use**: Convert TI volumes + masks to VTK/PLY/STL surfaces for visualization.

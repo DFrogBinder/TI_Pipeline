@@ -557,13 +557,19 @@ Typical files in `<dataset>/population_analysis/`:
 Typical files in `<batch_root>/subject_metrics_analysis/` for the normal single-ROI batch case, or under an explicit repeatability output root when you override it:
 
 - `subject_metrics_long.csv`
+- `run_subject_coverage.csv`
 - `repeat_level_population_statistics.csv`
 - `repeat_level_population_statistics_complete_subjects.csv`
 - `experiment_level_population_statistics.csv`
+- `variation_analysis_metrics.csv`
+- `pairwise_run_differences.csv`
 - `within_subject_repeatability.csv`
 - `subject_repeat_metric_means.csv`
 - `subject_repeat_metric_sds.csv`
 - `subject_level_variation.csv`
+- `subject_level_variation_summary.csv`
+- `subject_level_top_variable_subjects.csv`
+- `subject_cross_metric_instability.csv`
 - `image_repeatability_run_level.csv`
 - `image_repeatability_pairwise_subject_run_pairs.csv`
 - `image_repeatability_subject_level.csv`
@@ -572,8 +578,12 @@ Typical files in `<batch_root>/subject_metrics_analysis/` for the normal single-
 - `image_repeatability_issues.csv`
 - `image_repeatability_report.md`
 - `image_repeatability_methodology.md`
+- `analysis_summary.md`
+- `analysis_methodology.md`
+- `results_interpretation.md`
+- `subject_level_variation_report.md`
+- optional log-audit CSVs and `failure_report.md` when logs are provided
 - figures
-- Markdown interpretation and methodology reports
 
 ## Repeatability Logic
 

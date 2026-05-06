@@ -162,6 +162,13 @@ Outputs in `/path/to/root/population_analysis/`:
 - `subject_neighbor_metrics.csv` and `population_neighbor_summary.csv` (raw and summarized neighbor exposure metrics).
 - `population_anatomy_correlations.csv` and `worst_case_subjects.csv` (anatomy/performance associations and lowest ROI-peak subjects).
 
+Across-repeat outputs in `<batch_root>/subject_metrics_analysis/`:
+- `subject_metrics_long.csv` and `run_subject_coverage.csv` (flattened subject-run records and cohort coverage).
+- `repeat_level_population_statistics.csv` and `repeat_level_population_statistics_complete_subjects.csv` (per-repeat population summaries).
+- `experiment_level_population_statistics.csv`, `variation_analysis_metrics.csv`, `pairwise_run_differences.csv`, and `within_subject_repeatability.csv` (repeatability and drift summaries).
+- `subject_repeat_metric_means.csv`, `subject_repeat_metric_sds.csv`, `subject_level_variation.csv`, `subject_level_variation_summary.csv`, `subject_level_top_variable_subjects.csv`, and `subject_cross_metric_instability.csv` (subject-level repeat variation).
+- `image_repeatability_*.csv`, image repeatability reports, optional log-audit outputs, Markdown reports, and `figures/*.png`.
+
 ## Current pipeline diagram (mermaid)
 ```mermaid
 flowchart TD

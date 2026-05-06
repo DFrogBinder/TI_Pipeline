@@ -353,6 +353,31 @@ Across-repeat outputs are written by
 `<dataset_root>/subject_metrics_analysis/` unless an output directory is
 provided.
 
+### Across-Repeat Metric Checklist
+
+Scalar and subject-level repeatability:
+
+- per-run `n`, mean, SD, SEM, and 95% CI
+- median, IQR, min, max, and CV
+- mean and max absolute pairwise difference
+- SD of run means and CV of run means
+- subject repeat mean, SD, and CV
+- subject-specific drift, SD ratio versus pooled repeatability, and top
+  unstable subject rankings
+
+Image-level repeatability:
+
+- pairwise Dice and Jaccard for ROI masks, configured top-percentile masks, and
+  overlap masks
+- within-ROI voxelwise field correlations across repeats
+- voxel SD and CV summaries inside the ROI
+- ROI mean, ROI P95, and ROI peak field repeatability
+- peak displacement and overlap-mask center-of-mass displacement
+
+For the default `percentile=95`, the configured top-percentile mask is the top
+5% field mask. Output fields use `top_percentile_*` naming so runs with a
+different configured percentile remain correctly labeled.
+
 ### Loaded Scalar Metric Table
 
 | Output | Metric | Computation |
@@ -618,6 +643,29 @@ metrics.
 | `log_failure_category_by_run.csv` | Failure-category counts per run. |
 | `log_failure_stage_by_run.csv` | Failure-stage counts per run. |
 | `log_run_transition_summary.csv` | Paired transition summaries across runs. |
+
+### Narrative And Figure Outputs
+
+These files summarize the CSV metrics for review. They do not introduce new TI
+field formulas, but they are part of the across-repeat layer's output contract.
+
+| Output | Meaning |
+| --- | --- |
+| `analysis_summary.md` | Narrative summary of cohort size, key repeatability statistics, output inventory, and image-repeatability availability. |
+| `analysis_methodology.md` | Methodology document generated from the current run settings and computed fields. |
+| `results_interpretation.md` | Interpretation of repeat-level and experiment-level scalar repeatability results. |
+| `subject_level_variation_report.md` | Narrative report for subject-level repeat variation and top-variable subjects. |
+| `failure_report.md` | Optional narrative report for log-derived failures when logs are provided. |
+| `image_repeatability_methodology.md` | Methodology document for image-level repeatability when image analysis is enabled. |
+| `image_repeatability_report.md` | Narrative image-repeatability report when image analysis is enabled. |
+| `figures/01_subject_coverage.png` | Subject coverage figure. |
+| `figures/02_repeat_level_distributions.png` | Repeat-level metric distribution figure. |
+| `figures/03_repeat_level_mean_ci.png` | Repeat-level mean and CI figure. |
+| `figures/04_pairwise_run_differences.png` | Pairwise repeat-difference heatmap. |
+| `figures/05_variation_summary.png` | Experiment-level variation summary figure. |
+| `figures/06_subject_variation_summary.png` | Subject-level repeat variation figure. |
+| `figures/07_failure_summary.png` | Optional failure summary figure when logs are provided. |
+| `figures/08_image_repeatability_summary.png` | Image-level repeatability summary figure when image analysis succeeds. |
 
 ## Legacy Standalone Robustness Analysis
 

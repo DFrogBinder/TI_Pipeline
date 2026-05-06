@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple, Sequence
+from typing import Any, Optional, Dict, Iterable, Tuple, Sequence
 
 import numpy as np
 import json
@@ -26,7 +26,30 @@ from post.post_functions import (
     roi_masks_on_ti_grid,
     write_csv,
 )
-from post.metric_extensions import compute_extended_subject_metrics
+from post.metric_extensions import (
+    ANATOMY_DISTANCE_METRIC_KEYS,
+    BASELINE_METRIC_KEYS,
+    CENTROID_METRIC_KEYS,
+    ELECTRODE_METRIC_KEYS,
+    EXTENDED_METRIC_FIELDS,
+    EXTENDED_METRIC_SCHEMA_VERSION,
+    FOCALITY_METRIC_KEYS,
+    NEIGHBOR_METRIC_KEYS,
+    ROI_INTENSITY_METRIC_KEYS,
+    build_extended_metric_message_scaffold,
+    build_extended_metric_status_scaffold,
+    build_extended_metrics_scaffold,
+    compute_anatomy_distance_metrics,
+    compute_baseline_delta_metrics,
+    compute_centroid_metrics,
+    compute_electrode_distance_metrics,
+    compute_focality_metrics,
+    compute_neighbor_metrics,
+    compute_roi_intensity_metrics,
+    extended_metrics_config_fingerprint,
+    json_ready_metric_value,
+    load_subject_fastsurfer_atlas_data,
+)
 from utils.paths import post_root, ti_brain_path, t1_path
 from utils.ti_utils import (
     ensure_dir,
@@ -260,6 +283,51 @@ def _generate_selected_roi_overlays(
     return overlay_paths, roi_overlay_mode
 
 
+def extended_metrics_fingerprint_for_cfg(cfg: PostProcessConfig) -> str:
+    _, ti_path, _, _ = _infer_paths(cfg)
+    return extended_metrics_config_fingerprint(
+        root_dir=cfg.root_dir,
+        subject=cfg.subject,
+        ti_path=ti_path,
+        atlas_mode=cfg.atlas_mode,
+        fastsurfer_root=cfg.fastsurfer_root,
+        subject_fastsurfer_atlas_path=cfg.fs_mri_path,
+        roi_name=cfg.plot_roi or "",
+        percentile=cfg.percentile,
+        region_percentile=cfg.region_percentile,
+        focality_threshold=cfg.offtarget_threshold,
+        mni_baseline_root=cfg.mni_baseline_root,
+        mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+        neighbor_dilation_iter=cfg.neighbor_dilation_iter,
+        csf_labels=cfg.csf_labels,
+        skull_labels=cfg.skull_labels,
+        electrode_csv=cfg.electrode_csv,
+        electrode_names=cfg.electrode_names,
+        eeg_positions_path_template=cfg.eeg_positions_path_template,
+    )
+
+
+def _set_metric_group_state(
+    *,
+    metric_status: Dict[str, str],
+    metric_messages: Dict[str, Optional[str]],
+    metric_keys: Iterable[str],
+    status: str,
+    message: Optional[str] = None,
+) -> None:
+    for key in metric_keys:
+        metric_status[key] = status
+        metric_messages[key] = message
+
+
+def _apply_metric_values(
+    metric_values: Dict[str, Any],
+    values: Dict[str, Any],
+) -> None:
+    for key, value in values.items():
+        metric_values[key] = json_ready_metric_value(value)
+
+
 def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     """
     Library entrypoint. Returns a dict with useful results and file paths.
@@ -479,43 +547,386 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     sel = selected_plot_roi
 
     # ---- Extended per-repeat metrics for downstream repeatability analysis ----
-    extended_metrics = {}
+    extended_metrics = build_extended_metrics_scaffold()
+    extended_metric_status = build_extended_metric_status_scaffold()
+    extended_metric_messages = build_extended_metric_message_scaffold()
+    extended_group_status: Dict[str, str] = {}
+    extended_group_messages: Dict[str, Optional[str]] = {}
+    extended_config_fingerprint = extended_metrics_fingerprint_for_cfg(cfg)
     neighbor_table_path = None
     electrode_table_path = None
     if sel in roi_masks:
-        try:
-            extended_metrics = compute_extended_subject_metrics(
-                root_dir=cfg.root_dir,
-                subject=cfg.subject,
-                roi_name=sel,
+        roi_mask = roi_masks[sel]
+        subject_atlas_data = None
+        subject_atlas_error: Optional[Exception] = None
+        if fs_atlas_path:
+            try:
+                subject_atlas_data = load_subject_fastsurfer_atlas_data(ti_img, fs_atlas_path)
+            except Exception as exc:
+                subject_atlas_error = exc
+                if cfg.verbose:
+                    print(
+                        f"[WARN] Failed loading subject FastSurfer atlas for extended metrics "
+                        f"for {cfg.subject}: {type(exc).__name__}: {exc}"
+                    )
+
+        def execute_metric_group(
+            group_name: str,
+            metric_keys: Sequence[str],
+            compute_fn,
+        ) -> None:
+            try:
+                values = compute_fn()
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                extended_group_status[group_name] = "error"
+                extended_group_messages[group_name] = message
+                _set_metric_group_state(
+                    metric_status=extended_metric_status,
+                    metric_messages=extended_metric_messages,
+                    metric_keys=metric_keys,
+                    status="error",
+                    message=message,
+                )
+                if cfg.verbose:
+                    print(
+                        f"[WARN] Extended metric group '{group_name}' failed for {cfg.subject}: "
+                        f"{message}"
+                    )
+                return
+            _apply_metric_values(extended_metrics, values)
+            extended_group_status[group_name] = "ok"
+            extended_group_messages[group_name] = None
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=metric_keys,
+                status="ok",
+            )
+
+        def mark_metric_group_not_configured(
+            group_name: str,
+            metric_keys: Sequence[str],
+            message: str,
+        ) -> None:
+            extended_group_status[group_name] = "not_configured"
+            extended_group_messages[group_name] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=metric_keys,
+                status="not_configured",
+                message=message,
+            )
+
+        execute_metric_group(
+            "roi_intensity",
+            ROI_INTENSITY_METRIC_KEYS,
+            lambda: compute_roi_intensity_metrics(
                 ti_img=ti_img,
                 ti_data=ti_data,
-                roi_mask=roi_masks[sel],
+                roi_mask=roi_mask,
                 finite_mask=finite,
-                subject_fastsurfer_atlas_path=fs_atlas_path,
-                mni_baseline_root=cfg.mni_baseline_root,
-                mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+            ),
+        )
+        execute_metric_group(
+            "focality",
+            FOCALITY_METRIC_KEYS,
+            lambda: compute_focality_metrics(
+                ti_img=ti_img,
+                ti_data=ti_data,
+                finite_mask=finite,
                 focality_threshold=cfg.offtarget_threshold,
-                neighbor_dilation_iter=cfg.neighbor_dilation_iter,
-                csf_labels=cfg.csf_labels or [24],
-                skull_labels=cfg.skull_labels,
-                electrode_csv=cfg.electrode_csv,
-                electrode_names=cfg.electrode_names,
-                eeg_positions_path_template=cfg.eeg_positions_path_template,
+            ),
+        )
+
+        baseline_prereq_failed = (
+            extended_group_status.get("roi_intensity") == "error"
+            or extended_group_status.get("focality") == "error"
+        )
+        if baseline_prereq_failed:
+            message = (
+                "Baseline metrics depend on successful ROI intensity and focality metrics."
             )
-            if cfg.write_neighbor_table and extended_metrics.get("neighbors"):
-                roi_stub = normalize_roi_name(sel)
-                neighbor_table_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbors.json")
-                with open(neighbor_table_path, "w", encoding="utf-8") as handle:
-                    json.dump(extended_metrics["neighbors"], handle, indent=2)
-            if cfg.write_electrode_table and extended_metrics.get("electrode_distances"):
-                roi_stub = normalize_roi_name(sel)
-                electrode_table_path = os.path.join(out_dir, f"{roi_stub}_electrode_distances.json")
-                with open(electrode_table_path, "w", encoding="utf-8") as handle:
-                    json.dump(extended_metrics["electrode_distances"], handle, indent=2)
-        except Exception as e:
+            extended_group_status["baseline"] = "error"
+            extended_group_messages["baseline"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=BASELINE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
             if cfg.verbose:
-                print(f"[WARN] Skipped extended subject metrics for {cfg.subject}: {e}")
+                print(
+                    f"[WARN] Extended metric group 'baseline' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        elif cfg.mni_baseline_root and cfg.mni_fixed_atlas_path:
+            execute_metric_group(
+                "baseline",
+                BASELINE_METRIC_KEYS,
+                lambda: compute_baseline_delta_metrics(
+                    roi_name=sel,
+                    mni_baseline_root=cfg.mni_baseline_root,
+                    mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+                    focality_threshold=cfg.offtarget_threshold,
+                    roi_peak=extended_metrics.get("roi_peak"),
+                    roi_mean=extended_metrics.get("roi_mean"),
+                    focality_voxels_gt_threshold=extended_metrics.get("focality_voxels_gt_threshold"),
+                    focality_volume_mm3_gt_threshold=extended_metrics.get("focality_volume_mm3_gt_threshold"),
+                ),
+            )
+        else:
+            mark_metric_group_not_configured(
+                "baseline",
+                BASELINE_METRIC_KEYS,
+                "Baseline comparison requires both mni_baseline_root and mni_fixed_atlas_path.",
+            )
+
+        if cfg.mni_fixed_atlas_path:
+            try:
+                neighbor_values = compute_neighbor_metrics(
+                    mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+                    roi_name=sel,
+                    dilation_iter=cfg.neighbor_dilation_iter,
+                    subject_atlas_data=subject_atlas_data,
+                    ti_data=ti_data,
+                    finite_mask=finite,
+                    voxel_volume_mm3=vox_vol,
+                )
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                extended_group_status["neighbors"] = "error"
+                extended_group_messages["neighbors"] = message
+                _set_metric_group_state(
+                    metric_status=extended_metric_status,
+                    metric_messages=extended_metric_messages,
+                    metric_keys=NEIGHBOR_METRIC_KEYS,
+                    status="error",
+                    message=message,
+                )
+                if cfg.verbose:
+                    print(
+                        f"[WARN] Extended metric group 'neighbors' failed for {cfg.subject}: "
+                        f"{message}"
+                    )
+            else:
+                _apply_metric_values(extended_metrics, neighbor_values)
+                if subject_atlas_error is not None and fs_atlas_path:
+                    message = (
+                        "Neighbor template metrics were computed, but subject atlas-dependent "
+                        f"neighbor summaries failed because the subject atlas could not be loaded: "
+                        f"{type(subject_atlas_error).__name__}: {subject_atlas_error}"
+                    )
+                    extended_group_status["neighbors"] = "error"
+                    extended_group_messages["neighbors"] = message
+                    _set_metric_group_state(
+                        metric_status=extended_metric_status,
+                        metric_messages=extended_metric_messages,
+                        metric_keys=NEIGHBOR_METRIC_KEYS,
+                        status="error",
+                        message=message,
+                    )
+                    if cfg.verbose:
+                        print(f"[WARN] Extended metric group 'neighbors' partial failure for {cfg.subject}: {message}")
+                else:
+                    extended_group_status["neighbors"] = "ok"
+                    extended_group_messages["neighbors"] = None
+                    _set_metric_group_state(
+                        metric_status=extended_metric_status,
+                        metric_messages=extended_metric_messages,
+                        metric_keys=NEIGHBOR_METRIC_KEYS,
+                        status="ok",
+                    )
+        else:
+            mark_metric_group_not_configured(
+                "neighbors",
+                NEIGHBOR_METRIC_KEYS,
+                "Neighbor metrics require mni_fixed_atlas_path.",
+            )
+
+        roi_centroid_ijk = None
+        roi_centroid_xyz = None
+        try:
+            centroid_metrics, roi_centroid_ijk, roi_centroid_xyz = compute_centroid_metrics(
+                roi_mask,
+                ti_img.affine,
+            )
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            extended_group_status["centroid"] = "error"
+            extended_group_messages["centroid"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=CENTROID_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'centroid' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        else:
+            _apply_metric_values(extended_metrics, centroid_metrics)
+            extended_group_status["centroid"] = "ok"
+            extended_group_messages["centroid"] = None
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=CENTROID_METRIC_KEYS,
+                status="ok",
+            )
+
+        anatomy_labels_present = bool((cfg.csf_labels or [24])) or bool(cfg.skull_labels)
+        centroid_failed = extended_group_status.get("centroid") == "error"
+        centroid_failure_message = extended_group_messages.get("centroid")
+        if centroid_failed:
+            message = f"Centroid metrics failed, so anatomy distances could not be computed: {centroid_failure_message}"
+            extended_group_status["anatomy_distances"] = "error"
+            extended_group_messages["anatomy_distances"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=ANATOMY_DISTANCE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'anatomy_distances' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        elif not anatomy_labels_present:
+            mark_metric_group_not_configured(
+                "anatomy_distances",
+                ANATOMY_DISTANCE_METRIC_KEYS,
+                "Anatomy distance metrics require csf_labels and/or skull_labels.",
+            )
+        elif not fs_atlas_path:
+            mark_metric_group_not_configured(
+                "anatomy_distances",
+                ANATOMY_DISTANCE_METRIC_KEYS,
+                "Anatomy distance metrics require a subject FastSurfer atlas.",
+            )
+        elif subject_atlas_error is not None:
+            message = f"{type(subject_atlas_error).__name__}: {subject_atlas_error}"
+            extended_group_status["anatomy_distances"] = "error"
+            extended_group_messages["anatomy_distances"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=ANATOMY_DISTANCE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'anatomy_distances' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        else:
+            execute_metric_group(
+                "anatomy_distances",
+                ANATOMY_DISTANCE_METRIC_KEYS,
+                lambda: compute_anatomy_distance_metrics(
+                    atlas_data=subject_atlas_data,
+                    roi_centroid_ijk=roi_centroid_ijk,
+                    zooms=ti_img.header.get_zooms()[:3],
+                    csf_labels=cfg.csf_labels or [24],
+                    skull_labels=cfg.skull_labels,
+                ),
+            )
+
+        if centroid_failed and (cfg.electrode_csv or cfg.electrode_names):
+            message = f"Centroid metrics failed, so electrode distances could not be computed: {centroid_failure_message}"
+            extended_group_status["electrodes"] = "error"
+            extended_group_messages["electrodes"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=ELECTRODE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'electrodes' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        elif cfg.electrode_csv or cfg.electrode_names:
+            execute_metric_group(
+                "electrodes",
+                ELECTRODE_METRIC_KEYS,
+                lambda: compute_electrode_distance_metrics(
+                    root_dir=cfg.root_dir,
+                    subject=cfg.subject,
+                    roi_centroid_xyz=roi_centroid_xyz,
+                    electrode_csv=cfg.electrode_csv,
+                    electrode_names=cfg.electrode_names,
+                    eeg_positions_path_template=cfg.eeg_positions_path_template,
+                ),
+            )
+        else:
+            mark_metric_group_not_configured(
+                "electrodes",
+                ELECTRODE_METRIC_KEYS,
+                "Electrode distance metrics require electrode_csv or electrode_names.",
+            )
+
+        if cfg.write_neighbor_table and extended_metrics.get("neighbors"):
+            roi_stub = normalize_roi_name(sel)
+            neighbor_table_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbors.json")
+            with open(neighbor_table_path, "w", encoding="utf-8") as handle:
+                json.dump(extended_metrics["neighbors"], handle, indent=2)
+        if cfg.write_electrode_table and extended_metrics.get("electrode_distances"):
+            roi_stub = normalize_roi_name(sel)
+            electrode_table_path = os.path.join(out_dir, f"{roi_stub}_electrode_distances.json")
+            with open(electrode_table_path, "w", encoding="utf-8") as handle:
+                json.dump(extended_metrics["electrode_distances"], handle, indent=2)
+    else:
+        missing_roi_message = f"Selected target ROI '{sel}' was not present on the TI grid."
+        for group_name, metric_keys in (
+            ("roi_intensity", ROI_INTENSITY_METRIC_KEYS),
+            ("focality", FOCALITY_METRIC_KEYS),
+            ("baseline", BASELINE_METRIC_KEYS),
+            ("neighbors", NEIGHBOR_METRIC_KEYS),
+            ("centroid", CENTROID_METRIC_KEYS),
+            ("anatomy_distances", ANATOMY_DISTANCE_METRIC_KEYS),
+            ("electrodes", ELECTRODE_METRIC_KEYS),
+        ):
+            extended_group_status[group_name] = "error"
+            extended_group_messages[group_name] = missing_roi_message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=metric_keys,
+                status="error",
+                message=missing_roi_message,
+            )
+        if cfg.verbose:
+            print(f"[WARN] Extended metrics failed for {cfg.subject}: {missing_roi_message}")
+
+    pending_fields = [key for key in EXTENDED_METRIC_FIELDS if extended_metric_status.get(key) == "pending"]
+    if pending_fields:
+        _set_metric_group_state(
+            metric_status=extended_metric_status,
+            metric_messages=extended_metric_messages,
+            metric_keys=pending_fields,
+            status="error",
+            message="Metric status was never finalized due to an internal pipeline bug.",
+        )
+    has_errors = any(status == "error" for status in extended_metric_status.values())
+    overall_extended_status = "partial" if has_errors else "complete"
+    extended_metrics_meta = {
+        "schema_version": EXTENDED_METRIC_SCHEMA_VERSION,
+        "status": overall_extended_status,
+        "config_fingerprint": extended_config_fingerprint,
+        "group_statuses": extended_group_status,
+        "group_messages": extended_group_messages,
+    }
 
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
@@ -537,7 +948,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # ---- Subject-level robustness metrics ----
     subject_metrics = dict(
-        schema_version=2,
+        schema_version=EXTENDED_METRIC_SCHEMA_VERSION,
         subject=cfg.subject,
         target_roi=sel,
         percentile=cfg.percentile,
@@ -547,7 +958,11 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         top_percentile_voxels=int(topP_mask.sum()),
         rois=per_roi_metrics,
         extended_metrics=extended_metrics,
+        extended_metric_status=extended_metric_status,
+        extended_metric_messages=extended_metric_messages,
+        extended_metrics_meta=extended_metrics_meta,
     )
+    subject_metrics = json_ready_metric_value(subject_metrics)
 
     metrics_path = os.path.join(out_dir, "subject_metrics.json")
     with open(metrics_path, "w") as f:
@@ -568,6 +983,9 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         region_df=region_df,
         metrics_path=metrics_path,
         extended_metrics=extended_metrics,
+        extended_metric_status=extended_metric_status,
+        extended_metric_messages=extended_metric_messages,
+        extended_metrics_meta=extended_metrics_meta,
         neighbor_table_path=neighbor_table_path,
         electrode_table_path=electrode_table_path,
         overlay_strategy=overlay_strategy,

@@ -59,14 +59,16 @@ def _write_subject_run(
     roi_mask: np.ndarray,
     top_mask: np.ndarray,
     percentile_value: float,
+    percentile: float = 95.0,
 ) -> None:
     post_dir.mkdir(parents=True, exist_ok=True)
     overlap_mask = roi_mask & top_mask
+    percentile_tag = f"top{int(percentile)}pct"
 
     _save_nifti(post_dir / f"atlas_{roi_name}_mask.nii.gz", roi_mask.astype(np.float32))
-    _save_nifti(post_dir / "efield_top95pct_mask.nii.gz", top_mask.astype(np.float32))
+    _save_nifti(post_dir / f"efield_{percentile_tag}_mask.nii.gz", top_mask.astype(np.float32))
     _save_nifti(
-        post_dir / f"{roi_name}_overlap_top95pct_mask.nii.gz",
+        post_dir / f"{roi_name}_overlap_{percentile_tag}_mask.nii.gz",
         overlap_mask.astype(np.float32),
     )
     _save_nifti(post_dir / f"TI_in_{roi_name}.nii.gz", field)
@@ -76,7 +78,7 @@ def _write_subject_run(
         "schema_version": 2,
         "subject": subject,
         "target_roi": roi_name,
-        "percentile": 95.0,
+        "percentile": percentile,
         "percentile_value": percentile_value,
         "voxel_volume_mm3": 1.0,
         "top_percentile_voxels": int(np.count_nonzero(top_mask)),
@@ -186,7 +188,7 @@ def test_run_analysis_writes_image_repeatability_outputs(tmp_path, monkeypatch):
 
     pairwise = pd.read_csv(output_dir / "image_repeatability_pairwise_subject_run_pairs.csv")
     assert np.allclose(pairwise["roi_mask_dice"], 1.0)
-    assert (pairwise["top95_mask_dice"] < 1.0).all()
+    assert (pairwise["top_percentile_mask_dice"] < 1.0).all()
     assert (pairwise["overlap_mask_dice"] < 1.0).all()
     assert (pairwise["peak_displacement_mm"] > 0.0).all()
 

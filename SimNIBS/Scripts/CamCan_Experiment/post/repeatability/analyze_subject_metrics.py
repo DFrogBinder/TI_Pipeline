@@ -96,8 +96,8 @@ PLOT_METRICS = [
 IMAGE_MASK_METRIC_LABELS = {
     "roi_mask_dice": "ROI Mask Dice",
     "roi_mask_jaccard": "ROI Mask Jaccard",
-    "top95_mask_dice": "Top-5% Mask Dice",
-    "top95_mask_jaccard": "Top-5% Mask Jaccard",
+    "top_percentile_mask_dice": "Top-Percentile Mask Dice",
+    "top_percentile_mask_jaccard": "Top-Percentile Mask Jaccard",
     "overlap_mask_dice": "Overlap Mask Dice",
     "overlap_mask_jaccard": "Overlap Mask Jaccard",
 }
@@ -112,12 +112,69 @@ IMAGE_PAIRWISE_METRIC_LABELS = {
     "roi_peak_field_abs_diff": "ROI Peak |Δ|",
 }
 
+TOP_PERCENTILE_MASK_KIND = "top_percentile_mask"
+TOP_PERCENTILE_MASK_LABEL = "Top-Percentile Mask"
+
 IMAGE_FILE_KINDS = {
     "roi_mask": "atlas_{roi_name}_mask.nii.gz",
-    "top95_mask": "efield_top95pct_mask.nii.gz",
-    "overlap_mask": "{roi_name}_overlap_top95pct_mask.nii.gz",
+    TOP_PERCENTILE_MASK_KIND: "efield_{percentile_tag}_mask.nii.gz",
+    "overlap_mask": "{roi_name}_overlap_{percentile_tag}_mask.nii.gz",
     "roi_field": "TI_in_{roi_name}.nii.gz",
 }
+
+
+def normalize_percentile_value(value: object) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def unique_percentile_values(values: Iterable[object]) -> list[float]:
+    unique: list[float] = []
+    for value in values:
+        numeric = normalize_percentile_value(value)
+        if numeric is None:
+            continue
+        if any(math.isclose(numeric, existing, rel_tol=0.0, abs_tol=1e-9) for existing in unique):
+            continue
+        unique.append(numeric)
+    return sorted(unique)
+
+
+def infer_uniform_percentile(values: Iterable[object]) -> float | None:
+    unique = unique_percentile_values(values)
+    if len(unique) == 1:
+        return unique[0]
+    return None
+
+
+def percentile_filename_tag(percentile: object) -> str | None:
+    numeric = normalize_percentile_value(percentile)
+    if numeric is None:
+        return None
+    return f"top{int(numeric)}pct"
+
+
+def top_percentile_mask_filename(percentile: object) -> str:
+    tag = percentile_filename_tag(percentile)
+    if tag is None:
+        return "efield_top<int(percentile)>pct_mask.nii.gz"
+    return f"efield_{tag}_mask.nii.gz"
+
+
+def overlap_percentile_mask_filename(roi_name: str, percentile: object) -> str:
+    tag = percentile_filename_tag(percentile)
+    if tag is None:
+        return f"{roi_name}_overlap_top<int(percentile)>pct_mask.nii.gz"
+    return f"{roi_name}_overlap_{tag}_mask.nii.gz"
+
+
+def percentile_context_line(percentile: float | None) -> str:
+    if percentile is None:
+        return "- Field-percentile configuration could not be inferred uniquely from the loaded runs."
+    return f"- Field-percentile threshold used for image masks: `{percentile:.1f}`"
 
 
 def format_metric_value(metric: str, value: float | int | None) -> str:
@@ -338,20 +395,61 @@ def roi_name_variants(roi_name: str) -> list[str]:
     return variants
 
 
-def resolve_image_repeatability_path(post_dir: Path, roi_name: str, kind: str) -> Path:
+def resolve_image_repeatability_path(
+    post_dir: Path,
+    roi_name: str,
+    kind: str,
+    percentile: object = None,
+) -> Path:
     template = IMAGE_FILE_KINDS[kind]
-    if "{roi_name}" not in template:
-        candidate = post_dir / template
+    percentile_tag = percentile_filename_tag(percentile)
+    roi_variants = roi_name_variants(roi_name)
+
+    exact_candidates: list[Path] = []
+    if "{roi_name}" not in template and "{percentile_tag}" not in template:
+        exact_candidates = [post_dir / template]
+    elif "{roi_name}" in template and "{percentile_tag}" not in template:
+        exact_candidates = [post_dir / template.format(roi_name=variant) for variant in roi_variants]
+    elif "{roi_name}" not in template and percentile_tag is not None:
+        exact_candidates = [post_dir / template.format(percentile_tag=percentile_tag)]
+    elif percentile_tag is not None:
+        exact_candidates = [
+            post_dir / template.format(roi_name=variant, percentile_tag=percentile_tag)
+            for variant in roi_variants
+        ]
+
+    for candidate in exact_candidates:
         if candidate.exists():
             return candidate
-        raise FileNotFoundError(f"Missing required image `{candidate.name}` in {post_dir}")
 
-    for variant in roi_name_variants(roi_name):
-        candidate = post_dir / template.format(roi_name=variant)
-        if candidate.exists():
-            return candidate
+    fallback_matches: list[Path] = []
+    if kind == TOP_PERCENTILE_MASK_KIND:
+        fallback_matches = sorted(post_dir.glob("efield_top*pct_mask.nii.gz"))
+    elif kind == "overlap_mask":
+        for variant in roi_variants:
+            fallback_matches.extend(sorted(post_dir.glob(f"{variant}_overlap_top*pct_mask.nii.gz")))
 
-    expected = [template.format(roi_name=variant) for variant in roi_name_variants(roi_name)]
+    unique_matches: list[Path] = []
+    seen: set[Path] = set()
+    for match in fallback_matches:
+        resolved = match.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_matches.append(match)
+    if len(unique_matches) == 1:
+        return unique_matches[0]
+    if len(unique_matches) > 1:
+        raise FileNotFoundError(
+            f"Multiple candidate images found for `{kind}` in {post_dir}: "
+            f"{', '.join(path.name for path in unique_matches)}"
+        )
+
+    expected = [candidate.name for candidate in exact_candidates]
+    if kind == TOP_PERCENTILE_MASK_KIND:
+        expected.append("efield_top*pct_mask.nii.gz")
+    elif kind == "overlap_mask":
+        expected.extend(f"{variant}_overlap_top*pct_mask.nii.gz" for variant in roi_variants)
     raise FileNotFoundError(
         f"Missing required image for `{kind}` in {post_dir}. Tried: {', '.join(expected)}"
     )
@@ -679,8 +777,12 @@ def compute_image_repeatability(
             "nibabel is required for image-level repeatability analysis but is not installed."
         )
 
+    if "percentile" not in complete_case_frame.columns:
+        complete_case_frame = complete_case_frame.copy()
+        complete_case_frame["percentile"] = np.nan
+
     unique_runs = (
-        complete_case_frame.loc[:, ["subject", "repeat_id", "run_label", "run_short", "source_path"]]
+        complete_case_frame.loc[:, ["subject", "repeat_id", "run_label", "run_short", "source_path", "percentile"]]
         .drop_duplicates()
         .sort_values(["subject", "repeat_id"])
         .reset_index(drop=True)
@@ -694,6 +796,11 @@ def compute_image_repeatability(
     for subject, subject_runs in unique_runs.groupby("subject", sort=True):
         subject_runs = subject_runs.sort_values("repeat_id").reset_index(drop=True)
         try:
+            subject_percentiles = unique_percentile_values(subject_runs["percentile"].tolist())
+            if len(subject_percentiles) > 1:
+                raise ValueError(
+                    f"Mixed percentile settings detected across runs for {subject}: {subject_percentiles}"
+                )
             post_dirs = [dataset_root / Path(path).parent for path in subject_runs["source_path"]]
             run_descriptors = [
                 {
@@ -701,12 +808,18 @@ def compute_image_repeatability(
                     "run_label": str(row.run_label),
                     "run_short": str(row.run_short),
                     "post_dir": post_dir,
+                    "percentile": normalize_percentile_value(row.percentile),
                 }
                 for row, post_dir in zip(subject_runs.itertuples(index=False), post_dirs)
             ]
 
             reference_paths = {
-                kind: resolve_image_repeatability_path(run_descriptors[0]["post_dir"], roi_name, kind)
+                kind: resolve_image_repeatability_path(
+                    run_descriptors[0]["post_dir"],
+                    roi_name,
+                    kind,
+                    run_descriptors[0]["percentile"],
+                )
                 for kind in IMAGE_FILE_KINDS
             }
             reference_roi_img = nib.load(str(reference_paths["roi_mask"]))
@@ -731,7 +844,12 @@ def compute_image_repeatability(
 
             for descriptor in run_descriptors:
                 image_paths = {
-                    kind: resolve_image_repeatability_path(descriptor["post_dir"], roi_name, kind)
+                    kind: resolve_image_repeatability_path(
+                        descriptor["post_dir"],
+                        roi_name,
+                        kind,
+                        descriptor["percentile"],
+                    )
                     for kind in IMAGE_FILE_KINDS
                 }
                 images = {kind: nib.load(str(path)) for kind, path in image_paths.items()}
@@ -745,7 +863,7 @@ def compute_image_repeatability(
                     )
 
                 roi_mask = to_bool_array(images["roi_mask"])
-                top_mask = to_bool_array(images["top95_mask"])
+                top_mask = to_bool_array(images[TOP_PERCENTILE_MASK_KIND])
                 overlap_mask = to_bool_array(images["overlap_mask"])
                 roi_field = to_float_array(images["roi_field"])
                 roi_values = roi_field[reference_roi_indices]
@@ -799,11 +917,12 @@ def compute_image_repeatability(
                         "run_label": descriptor["run_label"],
                         "run_short": descriptor["run_short"],
                         "post_dir": str(descriptor["post_dir"].relative_to(dataset_root)),
+                        "percentile": descriptor["percentile"],
                         "same_grid_as_reference": True,
                         "same_roi_mask_as_reference": np.array_equal(reference_roi_mask, roi_mask),
                         "roi_mask_voxels": int(np.count_nonzero(roi_mask)),
                         "roi_field_finite_voxels": int(np.count_nonzero(finite_run_mask)),
-                        "top95_mask_voxels": int(np.count_nonzero(top_mask)),
+                        "top_percentile_mask_voxels": int(np.count_nonzero(top_mask)),
                         "overlap_mask_voxels": int(np.count_nonzero(overlap_mask)),
                         "roi_mean_field": roi_mean_field,
                         "roi_p95_field": roi_p95_field,
@@ -846,8 +965,14 @@ def compute_image_repeatability(
                         "run_b": descriptor_b["run_short"],
                         "roi_mask_dice": dice_coefficient(roi_masks[index_a], roi_masks[index_b]),
                         "roi_mask_jaccard": jaccard_index(roi_masks[index_a], roi_masks[index_b]),
-                        "top95_mask_dice": dice_coefficient(top_masks[index_a], top_masks[index_b]),
-                        "top95_mask_jaccard": jaccard_index(top_masks[index_a], top_masks[index_b]),
+                        "top_percentile_mask_dice": dice_coefficient(
+                            top_masks[index_a],
+                            top_masks[index_b],
+                        ),
+                        "top_percentile_mask_jaccard": jaccard_index(
+                            top_masks[index_a],
+                            top_masks[index_b],
+                        ),
                         "overlap_mask_dice": dice_coefficient(
                             overlap_masks[index_a],
                             overlap_masks[index_b],
@@ -2336,7 +2461,11 @@ def save_failure_summary_plot(
     plt.close(fig)
 
 
-def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Path) -> None:
+def save_image_repeatability_plot(
+    subject_summary: pd.DataFrame,
+    output_path: Path,
+    analysis_percentile: float | None = None,
+) -> None:
     if subject_summary.empty:
         return
 
@@ -2347,7 +2476,7 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
         id_vars="subject",
         value_vars=[
             "roi_mask_dice_mean",
-            "top95_mask_dice_mean",
+            "top_percentile_mask_dice_mean",
             "overlap_mask_dice_mean",
         ],
         var_name="metric",
@@ -2356,7 +2485,7 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
     dice_frame["metric_label"] = dice_frame["metric"].map(
         {
             "roi_mask_dice_mean": "ROI Mask",
-            "top95_mask_dice_mean": "Top-5% Mask",
+            "top_percentile_mask_dice_mean": TOP_PERCENTILE_MASK_LABEL,
             "overlap_mask_dice_mean": "Overlap Mask",
         }
     )
@@ -2365,7 +2494,7 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
         x="metric_label",
         y="value",
         hue="metric_label",
-        order=["ROI Mask", "Top-5% Mask", "Overlap Mask"],
+        order=["ROI Mask", TOP_PERCENTILE_MASK_LABEL, "Overlap Mask"],
         palette=["#5B8FF9", "#61DDAA", "#F6BD16"],
         dodge=False,
         legend=False,
@@ -2380,7 +2509,7 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
         id_vars="subject",
         value_vars=[
             "roi_mask_jaccard_mean",
-            "top95_mask_jaccard_mean",
+            "top_percentile_mask_jaccard_mean",
             "overlap_mask_jaccard_mean",
         ],
         var_name="metric",
@@ -2389,7 +2518,7 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
     jaccard_frame["metric_label"] = jaccard_frame["metric"].map(
         {
             "roi_mask_jaccard_mean": "ROI Mask",
-            "top95_mask_jaccard_mean": "Top-5% Mask",
+            "top_percentile_mask_jaccard_mean": TOP_PERCENTILE_MASK_LABEL,
             "overlap_mask_jaccard_mean": "Overlap Mask",
         }
     )
@@ -2398,7 +2527,7 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
         x="metric_label",
         y="value",
         hue="metric_label",
-        order=["ROI Mask", "Top-5% Mask", "Overlap Mask"],
+        order=["ROI Mask", TOP_PERCENTILE_MASK_LABEL, "Overlap Mask"],
         palette=["#5B8FF9", "#61DDAA", "#F6BD16"],
         dodge=False,
         legend=False,
@@ -2537,7 +2666,12 @@ def save_image_repeatability_plot(subject_summary: pd.DataFrame, output_path: Pa
     add_figure_note(
         fig,
         "Dice/Jaccard summarise mask overlap across all run pairs per subject. "
-        "Field CV metrics use the reference ROI mask from the first successful repeat for each subject.",
+        "Field CV metrics use the reference ROI mask from the first successful repeat for each subject."
+        + (
+            f" The top-percentile mask corresponds to a {analysis_percentile:.1f}th-percentile threshold."
+            if analysis_percentile is not None
+            else ""
+        ),
     )
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
@@ -2548,6 +2682,7 @@ def write_image_repeatability_methodology(
     roi_name: str,
     subject_summary: pd.DataFrame,
     issue_frame: pd.DataFrame,
+    analysis_percentile: float | None = None,
 ) -> Path:
     analysed_subjects = int(subject_summary["subject"].nunique()) if not subject_summary.empty else 0
     skipped_subjects = int(issue_frame["subject"].nunique()) if not issue_frame.empty else 0
@@ -2558,21 +2693,22 @@ def write_image_repeatability_methodology(
         "",
         (
             "This layer extends the scalar `subject_metrics.json` analysis into the saved NIfTI outputs so that "
-            "repeatability can be measured directly on ROI masks, top-5% masks, overlap masks, within-ROI field values, "
+            "repeatability can be measured directly on ROI masks, top-percentile masks, overlap masks, within-ROI field values, "
             "and hotspot localization."
         ),
         "",
         "## Inputs",
         "",
         f"- ROI analysed: `{roi_name}`",
+        percentile_context_line(analysis_percentile),
         f"- Subjects successfully analysed at the image level: `{analysed_subjects}`",
         f"- Subjects skipped due to missing files or incompatible headers: `{skipped_subjects}`",
         "",
         "For each successful subject-run, the analysis reads:",
         "",
         f"- `atlas_{roi_name}_mask.nii.gz` as the ROI mask",
-        "- `efield_top95pct_mask.nii.gz` as the whole-volume top-5% mask",
-        f"- `{roi_name}_overlap_top95pct_mask.nii.gz` as the target-overlap mask",
+        f"- `{top_percentile_mask_filename(analysis_percentile)}` as the whole-volume top-percentile mask",
+        f"- `{overlap_percentile_mask_filename(roi_name, analysis_percentile)}` as the target-overlap mask",
         f"- `TI_in_{roi_name}.nii.gz` as the within-ROI field image",
         "",
         "## Core Rules",
@@ -2593,7 +2729,7 @@ def write_image_repeatability_methodology(
         "### 1. Mask Repeatability",
         "",
         "- Pairwise Dice and Jaccard for the ROI mask across all run pairs.",
-        "- Pairwise Dice and Jaccard for the top-5% mask across all run pairs.",
+        "- Pairwise Dice and Jaccard for the top-percentile mask across all run pairs.",
         "- Pairwise Dice and Jaccard for the overlap mask across all run pairs.",
         "",
         "### 2. Within-ROI Field Repeatability",
@@ -2635,6 +2771,7 @@ def write_image_repeatability_report(
     roi_name: str,
     subject_summary: pd.DataFrame,
     issue_frame: pd.DataFrame,
+    analysis_percentile: float | None = None,
 ) -> Path:
     analysed_subjects = int(subject_summary["subject"].nunique()) if not subject_summary.empty else 0
     skipped_subjects = int(issue_frame["subject"].nunique()) if not issue_frame.empty else 0
@@ -2655,6 +2792,7 @@ def write_image_repeatability_report(
         "## Scope",
         "",
         f"- ROI analysed: `{roi_name}`",
+        percentile_context_line(analysis_percentile),
         f"- Subjects analysed at image level: `{analysed_subjects}`",
         f"- Subjects skipped: `{skipped_subjects}`",
         f"- Subjects with grid/affine consistency across all runs: `{grid_consistent}` of `{analysed_subjects}`",
@@ -2680,11 +2818,11 @@ def write_image_repeatability_report(
                     "Values near 1.0 indicate that downstream field variability is not being driven by ROI-mask drift."
                 ),
                 "",
-                "## Top-5% And Overlap Mask Repeatability",
+                "## Top-Percentile And Overlap Mask Repeatability",
                 "",
                 (
-                    f"- Top-5% mask mean pairwise Dice: `{cohort_mean('top95_mask_dice_mean'):.6f}`; "
-                    f"Jaccard: `{cohort_mean('top95_mask_jaccard_mean'):.6f}`"
+                    f"- Top-percentile mask mean pairwise Dice: `{cohort_mean('top_percentile_mask_dice_mean'):.6f}`; "
+                    f"Jaccard: `{cohort_mean('top_percentile_mask_jaccard_mean'):.6f}`"
                 ),
                 (
                     f"- Overlap mask mean pairwise Dice: `{cohort_mean('overlap_mask_dice_mean'):.6f}`; "
@@ -2909,8 +3047,8 @@ def write_report(
         report_lines[outputs_index:outputs_index] = [
             (
                 f"- The image-level repeatability layer confirmed that ROI support was stable. Mean ROI-mask Dice was "
-                f"**{cohort_mean('roi_mask_dice_mean'):.3f}**, while Top-5% and overlap-mask Dice were "
-                f"**{cohort_mean('top95_mask_dice_mean'):.3f}** and **{cohort_mean('overlap_mask_dice_mean'):.3f}**."
+                f"**{cohort_mean('roi_mask_dice_mean'):.3f}**, while top-percentile and overlap-mask Dice were "
+                f"**{cohort_mean('top_percentile_mask_dice_mean'):.3f}** and **{cohort_mean('overlap_mask_dice_mean'):.3f}**."
             ),
             (
                 f"- Within-ROI field repeatability was high. The mean pairwise voxelwise field correlation was "
@@ -2964,6 +3102,11 @@ def write_methodology_documentation(
     percentile_row = primary_stats.loc[primary_stats["metric"] == "percentile_value"].iloc[0]
     top_voxel_row = primary_stats.loc[primary_stats["metric"] == "top_percentile_voxels"].iloc[0]
     overlap_voxel_row = primary_stats.loc[primary_stats["metric"] == "overlap_top_voxels"].iloc[0]
+    analysis_percentile = (
+        infer_uniform_percentile(all_frame["percentile"].tolist())
+        if "percentile" in all_frame.columns
+        else None
+    )
 
     repeat_level_fields = [
         "`n`",
@@ -3043,7 +3186,7 @@ def write_methodology_documentation(
         "",
         "The analysis used these fields:",
         "",
-        "- `percentile_value`: threshold value defining the top 5% field region for that subject/run.",
+        "- `percentile_value`: threshold value defining the configured top-percentile field region for that subject/run.",
         "- `top_percentile_voxels`: number of voxels entering the top-percentile mask.",
         "- `overlap_top_voxels`: count of top-percentile voxels that overlap the target ROI.",
         "- `overlap_fraction`: fraction of the ROI covered by the top-percentile voxels.",
@@ -3315,20 +3458,20 @@ def write_methodology_documentation(
             "",
             (
                 "A third repeatability layer was added for the saved NIfTI outputs so the pipeline can compare the actual "
-                "ROI support, top-5% mask, overlap mask, within-ROI field map, and hotspot location across repeated runs "
+                "ROI support, top-percentile mask, overlap mask, within-ROI field map, and hotspot location across repeated runs "
                 "of the same subject."
             ),
             "",
             "For each complete-case subject, this layer reads:",
             "",
             f"- `atlas_{roi_name}_mask.nii.gz`",
-            "- `efield_top95pct_mask.nii.gz`",
-            f"- `{roi_name}_overlap_top95pct_mask.nii.gz`",
+            f"- `{top_percentile_mask_filename(analysis_percentile)}`",
+            f"- `{overlap_percentile_mask_filename(roi_name, analysis_percentile)}`",
             f"- `TI_in_{roi_name}.nii.gz`",
             "",
             "It then computes:",
             "",
-            "- pairwise Dice and Jaccard for the ROI mask, top-5% mask, and overlap mask",
+            "- pairwise Dice and Jaccard for the ROI mask, top-percentile mask, and overlap mask",
             "- pairwise within-ROI voxelwise field correlation across run pairs",
             "- voxelwise within-ROI SD and CV summaries across runs",
             "- across-run repeatability summaries for ROI mean, ROI P95, and ROI peak field",
@@ -3465,7 +3608,7 @@ def write_results_interpretation(
         "### 3. Percentile Value",
         "",
         (
-            "`Percentile Value` reflects the field threshold used to define the top 5% region for each subject. "
+            "`Percentile Value` reflects the field threshold used to define the top-percentile region for each subject. "
             "This tells you whether the overall field-strength distribution is shifting between repeats."
         ),
         "",
@@ -4020,6 +4163,11 @@ def run_analysis(
     image_issue_frame = pd.DataFrame(columns=["subject", "issue_type", "details"])
     image_pairwise_run_summary = pd.DataFrame()
     image_cohort_summary = pd.DataFrame()
+    analysis_percentile = (
+        infer_uniform_percentile(complete_case_frame["percentile"].tolist())
+        if "percentile" in complete_case_frame.columns
+        else None
+    )
     if logs_root_path is not None:
         log_detail_frame, log_summary_frame, log_transition_frame = load_log_analysis(
             logs_root_path,
@@ -4114,6 +4262,7 @@ def run_analysis(
         save_image_repeatability_plot(
             image_subject_summary,
             figures_dir / "08_image_repeatability_summary.png",
+            analysis_percentile=analysis_percentile,
         )
     report_path = write_report(
         dataset_root=dataset_root,
@@ -4146,12 +4295,14 @@ def run_analysis(
             roi_name=roi_name,
             subject_summary=image_subject_summary,
             issue_frame=image_issue_frame,
+            analysis_percentile=analysis_percentile,
         )
         image_repeatability_report_path = write_image_repeatability_report(
             output_dir=output_dir,
             roi_name=roi_name,
             subject_summary=image_subject_summary,
             issue_frame=image_issue_frame,
+            analysis_percentile=analysis_percentile,
         )
     subject_variation_report_path = write_subject_variation_report(
         output_dir=output_dir,

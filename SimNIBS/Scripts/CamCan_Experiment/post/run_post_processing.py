@@ -31,7 +31,7 @@ def discover_subjects(root: Path, subjects: Optional[Iterable[str]]) -> List[str
     return sorted([p.name for p in root.iterdir() if p.is_dir()])
 
 
-def should_skip_subject(out_dir: Path, force: bool) -> bool:
+def should_skip_subject(out_dir: Path, pp_cfg: "PostProcessConfig", force: bool) -> bool:
     if force:
         return False
     metrics_path = out_dir / "subject_metrics.json"
@@ -41,7 +41,18 @@ def should_skip_subject(out_dir: Path, force: bool) -> bool:
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    return isinstance(payload.get("extended_metrics"), dict)
+    meta = payload.get("extended_metrics_meta")
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("status") != "complete":
+        return False
+    try:
+        from post.post_process import extended_metrics_fingerprint_for_cfg
+
+        expected_fingerprint = extended_metrics_fingerprint_for_cfg(pp_cfg)
+    except Exception:
+        return False
+    return meta.get("config_fingerprint") == expected_fingerprint
 
 @dataclass
 class PostBatchConfig:
@@ -244,11 +255,12 @@ def run_batch(cfg: PostBatchConfig) -> dict:
     pending = []
 
     for subj in subjects:
+        pp_cfg = build_post_process_config(root, subj, cfg)
         out_dir = root / subj / "anat" / "post"
-        if should_skip_subject(out_dir, cfg.force):
+        if should_skip_subject(out_dir, pp_cfg, cfg.force):
             skipped.append(subj)
             continue
-        pending.append(build_post_process_config(root, subj, cfg))
+        pending.append(pp_cfg)
 
     max_workers = resolve_max_workers(cfg, len(pending))
     if pending:

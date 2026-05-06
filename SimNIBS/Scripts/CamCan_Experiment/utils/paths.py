@@ -28,7 +28,16 @@ def ti_brain_path(root: str, subject: str) -> Path:
 
 
 def t1_path(root: str, subject: str) -> Path:
-    return anat_root(root, subject) / f"{subject}_T1w.nii"
+    anat_dir = anat_root(root, subject)
+    nii_path = anat_dir / f"{subject}_T1w.nii"
+    if nii_path.is_file():
+        return nii_path
+
+    nii_gz_path = anat_dir / f"{subject}_T1w.nii.gz"
+    if nii_gz_path.is_file():
+        return nii_gz_path
+
+    return nii_path
 
 
 def post_root(root: str, subject: str) -> Path:
@@ -37,9 +46,14 @@ def post_root(root: str, subject: str) -> Path:
 
 def fastsurfer_atlas_path(root: Optional[str], subject: str, override: Optional[str]) -> Optional[Path]:
     if override:
-        return Path(override)
-    if root:
-        candidate = Path(root).expanduser() / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz"
+        candidate = Path(override).expanduser()
         if candidate.is_file():
             return candidate
+        return None
+    if root:
+        atlas_root = Path(root).expanduser()
+        for suffix in (".nii", ".nii.gz"):
+            candidate = atlas_root / f"{subject}{suffix}"
+            if candidate.is_file():
+                return candidate
     return None

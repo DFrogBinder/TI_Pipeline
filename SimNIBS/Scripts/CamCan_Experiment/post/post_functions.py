@@ -29,6 +29,8 @@ from utils.ti_utils import (
     summarize_atlas_regions,
     extract_table,
 )
+from utils.paths import fastsurfer_atlas_path
+from utils.roi_registry import FASTSURFER_DKT_LABELS, resolve_fastsurfer_roi_name
 
 
 
@@ -44,64 +46,14 @@ ROI_QUERIES_OXFORD = {
     "Hippocampus": {"atlas": "sub-maxprob-thr25-2mm",  "query": "hippocampus"},
 }
 
-# FastSurfer DKT+aseg (exact or substring match over our map values)
-ROI_QUERIES_FASTSURFER = {
-    "M1":          {"atlas": "fastsurfer", "query": "ctx-lh-precentral"},   # left M1
-    "Hippocampus": {"atlas": "fastsurfer", "query": "Left-Hippocampus"},
-}
+DEFAULT_FASTSURFER_ROI_NAMES = ("ctx-lh-precentral", "Left-Hippocampus")
+FASTSURFER_CONTEXT_EXCLUDE_LABELS = (4, 5, 14, 15, 24, 43, 44)
 
 EFIELD_PERCENTILE   = 95
 WRITE_PER_VOXEL_CSV = True
 
 # ------------------ FastSurfer DKT labels ------------------
-
-fastsurfer_dkt_labels = {
-    # Subcortical
-    0: "Unknown", 2: "Left-Cerebral-White-Matter", 3: "Left-Cerebral-Cortex",
-    4: "Left-Lateral-Ventricle", 5: "Left-Inf-Lat-Vent", 7: "Left-Cerebellum-White-Matter",
-    8: "Left-Cerebellum-Cortex", 10: "Left-Thalamus-Proper", 11: "Left-Caudate",
-    12: "Left-Putamen", 13: "Left-Pallidum", 14: "3rd-Ventricle", 15: "4th-Ventricle",
-    16: "Brain-Stem", 17: "Left-Hippocampus", 18: "Left-Amygdala", 24: "CSF",
-    26: "Left-Accumbens-area", 28: "Left-VentralDC", 30: "Left-vessel", 31: "Left-choroid-plexus",
-    41: "Right-Cerebral-White-Matter", 42: "Right-Cerebral-Cortex",
-    43: "Right-Lateral-Ventricle", 44: "Right-Inf-Lat-Vent",
-    46: "Right-Cerebellum-White-Matter", 47: "Right-Cerebellum-Cortex",
-    49: "Right-Thalamus-Proper", 50: "Right-Caudate", 51: "Right-Putamen",
-    52: "Right-Pallidum", 53: "Right-Hippocampus", 54: "Right-Amygdala",
-    58: "Right-Accumbens-area", 60: "Right-VentralDC", 62: "Right-vessel", 63: "Right-choroid-plexus",
-
-    # Left cortex (DKT)
-    1000: "ctx-lh-bankssts", 1001: "ctx-lh-caudalanteriorcingulate",
-    1002: "ctx-lh-caudalmiddlefrontal", 1003: "ctx-lh-cuneus",
-    1004: "ctx-lh-entorhinal", 1005: "ctx-lh-fusiform", 1006: "ctx-lh-inferiorparietal",
-    1007: "ctx-lh-inferiortemporal", 1008: "ctx-lh-isthmuscingulate",
-    1009: "ctx-lh-lateraloccipital", 1010: "ctx-lh-lateralorbitofrontal",
-    1011: "ctx-lh-lingual", 1012: "ctx-lh-medialorbitofrontal", 1013: "ctx-lh-middletemporal",
-    1014: "ctx-lh-parahippocampal", 1015: "ctx-lh-paracentral", 1016: "ctx-lh-parsopercularis",
-    1017: "ctx-lh-parsorbitalis", 1018: "ctx-lh-parstriangularis", 1019: "ctx-lh-pericalcarine",
-    1020: "ctx-lh-postcentral", 1021: "ctx-lh-posteriorcingulate", 1022: "ctx-lh-precentral",
-    1023: "ctx-lh-precuneus", 1024: "ctx-lh-rostralanteriorcingulate",
-    1025: "ctx-lh-rostralmiddlefrontal", 1026: "ctx-lh-superiorfrontal",
-    1027: "ctx-lh-superiorparietal", 1028: "ctx-lh-superiortemporal",
-    1029: "ctx-lh-supramarginal", 1030: "ctx-lh-frontalpole",
-    1031: "ctx-lh-temporalpole", 1032: "ctx-lh-transversetemporal", 1033: "ctx-lh-insula",
-
-    # Right cortex (DKT)
-    2000: "ctx-rh-bankssts", 2001: "ctx-rh-caudalanteriorcingulate",
-    2002: "ctx-rh-caudalmiddlefrontal", 2003: "ctx-rh-cuneus",
-    2004: "ctx-rh-entorhinal", 2005: "ctx-rh-fusiform", 2006: "ctx-rh-inferiorparietal",
-    2007: "ctx-rh-inferiortemporal", 2008: "ctx-rh-isthmuscingulate",
-    2009: "ctx-rh-lateraloccipital", 2010: "ctx-rh-lateralorbitofrontal",
-    2011: "ctx-rh-lingual", 2012: "ctx-rh-medialorbitofrontal", 2013: "ctx-rh-middletemporal",
-    2014: "ctx-rh-parahippocampal", 2015: "ctx-rh-paracentral", 2016: "ctx-rh-parsopercularis",
-    2017: "ctx-rh-parsorbitalis", 2018: "ctx-rh-parstriangularis", 2019: "ctx-rh-pericalcarine",
-    2020: "ctx-rh-postcentral", 2021: "ctx-rh-posteriorcingulate", 2022: "ctx-rh-precentral",
-    2023: "ctx-rh-precuneus", 2024: "ctx-rh-rostralanteriorcingulate",
-    2025: "ctx-rh-rostralmiddlefrontal", 2026: "ctx-rh-superiorfrontal",
-    2027: "ctx-rh-superiorparietal", 2028: "ctx-rh-superiortemporal",
-    2029: "ctx-rh-supramarginal", 2030: "ctx-rh-frontalpole",
-    2031: "ctx-rh-temporalpole", 2032: "ctx-rh-transversetemporal", 2033: "ctx-rh-insula",
-}
+fastsurfer_dkt_labels = FASTSURFER_DKT_LABELS
 
 # ------------------ Overlay helpers ------------------
 
@@ -184,6 +136,167 @@ def make_overlay_png(out_png, overlay_img, bg_img=None, title=None, roi_mask_img
     disp.savefig(out_png, dpi=300)
     disp.close()
 
+
+def build_context_scale_mask_from_fastsurfer(
+    atlas_img: nib.Nifti1Image,
+    *,
+    exclude_labels: tuple[int, ...] = FASTSURFER_CONTEXT_EXCLUDE_LABELS,
+) -> nib.Nifti1Image:
+    """
+    Build a plotting scale mask that keeps labeled brain tissue while excluding
+    CSF/ventricular labels that tend to dominate the colorbar.
+    """
+    atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32)
+    include = (atlas_data > 0) & (~np.isin(atlas_data, exclude_labels))
+    return nib.Nifti1Image(include.astype(np.uint8), atlas_img.affine, atlas_img.header)
+
+
+def _robust_vmax(values: np.ndarray, upper_percentile: float) -> float:
+    if values.size == 0:
+        raise ValueError("Cannot compute display bounds from an empty array.")
+
+    vmax = float(np.nanpercentile(values, upper_percentile))
+    if not np.isfinite(vmax):
+        vmax = float(np.nanmax(values))
+
+    vmin = float(np.nanmin(values))
+    if vmax <= vmin:
+        vmax = float(np.nanmax(values))
+    if vmax <= 0:
+        vmax = float(np.nanmax(values))
+    return vmax
+
+
+def _coerce_display_bounds(vmin: float, vmax: float) -> tuple[float, float]:
+    if not np.isfinite(vmin):
+        vmin = 0.0
+    if not np.isfinite(vmax):
+        vmax = vmin
+    if vmax <= vmin:
+        vmax = float(np.nextafter(vmin, np.inf))
+    return vmin, vmax
+
+
+def _prepare_overlay_data(arr: np.ndarray, thr_value: Optional[float]) -> tuple[np.ndarray, np.ndarray]:
+    finite = np.isfinite(arr)
+    if thr_value is None:
+        overlay_data = np.where(finite, arr, 0.0)
+    else:
+        overlay_data = np.where(finite & (arr >= thr_value), arr, 0.0)
+
+    subset = overlay_data[overlay_data > 0]
+    return overlay_data, subset
+
+
+def _overlay_ti_thresholds_on_t1_with_roi(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    out_prefix: str,
+    scale_mode: str,
+    scale_mask_img: Optional[nib.Nifti1Image] = None,
+    scale_upper_percentile: float = 99.5,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    include_full_field: bool = False,
+    percentile: float = 95.0,
+    hard_threshold: float = 200.0,
+    contour_color: str = "red",
+    contour_linewidth: float = 0.5,
+    cmap: str = "viridis",
+    dpi: int = 150,
+) -> tuple[str, str, Optional[str]]:
+    ti_arr = load_ti_as_scalar(ti_img)
+    ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
+
+    t1_on_ti = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
+    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
+    scale_on_ti = (
+        resample_to_img(scale_mask_img, ti_scalar_img, interpolation="nearest")
+        if scale_mask_img is not None
+        else None
+    )
+
+    arr = np.asarray(ti_arr, dtype=float)
+    finite_pos = np.isfinite(arr) & (arr > 0)
+    if not np.any(finite_pos):
+        raise ValueError("TI has no positive finite voxels.")
+    thr_percentile = float(np.percentile(arr[finite_pos], percentile))
+    thr_fixed = float(hard_threshold)
+
+    roi_data = np.asarray(roi_on_ti.dataobj) > 0
+    roi_coords = np.argwhere(roi_data)
+    if roi_coords.size:
+        center_ijk = roi_coords.mean(axis=0)
+        center_xyz = nib.affines.apply_affine(roi_on_ti.affine, center_ijk)
+        center_xyz = np.asarray(center_xyz, dtype=float)
+        center_xyz[2] += float(z_offset_mm)
+        cut_coords = tuple(float(x) for x in center_xyz)
+    else:
+        cut_coords = (0.0, 0.0, 0.0)
+
+    if scale_mode == "roi_focus":
+        scale_mask = roi_data
+        scale_title = "ROI focus"
+    elif scale_mode == "whole_brain":
+        scale_mask = np.ones(arr.shape, dtype=bool)
+        scale_title = "Whole-brain"
+    elif scale_on_ti is not None:
+        scale_mask = np.asarray(scale_on_ti.dataobj) > 0
+        scale_title = "Context"
+    else:
+        scale_mask = np.ones(arr.shape, dtype=bool)
+        scale_title = "Context"
+
+    scale_values = arr[finite_pos & scale_mask]
+    if scale_values.size == 0:
+        scale_values = arr[finite_pos]
+    vmax = _robust_vmax(scale_values, scale_upper_percentile)
+
+    def _plot_overlay(thr_value: Optional[float], label: str):
+        overlay_data, subset = _prepare_overlay_data(arr, thr_value)
+        vmin = float(np.nanmin(subset)) if subset.size else 0.0
+        local_vmax = max(vmax, float(np.nanmax(subset))) if subset.size else vmax
+        vmin, local_vmax = _coerce_display_bounds(vmin, local_vmax)
+        overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
+
+        display = plot_anat(
+            t1_on_ti,
+            display_mode="ortho",
+            dim=0,
+            annotate=True,
+            draw_cross=True,
+            colorbar=False,
+            black_bg=True,
+            cut_coords=cut_coords,
+            title=(
+                f"TI ≥ {thr_value:.3f} ({label}, {scale_title} scale)"
+                if thr_value is not None
+                else f"TI (full field, {scale_title} scale)"
+            ),
+        )
+        display.add_overlay(
+            overlay_img, colorbar=True, vmin=vmin, vmax=local_vmax, cmap=cmap
+        )
+        display.add_contours(
+            roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
+        )
+
+        if subject:
+            out_path = f"{out_prefix}_{subject}_{label}.png"
+        else:
+            out_path = f"{out_prefix}_{label}.png"
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+        display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+        display.close()
+        return out_path
+
+    png_full = _plot_overlay(None, "full") if include_full_field else None
+    png_percentile = _plot_overlay(thr_percentile, f"top{int(percentile)}")
+    png_fixed = _plot_overlay(thr_fixed, f"above{hard_threshold:.2f}")
+    return png_percentile, png_fixed, png_full
+
 def resample_atlas_to_ti_grid(atlas_img: nib.Nifti1Image, ti_img: nib.Nifti1Image) -> nib.Nifti1Image:
     """
     Resample a label atlas to the TI grid with nearest-neighbor interpolation.
@@ -253,72 +366,30 @@ def overlay_ti_thresholds_on_t1_with_roi(
     hard_threshold: float = 200.0,
     contour_color: str = "red",
     contour_linewidth: float = 0.5,
-    cmap: str = "jet",
+    cmap: str = "viridis",
     dpi: int = 150,
-    alpha: float = 0.85
+    alpha: float = 0.85,
+    scale_mask_img: Optional[nib.Nifti1Image] = None,
+    scale_upper_percentile: float = 99.5,
 ) -> tuple[str, str, Optional[str]]:
-
-    ti_arr = load_ti_as_scalar(ti_img)
-    ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
-
-    t1_on_ti  = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
-    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
-
-    arr = np.asarray(ti_arr, dtype=float)
-    finite_pos = np.isfinite(arr) & (arr > 0)
-    if not np.any(finite_pos):
-        raise ValueError("TI has no positive finite voxels.")
-    thr_percentile = float(np.percentile(arr[finite_pos], percentile))
-    thr_fixed = float(hard_threshold)
-    global_vmax = float(np.nanmax(arr[finite_pos]))
-
-    roi_data = np.asarray(roi_on_ti.dataobj)
-    roi_coords = np.argwhere(roi_data > 0)
-    if roi_coords.size:
-        center_ijk = roi_coords.mean(axis=0)
-        center_xyz = nib.affines.apply_affine(roi_on_ti.affine, center_ijk)
-        center_xyz = np.asarray(center_xyz, dtype=float)
-        center_xyz[2] += float(z_offset_mm)
-        cut_coords = tuple(float(x) for x in center_xyz)
-    else:
-        cut_coords = (0.0, 0.0, 0.0)
-
-    def _plot_overlay(thr_value: Optional[float], label: str):
-        if thr_value is None:
-            overlay_data = arr
-            subset = arr[finite_pos]
-        else:
-            overlay_data = np.where(arr >= thr_value, arr, 0.0)
-            subset = overlay_data[overlay_data > 0]
-        vmin = float(np.nanmin(subset)) if subset.size else 0.0
-        vmax = global_vmax
-        overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
-
-        display = plot_anat(
-            t1_on_ti, display_mode="ortho", dim=0, annotate=True,
-            draw_cross=True, colorbar=False, black_bg=True, cut_coords=cut_coords,
-            title=f"TI ≥ {thr_value:.3f} ({label})" if thr_value is not None else "TI (full field)",
-        )
-        display.add_overlay(
-            overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap="viridis"
-        )
-        display.add_contours(
-            roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
-        )
-
-        if subject:
-            out_path = f"{out_prefix}_{subject}_{label}.png"
-        else:
-            out_path = f"{out_prefix}_{label}.png"
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-        display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
-        display.close()
-        return out_path
-
-    png_full = _plot_overlay(None, "full") if include_full_field else None
-    png_percentile = _plot_overlay(thr_percentile, f"top{int(percentile)}")
-    png_fixed = _plot_overlay(thr_fixed, f"above{hard_threshold:.2f}")
-    return png_percentile, png_fixed, png_full
+    return _overlay_ti_thresholds_on_t1_with_roi(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        out_prefix=out_prefix,
+        scale_mode="context",
+        scale_mask_img=scale_mask_img,
+        scale_upper_percentile=scale_upper_percentile,
+        subject=subject,
+        z_offset_mm=z_offset_mm,
+        include_full_field=include_full_field,
+        percentile=percentile,
+        hard_threshold=hard_threshold,
+        contour_color=contour_color,
+        contour_linewidth=contour_linewidth,
+        cmap=cmap,
+        dpi=dpi,
+    )
 
 
 def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
@@ -336,10 +407,85 @@ def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
     contour_linewidth: float = 0.5,
     cmap: str = "viridis",
     dpi: int = 150,
+    scale_upper_percentile: float = 99.0,
 ) -> tuple[str, str, Optional[str]]:
     """
-    Overlay TI on T1 with ROI contour using per-image vmin/vmax.
-    Each image uses min/max of its own subset.
+    Overlay TI on T1 with ROI contour using a robust ROI-focused display scale.
+    """
+    return _overlay_ti_thresholds_on_t1_with_roi(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        out_prefix=out_prefix,
+        scale_mode="roi_focus",
+        scale_upper_percentile=scale_upper_percentile,
+        subject=subject,
+        z_offset_mm=z_offset_mm,
+        include_full_field=include_full_field,
+        percentile=percentile,
+        hard_threshold=hard_threshold,
+        contour_color=contour_color,
+        contour_linewidth=contour_linewidth,
+        cmap=cmap,
+        dpi=dpi,
+    )
+
+
+def overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    out_prefix: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    include_full_field: bool = False,
+    percentile: float = 95.0,
+    hard_threshold: float = 200.0,
+    contour_color: str = "red",
+    contour_linewidth: float = 0.5,
+    cmap: str = "viridis",
+    dpi: int = 150,
+    scale_upper_percentile: float = 99.5,
+) -> tuple[str, str, Optional[str]]:
+    """
+    Overlay TI on T1 with ROI contour using a robust whole-brain display scale.
+    """
+    return _overlay_ti_thresholds_on_t1_with_roi(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        out_prefix=out_prefix,
+        scale_mode="whole_brain",
+        scale_upper_percentile=scale_upper_percentile,
+        subject=subject,
+        z_offset_mm=z_offset_mm,
+        include_full_field=include_full_field,
+        percentile=percentile,
+        hard_threshold=hard_threshold,
+        contour_color=contour_color,
+        contour_linewidth=contour_linewidth,
+        cmap=cmap,
+        dpi=dpi,
+    )
+
+
+def overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    out_prefix: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    contour_color: str = "red",
+    contour_linewidth: float = 0.5,
+    cmap: str = "viridis",
+    dpi: int = 150,
+) -> str:
+    """
+    Write one unscaled full-field reference overlay using the true whole-brain
+    positive maximum as the colorbar upper bound.
     """
     ti_arr = load_ti_as_scalar(ti_img)
     ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
@@ -351,11 +497,9 @@ def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
     finite_pos = np.isfinite(arr) & (arr > 0)
     if not np.any(finite_pos):
         raise ValueError("TI has no positive finite voxels.")
-    thr_percentile = float(np.percentile(arr[finite_pos], percentile))
-    thr_fixed = float(hard_threshold)
 
-    roi_data = np.asarray(roi_on_ti.dataobj)
-    roi_coords = np.argwhere(roi_data > 0)
+    roi_data = np.asarray(roi_on_ti.dataobj) > 0
+    roi_coords = np.argwhere(roi_data)
     if roi_coords.size:
         center_ijk = roi_coords.mean(axis=0)
         center_xyz = nib.affines.apply_affine(roi_on_ti.affine, center_ijk)
@@ -365,42 +509,38 @@ def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
     else:
         cut_coords = (0.0, 0.0, 0.0)
 
-    def _plot_overlay(thr_value: Optional[float], label: str):
-        if thr_value is None:
-            overlay_data = arr
-            subset = arr[finite_pos]
-        else:
-            overlay_data = np.where(arr >= thr_value, arr, 0.0)
-            subset = overlay_data[overlay_data > 0]
-        vmin = float(np.nanmin(subset)) if subset.size else 0.0
-        vmax = float(np.nanmax(subset)) if subset.size else 1.0
-        overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
+    overlay_data, subset = _prepare_overlay_data(arr, None)
+    overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
+    vmin = float(np.nanmin(subset)) if subset.size else 0.0
+    vmax = float(np.nanmax(subset)) if subset.size else 0.0
+    vmin, vmax = _coerce_display_bounds(vmin, vmax)
 
-        display = plot_anat(
-            t1_on_ti, display_mode="ortho", dim=0, annotate=True,
-            draw_cross=True, colorbar=False, black_bg=True, cut_coords=cut_coords,
-            title=f"TI ≥ {thr_value:.3f} ({label})" if thr_value is not None else "TI (full field)",
-        )
-        display.add_overlay(
-            overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap=cmap
-        )
-        display.add_contours(
-            roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
-        )
+    display = plot_anat(
+        t1_on_ti,
+        display_mode="ortho",
+        dim=0,
+        annotate=True,
+        draw_cross=True,
+        colorbar=False,
+        black_bg=True,
+        cut_coords=cut_coords,
+        title="TI (full field, true whole-brain max reference)",
+    )
+    display.add_overlay(
+        overlay_img, colorbar=True, vmin=vmin, vmax=vmax, cmap=cmap
+    )
+    display.add_contours(
+        roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
+    )
 
-        if subject:
-            out_path = f"{out_prefix}_{subject}_{label}.png"
-        else:
-            out_path = f"{out_prefix}_{label}.png"
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-        display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
-        display.close()
-        return out_path
-
-    png_full = _plot_overlay(None, "full") if include_full_field else None
-    png_percentile = _plot_overlay(thr_percentile, f"top{int(percentile)}")
-    png_fixed = _plot_overlay(thr_fixed, f"above{hard_threshold:.2f}")
-    return png_percentile, png_fixed, png_full
+    if subject:
+        out_path = f"{out_prefix}_{subject}_full.png"
+    else:
+        out_path = f"{out_prefix}_full.png"
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+    display.close()
+    return out_path
 
 # ------------------ ROI extraction core ------------------
 
@@ -413,23 +553,11 @@ def load_custom_atlas(atlas_path: NiftiLike) -> nib.Nifti1Image:
 
 def _resolve_fastsurfer_atlas(subject: str, fastsurfer_root: Optional[str], explicit_path: Optional[str]) -> Optional[str]:
     """
-    Try several canonical locations for aparc.DKTatlas+aseg.deep.nii.gz.
-    Priority: explicit_path > {fastsurfer_root}/{subject}.nii.gz >
-              {fastsurfer_root}/{subject}/mri/... > env SUBJECTS_DIR.
+    Resolve the subject FastSurfer atlas from the supported flat-file layout.
+    Priority: explicit_path > {fastsurfer_root}/{subject}.nii > {fastsurfer_root}/{subject}.nii.gz
     """
-    candidates: List[Path] = []
-    if explicit_path:
-        candidates.append(Path(explicit_path))
-    if fastsurfer_root:
-        candidates.append(Path(fastsurfer_root) / f"{subject}.nii.gz")
-    env_sd = os.environ.get("SUBJECTS_DIR")
-    if env_sd:
-        candidates.append(Path(env_sd) / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz")
-
-    for c in candidates:
-        if c.is_file():
-            return str(c)
-    return None
+    atlas_path = fastsurfer_atlas_path(fastsurfer_root, subject, explicit_path)
+    return str(atlas_path) if atlas_path else None
 
 def roi_masks_on_ti_grid(
     ti_img: nib.Nifti1Image,
@@ -438,6 +566,7 @@ def roi_masks_on_ti_grid(
     subject: Optional[str] = None,
     fastsurfer_root: Optional[str] = None,
     fastsurfer_atlas_path: Optional[str] = None,
+    roi_names: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, nib.Nifti1Image]]:
     """
     Build ROI masks on the TI grid using either Harvard–Oxford (MNI) or subject FastSurfer atlas.
@@ -448,8 +577,8 @@ def roi_masks_on_ti_grid(
       - "mni": always use Harvard–Oxford
 
     FastSurfer search order: fastsurfer_atlas_path (explicit) >
-                             {fastsurfer_root}/{subject}/mri/aparc.DKTatlas+aseg.deep.nii.gz >
-                             $SUBJECTS_DIR/{subject}/mri/aparc.DKTatlas+aseg.deep.nii.gz
+                             {fastsurfer_root}/{subject}.nii >
+                             {fastsurfer_root}/{subject}.nii.gz
     """
     # Decide mode
     chosen_mode: AtlasMode = atlas_mode
@@ -467,7 +596,8 @@ def roi_masks_on_ti_grid(
         if not fs_atlas:
             raise FileNotFoundError(
                 "FastSurfer atlas not found. Provide --fs-mri-path OR --fastsurfer-root + --subject "
-                "or set $SUBJECTS_DIR. Expected 'aparc.DKTatlas+aseg.deep.nii.gz'."
+                "with atlases stored as '<fastsurfer_root>/<subject>.nii' or "
+                "'<fastsurfer_root>/<subject>.nii.gz'."
             )
 
     # Prepare outputs
@@ -516,17 +646,15 @@ def roi_masks_on_ti_grid(
     id_to_name = fastsurfer_dkt_labels
     name_to_id = {v.lower(): k for k, v in id_to_name.items()}
 
-    ROI_Q = ROI_QUERIES_FASTSURFER
-    for roi_name, info in ROI_Q.items():
-        q = info["query"].lower()
+    requested_rois = roi_names or list(DEFAULT_FASTSURFER_ROI_NAMES)
+    for requested_roi in requested_rois:
+        resolved_roi = resolve_fastsurfer_roi_name(requested_roi)
+        roi_name = resolved_roi.canonical_name
+        roi_key = roi_name.lower()
 
-        # Try exact name match first, then substring over all names
-        if q in name_to_id:
-            ids = [name_to_id[q]]
-        else:
-            ids = [k for k, v in id_to_name.items() if q in v.lower()]
-        if not ids:
-            raise ValueError(f"No FastSurfer labels match query '{info['query']}'")
+        if roi_key not in name_to_id:
+            raise ValueError(f"No FastSurfer label matches '{roi_name}'.")
+        ids = [name_to_id[roi_key]]
 
         combined_mask = np.isin(atlas_data, ids).astype(np.uint8)
 

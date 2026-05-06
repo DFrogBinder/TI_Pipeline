@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Remove anat/post directories for all subjects under a root directory.
+Remove anat/post directories found recursively under a root directory.
 """
 from __future__ import annotations
 
@@ -23,19 +23,22 @@ console = Console(markup=False)
 
 
 def find_post_dirs(root: Path) -> List[Path]:
-    post_dirs: List[Path] = []
-    for subj_dir in sorted([p for p in root.iterdir() if p.is_dir()]):
-        post_dir = subj_dir / "anat" / "post"
-        if post_dir.is_dir():
-            post_dirs.append(post_dir)
-    return post_dirs
+    return sorted(
+        path
+        for path in root.rglob("post")
+        if path.is_dir() and path.parent.name == "anat"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Delete anat/post directories for all subjects under a root folder."
+        description="Delete anat/post directories found recursively under a root folder."
     )
-    parser.add_argument("--root", required=True, help="Root directory containing subject folders.")
+    parser.add_argument(
+        "--root",
+        required=True,
+        help="Root directory to search recursively for anat/post folders.",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -54,7 +57,7 @@ def main() -> None:
 
     post_dirs = find_post_dirs(root)
     if not post_dirs:
-        print("[INFO] No anat/post directories found.")
+        print("[INFO] No anat/post directories found under the root.")
         return
 
     for d in post_dirs:

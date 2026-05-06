@@ -1,9 +1,10 @@
 # post_process.py
+import gzip
 import os
 import sys
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple
+from typing import Any, Optional, Dict, Iterable, Tuple, Sequence
 
 import numpy as np
 import json
@@ -15,12 +16,39 @@ if str(ROOT) not in sys.path:
 
 from post.post_functions import (
     _resolve_fastsurfer_atlas,
+    build_context_scale_mask_from_fastsurfer,
     fastsurfer_dkt_labels,
     make_outline,
+    overlay_ti_full_field_true_vmax_reference_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi_individual_scale,
+    overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale,
     roi_masks_on_ti_grid,
     write_csv,
+)
+from post.metric_extensions import (
+    ANATOMY_DISTANCE_METRIC_KEYS,
+    BASELINE_METRIC_KEYS,
+    CENTROID_METRIC_KEYS,
+    ELECTRODE_METRIC_KEYS,
+    EXTENDED_METRIC_FIELDS,
+    EXTENDED_METRIC_SCHEMA_VERSION,
+    FOCALITY_METRIC_KEYS,
+    NEIGHBOR_METRIC_KEYS,
+    ROI_INTENSITY_METRIC_KEYS,
+    build_extended_metric_message_scaffold,
+    build_extended_metric_status_scaffold,
+    build_extended_metrics_scaffold,
+    compute_anatomy_distance_metrics,
+    compute_baseline_delta_metrics,
+    compute_centroid_metrics,
+    compute_electrode_distance_metrics,
+    compute_focality_metrics,
+    compute_neighbor_metrics,
+    compute_roi_intensity_metrics,
+    extended_metrics_config_fingerprint,
+    json_ready_metric_value,
+    load_subject_fastsurfer_atlas_data,
 )
 from utils.paths import post_root, ti_brain_path, t1_path
 from utils.ti_utils import (
@@ -45,7 +73,7 @@ class PostProcessConfig:
     # Atlas selection
     atlas_mode: str = "mni"          # "auto" | "mni" | "fastsurfer"
     fastsurfer_root: Optional[str] = None
-    fs_mri_path: Optional[str] = None # explicit path to aparc.DKTatlas+aseg.deep.nii.gz
+    fs_mri_path: Optional[str] = None # explicit path to the subject atlas NIfTI
 
     # Behavior
     out_dir: Optional[str] = None
@@ -53,30 +81,251 @@ class PostProcessConfig:
     percentile: float = 95.0
     hard_threshold: float = 200.0
     overlay_z_offset_mm: float = 0.0
-    overlay_full_field: bool = False
+    overlay_full_field: bool = True
     write_region_table: bool = True
     region_percentile: float = 95.0
     offtarget_threshold: float = 0.2  # V/m threshold for focality checks
+    mni_baseline_root: Optional[str] = None
+    mni_fixed_atlas_path: Optional[str] = None
+    neighbor_dilation_iter: int = 1
+    csf_labels: Optional[Sequence[int]] = None
+    skull_labels: Optional[Sequence[int]] = None
+    electrode_csv: Optional[str] = None
+    electrode_names: Optional[Sequence[str]] = None
+    eeg_positions_path_template: Optional[str] = None
+    write_neighbor_table: bool = True
+    write_electrode_table: bool = True
 
     # Debug/logging
     verbose: bool = True
 
 
-def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str]]:
+def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str], str]:
     subj = cfg.subject
     root = os.path.abspath(cfg.root_dir)
     out_root = cfg.out_dir or str(post_root(root, subj))
 
     ti_path = cfg.ti_path or str(ti_brain_path(root, subj))
     if cfg.t1_path:
-        t1_file = cfg.t1_path
+        t1_file = str(Path(cfg.t1_path).expanduser())
+        t1_source = "cfg.t1_path"
     else:
         if subj.upper() == "MNI152":
             t1_file = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
+            t1_source = "built-in MNI152 template fallback"
         else:
             t1_file = str(t1_path(root, subj))
+            t1_source = f"derived from utils.paths.t1_path(root={root!r}, subject={subj!r})"
 
-    return out_root, ti_path, t1_file
+    return out_root, ti_path, t1_file, t1_source
+
+
+def _nearby_t1_candidates(t1_candidate: Path) -> Tuple[Path, ...]:
+    candidates = []
+    name = t1_candidate.name
+
+    if name.endswith(".nii.gz"):
+        candidates.append(t1_candidate.with_name(name[:-3]))
+    elif t1_candidate.suffix == ".nii":
+        candidates.append(t1_candidate.with_name(f"{name}.gz"))
+
+    return tuple(candidates)
+
+
+def _looks_like_nifti_bytes(payload: bytes) -> bool:
+    if len(payload) < 348:
+        return False
+
+    sizeof_hdr = int.from_bytes(payload[:4], byteorder="little", signed=False)
+    magic = payload[344:348]
+    return sizeof_hdr == 348 and magic in {b"n+1\x00", b"ni1\x00"}
+
+
+def _load_t1_image(t1_path: Path, cfg: PostProcessConfig) -> nib.spatialimages.SpatialImage:
+    try:
+        return nib.load(str(t1_path))
+    except Exception:
+        if not t1_path.name.endswith(".nii.gz"):
+            raise
+
+        outer_payload = gzip.open(t1_path, "rb").read()
+        if not outer_payload.startswith(b"\x1f\x8b"):
+            raise
+
+        inner_payload = gzip.decompress(outer_payload)
+        if not _looks_like_nifti_bytes(inner_payload):
+            raise
+
+        if cfg.verbose:
+            print(
+                f"[WARN] Detected double-gzipped T1 at {t1_path}; "
+                "loading after one extra decompression."
+            )
+
+        return nib.Nifti1Image.from_bytes(inner_payload)
+
+
+def _log_t1_lookup_details(
+    cfg: PostProcessConfig,
+    t1_candidate: Optional[str],
+    t1_source: str,
+    *,
+    error: Optional[Exception] = None,
+) -> None:
+    if not cfg.verbose:
+        return
+
+    print(f"[INFO] Overlay T1 source: {t1_source}")
+    if not t1_candidate:
+        print("[WARN] Overlay T1 path is empty; overlays that need T1 will be skipped.")
+        return
+
+    expanded = Path(t1_candidate).expanduser()
+    resolved = expanded.resolve()
+    print(f"[INFO] Overlay T1 candidate: {t1_candidate}")
+    print(f"[INFO] Overlay T1 resolved path: {resolved}")
+    print(f"[INFO] Overlay T1 exists={resolved.exists()} is_file={resolved.is_file()}")
+
+    nearby_existing = [str(path) for path in _nearby_t1_candidates(resolved) if path.is_file()]
+    if nearby_existing:
+        print(f"[INFO] Nearby existing T1 candidate(s): {', '.join(nearby_existing)}")
+
+    if error is not None:
+        print(f"[WARN] Failed loading T1 for overlays: {type(error).__name__}: {error}")
+    elif not resolved.is_file():
+        print("[WARN] T1 file for overlays was not found at the resolved path above.")
+
+
+def _generate_selected_roi_overlays(
+    *,
+    cfg: PostProcessConfig,
+    ti_img: nib.spatialimages.SpatialImage,
+    ti_data: np.ndarray,
+    t1_img_full: nib.spatialimages.SpatialImage,
+    roi_mask: np.ndarray,
+    fs_atlas_img: Optional[nib.Nifti1Image],
+    out_dir: str,
+    roi_name: str,
+) -> tuple[list[str], str]:
+    roi_mask_img = nib.Nifti1Image(roi_mask.astype(np.uint8), ti_img.affine, ti_img.header)
+    context_scale_mask_img = (
+        build_context_scale_mask_from_fastsurfer(fs_atlas_img)
+        if fs_atlas_img is not None
+        else None
+    )
+    sel_norm = normalize_roi_name(roi_name)
+    out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
+
+    png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
+        ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+        t1_img=t1_img_full,
+        roi_mask_img=roi_mask_img,
+        out_prefix=f"{out_base}_context",
+        subject=cfg.subject,
+        z_offset_mm=cfg.overlay_z_offset_mm,
+        include_full_field=cfg.overlay_full_field,
+        percentile=cfg.percentile,
+        hard_threshold=cfg.hard_threshold,
+        scale_mask_img=context_scale_mask_img,
+    )
+
+    roi_base = f"{out_base}_roi_focus"
+    roi_overlay_mode = "roi_focus"
+    try:
+        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=roi_base,
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+        )
+    except Exception as exc:
+        roi_overlay_mode = "whole_brain_fallback"
+        if cfg.verbose:
+            print(
+                f"[WARN] ROI-focused overlays failed for {cfg.subject}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            print(
+                f"[INFO] Retrying ROI-focused overlays for {cfg.subject} "
+                "with whole-brain display scaling."
+            )
+        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=roi_base,
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+        )
+
+    reference_full = overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
+        ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+        t1_img=t1_img_full,
+        roi_mask_img=roi_mask_img,
+        out_prefix=f"{out_base}_whole_brain_reference",
+        subject=cfg.subject,
+        z_offset_mm=cfg.overlay_z_offset_mm,
+    )
+
+    overlay_paths = [
+        path
+        for path in (png_full, png_95, png_02, roi_full, roi_95, roi_02, reference_full)
+        if path is not None
+    ]
+    return overlay_paths, roi_overlay_mode
+
+
+def extended_metrics_fingerprint_for_cfg(cfg: PostProcessConfig) -> str:
+    _, ti_path, _, _ = _infer_paths(cfg)
+    return extended_metrics_config_fingerprint(
+        root_dir=cfg.root_dir,
+        subject=cfg.subject,
+        ti_path=ti_path,
+        atlas_mode=cfg.atlas_mode,
+        fastsurfer_root=cfg.fastsurfer_root,
+        subject_fastsurfer_atlas_path=cfg.fs_mri_path,
+        roi_name=cfg.plot_roi or "",
+        percentile=cfg.percentile,
+        region_percentile=cfg.region_percentile,
+        focality_threshold=cfg.offtarget_threshold,
+        mni_baseline_root=cfg.mni_baseline_root,
+        mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+        neighbor_dilation_iter=cfg.neighbor_dilation_iter,
+        csf_labels=cfg.csf_labels,
+        skull_labels=cfg.skull_labels,
+        electrode_csv=cfg.electrode_csv,
+        electrode_names=cfg.electrode_names,
+        eeg_positions_path_template=cfg.eeg_positions_path_template,
+    )
+
+
+def _set_metric_group_state(
+    *,
+    metric_status: Dict[str, str],
+    metric_messages: Dict[str, Optional[str]],
+    metric_keys: Iterable[str],
+    status: str,
+    message: Optional[str] = None,
+) -> None:
+    for key in metric_keys:
+        metric_status[key] = status
+        metric_messages[key] = message
+
+
+def _apply_metric_values(
+    metric_values: Dict[str, Any],
+    values: Dict[str, Any],
+) -> None:
+    for key, value in values.items():
+        metric_values[key] = json_ready_metric_value(value)
 
 
 def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
@@ -85,11 +334,12 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     Set breakpoints inside to step through.
     """
     # ---- Paths & IO ----
-    out_dir, ti_path, t1_path = _infer_paths(cfg)
+    out_dir, ti_path, t1_path, t1_path_source = _infer_paths(cfg)
     if cfg.verbose:
         print(f"[cfg] subject={cfg.subject} | atlas_mode={cfg.atlas_mode}")
         print(f"[cfg] ti_path={ti_path}")
         print(f"[cfg] t1_path={t1_path}")
+        print(f"[cfg] t1_path_source={t1_path_source}")
         print(f"[cfg] out_dir={out_dir}")
 
     ensure_dir(out_dir)
@@ -103,7 +353,12 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         subject=cfg.subject,
         fastsurfer_root=cfg.fastsurfer_root,
         fastsurfer_atlas_path=cfg.fs_mri_path,
+        roi_names=[cfg.plot_roi] if cfg.plot_roi else None,
     )
+
+    selected_plot_roi = cfg.plot_roi
+    if selected_plot_roi not in roi_masks and len(roi_masks) == 1:
+        selected_plot_roi = next(iter(roi_masks))
 
     # Resolve full FastSurfer atlas if available (for full-region summary)
     fs_atlas_path = None
@@ -113,10 +368,10 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         # except Exception:
         #     fs_atlas_path = None
     
-    mask = roi_masks.get("Hippocampus")
+    mask = roi_masks.get(selected_plot_roi)
     print("[INFO]:MODE CHECK")
     print("[INFO]:subject:", cfg.subject, "| atlas_mode:", cfg.atlas_mode)
-    print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, cfg.subject, "mri", "aparc.DKTatlas+aseg.deep.nii.gz")))
+    print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, f"{cfg.subject}.nii.gz")))
     print("[INFO]:mask dtype/shape:", mask.dtype, mask.shape if mask is not None else None)
     print("[INFO]:mask voxels >0:", int(mask.sum()) if mask is not None else 0)
 
@@ -131,12 +386,15 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # Background for overlays (resampled to TI grid if available)
     t1_img_full = None
-    if t1_path and os.path.exists(t1_path):
+    if t1_path:
         try:
-            t1_img_full = nib.load(t1_path)
+            t1_resolved = Path(t1_path).expanduser()
+            if t1_resolved.is_file():
+                t1_img_full = _load_t1_image(t1_resolved, cfg)
+            else:
+                _log_t1_lookup_details(cfg, t1_path, t1_path_source)
         except Exception as e:
-            if cfg.verbose:
-                print(f"[WARN] Failed loading T1 ({t1_path}): {e}")
+            _log_t1_lookup_details(cfg, t1_path, t1_path_source, error=e)
 
     # Save global masks
     vox_vol = vol_mm3(ti_img)
@@ -197,47 +455,58 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             ti_in_roi_topP=ti_in_roi_topP_path,
         )
 
+        roi_finite_mask = mask & finite
+        roi_percentile_value = (
+            float(np.nanpercentile(ti_data[roi_finite_mask], cfg.region_percentile))
+            if np.any(roi_finite_mask)
+            else float("nan")
+        )
+
         per_roi_metrics[roi_name] = dict(
             roi_voxels=int(mask.sum()),
             overlap_top_voxels=int(overlap_mask.sum()),
             roi_volume_mm3=float(mask.sum() * vox_vol),
             overlap_volume_mm3=float(overlap_mask.sum() * vox_vol),
             overlap_fraction=float(overlap_mask.sum() / mask.sum()) if mask.sum() else 0.0,
+            roi_percentile=cfg.region_percentile,
+            roi_percentile_value=roi_percentile_value,
         )
         
         hippo_outline_path = None
         hippo_label_path   = None
         hippo_boldmask_path = None
 
-        if roi_name.lower() == "hippocampus":
+        if "hippocampus" in roi_name.lower():
+            roi_stub = normalize_roi_name(roi_name)
             outline = make_outline(mask, iterations=1)  # increase to 2-3 if you want thicker edge
-            hippo_outline_path = os.path.join(out_dir, "atlas_Hippocampus_outline_mask.nii.gz")
+            hippo_outline_path = os.path.join(out_dir, f"atlas_{roi_stub}_outline_mask.nii.gz")
             nib.save(nib.Nifti1Image(outline, ti_img.affine), hippo_outline_path)
 
             # 2b) Make a "bold" (high intensity) filled mask for viewers that fade 0/1 overlays
             bold = (mask.astype(np.uint8) * 255)
-            hippo_boldmask_path = os.path.join(out_dir, "atlas_Hippocampus_mask_255.nii.gz")
+            hippo_boldmask_path = os.path.join(out_dir, f"atlas_{roi_stub}_mask_255.nii.gz")
             nib.save(nib.Nifti1Image(bold, ti_img.affine), hippo_boldmask_path)
 
             # 2c) Export a label-ID volume on the TI grid (17 for L, 53 for R; 0 elsewhere)
             #     This is often the easiest to color distinctly in Freeview/FSLEyes.
             #     We reconstruct it from the original atlas image on the TI grid:
-            ids = [17, 53]  # bilateral; change to [17] or [53] if you want unilateral
-            # Start from zeros, paint the mask with ID 17/53 depending on which side each voxel belongs to.
-            # If you don't need per-side split, you can just use e.g. 17 for all.
-            # Here’s a simple approach: put 77 for left, 88 for right (or keep 17/53 if preferred).
             label_vol = np.zeros(mask.shape, dtype=np.uint16)
-            # Heuristic split by x in world space (left/right). Feel free to skip and just set 17/53 both.
-            ijk = np.argwhere(mask)
-            xyz = nib.affines.apply_affine(ti_img.affine, ijk)
-            # Left hemisphere has x<0 in RAS (typical); adjust if your orientation differs.
-            left_idx  = (xyz[:, 0] < 0)
-            right_idx = ~left_idx
-            if ijk.size > 0:
-                if left_idx.any():  label_vol[tuple(ijk[left_idx].T)]  = 17
-                if right_idx.any(): label_vol[tuple(ijk[right_idx].T)] = 53
+            if roi_name.lower().startswith("left-hippocampus"):
+                label_vol[mask] = 17
+            elif roi_name.lower().startswith("right-hippocampus"):
+                label_vol[mask] = 53
+            else:
+                ijk = np.argwhere(mask)
+                xyz = nib.affines.apply_affine(ti_img.affine, ijk)
+                left_idx = xyz[:, 0] < 0
+                right_idx = ~left_idx
+                if ijk.size > 0:
+                    if left_idx.any():
+                        label_vol[tuple(ijk[left_idx].T)] = 17
+                    if right_idx.any():
+                        label_vol[tuple(ijk[right_idx].T)] = 53
 
-            hippo_label_path = os.path.join(out_dir, "atlas_Hippocampus_labels_on_TI.nii.gz")
+            hippo_label_path = os.path.join(out_dir, f"atlas_{roi_stub}_labels_on_TI.nii.gz")
             nib.save(nib.Nifti1Image(label_vol, ti_img.affine), hippo_label_path)
 
             # Track in the return dict
@@ -250,6 +519,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     # ---- Full atlas region summaries (FastSurfer only) ----
     region_table_path = None
     region_df = None
+    fs_atlas_img = None
     if cfg.write_region_table and fs_atlas_path:
         try:
             fs_atlas_img = resample_atlas_to_ti_grid(nib.load(fs_atlas_path), ti_img)
@@ -266,54 +536,433 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         except Exception as e:
             if cfg.verbose:
                 print(f"[WARN] Skipped region table: {e}")
+    elif fs_atlas_path:
+        try:
+            fs_atlas_img = resample_atlas_to_ti_grid(nib.load(fs_atlas_path), ti_img)
+        except Exception as e:
+            if cfg.verbose:
+                print(f"[WARN] Failed loading FastSurfer atlas for overlay scaling: {e}")
 
+
+    sel = selected_plot_roi
+
+    # ---- Extended per-repeat metrics for downstream repeatability analysis ----
+    extended_metrics = build_extended_metrics_scaffold()
+    extended_metric_status = build_extended_metric_status_scaffold()
+    extended_metric_messages = build_extended_metric_message_scaffold()
+    extended_group_status: Dict[str, str] = {}
+    extended_group_messages: Dict[str, Optional[str]] = {}
+    extended_config_fingerprint = extended_metrics_fingerprint_for_cfg(cfg)
+    neighbor_table_path = None
+    electrode_table_path = None
+    if sel in roi_masks:
+        roi_mask = roi_masks[sel]
+        subject_atlas_data = None
+        subject_atlas_error: Optional[Exception] = None
+        if fs_atlas_path:
+            try:
+                subject_atlas_data = load_subject_fastsurfer_atlas_data(ti_img, fs_atlas_path)
+            except Exception as exc:
+                subject_atlas_error = exc
+                if cfg.verbose:
+                    print(
+                        f"[WARN] Failed loading subject FastSurfer atlas for extended metrics "
+                        f"for {cfg.subject}: {type(exc).__name__}: {exc}"
+                    )
+
+        def execute_metric_group(
+            group_name: str,
+            metric_keys: Sequence[str],
+            compute_fn,
+        ) -> None:
+            try:
+                values = compute_fn()
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                extended_group_status[group_name] = "error"
+                extended_group_messages[group_name] = message
+                _set_metric_group_state(
+                    metric_status=extended_metric_status,
+                    metric_messages=extended_metric_messages,
+                    metric_keys=metric_keys,
+                    status="error",
+                    message=message,
+                )
+                if cfg.verbose:
+                    print(
+                        f"[WARN] Extended metric group '{group_name}' failed for {cfg.subject}: "
+                        f"{message}"
+                    )
+                return
+            _apply_metric_values(extended_metrics, values)
+            extended_group_status[group_name] = "ok"
+            extended_group_messages[group_name] = None
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=metric_keys,
+                status="ok",
+            )
+
+        def mark_metric_group_not_configured(
+            group_name: str,
+            metric_keys: Sequence[str],
+            message: str,
+        ) -> None:
+            extended_group_status[group_name] = "not_configured"
+            extended_group_messages[group_name] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=metric_keys,
+                status="not_configured",
+                message=message,
+            )
+
+        execute_metric_group(
+            "roi_intensity",
+            ROI_INTENSITY_METRIC_KEYS,
+            lambda: compute_roi_intensity_metrics(
+                ti_img=ti_img,
+                ti_data=ti_data,
+                roi_mask=roi_mask,
+                finite_mask=finite,
+            ),
+        )
+        execute_metric_group(
+            "focality",
+            FOCALITY_METRIC_KEYS,
+            lambda: compute_focality_metrics(
+                ti_img=ti_img,
+                ti_data=ti_data,
+                finite_mask=finite,
+                focality_threshold=cfg.offtarget_threshold,
+            ),
+        )
+
+        baseline_prereq_failed = (
+            extended_group_status.get("roi_intensity") == "error"
+            or extended_group_status.get("focality") == "error"
+        )
+        if baseline_prereq_failed:
+            message = (
+                "Baseline metrics depend on successful ROI intensity and focality metrics."
+            )
+            extended_group_status["baseline"] = "error"
+            extended_group_messages["baseline"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=BASELINE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'baseline' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        elif cfg.mni_baseline_root and cfg.mni_fixed_atlas_path:
+            execute_metric_group(
+                "baseline",
+                BASELINE_METRIC_KEYS,
+                lambda: compute_baseline_delta_metrics(
+                    roi_name=sel,
+                    mni_baseline_root=cfg.mni_baseline_root,
+                    mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+                    focality_threshold=cfg.offtarget_threshold,
+                    roi_peak=extended_metrics.get("roi_peak"),
+                    roi_mean=extended_metrics.get("roi_mean"),
+                    focality_voxels_gt_threshold=extended_metrics.get("focality_voxels_gt_threshold"),
+                    focality_volume_mm3_gt_threshold=extended_metrics.get("focality_volume_mm3_gt_threshold"),
+                ),
+            )
+        else:
+            mark_metric_group_not_configured(
+                "baseline",
+                BASELINE_METRIC_KEYS,
+                "Baseline comparison requires both mni_baseline_root and mni_fixed_atlas_path.",
+            )
+
+        if cfg.mni_fixed_atlas_path:
+            try:
+                neighbor_values = compute_neighbor_metrics(
+                    mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+                    roi_name=sel,
+                    dilation_iter=cfg.neighbor_dilation_iter,
+                    subject_atlas_data=subject_atlas_data,
+                    ti_data=ti_data,
+                    finite_mask=finite,
+                    voxel_volume_mm3=vox_vol,
+                )
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                extended_group_status["neighbors"] = "error"
+                extended_group_messages["neighbors"] = message
+                _set_metric_group_state(
+                    metric_status=extended_metric_status,
+                    metric_messages=extended_metric_messages,
+                    metric_keys=NEIGHBOR_METRIC_KEYS,
+                    status="error",
+                    message=message,
+                )
+                if cfg.verbose:
+                    print(
+                        f"[WARN] Extended metric group 'neighbors' failed for {cfg.subject}: "
+                        f"{message}"
+                    )
+            else:
+                _apply_metric_values(extended_metrics, neighbor_values)
+                if subject_atlas_error is not None and fs_atlas_path:
+                    message = (
+                        "Neighbor template metrics were computed, but subject atlas-dependent "
+                        f"neighbor summaries failed because the subject atlas could not be loaded: "
+                        f"{type(subject_atlas_error).__name__}: {subject_atlas_error}"
+                    )
+                    extended_group_status["neighbors"] = "error"
+                    extended_group_messages["neighbors"] = message
+                    _set_metric_group_state(
+                        metric_status=extended_metric_status,
+                        metric_messages=extended_metric_messages,
+                        metric_keys=NEIGHBOR_METRIC_KEYS,
+                        status="error",
+                        message=message,
+                    )
+                    if cfg.verbose:
+                        print(f"[WARN] Extended metric group 'neighbors' partial failure for {cfg.subject}: {message}")
+                else:
+                    extended_group_status["neighbors"] = "ok"
+                    extended_group_messages["neighbors"] = None
+                    _set_metric_group_state(
+                        metric_status=extended_metric_status,
+                        metric_messages=extended_metric_messages,
+                        metric_keys=NEIGHBOR_METRIC_KEYS,
+                        status="ok",
+                    )
+        else:
+            mark_metric_group_not_configured(
+                "neighbors",
+                NEIGHBOR_METRIC_KEYS,
+                "Neighbor metrics require mni_fixed_atlas_path.",
+            )
+
+        roi_centroid_ijk = None
+        roi_centroid_xyz = None
+        try:
+            centroid_metrics, roi_centroid_ijk, roi_centroid_xyz = compute_centroid_metrics(
+                roi_mask,
+                ti_img.affine,
+            )
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            extended_group_status["centroid"] = "error"
+            extended_group_messages["centroid"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=CENTROID_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'centroid' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        else:
+            _apply_metric_values(extended_metrics, centroid_metrics)
+            extended_group_status["centroid"] = "ok"
+            extended_group_messages["centroid"] = None
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=CENTROID_METRIC_KEYS,
+                status="ok",
+            )
+
+        anatomy_labels_present = bool((cfg.csf_labels or [24])) or bool(cfg.skull_labels)
+        centroid_failed = extended_group_status.get("centroid") == "error"
+        centroid_failure_message = extended_group_messages.get("centroid")
+        if centroid_failed:
+            message = f"Centroid metrics failed, so anatomy distances could not be computed: {centroid_failure_message}"
+            extended_group_status["anatomy_distances"] = "error"
+            extended_group_messages["anatomy_distances"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=ANATOMY_DISTANCE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'anatomy_distances' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        elif not anatomy_labels_present:
+            mark_metric_group_not_configured(
+                "anatomy_distances",
+                ANATOMY_DISTANCE_METRIC_KEYS,
+                "Anatomy distance metrics require csf_labels and/or skull_labels.",
+            )
+        elif not fs_atlas_path:
+            mark_metric_group_not_configured(
+                "anatomy_distances",
+                ANATOMY_DISTANCE_METRIC_KEYS,
+                "Anatomy distance metrics require a subject FastSurfer atlas.",
+            )
+        elif subject_atlas_error is not None:
+            message = f"{type(subject_atlas_error).__name__}: {subject_atlas_error}"
+            extended_group_status["anatomy_distances"] = "error"
+            extended_group_messages["anatomy_distances"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=ANATOMY_DISTANCE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'anatomy_distances' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        else:
+            execute_metric_group(
+                "anatomy_distances",
+                ANATOMY_DISTANCE_METRIC_KEYS,
+                lambda: compute_anatomy_distance_metrics(
+                    atlas_data=subject_atlas_data,
+                    roi_centroid_ijk=roi_centroid_ijk,
+                    zooms=ti_img.header.get_zooms()[:3],
+                    csf_labels=cfg.csf_labels or [24],
+                    skull_labels=cfg.skull_labels,
+                ),
+            )
+
+        if centroid_failed and (cfg.electrode_csv or cfg.electrode_names):
+            message = f"Centroid metrics failed, so electrode distances could not be computed: {centroid_failure_message}"
+            extended_group_status["electrodes"] = "error"
+            extended_group_messages["electrodes"] = message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=ELECTRODE_METRIC_KEYS,
+                status="error",
+                message=message,
+            )
+            if cfg.verbose:
+                print(
+                    f"[WARN] Extended metric group 'electrodes' failed for {cfg.subject}: "
+                    f"{message}"
+                )
+        elif cfg.electrode_csv or cfg.electrode_names:
+            execute_metric_group(
+                "electrodes",
+                ELECTRODE_METRIC_KEYS,
+                lambda: compute_electrode_distance_metrics(
+                    root_dir=cfg.root_dir,
+                    subject=cfg.subject,
+                    roi_centroid_xyz=roi_centroid_xyz,
+                    electrode_csv=cfg.electrode_csv,
+                    electrode_names=cfg.electrode_names,
+                    eeg_positions_path_template=cfg.eeg_positions_path_template,
+                ),
+            )
+        else:
+            mark_metric_group_not_configured(
+                "electrodes",
+                ELECTRODE_METRIC_KEYS,
+                "Electrode distance metrics require electrode_csv or electrode_names.",
+            )
+
+        if cfg.write_neighbor_table and extended_metrics.get("neighbors"):
+            roi_stub = normalize_roi_name(sel)
+            neighbor_table_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbors.json")
+            with open(neighbor_table_path, "w", encoding="utf-8") as handle:
+                json.dump(extended_metrics["neighbors"], handle, indent=2)
+        if cfg.write_electrode_table and extended_metrics.get("electrode_distances"):
+            roi_stub = normalize_roi_name(sel)
+            electrode_table_path = os.path.join(out_dir, f"{roi_stub}_electrode_distances.json")
+            with open(electrode_table_path, "w", encoding="utf-8") as handle:
+                json.dump(extended_metrics["electrode_distances"], handle, indent=2)
+    else:
+        missing_roi_message = f"Selected target ROI '{sel}' was not present on the TI grid."
+        for group_name, metric_keys in (
+            ("roi_intensity", ROI_INTENSITY_METRIC_KEYS),
+            ("focality", FOCALITY_METRIC_KEYS),
+            ("baseline", BASELINE_METRIC_KEYS),
+            ("neighbors", NEIGHBOR_METRIC_KEYS),
+            ("centroid", CENTROID_METRIC_KEYS),
+            ("anatomy_distances", ANATOMY_DISTANCE_METRIC_KEYS),
+            ("electrodes", ELECTRODE_METRIC_KEYS),
+        ):
+            extended_group_status[group_name] = "error"
+            extended_group_messages[group_name] = missing_roi_message
+            _set_metric_group_state(
+                metric_status=extended_metric_status,
+                metric_messages=extended_metric_messages,
+                metric_keys=metric_keys,
+                status="error",
+                message=missing_roi_message,
+            )
+        if cfg.verbose:
+            print(f"[WARN] Extended metrics failed for {cfg.subject}: {missing_roi_message}")
+
+    pending_fields = [key for key in EXTENDED_METRIC_FIELDS if extended_metric_status.get(key) == "pending"]
+    if pending_fields:
+        _set_metric_group_state(
+            metric_status=extended_metric_status,
+            metric_messages=extended_metric_messages,
+            metric_keys=pending_fields,
+            status="error",
+            message="Metric status was never finalized due to an internal pipeline bug.",
+        )
+    has_errors = any(status == "error" for status in extended_metric_status.values())
+    overall_extended_status = "partial" if has_errors else "complete"
+    extended_metrics_meta = {
+        "schema_version": EXTENDED_METRIC_SCHEMA_VERSION,
+        "status": overall_extended_status,
+        "config_fingerprint": extended_config_fingerprint,
+        "group_statuses": extended_group_status,
+        "group_messages": extended_group_messages,
+    }
 
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
-    sel = cfg.plot_roi
-    sel_norm = normalize_roi_name(sel)
+    overlay_strategy = None
     if t1_img_full is not None and sel in roi_masks:
-        roi_mask_img = nib.Nifti1Image(roi_masks[sel].astype(np.uint8), ti_img.affine, ti_img.header)
-        out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
-        png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
-            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-            t1_img=t1_img_full,
-            roi_mask_img=roi_mask_img,
-            out_prefix=out_base,
-            subject=cfg.subject,
-            z_offset_mm=cfg.overlay_z_offset_mm,
-            include_full_field=cfg.overlay_full_field,
-            percentile=cfg.percentile,
-            hard_threshold=cfg.hard_threshold,
+        overlay_paths[sel], overlay_strategy = _generate_selected_roi_overlays(
+            cfg=cfg,
+            ti_img=ti_img,
+            ti_data=ti_data,
+            t1_img_full=t1_img_full,
+            roi_mask=roi_masks[sel],
+            fs_atlas_img=fs_atlas_img,
+            out_dir=out_dir,
+            roi_name=sel,
         )
-        dyn_base = f"{out_base}_dynamic"
-        dyn_95, dyn_02, dyn_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
-            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-            t1_img=t1_img_full,
-            roi_mask_img=roi_mask_img,
-            out_prefix=dyn_base,
-            subject=cfg.subject,
-            z_offset_mm=cfg.overlay_z_offset_mm,
-            include_full_field=cfg.overlay_full_field,
-            percentile=cfg.percentile,
-            hard_threshold=cfg.hard_threshold,
-        )
-        overlay_paths[sel] = [
-            p for p in (png_95, png_02, png_full, dyn_95, dyn_02, dyn_full) if p is not None
-        ]
     elif t1_img_full is None:
         if cfg.verbose:
-            print("[INFO] Skipping overlays (T1 not found).")
+            print("[INFO] Skipping overlays because no T1 background image could be loaded.")
 
     # ---- Subject-level robustness metrics ----
     subject_metrics = dict(
+        schema_version=EXTENDED_METRIC_SCHEMA_VERSION,
         subject=cfg.subject,
+        target_roi=sel,
         percentile=cfg.percentile,
         percentile_value=float(thr),
+        region_percentile=cfg.region_percentile,
         voxel_volume_mm3=vox_vol,
         top_percentile_voxels=int(topP_mask.sum()),
         rois=per_roi_metrics,
+        extended_metrics=extended_metrics,
+        extended_metric_status=extended_metric_status,
+        extended_metric_messages=extended_metric_messages,
+        extended_metrics_meta=extended_metrics_meta,
     )
+    subject_metrics = json_ready_metric_value(subject_metrics)
 
     metrics_path = os.path.join(out_dir, "subject_metrics.json")
     with open(metrics_path, "w") as f:
@@ -333,6 +982,13 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         region_table=region_table_path,
         region_df=region_df,
         metrics_path=metrics_path,
+        extended_metrics=extended_metrics,
+        extended_metric_status=extended_metric_status,
+        extended_metric_messages=extended_metric_messages,
+        extended_metrics_meta=extended_metrics_meta,
+        neighbor_table_path=neighbor_table_path,
+        electrode_table_path=electrode_table_path,
+        overlay_strategy=overlay_strategy,
     )
 
 if __name__ == "__main__":

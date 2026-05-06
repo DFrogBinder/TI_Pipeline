@@ -1,0 +1,145 @@
+<mxfile host="Electron" agent="codex">
+  <diagram id="analysis-flow" name="Analysis Pipeline">
+    <mxGraphModel dx="2020" dy="1257" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="2500" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#0f172a;" value="Repeatability Dataset Analysis: Statistical And Analytical Logic" vertex="1">
+          <mxGeometry height="34" width="1200" x="40" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="3" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#475569;" value="Focus: what is computed from the generated repeats, how it is summarized, and how remesh vs fixed-mesh conditions are contrasted." vertex="1">
+          <mxGeometry height="22" width="1400" x="40" y="56" as="geometry" />
+        </mxCell>
+        <mxCell id="mcWXJTK00h-mvabiscc9-231" edge="1" parent="1" source="10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#36393d;fontStyle=1;fontSize=16;align=center;verticalAlign=top;spacingLeft=16;spacingTop=12;" value="&lt;font style=&quot;font-size: 22px;&quot;&gt;Phase 1. Derive Repeat-Level Quantities&lt;/font&gt;" vertex="1">
+          <mxGeometry height="720" width="760" x="470" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="mcWXJTK00h-mvabiscc9-230" edge="1" parent="1" source="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#36393d;fontStyle=1;fontSize=16;align=center;verticalAlign=top;spacingLeft=16;spacingTop=12;" value="&lt;font style=&quot;font-size: 22px;&quot;&gt;Phase 2. Summarize Within-Condition (remesh/same-mesh) Repeatability&lt;/font&gt;" vertex="1">
+          <mxGeometry height="560" width="760" x="470" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="mcWXJTK00h-mvabiscc9-228" edge="1" parent="1" source="12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#36393d;fontStyle=1;fontSize=16;align=center;verticalAlign=top;spacingLeft=16;spacingTop=12;" value="&lt;font style=&quot;font-size: 22px;&quot;&gt;Phase 3. Contrast Remesh Vs Fixed-Mesh Conditions&lt;/font&gt;" vertex="1">
+          <mxGeometry height="560" width="760" x="470" y="1470" as="geometry" />
+        </mxCell>
+        <mxCell id="mcWXJTK00h-mvabiscc9-226" edge="1" parent="1" source="13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="60">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#36393d;fontStyle=1;fontSize=16;align=center;verticalAlign=top;spacingLeft=16;spacingTop=12;" value="&lt;font style=&quot;font-size: 22px;&quot;&gt;Phase 4. Optional Between-Subject Comparison&lt;/font&gt;" vertex="1">
+          <mxGeometry height="420" width="760" x="470" y="2080" as="geometry" />
+        </mxCell>
+        <mxCell id="20" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;1. Define the analysis frame&lt;/b&gt;&lt;br&gt;&lt;br&gt;Choose subject, condition, ROI labels, reference repeat, reference T1 grid and optional cohort-comparison settings.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="110" width="500" x="600" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="21" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;2. Put all repeats into one common space&lt;br&gt;&lt;/b&gt;&lt;br&gt;Resample the atlas, label maps and TI volumes onto the reference T1 grid so every repeat is measured in the same voxel space.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="140" width="500" x="600" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;3. Compute per-repeat quantitative measures&lt;br&gt;&lt;/b&gt;&lt;br&gt;- ROI TI mean, median, peak&lt;br&gt;- whole-head TI mean, median, peak&lt;br&gt;- mesh node count&lt;br&gt;- label difference fraction overall and inside ROI&lt;br&gt;- hotspot distance in head and ROI&lt;br&gt;- high-field Dice and centroid distance&lt;/font&gt;" vertex="1">
+          <mxGeometry height="190" width="500" x="600" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="23" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;4. Assemble one repeat-level summary table per condition&lt;br&gt;&lt;/b&gt;&lt;br&gt;Each repeat contributes one row to summary.csv/json, so the condition dataset becomes a rectangular table of repeat-by-metric values.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="500" x="600" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="30" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#0f172a;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;5. Compute repeatability statistics for every metric&lt;br&gt;&lt;/b&gt;&lt;br&gt;Apply the same summary function across repeats:&lt;br&gt;n, mean, sample SD, min, max, CV and CV%.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="500" x="600" y="950" as="geometry" />
+        </mxCell>
+        <mxCell id="31" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#0f172a;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;6. Summarize spatial stability across repeats&lt;br&gt;&lt;/b&gt;&lt;br&gt;Build the mean TI map, label-difference frequency map, ROI overlays and per-repeat QC views so the analysis captures not only amplitude variation but also spatial consistency.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="160" width="500" x="600" y="1100" as="geometry" />
+        </mxCell>
+        <mxCell id="32" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#0f172a;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;7. Save the within-condition analysis outputs&lt;br&gt;&lt;/b&gt;&lt;br&gt;Write summary tables, repeatability_stats, repeatability_report.md, parameter_consistency.json and the condition-level plots used for interpretation.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="500" x="600" y="1280" as="geometry" />
+        </mxCell>
+        <mxCell id="40" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;8. Join the two condition summaries for the same subject&lt;br&gt;&lt;/b&gt;&lt;br&gt;Treat remesh as the default baseline and fixed_mesh as the comparison condition when both are available.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="500" x="600" y="1520" as="geometry" />
+        </mxCell>
+        <mxCell id="41" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;9. Compute paired contrast metrics&lt;br&gt;&lt;/b&gt;&lt;br&gt;For each key metric compute:&lt;br&gt;- baseline mean, SD, CV&lt;br&gt;- comparison mean, SD, CV&lt;br&gt;- SD ratio = comparison SD / baseline SD&lt;br&gt;- SD reduction % = 100 × (1 - comparison SD / baseline SD)&lt;br&gt;- CV ratio and CV reduction % using the same form&lt;/font&gt;" vertex="1">
+          <mxGeometry height="180" width="500" x="600" y="1670" as="geometry" />
+        </mxCell>
+        <mxCell id="42" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;10. Save the paired-condition analytical outputs&lt;br&gt;&lt;/b&gt;&lt;br&gt;Write condition_comparison.json/md, metric-by-condition plots and one batch summary row per subject for the chosen primary metric.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="120" width="500" x="600" y="1880" as="geometry" />
+        </mxCell>
+        <mxCell id="50" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#0f172a;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;11. Compare within-subject variation to the cohort spread (optional)&lt;br&gt;&lt;/b&gt;&lt;br&gt;Load the chosen cohort metric from region_stats_fastsurfer.csv, then compare the repeat-level within-subject spread to the between-subject spread across the cohort.&lt;/font&gt;" vertex="1">
+          <mxGeometry height="140" width="500" x="600" y="2140" as="geometry" />
+        </mxCell>
+        <mxCell id="51" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#0f172a;fontSize=14;align=left;verticalAlign=middle;spacing=12;" value="&lt;font style=&quot;font-size: 17px;&quot;&gt;&lt;b&gt;12. Final analytical interpretation&lt;br&gt;&lt;/b&gt;&lt;br&gt;The implemented logic supports three comparisons:&lt;br&gt;- repeatability within one condition&lt;br&gt;- remesh variability versus FEM-only variability&lt;br&gt;- within-subject variation versus cohort-level variation&lt;/font&gt;" vertex="1">
+          <mxGeometry height="150" width="500" x="600" y="2310" as="geometry" />
+        </mxCell>
+        <mxCell id="60" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#ef4444;fontColor=#0f172a;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" value="Done" vertex="1">
+          <mxGeometry height="60" width="180" x="760" y="2560" as="geometry" />
+        </mxCell>
+        <mxCell id="100" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Inputs Used By The Analysis&lt;br&gt;&lt;/b&gt;&lt;br&gt;- repeat folders for each subject/condition&lt;br&gt;- subject atlas in native space&lt;br&gt;- explicit ROI labels&lt;br&gt;- TI volumes and label maps&lt;br&gt;- optional cohort CSVs for between-subject comparison&lt;/font&gt;" vertex="1">
+          <mxGeometry height="210" width="310" x="60" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="101" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Repeat-Level Variables Derived&lt;br&gt;&lt;/b&gt;&lt;br&gt;- ROI and head TI amplitudes&lt;br&gt;- mesh complexity via node count&lt;br&gt;- spatial drift via hotspot distance&lt;br&gt;- high-field overlap via Dice&lt;br&gt;- anatomy/label instability via diff fractions&lt;/font&gt;" vertex="1">
+          <mxGeometry height="170" width="340" x="1310" y="660" as="geometry" />
+        </mxCell>
+        <mxCell id="102" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Repeatability Statistics Implemented&lt;br&gt;&lt;/b&gt;&lt;br&gt;In _metric_stats(values):&lt;br&gt;- n = number of finite repeats&lt;br&gt;- mean = arithmetic mean&lt;br&gt;- SD = sample standard deviation (ddof = 1)&lt;br&gt;- CV = SD / mean&lt;br&gt;- CV% = 100 × CV&lt;br&gt;- min and max are also stored&lt;/font&gt;" vertex="1">
+          <mxGeometry height="220" width="310" x="100" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="103" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Condition-Level Outputs&lt;br&gt;&lt;/b&gt;&lt;br&gt;- summary.csv/json&lt;br&gt;- repeatability_stats.csv/json&lt;br&gt;- repeatability_report.md&lt;br&gt;- parameter_consistency.json&lt;br&gt;- label_diff_frequency.nii.gz&lt;br&gt;- ROI QC and repeat-level plots&lt;/font&gt;" vertex="1">
+          <mxGeometry height="200" width="260" x="1310" y="1230" as="geometry" />
+        </mxCell>
+        <mxCell id="104" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Paired Contrast Formulas&lt;br&gt;&lt;/b&gt;&lt;br&gt;For each metric:&lt;br&gt;- SD ratio = fixed_mesh SD / remesh SD&lt;br&gt;- SD reduction % = 100 × (1 - fixed_mesh SD / remesh SD)&lt;br&gt;- CV ratio = fixed_mesh CV / remesh CV&lt;br&gt;- CV reduction % = 100 × (1 - fixed_mesh CV / remesh CV)&lt;/font&gt;" vertex="1">
+          <mxGeometry height="220" width="360" x="1310" y="1470" as="geometry" />
+        </mxCell>
+        <mxCell id="105" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Cohort Comparison Quantities&lt;br&gt;&lt;/b&gt;&lt;br&gt;- within-subject SD and range from repeats&lt;br&gt;- between-subject SD and range from the cohort CSVs&lt;br&gt;- between/within SD ratio&lt;br&gt;- between/within range ratio&lt;br&gt;- subject percentile inside the cohort&lt;/font&gt;" vertex="1">
+          <mxGeometry height="210" width="310" x="60" y="2080" as="geometry" />
+        </mxCell>
+        <mxCell id="106" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontColor=#333333;fontSize=13;align=left;verticalAlign=top;spacing=12;" value="&lt;font style=&quot;font-size: 16px;&quot;&gt;&lt;b&gt;Paired And Batch Outputs&lt;br&gt;&lt;/b&gt;&lt;br&gt;- condition_comparison.json/md&lt;br&gt;- condition_metric_std_comparison.png&lt;br&gt;- condition_metric_cv_comparison.png&lt;br&gt;- median_roi_by_condition.png&lt;br&gt;- mesh_nodes_by_condition.png&lt;br&gt;- paired_condition_summary.csv/json&lt;/font&gt;" vertex="1">
+          <mxGeometry height="220" width="310" x="1310" y="1810" as="geometry" />
+        </mxCell>
+        <mxCell id="200" edge="1" parent="1" source="20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="21">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="201" edge="1" parent="1" source="21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="202" edge="1" parent="1" source="22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="204" edge="1" parent="1" source="30" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="31">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="205" edge="1" parent="1" source="31" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="32">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="207" edge="1" parent="1" source="40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="208" edge="1" parent="1" source="41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="210" edge="1" parent="1" source="50" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#475569;strokeWidth=1.4;" target="51">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="220" edge="1" parent="1" source="100" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=1.2;dashed=1;" target="20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="221" edge="1" parent="1" source="101" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=2;dashed=1;" target="22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="222" edge="1" parent="1" source="102" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=2;dashed=1;" target="30">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="223" edge="1" parent="1" source="103" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=2;dashed=1;" target="32">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="224" edge="1" parent="1" source="104" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=2;dashed=1;" target="41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="225" edge="1" parent="1" source="105" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=2;dashed=1;" target="50">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="226" edge="1" parent="1" source="106" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=none;strokeColor=#94a3b8;strokeWidth=2;dashed=1;" target="42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

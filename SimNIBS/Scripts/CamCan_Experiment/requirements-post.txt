@@ -1,0 +1,7 @@
+# Python dependencies for post/run_post_processing.py and post/*.py
+numpy
+pandas
+nibabel
+scipy
+nilearn
+matplotlib

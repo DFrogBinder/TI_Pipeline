@@ -1,8 +1,6 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import os
-import shutil
-import signal
 import sys
 from pathlib import Path
 import argparse
@@ -30,6 +28,7 @@ from utils.sim_utils import (
     atomic_replace,
     img_info,
 )
+from utils.skin_filter import smooth_skin_segmentation
 import time
 
 
@@ -37,10 +36,15 @@ import time
 #? Set appropriate flags
 meshPresent = False
 runMNI152 = False
-rootDIR = '/mnt/parscratch/users/cop23bi/LM1'
-DEFAULT_MESH_TIMEOUT_HOURS = 4.0
-MESH_TOTAL_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
-MESH_TIMEOUT_EXIT_CODE = 124
+mergeSegmentationMaps = False
+applyDeterministicSkinFilter = True
+skinFilterLabelId = 5
+skinFilterBackgroundId = 0
+skinFilterClosingVoxels = 2
+skinFilterOpeningVoxels = 1
+skinFilterKeepLargestComponent = True
+saveSkinFilterPreview = True
+rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
 
 
 def log_event(event: str, **fields) -> None:
@@ -59,135 +63,9 @@ def log_file_info(label: str, path: str) -> None:
     )
 
 
-class MeshTimeoutError(RuntimeError):
-    def __init__(self, *, label: str, cmd: list[str], timeout_sec: float):
-        super().__init__(f"{label} timed out after {timeout_sec:.0f} seconds")
-        self.label = label
-        self.cmd = cmd
-        self.timeout_sec = timeout_sec
-
-
-def _ensure_text(data: str | bytes | None) -> str:
-    if data is None:
-        return ""
-    if isinstance(data, bytes):
-        return data.decode(errors="replace")
-    return data
-
-
-def _kill_process_group(process: subprocess.Popen, *, label: str, sig: int, name: str) -> None:
-    if process.poll() is not None:
-        return
-
-    try:
-        os.killpg(process.pid, sig)
-        log_event("cmd_signal", label=label, signal=name, pid=process.pid)
-    except ProcessLookupError:
-        pass
-    except Exception as exc:
-        log_event("cmd_signal_error", label=label, signal=name, pid=process.pid, error=str(exc))
-
-
-def cleanup_subject_mesh_outputs(subject_dir: str, subject: str) -> None:
-    subject_path = Path(subject_dir)
-    suffix = subject.split("-")[-1].upper()
-    dir_candidates = [
-        subject_path / f"m2m_{subject}",
-        subject_path / f"m2m_sub-{suffix}",
-    ]
-    file_candidates = [
-        subject_path / f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii",
-        subject_path / f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii",
-        subject_path / "skin_mask.nii.gz",
-    ]
-
-    seen: set[Path] = set()
-    for path in dir_candidates:
-        if path in seen or not path.exists():
-            continue
-        seen.add(path)
-        try:
-            shutil.rmtree(path, ignore_errors=False)
-            log_event("mesh_cleanup", kind="dir", path=str(path))
-        except Exception as exc:
-            log_event("mesh_cleanup_error", kind="dir", path=str(path), error=str(exc))
-
-    for path in file_candidates:
-        if path in seen or not path.exists():
-            continue
-        seen.add(path)
-        try:
-            path.unlink()
-            log_event("mesh_cleanup", kind="file", path=str(path))
-        except Exception as exc:
-            log_event("mesh_cleanup_error", kind="file", path=str(path), error=str(exc))
-
-
-def _remaining_timeout(deadline: float | None) -> float | None:
-    if deadline is None:
-        return None
-    return max(0.0, deadline - time.monotonic())
-
-
-def run_mesh_cmd(
-    cmd: list[str],
-    *,
-    cwd: str,
-    label: str,
-    mesh_deadline: float | None,
-) -> None:
-    timeout_sec = _remaining_timeout(mesh_deadline)
-    if timeout_sec is not None and timeout_sec <= 0:
-        log_event("mesh_timeout_budget_exhausted", label=label, timeout_sec=MESH_TOTAL_TIMEOUT_SECONDS)
-        raise MeshTimeoutError(label=label, cmd=cmd, timeout_sec=MESH_TOTAL_TIMEOUT_SECONDS)
-
-    run_cmd(cmd, cwd=cwd, label=label, timeout_sec=timeout_sec)
-
-
-def run_cmd(
-    cmd: list[str],
-    *,
-    cwd: str | None = None,
-    label: str = "cmd",
-    timeout_sec: float | None = None,
-) -> None:
-    log_event("run_cmd", label=label, cmd=cmd, cwd=cwd, timeout_sec=timeout_sec)
-    process = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_sec)
-    except subprocess.TimeoutExpired as exc:
-        stdout = _ensure_text(exc.stdout)
-        stderr = _ensure_text(exc.stderr)
-        _kill_process_group(process, label=label, sig=signal.SIGTERM, name="SIGTERM")
-        try:
-            extra_stdout, extra_stderr = process.communicate(timeout=30)
-            stdout += _ensure_text(extra_stdout)
-            stderr += _ensure_text(extra_stderr)
-        except subprocess.TimeoutExpired:
-            _kill_process_group(process, label=label, sig=signal.SIGKILL, name="SIGKILL")
-            extra_stdout, extra_stderr = process.communicate()
-            stdout += _ensure_text(extra_stdout)
-            stderr += _ensure_text(extra_stderr)
-
-        log_event(
-            "cmd_timeout",
-            label=label,
-            timeout_sec=timeout_sec,
-            returncode=process.returncode,
-            stdout_tail=stdout[-2000:] if stdout else "",
-            stderr_tail=stderr[-2000:] if stderr else "",
-        )
-        raise MeshTimeoutError(label=label, cmd=cmd, timeout_sec=timeout_sec) from exc
-
-    result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
+    log_event("run_cmd", label=label, cmd=cmd, cwd=cwd)
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     log_event(
         "cmd_result",
         label=label,
@@ -227,10 +105,6 @@ def process_subject(subject_entry):
     if meshPresent:
         print(f"[INFO] ({subject_source}) Mesh present, skipping meshing step.")
     else:
-        mesh_deadline = (
-            time.monotonic() + MESH_TOTAL_TIMEOUT_SECONDS
-            if MESH_TOTAL_TIMEOUT_SECONDS is not None else None
-        )
         cmd = [
             "charm",
             subject,  # SUBJECT_ID must be first
@@ -241,16 +115,7 @@ def process_subject(subject_entry):
             ]
 
         try:
-            run_mesh_cmd(
-                cmd,
-                cwd=str(subject_dir),
-                label="charm_init",
-                mesh_deadline=mesh_deadline,
-            )
-        except MeshTimeoutError as e:
-            log_event("error", stage="charm_init", subject=subject, error=str(e))
-            cleanup_subject_mesh_outputs(subject_dir, subject)
-            raise
+            run_cmd(cmd, cwd=str(subject_dir), label="charm_init")
         except Exception as e:
             log_event("error", stage="charm_init", subject=subject, error=str(e))
             return
@@ -274,60 +139,100 @@ def process_subject(subject_entry):
             data = np.rint(data).astype(np.int16)
             return nib.Nifti1Image(data, like.affine, like.header)
 
-        # Resample to reference grid if needed
-        same_shape = custom_seg_map.shape == charm_seg_map.shape
-        same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
+        custom_seg_map = to_int_img(custom_seg_map, custom_seg_map)
+        log_event(
+            "segmentation_strategy",
+            subject=subject_source,
+            merge_segmentation_maps=mergeSegmentationMaps,
+            apply_skin_filter=applyDeterministicSkinFilter,
+        )
 
-        #? Low to high resampling is not recommended
-        # if not (same_shape and same_affine):
+        if mergeSegmentationMaps:
+            if applyDeterministicSkinFilter:
+                log_event(
+                    "skin_filter_ignored",
+                    subject=subject_source,
+                    reason="mergeSegmentationMaps=True",
+                )
+            # Resample to reference grid if needed
+            same_shape = custom_seg_map.shape == charm_seg_map.shape
+            same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
 
-        #     print("[INFO] Resampling custom segmentation to CHARM label grid (nearest-neighbor).")
-        #     # order=0 enforces nearest-neighbor to preserve labels
-        #     # src_img_nn = nib.Nifti1Image(
-        #     #     np.rint(custom_seg_map.get_fdata()).astype(np.int16), custom_seg_map.affine, custom_seg_map.header
-        #     # )
-        #     resampled = resample_from_to(custom_seg_map, charm_seg_map, order=0)
-        #     # rsmpl_custom_seg_map = to_int_img(resampled, charm_seg_map)
-
-        # else:
-        #     rsmpl_custom_seg_map = to_int_img(custom_seg_map, charm_seg_map)
-
-        #region Re-mesh
-        # merged_img, debug = merge_segmentation_maps(resampled, charm_seg_map,
-        #     manual_skin_id=5,          # scalp ID in custom segmentation
-        #     dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-        #     background_label=0,              # background ID in custom segmentation
-        #     output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-        #     save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-
-
-        #? High to low resampling
-        if not (same_shape and same_affine):
-
-            print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
-            # order=0 enforces nearest-neighbor to preserve labels
-            src_img_nn = nib.Nifti1Image(
-                np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
-            )
-            resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
-        else:
+            #? High to low resampling
             resampled = to_int_img(charm_seg_map, custom_seg_map)
+            if not (same_shape and same_affine):
 
-        #region Re-mesh
-        merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
-            manual_skin_id=5,          # scalp ID in custom segmentation
-            dilate_envelope_voxels=1,                  # dilate CHARM envelope by this many voxels
-            background_label=0,              # background ID in custom segmentation
-            output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-            save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
+                print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
+                # order=0 enforces nearest-neighbor to preserve labels
+                src_img_nn = nib.Nifti1Image(
+                    np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
+                )
+                resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
 
+            merged_img, merge_debug = merge_segmentation_maps(
+                custom_seg_map,
+                resampled,
+                manual_skin_id=skinFilterLabelId,
+                dilate_envelope_voxels=1,
+                background_label=skinFilterBackgroundId,
+                output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
+                save_envelope_path=os.path.join(subject_dir, "skin_mask.nii.gz"),
+            )
 
+            applied_seg_img_path = os.path.join(
+                subject_dir,
+                f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii",
+            )
+            nib.save(merged_img, applied_seg_img_path)
+            log_event("segmentation_merge_applied", subject=subject_source, **merge_debug)
+            log_file_info("merged_seg_map", applied_seg_img_path)
 
+        else:
+            applied_seg_img_path = os.path.join(
+                subject_dir,
+                f"{subject}_T1w_ras_1mm_T1andT2_masks_replaced.nii",
+            )
+            if applyDeterministicSkinFilter:
+                filter_output_path = applied_seg_img_path
+                if saveSkinFilterPreview:
+                    filter_output_path = os.path.join(
+                        subject_dir,
+                        f"{subject}_T1w_ras_1mm_T1andT2_masks_skin_smoothed.nii",
+                    )
 
-        merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
-        nib.save(merged_img, merged_seg_img_path)
+                try:
+                    custom_seg_map, skin_filter_debug = smooth_skin_segmentation(
+                        custom_seg_map,
+                        skin_label=skinFilterLabelId,
+                        background_label=skinFilterBackgroundId,
+                        closing_voxels=skinFilterClosingVoxels,
+                        opening_voxels=skinFilterOpeningVoxels,
+                        keep_largest_component=skinFilterKeepLargestComponent,
+                        output_path=filter_output_path,
+                    )
+                    applied_seg_img_path = str(filter_output_path)
+                    log_event(
+                        "skin_filter_applied",
+                        subject=subject_source,
+                        **skin_filter_debug,
+                    )
+                    log_file_info(
+                        "skin_filter_preview" if saveSkinFilterPreview else "smoothed_seg_map",
+                        applied_seg_img_path,
+                    )
+                except Exception as e:
+                    log_event("error", stage="skin_filter", subject=subject, error=str(e))
+                    return
+            else:
+                nib.save(custom_seg_map, applied_seg_img_path)
+                log_event(
+                    "skin_filter_skipped",
+                    subject=subject_source,
+                    enabled=applyDeterministicSkinFilter,
+                )
+                log_file_info("replacement_seg_map", applied_seg_img_path)
 
-        atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
+        atomic_replace(applied_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
 
 
         # Re-mesh with charm --mesh from the directory that contains m2m_<subject>
@@ -340,16 +245,7 @@ def process_subject(subject_entry):
         ]
 
         try:
-            run_mesh_cmd(
-                remesh_cmd,
-                cwd=str(subject_dir),
-                label="charm_remesh",
-                mesh_deadline=mesh_deadline,
-            )
-        except MeshTimeoutError as e:
-            log_event("error", stage="charm_remesh", subject=subject, error=str(e))
-            cleanup_subject_mesh_outputs(subject_dir, subject)
-            raise
+            run_cmd(remesh_cmd, cwd=str(subject_dir), label="charm_remesh")
         except Exception as e:
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
 
@@ -358,34 +254,17 @@ def process_subject(subject_entry):
     electrode_shape       = 'ellipse'
     electrode_conductivity = 1.4
 
-    # Left_Pallidum
-    montage_right = ('Fpz', 2e-3, 'AF8', -2e-3) 
-    montage_left  = ('TP7', 1.261915e-3, 'PO9', -1.261915e-3)
-    
-    # Right_Pallidum
-    # montage_right = ('F8', 2e-3, 'F10', -2e-3) 
-    # montage_left  = ('FT7', 1.261915e-3, 'C3', -1.261915e-3)
- 
-    
-    # Left Thalamus 
-    # montage_right = ('F7', 1.588656e-3, 'P7', -1.588656e-3) 
-    # montage_left  = ('F8', 2e-3, 'P8', -2e-3)
-    
-    # Right Thalamus 
-    # montage_right = ('AF7', 2e-3, 'TP7', -2e-3) 
-    # montage_left  = ('T8', 2e-3, 'PO8', -2e-3)
-    
+    # Right Hippocampus montage
+    montage_right = ('F9', 2e-3, 'P7', -2e-3)
+    montage_left  = ('FT8', 1.588656e-3, 'TP8',  -1.588656e-3)
+
     # Left Hippocampus montage
     # montage_right = ('F10', 2e-3, 'P8', -2e-3)
     # montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
     
-    # Left M1 montage
-    # montage_right = ('FC1', 2e-3, 'FCz', -2e-3)
-    # montage_left  = ('C3', 0.632456e-3, 'P5',  -0.632456e-3)
-    
-    # Right DLPFC montage
-    montage_right = ('AF4', 0.796214e-3, 'F4', -0.796214e-3)
-    montage_left  = ('C2', 2e-3, 'CP1', -2e-3)
+    # M1 montage
+    # montage_right = ('C1', 1.34e-3, 'Cz', -1.34e-3)
+    # montage_left  = ('C3', 2.66e-3, 'CP5',  -2.66e-3)
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
@@ -697,51 +576,15 @@ def main():
             "Ignored when --subject is given. Defaults to #CPUs (capped by #subjects)."
         ),
     )
-    parser.add_argument(
-        "--mesh-timeout-hours",
-        type=float,
-        default=DEFAULT_MESH_TIMEOUT_HOURS,
-        help=(
-            "Total timeout in hours across all meshing/remeshing work for one subject. "
-            "Set to 0 or a negative value to disable the timeout."
-        ),
-    )
 
     args = parser.parse_args()
     start = time.time()
-    global MESH_TOTAL_TIMEOUT_SECONDS
-    MESH_TOTAL_TIMEOUT_SECONDS = (
-        args.mesh_timeout_hours * 60 * 60 if args.mesh_timeout_hours > 0 else None
-    )
-    log_event(
-        "mesh_timeout_config",
-        mesh_timeout_hours=args.mesh_timeout_hours,
-        mesh_timeout_scope="total_meshing_phase",
-        mesh_timeout_seconds=MESH_TOTAL_TIMEOUT_SECONDS,
-        mesh_timeout_exit_code=MESH_TIMEOUT_EXIT_CODE,
-    )
 
     if args.subject:
         # ---------- Single-subject (Slurm array) mode ----------
         subject_id = args.subject.strip()
         print(f"[INFO] Running TI pipeline for single subject: {subject_id}")
-        try:
-            duration = process_subject(subject_id)
-        except MeshTimeoutError as exc:
-            total_runtime = time.time() - start
-            log_event(
-                "subject_mesh_timeout",
-                subject=subject_id,
-                stage=exc.label,
-                timeout_sec=exc.timeout_sec,
-                total_runtime_sec=total_runtime,
-                exit_code=MESH_TIMEOUT_EXIT_CODE,
-            )
-            print(
-                f"[ERROR] Mesh step '{exc.label}' timed out after "
-                f"{exc.timeout_sec / 3600:.2f} hour(s) for {subject_id}."
-            )
-            sys.exit(MESH_TIMEOUT_EXIT_CODE)
+        duration = process_subject(subject_id)
         total_runtime = time.time() - start
 
         print("Done.")

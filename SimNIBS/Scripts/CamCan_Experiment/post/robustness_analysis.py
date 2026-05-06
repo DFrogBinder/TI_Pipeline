@@ -3,7 +3,7 @@
 Standalone robustness analysis (per-subject + population).
 
 Computes:
-  - ROI peak/mean and deltas vs MNI152 baseline (CSV input)
+  - ROI peak/mean and deltas vs MNI152 baseline (root-based extraction)
   - Whole-brain focality voxels > threshold and delta vs MNI152
   - Neighboring-region mean/peak (atlas-adjacent to ROI)
   - Distances from ROI centroid to CSF/skull (if labels provided)
@@ -22,6 +22,7 @@ import pandas as pd
 import nibabel as nib
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
+from post.metric_extensions import compute_extended_subject_metrics
 from post.post_functions import (
     _resolve_fastsurfer_atlas,
     fastsurfer_dkt_labels,
@@ -39,7 +40,8 @@ class RobustnessConfig:
     atlas_mode: str = "fastsurfer"  # adjacency requires label atlas
     fastsurfer_root: Optional[str] = None
     fs_mri_path_template: Optional[str] = None  # e.g. "/path/{subject}.nii.gz"
-    mni_baseline_csv: Optional[str] = None
+    mni_baseline_root: Optional[str] = None
+    mni_fixed_atlas_path: Optional[str] = None
     focality_threshold: float = 0.2
     out_dir: Optional[str] = None
 
@@ -63,16 +65,6 @@ def discover_subjects(root: Path, subjects: Optional[Iterable[str]]) -> List[str
     if subjects:
         return list(subjects)
     return sorted([p.name for p in root.iterdir() if p.is_dir()])
-
-
-def _load_mni_baseline_csv(path: Path, roi_name: str) -> Dict[str, float]:
-    df = pd.read_csv(path)
-    if "roi" in df.columns:
-        df = df[df["roi"].str.lower() == roi_name.lower()]
-    if "metric" in df.columns and "value" in df.columns:
-        return {str(k): float(v) for k, v in zip(df["metric"], df["value"])}
-    raise ValueError("Baseline CSV must include columns 'metric' and 'value' (and optional 'roi').")
-
 
 def _load_electrode_centers(path: Path) -> Dict[str, List[Tuple[str, np.ndarray]]]:
     df = pd.read_csv(path)
@@ -220,10 +212,6 @@ def run_robustness(cfg: RobustnessConfig) -> Path:
     subj_out = out_dir / "subjects"
     subj_out.mkdir(parents=True, exist_ok=True)
 
-    baseline = {}
-    if cfg.mni_baseline_csv:
-        baseline = _load_mni_baseline_csv(Path(cfg.mni_baseline_csv), cfg.roi_name)
-
     electrode_centers = {}
     if cfg.electrode_csv:
         electrode_centers = _load_electrode_centers(Path(cfg.electrode_csv))
@@ -258,87 +246,60 @@ def run_robustness(cfg: RobustnessConfig) -> Path:
                 print(f"[WARN] ROI '{cfg.roi_name}' not found for {subj}")
             continue
         roi_mask = roi_masks[cfg.roi_name]
-
-        roi_vals = ti_data[roi_mask & finite]
-        roi_peak = float(np.max(roi_vals)) if roi_vals.size else np.nan
-        roi_mean = float(np.mean(roi_vals)) if roi_vals.size else np.nan
-
-        focality_voxels = int(np.sum(ti_data[finite] > cfg.focality_threshold))
-
-        roi_peak_delta = roi_peak - baseline.get("roi_peak", np.nan)
-        focality_delta = focality_voxels - baseline.get("focality_voxels", np.nan)
-
-        # Neighbor stats
         fs_path = _resolve_fastsurfer_atlas(
             subj,
             cfg.fastsurfer_root,
             cfg.fs_mri_path_template.format(subject=subj) if cfg.fs_mri_path_template else None,
         )
-        neighbor_df = pd.DataFrame()
-        if fs_path:
-            atlas_img = resample_atlas_to_ti_grid(nib.load(fs_path), ti_img)
-            atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32)
-            neighbor_ids = _neighbor_labels(roi_mask, atlas_data, cfg.neighbor_dilation_iter)
-            neighbor_df = _neighbor_stats(neighbor_ids, atlas_data, ti_data, finite)
-            neighbor_csv = subj_out / f"{subj}_neighbors.csv"
-            neighbor_df.to_csv(neighbor_csv, index=False)
-
-        # Distances to CSF/skull
-        roi_centroid_ijk = _roi_centroid_ijk(roi_mask)
-        roi_centroid_xyz = _roi_centroid_world(roi_mask, ti_img.affine)
-        csf_dist = np.nan
-        skull_dist = np.nan
-        if fs_path and roi_centroid_ijk is not None:
-            atlas_img = resample_atlas_to_ti_grid(nib.load(fs_path), ti_img)
-            atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32)
-            zooms = ti_img.header.get_zooms()[:3]
-            csf_mask = np.isin(atlas_data, csf_labels)
-            if np.any(csf_mask):
-                csf_dist = _distance_to_tissue(csf_mask, roi_centroid_ijk, zooms)
-            if cfg.skull_labels:
-                skull_mask = np.isin(atlas_data, cfg.skull_labels)
-                if np.any(skull_mask):
-                    skull_dist = _distance_to_tissue(skull_mask, roi_centroid_ijk, zooms)
-
-        # Electrode distances
-        electrode_rows = []
-        if roi_centroid_xyz is not None and subj in electrode_centers:
-            for name, coord in electrode_centers[subj]:
-                dist = float(np.linalg.norm(coord - roi_centroid_xyz))
-                electrode_rows.append({"electrode": name, "distance_mm": dist})
-            pd.DataFrame(electrode_rows).to_csv(subj_out / f"{subj}_electrode_distances.csv", index=False)
-        elif roi_centroid_xyz is not None and cfg.electrode_names:
-            centers = _electrode_centers_from_names(
-                root,
-                subj,
-                cfg.electrode_names,
-                cfg.eeg_positions_path_template,
+        extended_metrics = compute_extended_subject_metrics(
+            root_dir=str(root),
+            subject=subj,
+            roi_name=cfg.roi_name,
+            ti_img=ti_img,
+            ti_data=ti_data,
+            roi_mask=roi_mask,
+            finite_mask=finite,
+            subject_fastsurfer_atlas_path=fs_path,
+            mni_baseline_root=cfg.mni_baseline_root,
+            mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+            focality_threshold=cfg.focality_threshold,
+            neighbor_dilation_iter=cfg.neighbor_dilation_iter,
+            csf_labels=csf_labels,
+            skull_labels=cfg.skull_labels,
+            electrode_csv=cfg.electrode_csv,
+            electrode_names=cfg.electrode_names,
+            eeg_positions_path_template=cfg.eeg_positions_path_template,
+        )
+        neighbor_df = pd.DataFrame(extended_metrics.get("neighbors", []))
+        if not neighbor_df.empty:
+            neighbor_df.to_csv(subj_out / f"{subj}_neighbors.csv", index=False)
+        electrode_rows = extended_metrics.get("electrode_distances", [])
+        if electrode_rows:
+            pd.DataFrame(electrode_rows).to_csv(
+                subj_out / f"{subj}_electrode_distances.csv", index=False
             )
-            for name, coord in centers:
-                dist = float(np.linalg.norm(coord - roi_centroid_xyz))
-                electrode_rows.append({"electrode": name, "distance_mm": dist})
-            if electrode_rows:
-                pd.DataFrame(electrode_rows).to_csv(
-                    subj_out / f"{subj}_electrode_distances.csv", index=False
-                )
 
         per_subject_rows.append(
             {
                 "subject": subj,
                 "roi": cfg.roi_name,
-                "roi_peak": roi_peak,
-                "roi_mean": roi_mean,
-                "roi_peak_delta_mni": roi_peak_delta,
-                "focality_voxels": focality_voxels,
-                "focality_delta_mni": focality_delta,
-                "roi_centroid_x": float(roi_centroid_xyz[0]) if roi_centroid_xyz is not None else np.nan,
-                "roi_centroid_y": float(roi_centroid_xyz[1]) if roi_centroid_xyz is not None else np.nan,
-                "roi_centroid_z": float(roi_centroid_xyz[2]) if roi_centroid_xyz is not None else np.nan,
-                "csf_distance_mm": csf_dist,
-                "skull_distance_mm": skull_dist,
+                "roi_peak": extended_metrics.get("roi_peak"),
+                "roi_mean": extended_metrics.get("roi_mean"),
+                "roi_peak_abs_delta_mni": extended_metrics.get("roi_peak_abs_delta_mni"),
+                "roi_mean_abs_delta_mni": extended_metrics.get("roi_mean_abs_delta_mni"),
+                "focality_voxels_gt_threshold": extended_metrics.get("focality_voxels_gt_threshold"),
+                "focality_voxels_abs_delta_mni": extended_metrics.get("focality_voxels_abs_delta_mni"),
+                "roi_centroid_x": extended_metrics.get("roi_centroid_x"),
+                "roi_centroid_y": extended_metrics.get("roi_centroid_y"),
+                "roi_centroid_z": extended_metrics.get("roi_centroid_z"),
+                "csf_distance_mm": extended_metrics.get("csf_distance_mm"),
+                "skull_distance_mm": extended_metrics.get("skull_distance_mm"),
+                "electrode_distance_mean_mm": extended_metrics.get("electrode_distance_mean_mm"),
+                "electrode_distance_min_mm": extended_metrics.get("electrode_distance_min_mm"),
+                "electrode_distance_max_mm": extended_metrics.get("electrode_distance_max_mm"),
             }
         )
-        worst_case.append((subj, roi_peak))
+        worst_case.append((subj, float(extended_metrics.get("roi_peak", np.nan))))
 
     per_subject_df = pd.DataFrame(per_subject_rows)
     per_subject_df.to_csv(out_dir / "per_subject_metrics.csv", index=False)
@@ -348,7 +309,7 @@ def run_robustness(cfg: RobustnessConfig) -> Path:
         return float(series.quantile(0.75) - series.quantile(0.25))
 
     pop_rows = []
-    for metric in ["roi_peak", "roi_mean", "focality_voxels"]:
+    for metric in ["roi_peak", "roi_mean", "focality_voxels_gt_threshold"]:
         if metric not in per_subject_df.columns or per_subject_df.empty:
             continue
         vals = per_subject_df[metric].dropna()
@@ -389,7 +350,7 @@ if __name__ == "__main__":
         atlas_mode="fastsurfer",
         fastsurfer_root=None,
         fs_mri_path_template='/home/boyan/sandbox/Jake_Data/atlases/sub-CC110056.nii.gz',  # e.g. "/path/to/atlases/{subject}.nii.gz"
-        mni_baseline_csv="/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/mni_baseline_placeholder.csv",
+        mni_baseline_root="/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152_Hippocampus",
         focality_threshold=0.2,
         out_dir=None,
         csf_labels=[24],

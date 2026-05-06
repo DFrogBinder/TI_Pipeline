@@ -204,3 +204,4 @@ def merge_segmentation_maps(
         "manual_skin_id": int(manual_skin_id),
     }
     return out_img, debug
+

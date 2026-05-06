@@ -1,0 +1,45 @@
+{
+  "input_root": "/media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/new_params",
+  "analysis_dir": "/media/boyan/main/PhD/CamCan-SimNIBS_Repeatability/new_params/_analysis",
+  "metric": "mean_roi",
+  "estimator": "mean",
+  "tolerance": 0.05,
+  "coverage": 0.95,
+  "criterion": "ci_half_width",
+  "bootstrap_iterations": 20000,
+  "common_max_repeats": 38,
+  "subjects": 4,
+  "configured_recommendation": 2,
+  "recommendation_ci_half_width": 2,
+  "recommendation_abs_error_quantile": 2,
+  "per_subject": [
+    {
+      "subject": "sub-CC120120",
+      "available_repeats": 40,
+      "reference_value": 0.2702635644154083,
+      "recommendation_ci_half_width": 2,
+      "recommendation_abs_error_quantile": 2
+    },
+    {
+      "subject": "sub-CC210124",
+      "available_repeats": 40,
+      "reference_value": 0.3252193621903585,
+      "recommendation_ci_half_width": 2,
+      "recommendation_abs_error_quantile": 2
+    },
+    {
+      "subject": "sub-CC410243",
+      "available_repeats": 38,
+      "reference_value": 0.27203911580424917,
+      "recommendation_ci_half_width": 2,
+      "recommendation_abs_error_quantile": 2
+    },
+    {
+      "subject": "sub-CC721888",
+      "available_repeats": 40,
+      "reference_value": 0.22036352822430913,
+      "recommendation_ci_half_width": 2,
+      "recommendation_abs_error_quantile": 2
+    }
+  ]
+}

@@ -75,7 +75,7 @@ def _write_subject_run(
 
     roi_values = field[roi_mask]
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "subject": subject,
         "target_roi": roi_name,
         "percentile": percentile,
@@ -96,6 +96,25 @@ def _write_subject_run(
         "extended_metrics": {
             "roi_peak": float(np.nanmax(roi_values)),
             "roi_mean": float(np.nanmean(roi_values)),
+        },
+        "extended_metric_status": {
+            "roi_peak": "ok",
+            "roi_mean": "ok",
+        },
+        "extended_metric_messages": {
+            "roi_peak": None,
+            "roi_mean": None,
+        },
+        "extended_metrics_meta": {
+            "schema_version": 3,
+            "status": "complete",
+            "config_fingerprint": "test-fixture",
+            "group_statuses": {
+                "roi_intensity": "ok",
+            },
+            "group_messages": {
+                "roi_intensity": None,
+            },
         },
     }
     (post_dir / "subject_metrics.json").write_text(json.dumps(payload), encoding="utf-8")

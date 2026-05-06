@@ -42,9 +42,9 @@ The current implementation supports the analysis concepts discussed for the ROI 
 
 ## High-Level Pipeline
 
-The pipeline has four layers.
+The pipeline has three analysis layers plus a small orchestration layer.
 
-### 1. Per-subject post-processing
+### 1. Subject-level metrics
 
 Implemented in [post_process.py](./post_process.py).
 
@@ -54,9 +54,11 @@ This stage:
 - resolves the target ROI mask on the TI grid
 - computes percentile-threshold and overlap products
 - preserves the existing overlay image generation
-- appends extended metrics to `subject_metrics.json`
+- prebuilds the `subject_metrics.json` scaffold
+- computes extended metrics in explicit metric groups
+- records per-field status and error metadata in `subject_metrics.json`
 
-### 2. Within-run population aggregation
+### 2. Population (within run)-level metrics
 
 Implemented in [post_population.py](./post_population.py).
 
@@ -65,20 +67,11 @@ This stage:
 - reads per-subject `subject_metrics.json`
 - reads per-subject FastSurfer region summary tables when available
 - aggregates subject metrics across all subjects in one dataset run
+- can run on a partial dataset if some subjects fail, as long as at least one subject has complete outputs
 - summarizes neighboring-region and anatomy-linked metrics
 - produces per-run robustness tables
 
-### 3. Repeat-batch orchestration
-
-Implemented in [run_post_processing_batch.py](./run_post_processing_batch.py) and [run_post_processing_batch_env.py](./run_post_processing_batch_env.py).
-
-This stage:
-
-- discovers repeated dataset folders such as `*_Data_01` to `*_Data_10`
-- runs the per-subject and per-run stages for each repeat
-- optionally launches the across-repeat repeatability stage automatically after the batch completes
-
-### 4. Across-repeat repeatability analysis
+### 3. Across-repeat repeatability level
 
 Implemented in [repeatability/analyze_subject_metrics.py](./repeatability/analyze_subject_metrics.py).
 
@@ -89,6 +82,21 @@ This stage:
 - computes subject-level variation across repeats
 - writes tables, figures, and narrative reports
 - writes per-subject mean and SD summaries across repeats for the extended metrics
+
+### Orchestration entrypoints
+
+The three analysis layers above are orchestrated by:
+
+- [run_post_processing.py](./run_post_processing.py): single-dataset orchestration for layer 1 and optional layer 2
+- [run_post_processing_batch.py](./run_post_processing_batch.py): repeat-batch orchestration for layer 1, layer 2, and optional layer 3
+- [run_full_post_pipeline.py](./run_full_post_pipeline.py): CLI wrapper that auto-detects whether `--root` is a single dataset or a repeat batch
+- [run_post_processing_batch_env.py](./run_post_processing_batch_env.py): environment-driven HPC wrapper around the batch orchestration
+
+Current stage semantics:
+
+- `ok`: the stage completed without missing subjects or metric groups
+- `partial`: the stage completed with some failures, but later layers may still use the fully completed subset
+- `failed`: no trustworthy completed inputs were available for the downstream layer
 
 ## Data Model
 
@@ -279,6 +287,7 @@ The pipeline uses absolute differences relative to the configured MNI baseline f
 ```text
 post/
 ├── README.md
+├── pipeline_layers.py
 ├── metric_extensions.py
 ├── post_functions.py
 ├── post_population.py
@@ -316,13 +325,24 @@ Responsibilities:
 - build overlap masks and tables
 - write masks and masked TI volumes
 - write overlay PNGs
-- append extended metrics to `subject_metrics.json`
+- populate the `extended_metrics` scaffold
+- record per-field status and message metadata in `subject_metrics.json`
 
 Main output contract:
 
 - one subject processed
 - one `subject_metrics.json`
 - one set of ROI masks, overlays, and optional region tables
+
+### `pipeline_layers.py`
+
+Shared names for the three analysis layers.
+
+Responsibilities:
+
+- define the canonical stage ids used by the orchestration code
+- define the human-readable labels for those stages
+- standardize stage result payloads for orchestration summaries
 
 ### `metric_extensions.py`
 
@@ -372,9 +392,10 @@ Single-dataset pipeline runner.
 
 Responsibilities:
 
-- discover subjects under one dataset root
-- call `post_process.py` for each subject
-- optionally call `post_population.py`
+- resolve ROI aliases for one dataset root
+- orchestrate the `subject_level` stage explicitly
+- orchestrate the `population_within_run` stage explicitly
+- return stage-specific status summaries that can be reused by batch mode
 
 This is the main entrypoint for one dataset run.
 
@@ -386,9 +407,7 @@ Responsibilities:
 
 - auto-detect whether `--root` points to one dataset or a repeat batch root
 - build the single-dataset and batch configuration objects from CLI arguments
-- run subject-level processing
-- optionally run within-run population aggregation
-- optionally run across-repeat repeatability analysis
+- route execution into the same three-layer vocabulary used elsewhere in the code
 
 This is the recommended entrypoint for most interactive use.
 
@@ -399,9 +418,10 @@ Repeat-batch pipeline runner.
 Responsibilities:
 
 - discover repeated dataset folders
-- run the single-dataset pipeline for each repeat
+- run the single-dataset layer-1 and layer-2 orchestration for each repeat
+- defer layer-2 reruns onto the complete-case cohort when requested
 - write a batch summary JSON
-- optionally run across-repeat repeatability analysis per ROI after the batch completes
+- optionally run the `across_repeats` stage per ROI after the batch completes
 
 This is the main end-to-end entrypoint when testing the full repeated-run pipeline.
 
@@ -426,20 +446,26 @@ Responsibilities:
 - optionally restrict the analysis to the complete-case cohort present in every selected repeat
 - compute per-run and experiment-level statistics
 - compute subject-level repeat variation
-- compute image-level repeatability on saved ROI masks, top-5% masks, overlap masks, and within-ROI field images
+- resolve image-level masks from the stored subject percentile instead of assuming `95`
+- compute image-level repeatability on saved ROI masks, top-percentile masks, overlap masks, and within-ROI field images
 - quantify hotspot localization stability from peak displacement and overlap-mask center of mass
 - compute mean and SD across repeats per subject
 - generate figures and reports
 
 ## `subject_metrics.json` Schema
 
-The subject-level JSON now contains the original overlap structure plus `extended_metrics`.
+The subject-level JSON now contains the original overlap structure plus:
+
+- `extended_metrics`: the metric payload itself
+- `extended_metric_status`: per-field values such as `ok`, `not_configured`, or `error`
+- `extended_metric_messages`: per-field error or skip explanations
+- `extended_metrics_meta`: overall completion status, group-level status, and the config fingerprint used by skip logic
 
 Simplified shape:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "subject": "sub-CCxxxxxx",
   "target_roi": "Left-Hippocampus",
   "percentile": 95.0,
@@ -468,6 +494,26 @@ Simplified shape:
     "electrode_distance_mean_mm": 63.2,
     "neighbors": [...],
     "electrode_distances": [...]
+  },
+  "extended_metric_status": {
+    "roi_peak": "ok",
+    "mni_baseline_roi_peak": "not_configured",
+    "neighbor_mean_of_means": "error"
+  },
+  "extended_metric_messages": {
+    "roi_peak": null,
+    "mni_baseline_roi_peak": "Baseline comparison requires both mni_baseline_root and mni_fixed_atlas_path.",
+    "neighbor_mean_of_means": "FileNotFoundError: FastSurfer atlas not found: ..."
+  },
+  "extended_metrics_meta": {
+    "schema_version": 3,
+    "status": "complete",
+    "config_fingerprint": "0123abcd4567ef89",
+    "group_statuses": {
+      "roi_intensity": "ok",
+      "baseline": "not_configured",
+      "neighbors": "error"
+    }
   }
 }
 ```
@@ -532,7 +578,7 @@ The repeatability stage always uses all available repeats for the chosen ROI.
 The main ideas are:
 
 - each `subject_metrics.json` contributes one row for one subject in one repeat
-- a complete-case cohort is built from subjects that are present in every repeat
+- a complete-case cohort is built from subjects that are present in every repeat and whose `subject_metrics.json` is marked `extended_metrics_meta.status == "complete"`
 - by default, repeat-level summaries are restricted to that complete-case cohort
 - experiment-level summaries always use the complete-case cohort for subject-matched repeated measures
 - experiment-level summaries quantify run-to-run variability relative to subject-to-subject variability
@@ -541,7 +587,7 @@ The main ideas are:
 
 Important defaults:
 
-- batch mode now discards subjects that do not complete all selected repeats when it produces within-run population summaries and repeatability outputs
+- batch mode now allows a repeat dataset to finish as `partial` when some subjects fail, then discards those incomplete subjects when it produces complete-case within-run population summaries and repeatability outputs
 - the strict cohort can be relaxed only when you explicitly opt in with `--allow-incomplete-repeat-subjects`, `--allow-incomplete-subjects`, or `PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY=0`
 
 Important consequence:
@@ -666,7 +712,7 @@ Use this mode when you want:
 
 - repeat-level and experiment-level summary tables
 - subject-level mean and SD tables across repeats
-- ROI-mask, top-5% mask, overlap-mask, and within-ROI field repeatability metrics
+- ROI-mask, top-percentile-mask, overlap-mask, and within-ROI field repeatability metrics
 - hotspot localization stability metrics from peak and overlap center-of-mass displacement
 - repeatability figures and narrative reports
 - complete-case-only outputs by default
@@ -748,7 +794,7 @@ This keeps the repeated-run comparison decoupled from the raw NIfTI processing. 
 
 ### Missing MNI baseline
 
-If `mni_baseline_root` is not configured, the absolute-delta baseline fields will be `NaN`.
+If `mni_baseline_root` is not configured, the baseline-comparison fields are written as `null` in `extended_metrics` and marked `not_configured` in `extended_metric_status`.
 
 The baseline root should point to the SimNIBS output root for the MNI run of the current ROI. The extractor accepts either:
 
@@ -757,11 +803,31 @@ The baseline root should point to the SimNIBS output root for the MNI run of the
 
 ### Missing fixed MNI atlas
 
-If `mni_fixed_atlas_path` is not configured, neighboring-region metrics cannot be defined from the fixed-template design and will be absent.
+If `mni_fixed_atlas_path` is not configured, neighboring-region metrics and baseline-template comparisons cannot be defined from the fixed-template design. Those fields remain in the JSON scaffold and are marked `not_configured`.
 
 ### Old `subject_metrics.json` files
 
-If a subject already has an older JSON without `extended_metrics`, the single-dataset runner may need `force=True` so the subject is reprocessed.
+Older subject JSONs without `extended_metrics_meta` are no longer treated as complete by the skip logic. They will be reprocessed automatically unless you bypass that behavior elsewhere.
+
+### Subject skip logic
+
+Subjects are now skipped only when all of the following are true:
+
+- `extended_metrics_meta.status == "complete"`
+- the stored `config_fingerprint` matches the current post-processing configuration
+- `--force` was not requested
+
+This prevents partially failed extended-metric runs from being treated as valid cache hits.
+
+### Image repeatability percentile assumptions
+
+The image-level repeatability layer no longer assumes that the high-field masks are always `top95`.
+
+It now:
+
+- resolves mask filenames from the stored `percentile` field in each `subject_metrics.json`
+- falls back to filename pattern matching when the percentile metadata is unavailable
+- reports mixed-percentile runs for the same subject as issues instead of comparing them silently
 
 ### ROI naming
 

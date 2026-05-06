@@ -2,6 +2,7 @@ from pathlib import Path
 
 from post.run_post_processing_batch import (
     RepeatBatchConfig,
+    _dataset_status_from_stage_results,
     _resolve_repeatability_output_dir_for_roi,
     discover_repeat_datasets,
     make_default_pipeline_template,
@@ -57,12 +58,20 @@ def test_run_repeat_batch_uses_fresh_pipeline_template_per_dataset(tmp_path, mon
     incoming_plot_rois = []
     incoming_target_rois = []
 
-    def fake_run_pipeline(cfg):
+    def fake_run_pipeline(cfg, raise_on_error=True):
         seen_roots.append(Path(cfg.post.root).name)
         incoming_plot_rois.append(cfg.post.plot_roi)
         incoming_target_rois.append(cfg.population.target_roi)
         cfg.post.plot_roi = f"mutated-{Path(cfg.post.root).name}"
         cfg.population.target_roi = f"target-{Path(cfg.post.root).name}"
+        return {
+            "resolved_plot_roi": cfg.post.plot_roi,
+            "resolved_target_roi": cfg.population.target_roi,
+            "stages": {
+                "subject_level": {"stage": "subject_level", "status": "ok"},
+                "population_within_run": {"stage": "population_within_run", "status": "ok"},
+            },
+        }
 
     monkeypatch.setattr("post.run_post_processing_batch.run_pipeline", fake_run_pipeline)
 
@@ -82,7 +91,29 @@ def test_run_repeat_batch_uses_fresh_pipeline_template_per_dataset(tmp_path, mon
     assert template.post.plot_roi is None
     assert template.population.target_roi is None
     assert summary["processed_datasets"] == 2
+    assert summary["ok_datasets"] == 2
+    assert summary["partial_datasets"] == 0
     assert summary["failed_datasets"] == 0
+
+
+def test_dataset_status_from_stage_results_marks_partial_when_only_subject_stage_is_partial():
+    status, detail = _dataset_status_from_stage_results(
+        {
+            "subject_level": {
+                "stage": "subject_level",
+                "status": "partial",
+                "warning": "2 subjects failed",
+            },
+            "population_within_run": {
+                "stage": "population_within_run",
+                "status": "skipped",
+                "reason": "deferred",
+            },
+        }
+    )
+
+    assert status == "partial"
+    assert detail == "subject_level: 2 subjects failed"
 
 
 def test_default_repeatability_output_dir_is_inline_for_single_roi_batch(tmp_path):

@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from post.metric_extensions import flatten_subject_metric_payload
+from post.pipeline_layers import load_subject_metrics_payload, subject_metrics_payload_complete
 
 
 def iqr(series: pd.Series) -> float:
@@ -31,10 +32,17 @@ def load_subject_region_table(subj: str, path: Path) -> Optional[pd.DataFrame]:
 def load_subject_metrics(subj: str, path: Path) -> Optional[dict]:
     if not path.is_file():
         return None
-    with open(path, "r") as f:
-        data = json.load(f)
+    data = load_subject_metrics_payload(path)
+    if data is None or not subject_metrics_payload_complete(data):
+        return None
     data["subject"] = subj
     return data
+
+
+def subject_has_complete_outputs(post_root: Path, region_filename: str, metrics_filename: str) -> bool:
+    region_path = post_root / region_filename
+    metrics_path = post_root / metrics_filename
+    return region_path.is_file() and subject_metrics_payload_complete(load_subject_metrics_payload(metrics_path))
 
 
 def flatten_subject_metrics(subject_metrics: List[dict], target_roi: str) -> pd.DataFrame:
@@ -172,15 +180,20 @@ def subject_anatomy_correlations(df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def discover_subjects(root: Path, subjects: Optional[Iterable[str]], region_filename: str) -> List[str]:
+def discover_subjects(
+    root: Path,
+    subjects: Optional[Iterable[str]],
+    region_filename: str,
+    metrics_filename: str,
+) -> List[str]:
     if subjects:
         return list(subjects)
     found: List[str] = []
     for subj_dir in root.iterdir():
         if not subj_dir.is_dir():
             continue
-        region_path = subj_dir / "anat" / "post" / region_filename
-        if region_path.is_file():
+        post_root = subj_dir / "anat" / "post"
+        if subject_has_complete_outputs(post_root, region_filename, metrics_filename):
             found.append(subj_dir.name)
     return sorted(found)
 
@@ -282,7 +295,7 @@ def run_population(
     out_dir = Path(out_dir or (root / "population_analysis"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    subjects = discover_subjects(root, subjects, region_filename)
+    subjects = discover_subjects(root, subjects, region_filename, metrics_filename)
     if not subjects:
         raise SystemExit("No subjects found with region stats.")
 
@@ -293,13 +306,15 @@ def run_population(
         reg_path = subj_root / region_filename
         met_path = subj_root / metrics_filename
 
+        sm = load_subject_metrics(subj, met_path)
+        if sm is None:
+            continue
+
         df = load_subject_region_table(subj, reg_path)
         if df is not None:
             region_tables.append(df)
 
-        sm = load_subject_metrics(subj, met_path)
-        if sm is not None:
-            subj_metrics.append(sm)
+        subj_metrics.append(sm)
 
     if not region_tables:
         raise SystemExit("No per-subject region tables were loaded.")

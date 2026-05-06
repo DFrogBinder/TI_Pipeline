@@ -9,6 +9,12 @@ Batch runner for repeated dataset roots such as:
 This wrapper discovers each repeat directory under a shared parent root and then
 reuses the existing single-dataset pipeline from run_post_processing.py. The ROI
 name is therefore inferred from each dataset directory name and is not hard-coded.
+
+The orchestration is intentionally split into three explicit layers:
+
+1. Subject-level metrics
+2. Population (within run)-level metrics
+3. Across-repeats-level metrics
 """
 from __future__ import annotations
 
@@ -25,6 +31,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from post.pipeline_layers import (
+    ACROSS_REPEATS_STAGE,
+    PIPELINE_STAGE_ORDER,
+    POPULATION_WITHIN_RUN_STAGE,
+    SUBJECT_LEVEL_STAGE,
+    subject_metrics_file_complete,
+)
 from post.run_post_processing import (
     PipelineConfig,
     apply_cli_overrides,
@@ -113,6 +126,8 @@ def discover_repeat_datasets(
 def build_dataset_pipeline_config(dataset_root: Path, template: PipelineConfig) -> PipelineConfig:
     cfg = deepcopy(template)
     cfg.post.root = str(dataset_root)
+    population_output_dir = _resolve_population_output_dir_for_dataset(template, dataset_root)
+    cfg.population.out_dir = str(population_output_dir) if population_output_dir is not None else None
     return cfg
 
 
@@ -169,6 +184,16 @@ def _resolve_population_output_root(pipeline_template: PipelineConfig) -> Option
     return Path(pipeline_template.population.out_dir).expanduser()
 
 
+def _resolve_population_output_dir_for_dataset(
+    pipeline_template: PipelineConfig,
+    dataset_root: Path,
+) -> Optional[Path]:
+    output_root = _resolve_population_output_root(pipeline_template)
+    if output_root is None:
+        return None
+    return output_root / dataset_root.name
+
+
 def _subject_has_required_outputs(
     dataset_root: Path,
     subject: str,
@@ -177,7 +202,7 @@ def _subject_has_required_outputs(
     metrics_filename: str,
 ) -> bool:
     post_root = dataset_root / subject / "anat" / "post"
-    return (post_root / region_filename).is_file() and (post_root / metrics_filename).is_file()
+    return (post_root / region_filename).is_file() and subject_metrics_file_complete(post_root / metrics_filename)
 
 
 def _collect_complete_repeat_subjects(
@@ -187,7 +212,7 @@ def _collect_complete_repeat_subjects(
 ) -> dict[str, list[str]]:
     by_roi: dict[str, list[set[str]]] = {}
     for result in results:
-        if result["status"] != "ok":
+        if result["status"] == "failed":
             continue
         roi_name = result.get("resolved_target_roi")
         if not roi_name:
@@ -235,7 +260,6 @@ def _rerun_population_for_complete_subjects(
     from post.post_population import run_population
 
     population_results: list[dict] = []
-    population_out_dir = _resolve_population_output_root(pipeline_template)
     template_region_csv = (
         Path(pipeline_template.population.template_region_csv).expanduser()
         if pipeline_template.population.template_region_csv
@@ -243,7 +267,7 @@ def _rerun_population_for_complete_subjects(
     )
 
     for result in results:
-        if result["status"] != "ok":
+        if result["status"] == "failed":
             continue
 
         roi_name = str(result.get("resolved_target_roi") or "")
@@ -253,6 +277,7 @@ def _rerun_population_for_complete_subjects(
         if not subjects:
             population_results.append(
                 {
+                    "stage": POPULATION_WITHIN_RUN_STAGE,
                     "dataset_root": str(dataset_root),
                     "roi_name": roi_name,
                     "status": "skipped",
@@ -265,7 +290,7 @@ def _rerun_population_for_complete_subjects(
             output_path = run_population(
                 root=dataset_root,
                 subjects=subjects,
-                out_dir=population_out_dir,
+                out_dir=_resolve_population_output_dir_for_dataset(pipeline_template, dataset_root),
                 region_filename=pipeline_template.population.region_filename,
                 metrics_filename=pipeline_template.population.metrics_filename,
                 peak_threshold=pipeline_template.population.peak_threshold,
@@ -274,6 +299,7 @@ def _rerun_population_for_complete_subjects(
             )
             population_results.append(
                 {
+                    "stage": POPULATION_WITHIN_RUN_STAGE,
                     "dataset_root": str(dataset_root),
                     "roi_name": roi_name,
                     "status": "ok",
@@ -284,6 +310,7 @@ def _rerun_population_for_complete_subjects(
         except Exception as exc:
             population_results.append(
                 {
+                    "stage": POPULATION_WITHIN_RUN_STAGE,
                     "dataset_root": str(dataset_root),
                     "roi_name": roi_name,
                     "status": "failed",
@@ -295,7 +322,7 @@ def _rerun_population_for_complete_subjects(
     return population_results
 
 
-def _run_repeatability_stage(
+def _run_across_repeats_stage(
     *,
     batch_root: Path,
     cfg: RepeatBatchConfig,
@@ -308,7 +335,7 @@ def _run_repeatability_stage(
 
     by_roi: dict[str, list[dict]] = {}
     for result in results:
-        if result["status"] != "ok":
+        if result["status"] == "failed":
             continue
         roi_name = result.get("resolved_target_roi")
         if not roi_name:
@@ -337,6 +364,7 @@ def _run_repeatability_stage(
             )
             repeatability_results.append(
                 {
+                    "stage": ACROSS_REPEATS_STAGE,
                     "roi_name": roi_name,
                     "dataset_count": len(roi_results),
                     "status": "ok",
@@ -346,6 +374,7 @@ def _run_repeatability_stage(
         except Exception as exc:
             repeatability_results.append(
                 {
+                    "stage": ACROSS_REPEATS_STAGE,
                     "roi_name": roi_name,
                     "dataset_count": len(roi_results),
                     "status": "failed",
@@ -354,6 +383,32 @@ def _run_repeatability_stage(
             )
 
     return repeatability_results
+
+
+def _dataset_status_from_stage_results(stage_results: dict[str, dict]) -> tuple[str, Optional[str]]:
+    failed_stages = [
+        (stage_name, stage_payload)
+        for stage_name, stage_payload in stage_results.items()
+        if stage_payload.get("status") == "failed"
+    ]
+    if not failed_stages:
+        partial_stages = [
+            (stage_name, stage_payload)
+            for stage_name, stage_payload in stage_results.items()
+            if stage_payload.get("status") == "partial"
+        ]
+        if partial_stages:
+            warning = "; ".join(
+                f"{stage_name}: {stage_payload.get('warning', 'stage partial')}"
+                for stage_name, stage_payload in partial_stages
+            )
+            return "partial", warning
+        return "ok", None
+    error = "; ".join(
+        f"{stage_name}: {stage_payload.get('error', 'stage failed')}"
+        for stage_name, stage_payload in failed_stages
+    )
+    return "failed", error
 
 
 def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) -> dict:
@@ -388,8 +443,15 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
 
         status = "ok"
         error = None
+        pipeline_summary = None
         try:
-            run_pipeline(dataset_cfg)
+            pipeline_summary = run_pipeline(dataset_cfg, raise_on_error=False)
+            status, error = _dataset_status_from_stage_results(pipeline_summary.get("stages", {}))
+            if status == "failed":
+                failed.append(dataset.name)
+                print(f"[WARN] Dataset failed: {dataset.name} -> {error}")
+            elif status == "partial":
+                print(f"[WARN] Dataset partial: {dataset.name} -> {error}")
         except KeyboardInterrupt:
             raise
         except BaseException as exc:
@@ -405,8 +467,17 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
                 "roi_prefix": dataset.roi_prefix,
                 "repeat_id": dataset.repeat_id,
                 "status": status,
-                "resolved_plot_roi": dataset_cfg.post.plot_roi,
-                "resolved_target_roi": dataset_cfg.population.target_roi,
+                "resolved_plot_roi": (
+                    pipeline_summary.get("resolved_plot_roi")
+                    if pipeline_summary is not None
+                    else dataset_cfg.post.plot_roi
+                ),
+                "resolved_target_roi": (
+                    pipeline_summary.get("resolved_target_roi")
+                    if pipeline_summary is not None
+                    else dataset_cfg.population.target_roi
+                ),
+                "stages": pipeline_summary.get("stages", {}) if pipeline_summary is not None else {},
                 "error": error,
             }
         )
@@ -418,10 +489,14 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
         "batch_root": str(batch_root),
         "dataset_glob": cfg.dataset_glob,
         "repeats": list(cfg.repeats) if cfg.repeats is not None else None,
+        "stage_order": list(PIPELINE_STAGE_ORDER),
         "total_datasets": len(datasets),
-        "processed_datasets": sum(1 for item in results if item["status"] == "ok"),
+        "processed_datasets": sum(1 for item in results if item["status"] != "failed"),
+        "ok_datasets": sum(1 for item in results if item["status"] == "ok"),
+        "partial_datasets": sum(1 for item in results if item["status"] == "partial"),
         "failed_datasets": len(failed),
         "complete_repeat_subjects_only": cfg.complete_repeat_subjects_only,
+        "dataset_stage_results": results,
         "results": results,
     }
 
@@ -448,17 +523,21 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
         summary["complete_repeat_subjects"] = manifest_rows
 
     if defer_population_until_complete_case:
-        summary["population_results"] = _rerun_population_for_complete_subjects(
+        population_within_run_results = _rerun_population_for_complete_subjects(
             results=results,
             pipeline_template=pipeline_template,
             complete_subjects_by_roi=complete_subjects_by_roi,
         )
+        summary["population_within_run_complete_case_results"] = population_within_run_results
+        summary["population_results"] = population_within_run_results
 
-    summary["repeatability_results"] = _run_repeatability_stage(
+    across_repeats_results = _run_across_repeats_stage(
         batch_root=batch_root,
         cfg=cfg,
         results=results,
     )
+    summary["across_repeats_results"] = across_repeats_results
+    summary["repeatability_results"] = across_repeats_results
 
     summary_path = _resolve_summary_path(cfg, batch_root)
     if summary_path is not None:
@@ -503,13 +582,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-repeatability",
         action="store_true",
-        help="Skip the final across-repeat analysis stage.",
+        help="Skip the final across-repeats-level metrics stage.",
     )
     parser.add_argument(
         "--repeatability-output-dir",
         default=None,
         help=(
-            "Optional output directory root for repeatability analysis. "
+            "Optional output directory root for the across-repeats-level metrics stage. "
             "A per-ROI subdirectory will be created under this path. "
             "If omitted, a single-ROI batch writes directly to <batch_root>/subject_metrics_analysis, "
             "while a mixed-ROI batch falls back to <batch_root>/repeatability_analysis/<roi>."

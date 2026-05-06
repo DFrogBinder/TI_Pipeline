@@ -1,7 +1,10 @@
 """
-Batch runner for subject-level post processing and optional population aggregation.
+Single-dataset orchestration for two explicit post-processing layers:
 
-Edit the config at the bottom to control the full pipeline from a single entrypoint.
+1. Subject-level metrics
+2. Population (within run)-level metrics
+
+Across-repeats-level metrics are orchestrated separately by run_post_processing_batch.py.
 """
 from __future__ import annotations
 
@@ -9,7 +12,6 @@ import argparse
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
-import json
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
@@ -19,6 +21,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from post.pipeline_layers import (
+    PIPELINE_STAGE_LABELS,
+    POPULATION_WITHIN_RUN_STAGE,
+    SUBJECT_LEVEL_STAGE,
+    load_subject_metrics_payload,
+    stage_failed,
+    stage_ok,
+    stage_partial,
+    stage_skipped,
+    subject_metrics_payload_complete,
+)
 from utils.roi_registry import match_fastsurfer_roi_from_directory, resolve_fastsurfer_roi_name
 
 if TYPE_CHECKING:
@@ -37,14 +50,10 @@ def should_skip_subject(out_dir: Path, pp_cfg: "PostProcessConfig", force: bool)
     metrics_path = out_dir / "subject_metrics.json"
     if not metrics_path.is_file():
         return False
-    try:
-        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
-    except Exception:
+    payload = load_subject_metrics_payload(metrics_path)
+    if payload is None:
         return False
-    meta = payload.get("extended_metrics_meta")
-    if not isinstance(meta, dict):
-        return False
-    if meta.get("status") != "complete":
+    if not subject_metrics_payload_complete(payload):
         return False
     try:
         from post.post_process import extended_metrics_fingerprint_for_cfg
@@ -52,6 +61,7 @@ def should_skip_subject(out_dir: Path, pp_cfg: "PostProcessConfig", force: bool)
         expected_fingerprint = extended_metrics_fingerprint_for_cfg(pp_cfg)
     except Exception:
         return False
+    meta = payload.get("extended_metrics_meta")
     return meta.get("config_fingerprint") == expected_fingerprint
 
 @dataclass
@@ -185,11 +195,15 @@ def _read_positive_int_env(name: str) -> Optional[int]:
     return value
 
 
-def process_subject(pp_cfg: PostProcessConfig) -> str:
+def process_subject(pp_cfg: PostProcessConfig) -> dict:
     from post.post_process import run_post_process
 
-    run_post_process(pp_cfg)
-    return pp_cfg.subject
+    result = run_post_process(pp_cfg)
+    return {
+        "subject": pp_cfg.subject,
+        "extended_status": result["extended_metrics_meta"]["status"],
+        "metrics_path": result["metrics_path"],
+    }
 
 
 def _uses_fastsurfer_aliases(cfg: PostBatchConfig) -> bool:
@@ -252,6 +266,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
     processed = []
     skipped = []
     failed = []
+    incomplete = []
     pending = []
 
     for subj in subjects:
@@ -272,8 +287,11 @@ def run_batch(cfg: PostBatchConfig) -> dict:
     if max_workers <= 1:
         for pp_cfg in pending:
             try:
-                process_subject(pp_cfg)
-                processed.append(pp_cfg.subject)
+                subject_result = process_subject(pp_cfg)
+                if subject_result["extended_status"] == "complete":
+                    processed.append(pp_cfg.subject)
+                else:
+                    incomplete.append((pp_cfg.subject, f"extended_metrics_meta.status={subject_result['extended_status']}"))
             except Exception as exc:
                 failed.append((pp_cfg.subject, f"{type(exc).__name__}: {exc}"))
     else:
@@ -288,50 +306,147 @@ def run_batch(cfg: PostBatchConfig) -> dict:
             for future in as_completed(future_to_subject):
                 subj = future_to_subject[future]
                 try:
-                    future.result()
-                    processed.append(subj)
+                    subject_result = future.result()
+                    if subject_result["extended_status"] == "complete":
+                        processed.append(subj)
+                    else:
+                        incomplete.append((subj, f"extended_metrics_meta.status={subject_result['extended_status']}"))
                 except Exception as exc:
                     failed.append((subj, f"{type(exc).__name__}: {exc}"))
 
     processed.sort()
     skipped.sort()
     failed.sort(key=lambda item: item[0])
+    incomplete.sort(key=lambda item: item[0])
 
     print(f"[INFO] Processed {len(processed)} subject(s).")
     if skipped:
         print(f"[INFO] Skipped {len(skipped)} subject(s) (existing outputs).")
+    if incomplete:
+        print(f"[WARN] Incomplete extended metrics for {len(incomplete)} subject(s).")
+        for subj, err in incomplete:
+            print(f"  - {subj}: {err}")
     if failed:
         print(f"[WARN] Failed {len(failed)} subject(s).")
         for subj, err in failed:
             print(f"  - {subj}: {err}")
 
-    return {"processed": processed, "skipped": skipped, "failed": failed}
+    return {"processed": processed, "skipped": skipped, "failed": failed, "incomplete": incomplete}
 
 
-def run_pipeline(cfg: PipelineConfig) -> None:
-    _resolve_pipeline_rois(cfg)
-    batch_result = run_batch(cfg.post)
+def _resolve_population_output_dir(cfg: PopulationConfig) -> Optional[Path]:
+    if not cfg.out_dir:
+        return None
+    return Path(cfg.out_dir).expanduser()
 
-    if cfg.population.enabled:
-        from post.post_population import run_population
 
-        root = Path(cfg.post.root).expanduser().resolve()
-        run_population(
-            root=root,
-            subjects=cfg.post.subjects,
-            out_dir=Path(cfg.population.out_dir).expanduser()
-            if cfg.population.out_dir
-            else None,
-            region_filename=cfg.population.region_filename,
-            metrics_filename=cfg.population.metrics_filename,
-            peak_threshold=cfg.population.peak_threshold,
-            target_roi=cfg.population.target_roi or (cfg.post.plot_roi or "Hippocampus"),
-            template_region_csv=Path(cfg.population.template_region_csv).expanduser()
-            if cfg.population.template_region_csv
-            else None,
+def run_subject_level_stage(cfg: PostBatchConfig) -> dict:
+    print(f"[INFO] Stage: {PIPELINE_STAGE_LABELS[SUBJECT_LEVEL_STAGE]}")
+    batch_result = run_batch(cfg)
+    usable_subjects = batch_result["processed"] + batch_result["skipped"]
+    if batch_result["failed"] or batch_result["incomplete"]:
+        status_details = {
+            "processed_subjects": batch_result["processed"],
+            "skipped_subjects": batch_result["skipped"],
+            "failed_subjects": batch_result["failed"],
+            "incomplete_subjects": batch_result["incomplete"],
+            "usable_subject_count": len(usable_subjects),
+        }
+        if usable_subjects:
+            return stage_partial(
+                SUBJECT_LEVEL_STAGE,
+                warning=(
+                    f"{len(batch_result['failed'])} subject exception(s) and "
+                    f"{len(batch_result['incomplete'])} subject(s) with incomplete extended metrics. "
+                    "Later layers may still use the completed subject subset."
+                ),
+                **status_details,
+            )
+        return stage_failed(
+            SUBJECT_LEVEL_STAGE,
+            error=(
+                f"{len(batch_result['failed'])} subject exception(s) and "
+                f"{len(batch_result['incomplete'])} subject(s) with incomplete extended metrics. "
+                "No complete subject outputs were available for downstream stages."
+            ),
+            **status_details,
         )
-    if batch_result["failed"]:
-        raise SystemExit("Some subjects failed during post-processing.")
+    return stage_ok(
+        SUBJECT_LEVEL_STAGE,
+        processed_subjects=batch_result["processed"],
+        skipped_subjects=batch_result["skipped"],
+        failed_subjects=batch_result["failed"],
+        incomplete_subjects=batch_result["incomplete"],
+    )
+
+
+def run_population_within_run_stage(cfg: PipelineConfig) -> dict:
+    if not cfg.population.enabled:
+        return stage_skipped(
+            POPULATION_WITHIN_RUN_STAGE,
+            reason="Population (within run)-level aggregation was disabled in the pipeline config.",
+        )
+
+    print(f"[INFO] Stage: {PIPELINE_STAGE_LABELS[POPULATION_WITHIN_RUN_STAGE]}")
+    from post.post_population import run_population
+
+    root = Path(cfg.post.root).expanduser().resolve()
+    output_path = run_population(
+        root=root,
+        subjects=cfg.post.subjects,
+        out_dir=_resolve_population_output_dir(cfg.population),
+        region_filename=cfg.population.region_filename,
+        metrics_filename=cfg.population.metrics_filename,
+        peak_threshold=cfg.population.peak_threshold,
+        target_roi=cfg.population.target_roi or (cfg.post.plot_roi or "Hippocampus"),
+        template_region_csv=Path(cfg.population.template_region_csv).expanduser()
+        if cfg.population.template_region_csv
+        else None,
+    )
+    return stage_ok(
+        POPULATION_WITHIN_RUN_STAGE,
+        output_dir=str(output_path),
+        region_filename=cfg.population.region_filename,
+        metrics_filename=cfg.population.metrics_filename,
+        target_roi=cfg.population.target_roi or (cfg.post.plot_roi or "Hippocampus"),
+    )
+
+
+def run_pipeline(cfg: PipelineConfig, *, raise_on_error: bool = True) -> dict:
+    _resolve_pipeline_rois(cfg)
+    summary = {
+        "resolved_plot_roi": cfg.post.plot_roi,
+        "resolved_target_roi": cfg.population.target_roi,
+        "stages": {},
+    }
+
+    subject_stage = run_subject_level_stage(cfg.post)
+    summary["stages"][SUBJECT_LEVEL_STAGE] = subject_stage
+
+    if subject_stage["status"] == "failed":
+        population_stage = stage_skipped(
+            POPULATION_WITHIN_RUN_STAGE,
+            reason="Population (within run)-level metrics were skipped because subject-level processing produced no complete subjects.",
+        )
+    else:
+        try:
+            population_stage = run_population_within_run_stage(cfg)
+        except Exception as exc:
+            population_stage = stage_failed(
+                POPULATION_WITHIN_RUN_STAGE,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+    summary["stages"][POPULATION_WITHIN_RUN_STAGE] = population_stage
+
+    if raise_on_error:
+        if subject_stage["status"] == "failed":
+            raise SystemExit(subject_stage["error"])
+        if subject_stage["status"] == "partial":
+            raise SystemExit(subject_stage["warning"])
+        if population_stage["status"] == "failed":
+            raise SystemExit(population_stage["error"])
+
+    return summary
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

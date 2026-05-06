@@ -1,12 +1,12 @@
 """
 Single-command CLI entrypoint for the TI post-processing pipeline.
 
-This wrapper hides the current split between:
+This wrapper hides the current split between the three explicit post-processing
+layers:
 
-- single-dataset processing
-- repeat-batch processing
-- optional within-run population aggregation
-- optional across-repeat repeatability analysis
+1. Subject-level metrics
+2. Population (within run)-level metrics
+3. Across-repeats-level metrics
 
 It chooses the correct orchestration path from one command.
 """
@@ -171,7 +171,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-population",
         action="store_true",
-        help="Disable within-run population aggregation.",
+        help="Disable population (within run)-level aggregation.",
     )
     parser.add_argument(
         "--population-output-dir",
@@ -186,7 +186,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-repeatability",
         action="store_true",
-        help="Disable the across-repeat repeatability stage in batch mode.",
+        help="Disable the across-repeats-level metrics stage in batch mode.",
     )
     parser.add_argument(
         "--repeatability-output-dir",
@@ -293,15 +293,17 @@ def build_batch_config(args: argparse.Namespace, root: Path) -> RepeatBatchConfi
 def run_single_mode(args: argparse.Namespace, root: Path) -> None:
     cfg = build_pipeline_config(args, root)
     print(f"[INFO] Running single-dataset pipeline on: {root}")
+    print("[INFO] Layers: subject_level -> population_within_run")
     run_pipeline(cfg)
     if not args.no_repeatability:
-        print("[INFO] Repeatability analysis was not run because single mode processes only one dataset root.")
+        print("[INFO] Across-repeats-level metrics were not run because single mode processes only one dataset root.")
 
 
 def run_batch_mode(args: argparse.Namespace, root: Path) -> None:
     pipeline_cfg = build_pipeline_config(args, root)
     batch_cfg = build_batch_config(args, root)
     print(f"[INFO] Running repeat-batch pipeline on: {root}")
+    print("[INFO] Layers: subject_level -> population_within_run -> across_repeats")
     run_repeat_batch(batch_cfg, pipeline_cfg)
 
 

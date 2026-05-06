@@ -1,6 +1,6 @@
 # Repeatability Analysis
 
-This folder contains the across-repeat analysis layer for repeated TI simulation experiments.
+This folder contains the across-repeats-level metrics layer for repeated TI simulation experiments.
 
 By default, this layer now analyses only the complete-case cohort: subjects that
 have valid post-processing outputs in every selected repeat for the ROI being
@@ -19,19 +19,19 @@ analysed.
 ## How this differs from the rest of `post/`
 
 - `post_process.py`
-  Generates per-subject post-processing outputs for one dataset run.
+  Generates the subject-level metrics layer for one dataset run.
 
 - `post_population.py`
-  Aggregates subjects within one dataset run.
+  Generates the population (within run)-level metrics layer for one dataset run.
 
 - `robustness_analysis.py`
   Computes anatomical and targeting robustness measures within one dataset.
 
 - `run_post_processing_batch.py`
-  Runs the post-processing pipeline across repeated dataset folders, computes the
-  per-ROI complete-case cohort shared across all selected repeats, reruns
-  within-run population summaries on that cohort, and then launches the
-  repeatability analysis.
+  Orchestrates the first two layers across repeated dataset folders, computes
+  the per-ROI complete-case cohort shared across all selected repeats, reruns
+  the within-run population summaries on that cohort when requested, and then
+  launches this third layer.
 
 ## Recommended workflow
 
@@ -46,13 +46,18 @@ analysed.
 
 - One row is loaded for each subject in each repeat from `subject_metrics.json`.
 - A complete-case cohort is built from the intersection of subjects present in
-  every selected repeat.
+  every selected repeat whose `subject_metrics.json` is marked
+  `extended_metrics_meta.status == "complete"`.
 - By default, repeat-level descriptive outputs and all experiment-level
   repeatability outputs are restricted to that complete-case cohort.
-- In batch mode, within-run population summaries are rerun on that same
-  complete-case cohort after all repeats finish.
+- In batch mode, a repeat dataset may finish as `partial` if some subjects fail.
+  Within-run population summaries are then rerun on the shared complete-case
+  cohort after all repeats finish.
 - The image-level repeatability layer always uses the complete-case cohort so
   the same subject and ROI support are compared across all repeated runs.
+- Image-level mask lookup uses the stored `percentile` field from each
+  `subject_metrics.json` entry, so the repeatability layer no longer assumes
+  that the high-field masks are always `top95`.
 
 The default can be relaxed only when explicitly requested:
 
@@ -83,3 +88,15 @@ analysis:
 python3 repeatability/analyze_subject_metrics.py /path/to/Left_Hippocampus_Post_Data \
   --skip-image-repeatability
 ```
+
+## Image-level naming
+
+The image-level repeatability CSV outputs now use generic top-percentile column
+names such as:
+
+- `top_percentile_mask_dice`
+- `top_percentile_mask_jaccard`
+- `top_percentile_mask_dice_mean`
+- `top_percentile_mask_jaccard_mean`
+
+This avoids silently mislabeling non-95th-percentile runs as `top95`.

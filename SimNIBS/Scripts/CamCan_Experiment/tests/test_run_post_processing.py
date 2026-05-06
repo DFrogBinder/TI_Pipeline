@@ -5,6 +5,7 @@ from post.run_post_processing import (
     build_arg_parser,
     resolve_max_workers,
     resolve_subject_fastsurfer_atlas_path,
+    run_subject_level_stage,
 )
 
 
@@ -75,3 +76,37 @@ def test_cli_parser_accepts_atlas_filename_alias():
     )
 
     assert args.fastsurfer_atlas_filename == "mri/aparc.DKTatlas+aseg.deep.nii.gz"
+
+
+def test_run_subject_level_stage_marks_partial_when_some_subjects_are_usable(monkeypatch):
+    monkeypatch.setattr(
+        "post.run_post_processing.run_batch",
+        lambda cfg: {
+            "processed": ["sub-01"],
+            "skipped": ["sub-02"],
+            "failed": [("sub-03", "boom")],
+            "incomplete": [],
+        },
+    )
+
+    result = run_subject_level_stage(PostBatchConfig(root="/tmp/example"))
+
+    assert result["status"] == "partial"
+    assert result["usable_subject_count"] == 2
+
+
+def test_run_subject_level_stage_marks_failed_when_no_subject_outputs_are_usable(monkeypatch):
+    monkeypatch.setattr(
+        "post.run_post_processing.run_batch",
+        lambda cfg: {
+            "processed": [],
+            "skipped": [],
+            "failed": [("sub-03", "boom")],
+            "incomplete": [("sub-04", "partial")],
+        },
+    )
+
+    result = run_subject_level_stage(PostBatchConfig(root="/tmp/example"))
+
+    assert result["status"] == "failed"
+    assert result["usable_subject_count"] == 0

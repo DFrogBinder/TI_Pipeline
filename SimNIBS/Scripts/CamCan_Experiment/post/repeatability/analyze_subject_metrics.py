@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     nib = None
 
 from post.metric_extensions import flatten_subject_metric_payload
+from post.pipeline_layers import subject_metrics_payload_complete
 
 
 METRIC_LABELS = {
@@ -315,6 +316,8 @@ def load_subject_metrics(dataset_root: Path, roi_name: str | None) -> tuple[pd.D
     for metric_path in discover_subject_metrics(dataset_root):
         with metric_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
+        if not subject_metrics_payload_complete(payload):
+            continue
 
         run_label = infer_run_label(metric_path, dataset_root)
         repeat_id = infer_repeat_id(run_label)
@@ -644,6 +647,12 @@ def compute_repeat_level_stats(frame: pd.DataFrame, metrics: Iterable[str]) -> p
     return pd.DataFrame(rows).sort_values(["metric", "repeat_id"]).reset_index(drop=True)
 
 
+def complete_metric_pivot(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
+    pivot = frame.pivot(index="subject", columns="repeat_id", values=metric).sort_index(axis=1)
+    pivot = pivot.apply(pd.to_numeric, errors="coerce")
+    return pivot.dropna(axis=0, how="any")
+
+
 def compute_pairwise_differences(frame: pd.DataFrame, metrics: Iterable[str]) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for metric in metrics:
@@ -669,7 +678,23 @@ def compute_pairwise_differences(frame: pd.DataFrame, metrics: Iterable[str]) ->
 def compute_within_subject_repeatability(frame: pd.DataFrame, metrics: Iterable[str]) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for metric in metrics:
-        pivot = frame.pivot(index="subject", columns="repeat_id", values=metric).sort_index(axis=1)
+        pivot = complete_metric_pivot(frame, metric)
+        if pivot.empty:
+            rows.append(
+                {
+                    "metric": metric,
+                    "metric_label": infer_metric_label(metric),
+                    "n_subjects": 0,
+                    "subject_mean_mean": math.nan,
+                    "subject_mean_std": math.nan,
+                    "subject_mean_median": math.nan,
+                    "subject_within_run_sd_mean": math.nan,
+                    "subject_within_run_sd_median": math.nan,
+                    "subject_within_run_cv_percent_mean": math.nan,
+                    "subject_within_run_cv_percent_median": math.nan,
+                }
+            )
+            continue
         means = pivot.mean(axis=1)
         stds = pivot.std(axis=1, ddof=1)
         cvs = (stds / means.replace(0, np.nan)) * 100.0
@@ -711,14 +736,14 @@ def compute_anova_variation_components(pivot: pd.DataFrame) -> dict[str, float]:
             "pooled_within_subject_sd": math.nan,
         }
 
-    grand_mean = float(values.mean())
-    subject_means = values.mean(axis=1, keepdims=True)
-    run_means = values.mean(axis=0, keepdims=True)
+    grand_mean = float(np.nanmean(values))
+    subject_means = np.nanmean(values, axis=1, keepdims=True)
+    run_means = np.nanmean(values, axis=0, keepdims=True)
     residuals = values - subject_means - run_means + grand_mean
 
-    ss_subject = n_runs * float(np.sum((subject_means - grand_mean) ** 2))
-    ss_run = n_subjects * float(np.sum((run_means - grand_mean) ** 2))
-    ss_residual = float(np.sum(residuals**2))
+    ss_subject = n_runs * float(np.nansum((subject_means - grand_mean) ** 2))
+    ss_run = n_subjects * float(np.nansum((run_means - grand_mean) ** 2))
+    ss_residual = float(np.nansum(residuals**2))
 
     ms_subject = ss_subject / (n_subjects - 1)
     ms_run = ss_run / (n_runs - 1)
@@ -1153,12 +1178,12 @@ def compute_experiment_level_stats(
             within_subject_repeatability["metric"] == metric
         ].iloc[0]
 
-        pivot = complete_case_frame.pivot(index="subject", columns="repeat_id", values=metric).sort_index(axis=1)
+        pivot = complete_metric_pivot(complete_case_frame, metric)
         variation_components = compute_anova_variation_components(pivot)
         pooled_within_subject_sd = variation_components["pooled_within_subject_sd"]
         standard_error_of_measurement = pooled_within_subject_sd
         repeatability_coefficient = 1.96 * math.sqrt(2) * pooled_within_subject_sd
-        grand_mean_complete_case = float(np.nanmean(pivot.to_numpy(dtype=float)))
+        grand_mean_complete_case = float(np.nanmean(pivot.to_numpy(dtype=float))) if not pivot.empty else math.nan
         pooled_within_subject_cv_percent = (
             (pooled_within_subject_sd / grand_mean_complete_case) * 100.0
             if grand_mean_complete_case not in (0.0, -0.0)
@@ -1196,7 +1221,7 @@ def compute_experiment_level_stats(
         drift_slope_percent_per_repeat = math.nan
         drift_pvalue = math.nan
         drift_r_squared = math.nan
-        if pivot.shape[1] >= 2:
+        if pivot.shape[0] >= 1 and pivot.shape[1] >= 2:
             slope_result = stats.linregress(
                 pivot.columns.to_numpy(dtype=float),
                 pivot.mean(axis=0).to_numpy(dtype=float),
@@ -1212,13 +1237,13 @@ def compute_experiment_level_stats(
         friedman_statistic = math.nan
         friedman_pvalue = math.nan
         kendall_w = math.nan
-        repeated_values = pivot.to_numpy()
+        repeated_values = pivot.to_numpy(dtype=float)
         has_within_subject_change = False
         if repeated_values.size:
             baseline = repeated_values[:, [0]]
-            has_within_subject_change = bool(
-                np.nanmax(np.abs(repeated_values - baseline)) > 0.0
-            )
+            diff = np.abs(repeated_values - baseline)
+            if not np.isnan(diff).all():
+                has_within_subject_change = bool(np.nanmax(diff) > 0.0)
 
         if pivot.shape[0] > 0 and pivot.shape[1] > 2 and has_within_subject_change:
             result = stats.friedmanchisquare(*[pivot[column].to_numpy() for column in pivot.columns])
@@ -1286,8 +1311,10 @@ def compute_subject_level_variation(
     pooled_lookup = experiment_level_stats.set_index("metric")["pooled_within_subject_sd"].to_dict()
 
     for metric in metrics:
-        pivot = complete_case_frame.pivot(index="subject", columns="repeat_id", values=metric).sort_index(axis=1)
+        pivot = complete_metric_pivot(complete_case_frame, metric)
         pooled_within_subject_sd = float(pooled_lookup.get(metric, math.nan))
+        if pivot.empty:
+            continue
 
         for subject, values in pivot.iterrows():
             series = values.to_numpy(dtype=float)

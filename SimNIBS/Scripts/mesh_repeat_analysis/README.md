@@ -49,7 +49,9 @@ That means the only intended difference between the two conditions is the mesh s
 Implementation note:
 
 - `fixed_mesh` now uses a filesystem lock around shared mesh-cache creation, so concurrent array tasks for the same subject cannot try to build the same mesh at the same time.
+- A mesh is only reused when both the mesh file and the `.mesh_ready.json` marker exist. A stray mesh without that ready marker is treated as incomplete and rebuilt.
 - Repeat outputs are still isolated per repeat, so missing fixed-mesh repeats indicate task failures or incomplete runs, not cross-repeat overwrites.
+- Recovery submissions skip repeats only when the required analysis inputs already exist (`TI.msh`, base volume, label volume, and `ti_brain_only.nii.gz`), which avoids remeshing completed repeats during resubmission.
 
 ## New Experiment Layout
 
@@ -62,8 +64,8 @@ With the new paired runner, outputs are written like this:
       condition_manifest.json
       repeats/
         repeat_001/
-          task_manifest.json
           sub-CC110056/
+            task_manifest.json
             anat/
               sub-CC110056_T1w.nii
               sub-CC110056_T2w.nii
@@ -82,8 +84,8 @@ With the new paired runner, outputs are written like this:
             sub-CC110056.msh
       repeats/
         repeat_001/
-          task_manifest.json
           sub-CC110056/
+            task_manifest.json
             anat/
               m2m_sub-CC110056 -> symlink to fixed mesh cache
               SimNIBS/
@@ -367,6 +369,68 @@ python post/repeatability_experiment_report.py \
   --skip-cohort
 ```
 
+### Fault-Tolerant Batch Behavior
+
+In batch mode, the paired report now continues past subject-level failures such as:
+
+- missing atlas for one subject
+- missing repeat folders for one subject
+- bad or incomplete per-subject outputs
+
+Those failures are recorded instead of aborting the whole job.
+
+Batch-level summary files now include:
+
+- `_analysis/paired_condition_summary.json`
+- `_analysis/paired_condition_summary.csv`
+- `_analysis/paired_condition_failures.json`
+
+Each failed subject records its error type, error message, and traceback in the JSON failure summary.
+
+### Slurm Submission
+
+A dedicated wrapper is available:
+
+- `hpc_scripts/repeatability_experiment_report.slurm`
+
+Submit all subjects with ROI settings taken from the config:
+
+```bash
+sbatch \
+  --export=ALL,EXPERIMENT_CONFIG=/path/to/my_experiment.json,PIPELINE_DIR=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis \
+  hpc_scripts/repeatability_experiment_report.slurm
+```
+
+Submit all subjects while setting the ROI explicitly:
+
+```bash
+sbatch \
+  --export=ALL,EXPERIMENT_CONFIG=/path/to/my_experiment.json,PIPELINE_DIR=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis,ROI_PRESET=left-hippocampus,ATLAS_DIR=/home/boyan/sandbox/Jake_Data/atlases \
+  hpc_scripts/repeatability_experiment_report.slurm
+```
+
+Useful environment overrides for the Slurm wrapper:
+
+- `SUBJECT_ID`
+- `CONDITIONS`
+- `MAX_SUBJECTS`
+- `OUTPUT_DIR`
+- `ROI_PRESET`
+- `ROI_NAME`
+- `ROI_LABELS`
+- `ATLAS_DIR`
+- `COMPARE_COHORT_ROOT`
+- `COHORT_REGION_NAME`
+- `COHORT_REGION_LABEL`
+- `COHORT_METRIC`
+- `COMPARE_METRIC`
+- `REFERENCE_REPEAT`
+- `SPATIAL_PERCENTILE`
+- `SKIP_COHORT=1`
+- `LOG_DIR`
+- `LOG_FILE`
+- `JSONL_LOG_FILE`
+
 ## What The Paired Analysis Produces
 
 For each subject and condition:
@@ -397,6 +461,7 @@ Batch-level outputs:
 
 - `_analysis/paired_condition_summary.json`
 - `_analysis/paired_condition_summary.csv`
+- `_analysis/paired_condition_failures.json`
 
 ## Condition Comparison Logic
 

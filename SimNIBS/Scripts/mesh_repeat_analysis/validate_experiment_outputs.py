@@ -9,6 +9,7 @@ import csv
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 HERE = Path(__file__).resolve()
 if str(HERE.parent) not in sys.path:
@@ -23,6 +24,38 @@ from experiment_config import (  # noqa: E402
     subject_condition_mesh_cache_root,
     subject_condition_repeats_root,
 )
+
+try:
+    from rich.console import Console
+    from rich.progress import (
+        BarColumn,
+        MofNCompleteColumn,
+        Progress,
+        SpinnerColumn,
+        TaskProgressColumn,
+        TextColumn,
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+    )
+except Exception:  # pragma: no cover - fallback path
+    Console = None
+    Progress = None
+
+
+def _build_progress() -> Any:
+    if Progress is None:
+        return None
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=32),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=Console(stderr=True) if Console is not None else None,
+        transient=False,
+    )
 
 
 def _exists_nonempty(path: Path) -> bool:
@@ -133,7 +166,7 @@ def _check_repeat(
         "ti_msh": paths["ti_msh"],
     }
     for key, path in required_paths.items():
-        if key in {"repeat_root", "anat_dir"}:
+        if key in {"repeat_root", "subject_root", "anat_dir"}:
             if not path.is_dir():
                 missing.append(key)
         elif not _exists_nonempty(path):
@@ -200,6 +233,9 @@ def _check_condition(
     subject: str,
     condition_name: str,
     check_analysis: bool,
+    progress: Any = None,
+    repeats_task_id: Any = None,
+    conditions_task_id: Any = None,
 ) -> dict[str, object]:
     condition = condition_by_name(config, condition_name)
     condition_root = subject_condition_repeats_root(config, subject, condition_name).parent
@@ -230,16 +266,24 @@ def _check_condition(
         if not _exists_nonempty(cache_ready):
             warnings.append("mesh_cache_ready_marker_missing")
 
-    repeat_reports = [
-        _check_repeat(
-            config,
-            subject=subject,
-            condition_name=condition_name,
-            mesh_mode=condition.mesh_mode,
-            repeat_index=repeat_index,
+    repeat_reports = []
+    if progress is not None and repeats_task_id is not None:
+        progress.update(
+            repeats_task_id,
+            description=f"Checking repeats: {subject} / {condition_name}",
         )
-        for repeat_index in range(1, condition.repeat_count + 1)
-    ]
+    for repeat_index in range(1, condition.repeat_count + 1):
+        repeat_reports.append(
+            _check_repeat(
+                config,
+                subject=subject,
+                condition_name=condition_name,
+                mesh_mode=condition.mesh_mode,
+                repeat_index=repeat_index,
+            )
+        )
+        if progress is not None and repeats_task_id is not None:
+            progress.advance(repeats_task_id)
     complete_repeats = sum(1 for row in repeat_reports if row["status"] == "complete")
     incomplete_repeats = condition.repeat_count - complete_repeats
 
@@ -281,7 +325,7 @@ def _check_condition(
             "repeat_qc_png_count": repeat_qc_count,
         }
 
-    return {
+    result = {
         "subject": subject,
         "condition": condition_name,
         "mesh_mode": condition.mesh_mode,
@@ -295,6 +339,9 @@ def _check_condition(
         "repeats": repeat_reports,
         "analysis": analysis_info,
     }
+    if progress is not None and conditions_task_id is not None:
+        progress.advance(conditions_task_id)
+    return result
 
 
 def _check_paired_outputs(
@@ -303,12 +350,19 @@ def _check_paired_outputs(
     subjects: list[str],
     condition_names: list[str],
     check_analysis: bool,
+    progress: Any = None,
+    paired_task_id: Any = None,
 ) -> dict[str, object] | None:
     if not check_analysis or len(condition_names) < 2:
         return None
 
     subject_reports = []
     for subject in subjects:
+        if progress is not None and paired_task_id is not None:
+            progress.update(
+                paired_task_id,
+                description=f"Checking paired analysis: {subject}",
+            )
         paths = _paired_analysis_paths(config, subject)
         missing: list[str] = []
         for key in (
@@ -329,6 +383,8 @@ def _check_paired_outputs(
                 "missing": missing,
             }
         )
+        if progress is not None and paired_task_id is not None:
+            progress.advance(paired_task_id)
 
     batch_paths = _paired_analysis_paths(config, subjects[0] if subjects else config.subjects[0])
     batch_missing = [
@@ -482,6 +538,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Return exit code 1 if any simulation or analysis outputs are incomplete.",
     )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable the rich progress display even if rich is installed.",
+    )
     return parser
 
 
@@ -501,22 +562,59 @@ def main() -> None:
         else [condition.name for condition in config.conditions]
     )
 
-    subject_reports = [
-        _check_condition(
+    condition_pairs = [(subject, condition_name) for subject in subjects for condition_name in condition_names]
+    total_repeats = sum(condition_by_name(config, condition_name).repeat_count for _, condition_name in condition_pairs)
+    subject_reports: list[dict[str, object]] = []
+
+    progress = None if args.no_progress else _build_progress()
+    if progress is not None:
+        with progress:
+            conditions_task_id = progress.add_task("Checking subject/condition groups", total=len(condition_pairs))
+            repeats_task_id = progress.add_task("Checking repeats", total=total_repeats)
+            paired_task_id = None
+            if args.check_analysis and len(condition_names) >= 2:
+                paired_task_id = progress.add_task("Checking paired analysis", total=len(subjects))
+
+            for subject, condition_name in condition_pairs:
+                progress.update(
+                    conditions_task_id,
+                    description=f"Checking condition: {subject} / {condition_name}",
+                )
+                subject_reports.append(
+                    _check_condition(
+                        config,
+                        subject=subject,
+                        condition_name=condition_name,
+                        check_analysis=args.check_analysis,
+                        progress=progress,
+                        repeats_task_id=repeats_task_id,
+                        conditions_task_id=conditions_task_id,
+                    )
+                )
+            paired_outputs = _check_paired_outputs(
+                config,
+                subjects=subjects,
+                condition_names=condition_names,
+                check_analysis=args.check_analysis,
+                progress=progress,
+                paired_task_id=paired_task_id,
+            )
+    else:
+        for subject, condition_name in condition_pairs:
+            subject_reports.append(
+                _check_condition(
+                    config,
+                    subject=subject,
+                    condition_name=condition_name,
+                    check_analysis=args.check_analysis,
+                )
+            )
+        paired_outputs = _check_paired_outputs(
             config,
-            subject=subject,
-            condition_name=condition_name,
+            subjects=subjects,
+            condition_names=condition_names,
             check_analysis=args.check_analysis,
         )
-        for subject in subjects
-        for condition_name in condition_names
-    ]
-    paired_outputs = _check_paired_outputs(
-        config,
-        subjects=subjects,
-        condition_names=condition_names,
-        check_analysis=args.check_analysis,
-    )
     summary = _build_summary(
         config=config,
         subject_reports=subject_reports,

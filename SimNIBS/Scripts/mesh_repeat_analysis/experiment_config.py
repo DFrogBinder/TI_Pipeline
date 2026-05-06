@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 VALID_MESH_MODES = {"remesh", "fixed_mesh"}
+VALID_COMPARE_METRICS = {"median_roi", "mean_roi", "peak_roi"}
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,14 @@ def _require_positive_int(value: object, *, field_name: str) -> int:
     return value
 
 
+def _optional_int(value: object, *, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int):
+        raise ValueError(f"Expected '{field_name}' to be an integer when provided.")
+    return value
+
+
 def _parse_condition(raw: object, *, index: int) -> ConditionConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"Condition #{index + 1} must be a JSON object.")
@@ -115,6 +124,15 @@ def _parse_analysis(raw: object) -> AnalysisConfig:
                 )
             parsed_labels.append(value)
         roi_labels = parsed_labels
+    compare_metric = _optional_string(
+        raw.get("compare_metric"),
+        field_name="analysis.compare_metric",
+    )
+    if compare_metric is not None and compare_metric not in VALID_COMPARE_METRICS:
+        raise ValueError(
+            f"Unsupported analysis.compare_metric '{compare_metric}'. "
+            f"Valid values: {', '.join(sorted(VALID_COMPARE_METRICS))}."
+        )
     return AnalysisConfig(
         roi_preset=_optional_string(raw.get("roi_preset"), field_name="analysis.roi_preset"),
         roi_name=_optional_string(raw.get("roi_name"), field_name="analysis.roi_name"),
@@ -128,11 +146,11 @@ def _parse_analysis(raw: object) -> AnalysisConfig:
             raw.get("cohort_region_name"),
             field_name="analysis.cohort_region_name",
         ),
-        cohort_region_label=raw.get("cohort_region_label"),
-        compare_metric=_optional_string(
-            raw.get("compare_metric"),
-            field_name="analysis.compare_metric",
+        cohort_region_label=_optional_int(
+            raw.get("cohort_region_label"),
+            field_name="analysis.cohort_region_label",
         ),
+        compare_metric=compare_metric,
     )
 
 

@@ -284,6 +284,32 @@ def _mesh_ready_marker(workspace: WorkspacePaths) -> Path:
     return workspace.anat_dir / ".mesh_ready.json"
 
 
+def _find_generated_volume(parent: Path) -> Path | None:
+    if not parent.is_dir():
+        return None
+    candidates = sorted(parent.glob("TI_Volumetric_*"))
+    return candidates[0] if candidates else None
+
+
+def _repeat_done_marker(workspace: WorkspacePaths) -> Path:
+    return workspace.output_root / "ti_brain_only.nii.gz"
+
+
+def _repeat_outputs_complete(workspace: WorkspacePaths, subject: str) -> bool:
+    output_root = workspace.output_root / "Output" / subject
+    if not workspace.mesh_path.is_file():
+        return False
+    if not _repeat_done_marker(workspace).is_file():
+        return False
+    if not (output_root / "TI.msh").is_file():
+        return False
+    if _find_generated_volume(output_root / "Volume_Labels") is None:
+        return False
+    if _find_generated_volume(output_root / "Volume_Base") is None:
+        return False
+    return True
+
+
 def _prepare_repeat_workspace(
     source_paths: SourceSubjectPaths,
     *,
@@ -340,22 +366,23 @@ def _mesh_workspace(
         return workspace.mesh_path
 
     with _exclusive_lock(lock_path):
-        if workspace.mesh_path.exists() and not force_mesh:
-            if not ready_marker.exists():
-                _write_json(
-                    ready_marker,
-                    {
-                        "subject": subject,
-                        "mesh_path": str(workspace.mesh_path),
-                        "status": "adopted_existing_mesh",
-                        "created_at": time.time(),
-                    },
-                )
+        if workspace.mesh_path.exists() and ready_marker.exists() and not force_mesh:
             log_event("mesh_reuse", subject=subject, mesh_path=str(workspace.mesh_path))
             return workspace.mesh_path
 
         if force_mesh and ready_marker.exists():
             ready_marker.unlink()
+
+        if workspace.mesh_path.exists() and not ready_marker.exists():
+            log_event(
+                "mesh_rebuild_without_ready_marker",
+                subject=subject,
+                mesh_path=str(workspace.mesh_path),
+                note=(
+                    "Found a mesh file without a ready marker. Treating it as incomplete "
+                    "and rebuilding instead of reusing it."
+                ),
+            )
 
         run_cmd(
             [
@@ -652,8 +679,52 @@ def execute_task(
     )
 
     repeat_root = subject_condition_repeats_root(config, task.subject, task.condition_name) / task.repeat_tag
-    repeat_workspace: WorkspacePaths
+    repeat_workspace = _workspace_from_anat_dir(repeat_root / task.subject / "anat", task.subject)
     shared_mesh_path: Path | None = None
+
+    if task.mesh_mode == "fixed_mesh":
+        mesh_cache_workspace = _workspace_from_anat_dir(
+            subject_condition_mesh_cache_root(config, task.subject, task.condition_name),
+            task.subject,
+        )
+        shared_mesh_path = mesh_cache_workspace.mesh_path
+
+    result = {
+        "subject": task.subject,
+        "condition": task.condition_name,
+        "mesh_mode": task.mesh_mode,
+        "repeat_index": task.repeat_index,
+        "repeat_tag": task.repeat_tag,
+        "repeat_root": str(repeat_workspace.root),
+        "repeat_anat_dir": str(repeat_workspace.anat_dir),
+        "repeat_output_root": str(repeat_workspace.output_root),
+        "repeat_mesh_path": str(repeat_workspace.mesh_path),
+        "shared_mesh_path": str(shared_mesh_path) if shared_mesh_path is not None else None,
+        "status": "planned" if dry_run else "completed",
+        "skipped_existing": False,
+    }
+
+    if _repeat_outputs_complete(repeat_workspace, task.subject) and not overwrite and not dry_run:
+        if not (repeat_workspace.root / "task_manifest.json").exists():
+            _write_task_manifest(
+                repeat_workspace,
+                task=task,
+                config=config,
+                shared_mesh_path=shared_mesh_path,
+            )
+        log_event(
+            "task_skip",
+            subject=task.subject,
+            condition=task.condition_name,
+            repeat_tag=task.repeat_tag,
+            reason="required_outputs_exist",
+            done_marker=str(_repeat_done_marker(repeat_workspace)),
+        )
+        result["status"] = "skipped"
+        result["skipped_existing"] = True
+        return result
+
+    repeat_workspace: WorkspacePaths
 
     if task.mesh_mode == "remesh":
         repeat_workspace = _prepare_repeat_workspace(
@@ -692,41 +763,12 @@ def execute_task(
     else:
         raise ValueError(f"Unsupported mesh mode: {task.mesh_mode}")
 
-    done_marker = repeat_workspace.output_root / "ti_brain_only.nii.gz"
     _write_task_manifest(
         repeat_workspace,
         task=task,
         config=config,
         shared_mesh_path=shared_mesh_path,
     )
-
-    result = {
-        "subject": task.subject,
-        "condition": task.condition_name,
-        "mesh_mode": task.mesh_mode,
-        "repeat_index": task.repeat_index,
-        "repeat_tag": task.repeat_tag,
-        "repeat_root": str(repeat_workspace.root),
-        "repeat_anat_dir": str(repeat_workspace.anat_dir),
-        "repeat_output_root": str(repeat_workspace.output_root),
-        "repeat_mesh_path": str(repeat_workspace.mesh_path),
-        "shared_mesh_path": str(shared_mesh_path) if shared_mesh_path is not None else None,
-        "status": "planned" if dry_run else "completed",
-        "skipped_existing": False,
-    }
-
-    if done_marker.exists() and not overwrite and not dry_run:
-        log_event(
-            "task_skip",
-            subject=task.subject,
-            condition=task.condition_name,
-            repeat_tag=task.repeat_tag,
-            reason="done_marker_exists",
-            done_marker=str(done_marker),
-        )
-        result["status"] = "skipped"
-        result["skipped_existing"] = True
-        return result
 
     if dry_run:
         log_event(

@@ -58,9 +58,15 @@ Use this as a quick map from raw data to population summaries and where each ste
   ```
 - **Outputs** (in `<root>/population_analysis/`):
   - `all_region_values.csv`
+  - `population_cohort_manifest.csv`
   - `population_region_summary.csv` (IQR, CV, peak fraction > threshold)
   - `subject_robustness.csv` (target ROI peaks/overlaps)
-  - `volume_intensity_correlation.csv`
+  - `volume_intensity_correlation.csv` (legacy pooled volume/intensity correlations)
+  - `regional_volume_intensity_correlation.csv` (per-region volume/intensity correlations)
+  - `subject_metric_values.csv` and `population_subject_metric_summary.csv`
+  - `subject_neighbor_metrics.csv` and `population_neighbor_summary.csv`
+  - `population_anatomy_correlations.csv`
+  - `worst_case_subjects.csv`
 
 ## 5) Optional geometry exports
 - **Script**: `create3dmesh.py`

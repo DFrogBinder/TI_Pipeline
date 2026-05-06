@@ -147,6 +147,8 @@ Visual overview:
 ## What Is Measured
 
 The pipeline currently measures five analysis families.
+For exact formulas and CSV field definitions across all post-processing stages,
+see the [Post-Processing Metric Dictionary](../docs/METRIC_DICTIONARY.md).
 
 ### 1. Overlap and percentile metrics
 
@@ -538,8 +540,10 @@ Typical files in `<dataset>/<subject>/anat/post/`:
 Typical files in `<dataset>/population_analysis/`:
 
 - `all_region_values.csv`
+- `population_cohort_manifest.csv`
 - `population_region_summary.csv`
 - `volume_intensity_correlation.csv`
+- `regional_volume_intensity_correlation.csv`
 - `subject_robustness.csv`
 - `subject_metric_values.csv`
 - `population_subject_metric_summary.csv`

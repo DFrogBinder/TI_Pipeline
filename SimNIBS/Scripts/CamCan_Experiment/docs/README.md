@@ -20,6 +20,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
 - **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
+- **Metric dictionary**: `docs/METRIC_DICTIONARY.md` explains how every subject-level, population-level, and repeatability metric is computed.
 - **Mesh export**: `viz/create3dmesh.py` converts TI volumes + masks to VTK/PLY/STL for visualization.
 - **Job wrappers**: `my_jobArray.slurm`, `ti_multi.slurm`, and `run_post_processing.slurm` help launch simulation/post-processing steps on HPC.
 - **Docs/diagrams**: `README.md`, `PIPELINE_OVERVIEW.md`, `Updated_TI_Pipeline.drawio`.
@@ -152,9 +153,14 @@ python post/post_population.py \
 - Minimal smoke tests for utils and ROI alias resolution: `pytest tests/test_ti_utils.py tests/test_roi_registry.py` (requires pytest + nibabel).
 Outputs in `/path/to/root/population_analysis/`:
 - `all_region_values.csv` (concatenated per-subject region stats).
+- `population_cohort_manifest.csv` (complete subject cohort used by within-run aggregation).
 - `population_region_summary.csv` (variability/robustness per label).
-- `volume_intensity_correlation.csv` (volume vs mean/max TI correlations).
+- `volume_intensity_correlation.csv` (legacy pooled volume vs mean/max TI correlations).
+- `regional_volume_intensity_correlation.csv` (per-region volume vs mean/max TI correlations when at least three subjects are available).
 - `subject_robustness.csv` (target ROI peaks/drops, overlap fractions).
+- `subject_metric_values.csv` and `population_subject_metric_summary.csv` (flattened subject metrics and cohort summaries).
+- `subject_neighbor_metrics.csv` and `population_neighbor_summary.csv` (raw and summarized neighbor exposure metrics).
+- `population_anatomy_correlations.csv` and `worst_case_subjects.csv` (anatomy/performance associations and lowest ROI-peak subjects).
 
 ## Current pipeline diagram (mermaid)
 ```mermaid

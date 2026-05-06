@@ -5,8 +5,7 @@ Aggregates per-subject outputs produced by post_process.py (region_stats_fastsur
 and subject_metrics.json) to derive variability, robustness, and hotspot summaries.
 """
 import argparse
-import json
-import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -17,8 +16,54 @@ from post.metric_extensions import flatten_subject_metric_payload
 from post.pipeline_layers import load_subject_metrics_payload, subject_metrics_payload_complete
 
 
+COHORT_MANIFEST_COLUMNS = [
+    "subject",
+    "has_region_table",
+    "has_complete_subject_metrics",
+    "included",
+]
+
+
+@dataclass
+class PopulationData:
+    subjects: List[str]
+    subject_metrics: List[dict]
+    all_regions: pd.DataFrame
+    flat_subject_metrics: pd.DataFrame
+    neighbor_metrics: pd.DataFrame
+    target_roi: str
+    cohort_manifest: pd.DataFrame
+
+
 def iqr(series: pd.Series) -> float:
     return float(series.quantile(0.75) - series.quantile(0.25))
+
+
+def numeric_summary(values: pd.Series) -> dict:
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce").dropna()
+    if numeric.empty:
+        return {
+            "count": 0,
+            "mean": np.nan,
+            "median": np.nan,
+            "iqr": np.nan,
+            "std": np.nan,
+            "cv": np.nan,
+            "min": np.nan,
+            "max": np.nan,
+        }
+
+    mean = float(numeric.mean())
+    return {
+        "count": int(numeric.shape[0]),
+        "mean": mean,
+        "median": float(numeric.median()),
+        "iqr": iqr(numeric),
+        "std": float(numeric.std(ddof=1)) if numeric.shape[0] > 1 else 0.0,
+        "cv": float(numeric.std(ddof=0) / mean) if mean else np.nan,
+        "min": float(numeric.min()),
+        "max": float(numeric.max()),
+    }
 
 
 def load_subject_region_table(subj: str, path: Path) -> Optional[pd.DataFrame]:
@@ -60,31 +105,44 @@ def flatten_subject_metrics(subject_metrics: List[dict], target_roi: str) -> pd.
 
 
 def summarize_subject_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    output_columns = [
+        "metric",
+        "subjects",
+        "mean",
+        "median",
+        "iqr",
+        "std",
+        "cv",
+        "min",
+        "max",
+    ]
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=output_columns)
 
     excluded = {"subject", "target_roi"}
     rows = []
     for column in df.columns:
         if column in excluded:
             continue
-        values = pd.to_numeric(df[column], errors="coerce").dropna()
-        if values.empty:
+        stats = numeric_summary(df[column])
+        if stats["count"] == 0:
             continue
         rows.append(
             {
                 "metric": column,
-                "subjects": int(values.shape[0]),
-                "mean": float(values.mean()),
-                "median": float(values.median()),
-                "iqr": iqr(values),
-                "std": float(values.std(ddof=1)) if values.shape[0] > 1 else 0.0,
-                "cv": float(values.std(ddof=0) / values.mean()) if values.mean() else np.nan,
-                "min": float(values.min()),
-                "max": float(values.max()),
+                "subjects": stats["count"],
+                "mean": stats["mean"],
+                "median": stats["median"],
+                "iqr": stats["iqr"],
+                "std": stats["std"],
+                "cv": stats["cv"],
+                "min": stats["min"],
+                "max": stats["max"],
             }
         )
-    return pd.DataFrame(rows).sort_values("metric").reset_index(drop=True)
+    if not rows:
+        return pd.DataFrame(columns=output_columns)
+    return pd.DataFrame(rows, columns=output_columns).sort_values("metric").reset_index(drop=True)
 
 
 def collect_neighbor_metrics(subject_metrics: List[dict]) -> pd.DataFrame:
@@ -119,26 +177,43 @@ def summarize_neighbor_metrics(df: pd.DataFrame) -> pd.DataFrame:
     grouped = df.groupby(["label_id", "label_name"], dropna=False)
     rows = []
     for (label_id, label_name), group in grouped:
+        mean_stats = numeric_summary(group["mean"])
+        peak_stats = numeric_summary(group["max"])
+        volume_stats = numeric_summary(group["volume_mm3"])
         rows.append(
             {
                 "label_id": label_id,
                 "label_name": label_name,
                 "subjects": int(group["subject"].nunique()),
-                "mean_of_mean": float(pd.to_numeric(group["mean"], errors="coerce").mean()),
-                "median_of_mean": float(pd.to_numeric(group["mean"], errors="coerce").median()),
-                "iqr_mean": iqr(pd.to_numeric(group["mean"], errors="coerce").dropna()),
-                "mean_peak": float(pd.to_numeric(group["max"], errors="coerce").mean()),
-                "median_peak": float(pd.to_numeric(group["max"], errors="coerce").median()),
-                "iqr_peak": iqr(pd.to_numeric(group["max"], errors="coerce").dropna()),
-                "mean_volume_mm3": float(pd.to_numeric(group["volume_mm3"], errors="coerce").mean()),
+                "mean_of_mean": mean_stats["mean"],
+                "median_of_mean": mean_stats["median"],
+                "iqr_mean": mean_stats["iqr"],
+                "std_mean": mean_stats["std"],
+                "cv_mean": mean_stats["cv"],
+                "min_mean": mean_stats["min"],
+                "max_mean": mean_stats["max"],
+                "mean_peak": peak_stats["mean"],
+                "median_peak": peak_stats["median"],
+                "iqr_peak": peak_stats["iqr"],
+                "std_peak": peak_stats["std"],
+                "cv_peak": peak_stats["cv"],
+                "min_peak": peak_stats["min"],
+                "max_peak": peak_stats["max"],
+                "mean_volume_mm3": volume_stats["mean"],
             }
         )
     return pd.DataFrame(rows).sort_values(["label_name", "label_id"]).reset_index(drop=True)
 
 
 def subject_anatomy_correlations(df: pd.DataFrame) -> pd.DataFrame:
+    output_columns = [
+        "performance_metric",
+        "anatomy_metric",
+        "subjects",
+        "pearson_r",
+    ]
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=output_columns)
 
     performance_metrics = [
         "roi_peak",
@@ -175,7 +250,9 @@ def subject_anatomy_correlations(df: pd.DataFrame) -> pd.DataFrame:
                     "pearson_r": float(corr),
                 }
             )
-    return pd.DataFrame(rows).sort_values(
+    if not rows:
+        return pd.DataFrame(columns=output_columns)
+    return pd.DataFrame(rows, columns=output_columns).sort_values(
         ["performance_metric", "anatomy_metric"]
     ).reset_index(drop=True)
 
@@ -198,31 +275,100 @@ def discover_subjects(
     return sorted(found)
 
 
+def load_population_data(
+    *,
+    root: Path,
+    subjects: Optional[Iterable[str]],
+    region_filename: str,
+    metrics_filename: str,
+    target_roi: str,
+) -> PopulationData:
+    discovered_subjects = discover_subjects(root, subjects, region_filename, metrics_filename)
+
+    included_subjects: List[str] = []
+    subject_metrics: List[dict] = []
+    region_tables: List[pd.DataFrame] = []
+    manifest_rows = []
+
+    for subj in discovered_subjects:
+        subj_root = root / subj / "anat" / "post"
+        region_path = subj_root / region_filename
+        metrics_path = subj_root / metrics_filename
+
+        has_region_table = region_path.is_file()
+        metrics_payload = load_subject_metrics(subj, metrics_path)
+        has_complete_subject_metrics = metrics_payload is not None
+        included = bool(has_region_table and has_complete_subject_metrics)
+
+        if not has_complete_subject_metrics:
+            continue
+
+        manifest_rows.append(
+            {
+                "subject": subj,
+                "has_region_table": has_region_table,
+                "has_complete_subject_metrics": has_complete_subject_metrics,
+                "included": included,
+            }
+        )
+
+        if not included:
+            continue
+
+        region_table = load_subject_region_table(subj, region_path)
+        if region_table is None:
+            continue
+
+        included_subjects.append(subj)
+        subject_metrics.append(metrics_payload)
+        region_tables.append(region_table)
+
+    all_regions = (
+        pd.concat(region_tables, ignore_index=True)
+        if region_tables
+        else pd.DataFrame()
+    )
+    flat_subject_metrics = flatten_subject_metrics(subject_metrics, target_roi)
+    neighbor_metrics = collect_neighbor_metrics(subject_metrics)
+    cohort_manifest = pd.DataFrame(manifest_rows, columns=COHORT_MANIFEST_COLUMNS)
+
+    return PopulationData(
+        subjects=included_subjects,
+        subject_metrics=subject_metrics,
+        all_regions=all_regions,
+        flat_subject_metrics=flat_subject_metrics,
+        neighbor_metrics=neighbor_metrics,
+        target_roi=target_roi,
+        cohort_manifest=cohort_manifest,
+    )
+
+
 def aggregate_regions(df: pd.DataFrame, peak_threshold: float) -> pd.DataFrame:
     grouped = df.groupby(["label_id", "label_name"])
     rows = []
     for (lab_id, lab_name), g in grouped:
-        peak = g["max"]
-        mean_vals = g["mean"]
-        vol = g["volume_mm3"]
+        peak = pd.to_numeric(g["max"], errors="coerce")
+        peak_stats = numeric_summary(g["max"])
+        mean_stats = numeric_summary(g["mean"])
+        volume_stats = numeric_summary(g["volume_mm3"])
         rows.append(
             {
                 "label_id": lab_id,
                 "label_name": lab_name,
                 "subjects": g["subject"].nunique(),
-                "mean_of_mean": float(mean_vals.mean()),
-                "median_of_mean": float(mean_vals.median()),
-                "iqr_mean": iqr(mean_vals),
-                "cv_mean": float(mean_vals.std(ddof=0) / mean_vals.mean()) if mean_vals.mean() else np.nan,
-                "mean_peak": float(peak.mean()),
-                "median_peak": float(peak.median()),
-                "iqr_peak": iqr(peak),
-                "cv_peak": float(peak.std(ddof=0) / peak.mean()) if peak.mean() else np.nan,
-                "min_peak": float(peak.min()),
-                "max_peak": float(peak.max()),
+                "mean_of_mean": mean_stats["mean"],
+                "median_of_mean": mean_stats["median"],
+                "iqr_mean": mean_stats["iqr"],
+                "cv_mean": mean_stats["cv"],
+                "mean_peak": peak_stats["mean"],
+                "median_peak": peak_stats["median"],
+                "iqr_peak": peak_stats["iqr"],
+                "cv_peak": peak_stats["cv"],
+                "min_peak": peak_stats["min"],
+                "max_peak": peak_stats["max"],
                 "frac_peak_gt_thr": float((peak > peak_threshold).sum() / len(peak)) if len(peak) else np.nan,
-                "mean_volume_mm3": float(vol.mean()),
-                "median_volume_mm3": float(vol.median()),
+                "mean_volume_mm3": volume_stats["mean"],
+                "median_volume_mm3": volume_stats["median"],
             }
         )
     out = pd.DataFrame(rows)
@@ -234,9 +380,38 @@ def aggregate_regions(df: pd.DataFrame, peak_threshold: float) -> pd.DataFrame:
 def correlation_volume_intensity(df: pd.DataFrame) -> pd.DataFrame:
     corr_rows = []
     for metric in ("mean", "max"):
-        c = df[["volume_mm3", metric]].corr().iloc[0, 1]
+        pair = df[["volume_mm3", metric]].apply(pd.to_numeric, errors="coerce").dropna()
+        c = pair.corr().iloc[0, 1] if pair.shape[0] >= 2 else np.nan
         corr_rows.append({"metric": metric, "pearson_r": float(c)})
     return pd.DataFrame(corr_rows)
+
+
+def regional_volume_intensity_correlation(df: pd.DataFrame) -> pd.DataFrame:
+    corr_rows = []
+    grouped = df.groupby(["label_id", "label_name"])
+    for (label_id, label_name), group in grouped:
+        for metric in ("mean", "max"):
+            pair = group.loc[:, ["subject", "volume_mm3", metric]].copy()
+            pair["volume_mm3"] = pd.to_numeric(pair["volume_mm3"], errors="coerce")
+            pair[metric] = pd.to_numeric(pair[metric], errors="coerce")
+            pair = pair.dropna(subset=["volume_mm3", metric])
+            subject_count = int(pair["subject"].nunique())
+            if subject_count < 3:
+                continue
+            corr = pair[["volume_mm3", metric]].corr(method="pearson").iloc[0, 1]
+            corr_rows.append(
+                {
+                    "label_id": label_id,
+                    "label_name": label_name,
+                    "subjects": subject_count,
+                    "metric": metric,
+                    "pearson_r": float(corr),
+                }
+            )
+    return pd.DataFrame(
+        corr_rows,
+        columns=["label_id", "label_name", "subjects", "metric", "pearson_r"],
+    ).sort_values(["label_id", "metric"]).reset_index(drop=True)
 
 
 def subject_target_table(
@@ -295,31 +470,21 @@ def run_population(
     out_dir = Path(out_dir or (root / "population_analysis"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    subjects = discover_subjects(root, subjects, region_filename, metrics_filename)
-    if not subjects:
+    data = load_population_data(
+        root=root,
+        subjects=subjects,
+        region_filename=region_filename,
+        metrics_filename=metrics_filename,
+        target_roi=target_roi,
+    )
+    data.cohort_manifest.to_csv(out_dir / "population_cohort_manifest.csv", index=False)
+
+    if not data.subjects:
         raise SystemExit("No subjects found with region stats.")
-
-    region_tables = []
-    subj_metrics = []
-    for subj in subjects:
-        subj_root = root / subj / "anat" / "post"
-        reg_path = subj_root / region_filename
-        met_path = subj_root / metrics_filename
-
-        sm = load_subject_metrics(subj, met_path)
-        if sm is None:
-            continue
-
-        df = load_subject_region_table(subj, reg_path)
-        if df is not None:
-            region_tables.append(df)
-
-        subj_metrics.append(sm)
-
-    if not region_tables:
+    if data.all_regions.empty:
         raise SystemExit("No per-subject region tables were loaded.")
 
-    all_regions = pd.concat(region_tables, ignore_index=True)
+    all_regions = data.all_regions
     all_regions.to_csv(out_dir / "all_region_values.csv", index=False)
 
     summary = aggregate_regions(all_regions, peak_threshold)
@@ -327,12 +492,14 @@ def run_population(
 
     corr = correlation_volume_intensity(all_regions)
     corr.to_csv(out_dir / "volume_intensity_correlation.csv", index=False)
+    regional_corr = regional_volume_intensity_correlation(all_regions)
+    regional_corr.to_csv(out_dir / "regional_volume_intensity_correlation.csv", index=False)
 
     template_peak = load_template_peak(template_region_csv, target_roi)
-    subj_df = subject_target_table(all_regions, subj_metrics, target_roi, template_peak)
+    subj_df = subject_target_table(all_regions, data.subject_metrics, target_roi, template_peak)
     subj_df.to_csv(out_dir / "subject_robustness.csv", index=False)
 
-    flat_subject_metrics = flatten_subject_metrics(subj_metrics, target_roi)
+    flat_subject_metrics = data.flat_subject_metrics
     if not flat_subject_metrics.empty:
         flat_subject_metrics.to_csv(out_dir / "subject_metric_values.csv", index=False)
         summarize_subject_metrics(flat_subject_metrics).to_csv(
@@ -351,14 +518,14 @@ def run_population(
         if not anatomy_corr.empty:
             anatomy_corr.to_csv(out_dir / "population_anatomy_correlations.csv", index=False)
 
-    neighbor_metrics = collect_neighbor_metrics(subj_metrics)
+    neighbor_metrics = data.neighbor_metrics
     if not neighbor_metrics.empty:
         neighbor_metrics.to_csv(out_dir / "subject_neighbor_metrics.csv", index=False)
         summarize_neighbor_metrics(neighbor_metrics).to_csv(
             out_dir / "population_neighbor_summary.csv", index=False
         )
 
-    print(f"[INFO] Aggregated {len(subjects)} subject(s). Outputs in: {out_dir}")
+    print(f"[INFO] Aggregated {len(data.subjects)} subject(s). Outputs in: {out_dir}")
     return out_dir
 
 

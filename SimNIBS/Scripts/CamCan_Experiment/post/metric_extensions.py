@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
-from post.post_functions import roi_masks_on_ti_grid
 from utils.roi_registry import FASTSURFER_DKT_LABELS, resolve_fastsurfer_roi_name
 from utils.ti_utils import load_ti_as_scalar, resample_atlas_to_ti_grid, vol_mm3
 
@@ -266,6 +265,8 @@ def load_mni_baseline_metrics(
         ti_path = subject_root / "anat" / "SimNIBS" / "ti_brain_only.nii.gz"
         if not ti_path.is_file():
             continue
+
+        from post.post_functions import roi_masks_on_ti_grid
 
         ti_img = nib.load(str(ti_path))
         ti_data = load_ti_as_scalar(ti_img)

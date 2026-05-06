@@ -1,6 +1,8 @@
 # Repeatability Analysis
 
 This folder contains the across-repeats-level metrics layer for repeated TI simulation experiments.
+For exact metric formulas and output field definitions, see
+`../../docs/METRIC_DICTIONARY.md`.
 
 By default, this layer now analyses only the complete-case cohort: subjects that
 have valid post-processing outputs in every selected repeat for the ROI being

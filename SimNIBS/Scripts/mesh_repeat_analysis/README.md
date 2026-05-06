@@ -441,6 +441,7 @@ For each subject and condition:
 - `parameter_consistency.json`
 - `label_diff_frequency.nii.gz`
 - `roi_mask_on_t1.nii.gz`
+- `roi_mask_on_reference_ti.nii.gz`
 - `roi_outline_on_t1.png`
 - `roi_outline_on_mean_ti.png`
 - `repeat_qc/repeat_###_roi_outline_on_ti.png`

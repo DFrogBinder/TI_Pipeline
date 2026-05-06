@@ -402,6 +402,87 @@ def _plot_roi_qc(
     plt.close(fig)
 
 
+def _plot_roi_qc_on_ti_grid(
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    out_path: Path,
+    *,
+    title: str,
+    ti_label: str = "TI (V/m)",
+) -> None:
+    """Render QC overlays with the TI volume as the authoritative grid.
+
+    CamCan's post-processing keeps ROI masks and overlays on the TI grid, then
+    resamples the T1 background onto that grid. The mesh repeatability report
+    originally did the inverse by resampling TI onto a reference T1 grid, which
+    is exactly the path that can make QC artifacts look shifted even when the
+    underlying repeat data are otherwise usable.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return
+
+    t1_on_ti = resample_from_to(t1_img, ti_img, order=1)
+    roi_on_ti = _ensure_label_grid(roi_mask_img, ti_img, label="roi_qc_to_ti")
+
+    t1_data = np.asarray(t1_on_ti.dataobj, dtype=np.float32)
+    roi_data = np.asarray(roi_on_ti.dataobj) > 0
+    ti_data = np.asarray(ti_img.dataobj, dtype=np.float32)
+
+    center = _roi_center_ijk(roi_data)
+    slices = [
+        ("sagittal", t1_data[center[0], :, :], roi_data[center[0], :, :], ti_data[center[0], :, :]),
+        ("coronal", t1_data[:, center[1], :], roi_data[:, center[1], :], ti_data[:, center[1], :]),
+        ("axial", t1_data[:, :, center[2]], roi_data[:, :, center[2]], ti_data[:, :, center[2]]),
+    ]
+
+    valid_ti = _finite_values(ti_data[np.isfinite(ti_data) & (ti_data > 0)])
+    if valid_ti.size:
+        vmin = float(np.nanpercentile(valid_ti, 5))
+        vmax = float(np.nanpercentile(valid_ti, 99))
+        if vmax <= vmin:
+            vmax = float(np.nanmax(valid_ti))
+            vmin = float(np.nanmin(valid_ti))
+    else:
+        vmin, vmax = 0.0, 1.0
+
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+    overlay_artist = None
+    for ax, (slice_name, bg, mask2d, ti2d) in zip(axes, slices, strict=False):
+        ax.imshow(bg.T, cmap="gray", origin="lower")
+        overlay = np.ma.masked_where(~np.isfinite(ti2d.T) | (ti2d.T <= 0), ti2d.T)
+        overlay_artist = ax.imshow(
+            overlay,
+            cmap="viridis",
+            alpha=0.65,
+            origin="lower",
+            vmin=vmin,
+            vmax=vmax,
+        )
+        if np.any(mask2d):
+            ax.contour(
+                mask2d.T.astype(np.float32),
+                levels=[0.5],
+                colors=["cyan"],
+                linewidths=1.2,
+                origin="lower",
+            )
+        ax.set_title(slice_name)
+        ax.axis("off")
+
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    if overlay_artist is not None:
+        cbar = fig.colorbar(overlay_artist, ax=axes, fraction=0.03, pad=0.02)
+        cbar.set_label(ti_label)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def _resolve_t1_path(subject: str, anat_dir: Path, t1_root: Path | None) -> Path:
     local_t1 = anat_dir / f"{subject}_T1w.nii"
     if local_t1.exists():
@@ -1099,6 +1180,8 @@ def _run_subject_analysis(
         raise SystemExit(
             f"{roi_name} mask is empty after resampling; check label IDs and atlas alignment."
         )
+    ref_roi_mask_img = nib.Nifti1Image(roi_mask.astype(np.uint8), ref_t1.affine, ref_t1.header)
+    ref_roi_mask_img.header.set_data_dtype(np.uint8)
 
     ref_label_path, _, ref_ti_path = _load_or_create_volumes(ref_anat, subject, ref_t1_path)
     ref_label_img = nib.load(ref_label_path)
@@ -1107,7 +1190,7 @@ def _run_subject_analysis(
     ref_ti_img = _ensure_scalar_grid(nib.load(ref_ti_path), ref_t1, label="ref_ti_to_t1")
     ref_ti_data = np.asarray(ref_ti_img.dataobj, dtype=np.float32)
     ref_head_mask = ref_labels > 0
-    ref_ti_data, ref_ti_scale_factor = _normalize_ti_units(
+    ref_ti_data, _ = _normalize_ti_units(
         ref_ti_data,
         ref_head_mask,
         label="ref_ti_to_t1",
@@ -1141,7 +1224,8 @@ def _run_subject_analysis(
         label_img = _ensure_label_grid(nib.load(label_path), ref_t1, label=f"{repeat_tag}_labels_to_t1")
         labels = np.asarray(label_img.dataobj).astype(np.int32, copy=False)
 
-        ti_img = _ensure_scalar_grid(nib.load(ti_path), ref_t1, label=f"{repeat_tag}_ti_to_t1")
+        native_ti_img = nib.load(ti_path)
+        ti_img = _ensure_scalar_grid(native_ti_img, ref_t1, label=f"{repeat_tag}_ti_to_t1")
         base_data = np.asarray(ti_img.dataobj, dtype=np.float32)
         head_mask = labels > 0
         base_data, ti_scale_factor = _normalize_ti_units(
@@ -1149,19 +1233,21 @@ def _run_subject_analysis(
             head_mask,
             label=f"{repeat_tag}_ti_to_t1",
         )
+        native_ti_data = np.asarray(native_ti_img.dataobj, dtype=np.float32) * float(ti_scale_factor)
+        native_ti_plot_img = nib.Nifti1Image(native_ti_data, native_ti_img.affine, native_ti_img.header)
 
         diff = labels != ref_labels
         diff_counts += diff.astype(np.int32)
         ti_sum += base_data.astype(np.float64, copy=False)
-        _plot_roi_qc(
-            ref_t1,
-            roi_mask,
+        _plot_roi_qc_on_ti_grid(
+            native_ti_plot_img,
+            nib.load(t1_path),
+            ref_roi_mask_img,
             repeat_qc_dir / f"{repeat_tag}_roi_outline_on_ti.png",
             title=(
                 f"{repeat_tag} | {roi_name} outline on TI + T1 | "
                 f"labels: {', '.join(str(x) for x in roi_labels)}"
             ),
-            ti_data=base_data,
         )
 
         diff_fraction = float(diff.mean())
@@ -1276,21 +1362,25 @@ def _run_subject_analysis(
         json.dump(skipped_repeats, f, indent=2)
 
     mean_ti_data = (ti_sum / max(1, len(summary_rows))).astype(np.float32, copy=False)
-    roi_mask_img = nib.Nifti1Image(roi_mask.astype(np.uint8), ref_t1.affine, ref_t1.header)
-    roi_mask_img.header.set_data_dtype(np.uint8)
-    nib.save(roi_mask_img, output_dir / "roi_mask_on_t1.nii.gz")
+    mean_ti_img = nib.Nifti1Image(mean_ti_data, ref_t1.affine, ref_t1.header)
+    mean_ti_img.header.set_data_dtype(np.float32)
+
+    nib.save(ref_roi_mask_img, output_dir / "roi_mask_on_t1.nii.gz")
+    ref_roi_mask_on_ti = _ensure_label_grid(ref_roi_mask_img, ref_ti_img, label="roi_mask_to_reference_ti")
+    ref_roi_mask_on_ti.header.set_data_dtype(np.uint8)
+    nib.save(ref_roi_mask_on_ti, output_dir / "roi_mask_on_reference_ti.nii.gz")
     _plot_roi_qc(
         ref_t1,
         roi_mask,
         output_dir / "roi_outline_on_t1.png",
         title=f"{roi_name} outline on T1 | labels: {', '.join(str(x) for x in roi_labels)}",
     )
-    _plot_roi_qc(
+    _plot_roi_qc_on_ti_grid(
+        mean_ti_img,
         ref_t1,
-        roi_mask,
+        ref_roi_mask_img,
         output_dir / "roi_outline_on_mean_ti.png",
         title=f"{roi_name} outline on mean TI + T1 | labels: {', '.join(str(x) for x in roi_labels)}",
-        ti_data=mean_ti_data,
     )
 
     repeatability_metric_order = [

@@ -14,7 +14,6 @@ FORCE_MESH="${FORCE_MESH:-0}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${PIPELINE_DIR}/hpc_scripts/repeatability_experiment_array.slurm}"
-SBATCH_OPTIONS=()
 
 if [ "$#" -ne 0 ]; then
     echo "[ERROR] This helper is configured from the variables at the top of the file."
@@ -96,7 +95,6 @@ echo "[INFO] Force mesh:        ${FORCE_MESH}"
 echo "[INFO] Slurm script:      ${SLURM_SCRIPT}"
 
 "${SBATCH_BIN}" \
-    "${SBATCH_OPTIONS[@]}" \
     --array="${ARRAY_SPEC}" \
     --export="${EXPORT_VARS}" \
     "${SLURM_SCRIPT}"

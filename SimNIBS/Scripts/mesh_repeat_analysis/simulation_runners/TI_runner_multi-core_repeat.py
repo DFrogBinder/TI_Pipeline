@@ -407,15 +407,6 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
     ti_affine = ti_img.affine
     ti_hdr = ti_img.header
 
-    # Extract unique labels
-    labels = np.asarray(label_img.dataobj)  # lazy; no copy unless needed
-    labels = labels.astype(np.int32, copy=False)
-    codes, counts = np.unique(labels, return_counts=True)
-
-    GM_LABELS = {2}
-    WM_LABELS = {1}
-    brain_mask = np.isin(labels, list(GM_LABELS | WM_LABELS))
-
     same_shape = ti_img.shape == label_img.shape
     same_affine = np.allclose(ti_img.affine, label_img.affine, atol=1e-3)
     log_event(
@@ -427,6 +418,14 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
     )
     if not (same_shape and same_affine):
         label_img = resample_from_to(label_img, ti_img, order=0)
+
+    # Extract labels after any resampling so the mask is on the TI grid.
+    labels = np.asarray(label_img.dataobj).astype(np.int32, copy=False)
+    codes, counts = np.unique(labels, return_counts=True)
+
+    GM_LABELS = {2}
+    WM_LABELS = {1}
+    brain_mask = np.isin(labels, list(GM_LABELS | WM_LABELS))
 
     ti_data = ti_img.get_fdata(dtype=np.float32)
     masked = np.where(brain_mask, ti_data, np.nan).astype(np.float32)

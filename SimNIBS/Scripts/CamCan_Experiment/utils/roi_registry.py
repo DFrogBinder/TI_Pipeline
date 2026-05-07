@@ -119,6 +119,9 @@ FASTSURFER_DKT_LABELS: Dict[int, str] = {
     2031: "ctx-rh-temporalpole",
     2032: "ctx-rh-transversetemporal",
     2033: "ctx-rh-insula",
+    # Destrieux/a2009s middle frontal gyrus labels used by some DLPC analyses.
+    11115: "ctx_lh_G_front_middle",
+    12115: "ctx_rh_G_front_middle",
 }
 
 _HEMISPHERE_ALIASES = {
@@ -132,6 +135,38 @@ _SPECIAL_REGION_ALIASES = {
         "motor_cortex",
         "primary_motor_cortex",
         "primary_motor",
+    },
+}
+
+_EXPLICIT_CANONICAL_ALIASES: Dict[str, Set[str]] = {
+    # Destrieux middle-frontal gyrus target used by the DLPFC/DLPC montage.
+    "ctx_lh_G_front_middle": {
+        "left_dlpc",
+        "left_dlpfc",
+        "lh_dlpc",
+        "lh_dlpfc",
+        "l_dlpc",
+        "l_dlpfc",
+        "dlpc_left",
+        "dlpfc_left",
+        "dorsolateral_prefrontal_left",
+        "left_dorsolateral_prefrontal",
+        "left_dorsolateral_prefrontal_cortex",
+    },
+    "ctx_rh_G_front_middle": {
+        "right_dlpc",
+        "right_dlpfc",
+        "rigth_dlpc",
+        "rigth_dlpfc",
+        "rh_dlpc",
+        "rh_dlpfc",
+        "r_dlpc",
+        "r_dlpfc",
+        "dlpc_right",
+        "dlpfc_right",
+        "dorsolateral_prefrontal_right",
+        "right_dorsolateral_prefrontal",
+        "right_dorsolateral_prefrontal_cortex",
     },
 }
 
@@ -182,6 +217,10 @@ def _canonical_parts(canonical_name: str) -> tuple[str | None, str]:
         return "left", _snake_case(canonical_name.removeprefix("ctx-lh-"))
     if canonical_name.startswith("ctx-rh-"):
         return "right", _snake_case(canonical_name.removeprefix("ctx-rh-"))
+    if canonical_name.startswith("ctx_lh_"):
+        return "left", _snake_case(canonical_name.removeprefix("ctx_lh_"))
+    if canonical_name.startswith("ctx_rh_"):
+        return "right", _snake_case(canonical_name.removeprefix("ctx_rh_"))
     if canonical_name.startswith("Left-"):
         return "left", _snake_case(canonical_name.removeprefix("Left-"))
     if canonical_name.startswith("Right-"):
@@ -195,6 +234,7 @@ def _generate_aliases(canonical_name: str) -> Set[str]:
     region_aliases = _region_aliases(region_name)
 
     aliases.update(region_aliases)
+    aliases.update(_EXPLICIT_CANONICAL_ALIASES.get(canonical_name, set()))
     if hemisphere is None:
         return aliases
 

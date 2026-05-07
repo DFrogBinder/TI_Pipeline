@@ -23,7 +23,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Metric dictionary**: `docs/METRIC_DICTIONARY.md` explains how every subject-level, population-level, and repeatability metric is computed.
 - **Mesh export**: `viz/create3dmesh.py` converts TI volumes + masks to VTK/PLY/STL for visualization.
 - **Job wrappers**: `my_jobArray.slurm`, `ti_multi.slurm`, and `run_post_processing.slurm` help launch simulation/post-processing steps on HPC.
-- **Docs/diagrams**: `README.md`, `PIPELINE_OVERVIEW.md`, `Updated_TI_Pipeline.drawio`.
+- **Docs/diagrams**: `README.md`, `PIPELINE_OVERVIEW.md`, source diagrams in `drawio/`, and publication exports in `docs/figures/post_pipeline/`.
 
 ## Directory layout
 - `atlas/`: FastSurfer/FreeSurfer atlas scripts.

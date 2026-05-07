@@ -255,12 +255,17 @@ python simulation_runners/repeatability_experiment.py \
 Use the submit helper:
 
 ```bash
-bash hpc_scripts/submit_repeatability_experiment.sh \
-  /path/to/my_experiment.json \
-  20
+bash hpc_scripts/submit_repeatability_experiment.sh
 ```
 
-The second argument is the maximum number of concurrent array tasks.
+Edit the submission settings at the top of `hpc_scripts/submit_repeatability_experiment.sh`
+before running it. The most commonly changed values are:
+
+- `EXPERIMENT_CONFIG`
+- `MAX_CONCURRENT_TASKS`
+- `LOG_DIR`
+- `OVERWRITE_OUTPUT`
+- `FORCE_MESH`
 
 What the helper does:
 

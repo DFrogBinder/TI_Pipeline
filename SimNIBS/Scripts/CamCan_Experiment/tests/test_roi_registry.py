@@ -63,6 +63,26 @@ def test_resolve_fastsurfer_roi_name_supports_shorthand_thalamus_aliases():
     assert match.canonical_name == "Left-Accumbens-area"
 
 
+def test_resolve_fastsurfer_roi_name_supports_right_dlpc_aliases():
+    match = resolve_fastsurfer_roi_name("right_dlpc")
+    assert match.canonical_name == "ctx_rh_G_front_middle"
+
+    match = match_fastsurfer_roi_from_directory("/tmp/Right_DLPC_Runs")
+    assert match.canonical_name == "ctx_rh_G_front_middle"
+    assert match.matched_alias == "right_dlpc"
+
+    typo_match = resolve_fastsurfer_roi_name("rigth_dlpfc")
+    assert typo_match.canonical_name == "ctx_rh_G_front_middle"
+
+
+def test_resolve_fastsurfer_roi_name_supports_destrieux_middle_frontal_labels():
+    left_match = resolve_fastsurfer_roi_name("ctx_lh_G_front_middle")
+    assert left_match.canonical_name == "ctx_lh_G_front_middle"
+
+    right_match = resolve_fastsurfer_roi_name("right_g_front_middle")
+    assert right_match.canonical_name == "ctx_rh_G_front_middle"
+
+
 def test_pipeline_exits_before_analysis_for_unknown_dataset_roi():
     from post.run_post_processing import (
         PipelineConfig,

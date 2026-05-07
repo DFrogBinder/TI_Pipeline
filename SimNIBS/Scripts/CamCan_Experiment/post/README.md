@@ -138,11 +138,12 @@ The most important file in that directory is `subject_metrics.json`.
 
 Visual overview:
 
-- Summary structure: [draw.io](../docs/post_pipeline_metric_flowchart.drawio), [SVG](../docs/post_pipeline_metric_flowchart.svg)
-- Inputs and subject-level metrics: [draw.io](../docs/post_pipeline_metric_flowchart_inputs_subject_level.drawio), [SVG](../docs/post_pipeline_metric_flowchart_inputs_subject_level.svg)
-- Cohort definition across repeats: [draw.io](../docs/post_pipeline_metric_flowchart_cohort_definition_across_repeats.drawio), [SVG](../docs/post_pipeline_metric_flowchart_cohort_definition_across_repeats.svg)
-- Within-run population metrics: [draw.io](../docs/post_pipeline_metric_flowchart_within_run_population_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_within_run_population_metrics.svg)
-- Across-repeat analysis outputs: [draw.io](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio), [SVG](../docs/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg)
+- Figure index: [post-processing figure set](../docs/figures/post_pipeline/README.md)
+- Summary structure: [draw.io](../drawio/post_pipeline_metric_flowchart.drawio), [SVG](../docs/figures/post_pipeline/post_pipeline_metric_flowchart.svg)
+- Inputs and subject-level metrics: [draw.io](../drawio/post_pipeline_metric_flowchart_inputs_subject_level.drawio), [SVG](../docs/figures/post_pipeline/post_pipeline_metric_flowchart_inputs_subject_level.svg)
+- Cohort definition across repeats: [draw.io](../drawio/post_pipeline_metric_flowchart_cohort_definition_across_repeats.drawio), [SVG](../docs/figures/post_pipeline/post_pipeline_metric_flowchart_cohort_definition_across_repeats.svg)
+- Within-run population metrics: [draw.io](../drawio/post_pipeline_metric_flowchart_within_run_population_metrics.drawio), [SVG](../docs/figures/post_pipeline/post_pipeline_metric_flowchart_within_run_population_metrics.svg)
+- Across-repeat analysis outputs: [draw.io](../drawio/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio), [SVG](../docs/figures/post_pipeline/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg)
 
 ## What Is Measured
 

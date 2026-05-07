@@ -1,0 +1,128 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" agent="Codex" version="29.3.0" type="device">
+  <diagram id="variation_study_pipeline" name="Page-1">
+    <mxGraphModel dx="1980" dy="1120" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1980" pageHeight="1120" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" value="Variation study pipeline" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=38;fontFamily=Helvetica;fontColor=#0F172A;fontStyle=1;" vertex="1">
+          <mxGeometry x="80" y="28" width="1820" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" value="Context diagram for template montage optimization, subject-specific TI simulations, and population robustness analyses" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=18;fontFamily=Helvetica;fontColor=#334155;" vertex="1">
+          <mxGeometry x="120" y="84" width="1740" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="mni" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="70" y="180" width="430" height="265" as="geometry" />
+        </mxCell>
+        <mxCell id="mni_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="71" y="181" width="428" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="mni_title" parent="1" value="MNI152 optimization" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="78" y="188" width="414" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="mni_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;MNI152 head model and template ROI definitions&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Exhaustive search identifies optimized TI montages on the template&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Template fields provide baseline target intensity and focality references&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="71" y="242" width="428" height="201" as="geometry" />
+        </mxCell>
+        <mxCell id="camcan" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="70" y="540" width="430" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="camcan_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="71" y="541" width="428" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="camcan_title" parent="1" value="CamCan subject subset" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="78" y="548" width="414" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="camcan_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;176 manually corrected subjects from the CamCan dataset&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Manual segmentation correction precedes subject-specific modelling&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;FreeSurfer/FastSurfer atlases are computed for each subject&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="71" y="602" width="428" height="206" as="geometry" />
+        </mxCell>
+        <mxCell id="sim" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="640" y="335" width="500" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="sim_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#C2410C;strokeColor=#C2410C;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="641" y="336" width="498" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="sim_title" parent="1" value="Subject-specific FEM simulations" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="648" y="343" width="484" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="sim_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Optimized template montages are replayed across the subject subset&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Two target ROIs are simulated with SimNIBS on HPC resources&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Subject-space TI fields and whole-brain field volumes are extracted&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="641" y="397" width="498" height="236" as="geometry" />
+        </mxCell>
+        <mxCell id="anatomy_map" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#ECFDF5;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1260" y="180" width="580" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="map_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#047857;strokeColor=#047857;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1261" y="181" width="578" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="map_title" parent="1" value="Map TI fields to anatomy" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1268" y="188" width="564" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="map_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Sample fields onto cortical surfaces and subcortical ROI labels&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Summarize regional mean and peak TI exposure in each subject atlas&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Extract target ROI intensity, focality, off-target exposure, and anatomy distances&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1261" y="242" width="578" height="236" as="geometry" />
+        </mxCell>
+        <mxCell id="hotspot" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F7FEE7;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1240" y="560" width="600" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="hotspot_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#4D7C0F;strokeColor=#4D7C0F;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1241" y="561" width="598" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="hotspot_title" parent="1" value="Population hotspot analysis" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1248" y="568" width="584" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="hotspot_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Compare regional fields across the 176-subject cohort&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Quantify region-wise variability with IQR and CV summaries&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Identify regions consistently stimulated without registering all subjects to one atlas&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1241" y="622" width="598" height="206" as="geometry" />
+        </mxCell>
+        <mxCell id="robustness" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="610" y="770" width="590" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="robustness_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#475569;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="611" y="771" width="588" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="robustness_title" parent="1" value="Population robustness analysis" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="618" y="778" width="574" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="robustness_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Target E-field drop from the MNI reference&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Focality change above the configured hard threshold&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Off-target intensity in surrounding brain regions&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Worst-case subjects and anatomy correlations, including skull, CSF, and electrode-to-ROI distance&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="611" y="832" width="588" height="236" as="geometry" />
+        </mxCell>
+        <mxCell id="interpretation" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FEFCE8;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1260" y="900" width="580" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="interpretation_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#A16207;strokeColor=#A16207;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1261" y="901" width="578" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="interpretation_title" parent="1" value="Combined interpretation" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1268" y="908" width="564" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="interpretation_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Robustness of template-optimized TI across individual anatomy&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Registration-free population hotspot structure&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Feasibility evidence for group and clinical protocol design&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1261" y="962" width="578" height="116" as="geometry" />
+        </mxCell>
+        <mxCell id="e_mni_sim" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.5;entryX=0;entryY=0.35;" edge="1" source="mni" target="sim">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_camcan_sim" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.5;entryX=0;entryY=0.7;" edge="1" source="camcan" target="sim">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sim_map" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.38;entryX=0;entryY=0.5;" edge="1" source="sim" target="anatomy_map">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_map_hotspot" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="anatomy_map" target="hotspot">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_map_robustness" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0;exitY=0.7;entryX=0.5;entryY=0;" edge="1" source="anatomy_map" target="robustness">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1200" y="390" />
+              <mxPoint x="1200" y="720" />
+              <mxPoint x="905" y="720" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_hotspot_interpret" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="hotspot" target="interpretation">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_robust_interpret" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.72;entryX=0;entryY=0.5;" edge="1" source="robustness" target="interpretation">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

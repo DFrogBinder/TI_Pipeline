@@ -1,0 +1,149 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" agent="Codex" version="29.3.0" type="device">
+  <diagram id="post_pipeline_metric_flowchart_inputs_subject_level" name="Page-1">
+    <mxGraphModel dx="2100" dy="1220" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2100" pageHeight="1220" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" value="Inputs and subject-level metrics" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=38;fontFamily=Helvetica;fontColor=#0F172A;fontStyle=1;" vertex="1">
+          <mxGeometry x="80" y="28" width="1940" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" value="Required inputs and grouped metrics recorded for one subject in one repeat" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=18;fontFamily=Helvetica;fontColor=#334155;" vertex="1">
+          <mxGeometry x="120" y="84" width="1860" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="70" y="210" width="430" height="390" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="71" y="211" width="428" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs_title" parent="1" value="Analysis inputs" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="78" y="218" width="414" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;TI field on the subject TI grid&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Subject atlas and ROI definition&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Optional T1 background for overlay quality control&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Optional MNI baseline simulation root&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Optional fixed MNI atlas for neighboring-region templates&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Optional CSF/skull labels and electrode geometry&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="71" y="272" width="428" height="326" as="geometry" />
+        </mxCell>
+        <mxCell id="overlap" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="610" y="170" width="430" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="overlap_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="611" y="171" width="428" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="overlap_title" parent="1" value="Overlap and mask metrics" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="618" y="178" width="414" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="overlap_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Voxel size, configured percentile, and percentile threshold value&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;ROI volume, top-percentile volume, overlap volume, and overlap fraction&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Saved ROI mask, top-percentile mask, and ROI-overlap mask on the subject grid&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="611" y="232" width="428" height="196" as="geometry" />
+        </mxCell>
+        <mxCell id="intensity" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1120" y="170" width="500" height="285" as="geometry" />
+        </mxCell>
+        <mxCell id="intensity_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1121" y="171" width="498" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="intensity_title" parent="1" value="ROI and atlas intensity metrics" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1128" y="178" width="484" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="intensity_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Per-atlas-label mean, median, peak, percentile, coefficient of variation, voxels, and volume&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Target ROI mean, peak, percentile value, and volume summaries&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;MNI baseline ROI mean/peak and absolute deltas when a baseline root is supplied&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1121" y="232" width="498" height="221" as="geometry" />
+        </mxCell>
+        <mxCell id="focality" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="610" y="520" width="430" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="focality_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#C2410C;strokeColor=#C2410C;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="611" y="521" width="428" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="focality_title" parent="1" value="Focality and baseline comparison" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="618" y="528" width="414" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="focality_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Voxels and volume above the configured focality threshold&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;MNI baseline focality voxels/volume and absolute deltas when available&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Thresholded overlay assets remain tied to the configured percentile and hard cutoff&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="611" y="582" width="428" height="206" as="geometry" />
+        </mxCell>
+        <mxCell id="neighbor" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F7FEE7;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1120" y="540" width="500" height="270" as="geometry" />
+        </mxCell>
+        <mxCell id="neighbor_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#4D7C0F;strokeColor=#4D7C0F;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1121" y="541" width="498" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="neighbor_title" parent="1" value="Neighbor-region exposure metrics" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1128" y="548" width="484" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="neighbor_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Neighbor template count and per-neighbor mean, peak, voxel, and volume metrics&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Summary exposure across neighboring regions: mean of means and max/min of peaks&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Templates come from the optional fixed MNI atlas when supplied&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1121" y="602" width="498" height="206" as="geometry" />
+        </mxCell>
+        <mxCell id="anatomy" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#ECFDF5;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="70" y="760" width="430" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="anatomy_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#047857;strokeColor=#047857;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="71" y="761" width="428" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="anatomy_title" parent="1" value="Anatomy and electrode metrics" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="78" y="768" width="414" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="anatomy_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;ROI centroid in subject space&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;CSF and skull distance measurements when labels are available&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Mean, minimum, maximum, and per-electrode distances from electrodes to the ROI&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="71" y="822" width="428" height="196" as="geometry" />
+        </mxCell>
+        <mxCell id="outputs" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="690" y="900" width="910" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="outputs_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#475569;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="691" y="901" width="908" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="outputs_title" parent="1" value="Subject-level written outputs" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="698" y="908" width="894" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="outputs_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;subject_metrics.json is the compatibility record for downstream repeatability&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;region_stats_fastsurfer.csv stores atlas-region exposure summaries&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;ROI masks, TI-in-ROI volumes, top-percentile volumes, overlap CSVs, and overlay PNGs are written per subject&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="691" y="962" width="908" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="e_inputs_overlap" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.28;entryX=0;entryY=0.5;" edge="1" source="inputs" target="overlap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_inputs_intensity" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.5;entryX=0;entryY=0.72;" edge="1" source="inputs" target="intensity">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="560" y="405" />
+              <mxPoint x="1090" y="405" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_inputs_focality" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.72;entryX=0;entryY=0.45;" edge="1" source="inputs" target="focality">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="555" y="520" />
+              <mxPoint x="590" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_intensity_neighbor" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="intensity" target="neighbor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_anatomy_outputs" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.55;entryX=0;entryY=0.5;" edge="1" source="anatomy" target="outputs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="560" y="890" />
+              <mxPoint x="650" y="1015" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_overlap_outputs" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.74;entryX=0.44;entryY=0;" edge="1" source="overlap" target="outputs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1080" y="362" />
+              <mxPoint x="1080" y="860" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_focality_outputs" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.42;entryY=0;" edge="1" source="focality" target="outputs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_neighbor_outputs" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.78;entryY=0;" edge="1" source="neighbor" target="outputs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1370" y="860" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,14 @@
+# Post-processing figure set
+
+Publication-ready Draw.io sources are maintained in [`../../../drawio`](../../../drawio).
+Vector exports in this directory are generated from those sources.
+
+| Figure | Source | Export | Purpose | Placement |
+| --- | --- | --- | --- | --- |
+| Post-processing pipeline summary | [`post_pipeline_metric_flowchart.drawio`](../../../drawio/post_pipeline_metric_flowchart.drawio) | [`post_pipeline_metric_flowchart.svg`](post_pipeline_metric_flowchart.svg) | Overview of subject extraction, cohort selection, within-run summaries, and across-repeat repeatability. | Main text |
+| Inputs and subject-level metrics | [`post_pipeline_metric_flowchart_inputs_subject_level.drawio`](../../../drawio/post_pipeline_metric_flowchart_inputs_subject_level.drawio) | [`post_pipeline_metric_flowchart_inputs_subject_level.svg`](post_pipeline_metric_flowchart_inputs_subject_level.svg) | Input dependencies and grouped per-subject metric families. | Supplement |
+| Cohort definition across repeats | [`post_pipeline_metric_flowchart_cohort_definition_across_repeats.drawio`](../../../drawio/post_pipeline_metric_flowchart_cohort_definition_across_repeats.drawio) | [`post_pipeline_metric_flowchart_cohort_definition_across_repeats.svg`](post_pipeline_metric_flowchart_cohort_definition_across_repeats.svg) | Complete-case inclusion rule, manifest output, and downstream cohort effects. | Supplement |
+| Within-run population metrics | [`post_pipeline_metric_flowchart_within_run_population_metrics.drawio`](../../../drawio/post_pipeline_metric_flowchart_within_run_population_metrics.drawio) | [`post_pipeline_metric_flowchart_within_run_population_metrics.svg`](post_pipeline_metric_flowchart_within_run_population_metrics.svg) | Population, neighbor, correlation, anatomy, and worst-case outputs within one repeat. | Supplement |
+| Across-repeat analysis outputs | [`post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio`](../../../drawio/post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.drawio) | [`post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg`](post_pipeline_metric_flowchart_across_repeat_repeatability_metrics.svg) | Scalar, subject-repeat, image repeatability, figure, report, and optional log-audit outputs. | Supplement |
+| Temporal interference pipeline overview | [`Updated_TI_Pipeline.drawio`](../../../drawio/Updated_TI_Pipeline.drawio) | [`Updated_TI_Pipeline.svg`](Updated_TI_Pipeline.svg) | Context figure linking anatomy, simulation, post-processing, and population/repeatability stages. | Main text or context |
+| Variation study pipeline | [`variation_study_pipeline.drawio`](../../../drawio/variation_study_pipeline.drawio) | [`variation_study_pipeline.svg`](variation_study_pipeline.svg) | Template montage replay across subject-specific anatomy and population robustness interpretation. | Supplement |

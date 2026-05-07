@@ -1,0 +1,116 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" agent="Codex" version="29.3.0" type="device">
+  <diagram id="post_pipeline_metric_flowchart_across_repeat_repeatability_metrics" name="Page-1">
+    <mxGraphModel dx="2200" dy="1160" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1160" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" value="Across-repeat analysis outputs" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=38;fontFamily=Helvetica;fontColor=#0F172A;fontStyle=1;" vertex="1">
+          <mxGeometry x="80" y="28" width="2040" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" value="Repeatability tables, image metrics, figures, reports, and optional log audit after complete-case selection" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=18;fontFamily=Helvetica;fontColor=#334155;" vertex="1">
+          <mxGeometry x="120" y="84" width="1960" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="70" y="190" width="470" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="71" y="191" width="468" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs_title" parent="1" value="Repeatability inputs" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="78" y="198" width="454" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="inputs_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Complete-case subjects retained across every selected repeat&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Per-subject scalar metrics and atlas-region tables for each repeat&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Saved ROI masks, configured top-percentile masks, overlap masks, and ROI field volumes&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Optional log root when failure auditing is requested&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="71" y="252" width="468" height="246" as="geometry" />
+        </mxCell>
+        <mxCell id="scalar" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="650" y="160" width="620" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="scalar_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#C2410C;strokeColor=#C2410C;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="651" y="161" width="618" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="scalar_title" parent="1" value="Scalar repeatability tables" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="658" y="168" width="604" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="scalar_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;repeat_level_population_statistics.csv and complete-subject counterpart&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;experiment_level_population_statistics.csv, variation_analysis_metrics.csv, and pairwise_run_differences.csv&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Per-run n, mean, SD, SEM, 95% CI, median, IQR, min, max, CV, and pairwise differences&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="651" y="222" width="618" height="256" as="geometry" />
+        </mxCell>
+        <mxCell id="subject" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1410" y="160" width="650" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="subject_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1411" y="161" width="648" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="subject_title" parent="1" value="Subject-repeat tables" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1418" y="168" width="634" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="subject_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;subject_metrics_long.csv and run_subject_coverage.csv&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;subject_repeat_metric_means.csv and subject_repeat_metric_sds.csv&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;within_subject_repeatability.csv, subject_level_variation*.csv, and top-variable-subject tables&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1411" y="222" width="648" height="236" as="geometry" />
+        </mxCell>
+        <mxCell id="image" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EEF2FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="650" y="590" width="660" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="image_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#3730A3;strokeColor=#3730A3;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="651" y="591" width="658" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="image_title" parent="1" value="Image repeatability tables" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="658" y="598" width="644" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="image_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Pairwise Dice and Jaccard for ROI masks, configured top-percentile masks, and overlap masks&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Top-percentile mask means the configured percentile threshold; it is top 5% only when percentile is 95&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Within-ROI voxelwise field correlations, voxel SD/CV summaries, ROI mean/P95/peak repeatability, and COM displacement&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="651" y="652" width="658" height="266" as="geometry" />
+        </mxCell>
+        <mxCell id="figures" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F7FEE7;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1430" y="580" width="630" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="figures_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#4D7C0F;strokeColor=#4D7C0F;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="1431" y="581" width="628" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="figures_title" parent="1" value="Figures and narrative reports" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="1438" y="588" width="614" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="figures_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Figures 01-08 summarize scalar repeatability, subject variation, pairwise differences, and image repeatability&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;analysis_summary.md, analysis_methodology.md, results_interpretation.md&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;image_repeatability_methodology.md, image_repeatability_report.md, and subject_level_variation_report.md&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="1431" y="642" width="628" height="266" as="geometry" />
+        </mxCell>
+        <mxCell id="logs" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="120" y="720" width="470" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="logs_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#475569;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry x="121" y="721" width="468" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="logs_title" parent="1" value="Optional log audit reports" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" vertex="1">
+          <mxGeometry x="128" y="728" width="454" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="logs_body" parent="1" value="&lt;div style='font-size:16px;line-height:1.22;color:#0F172A;'&gt;&lt;ul style='margin:4px 0 0 18px;padding-left:18px;'&gt;&lt;li style='margin:0 0 6px 0;'&gt;Runs only when --logs-root is provided&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;failure_report.md and log-audit CSVs summarize failure categories, stages, and evidence&lt;/li&gt;&lt;li style='margin:0 0 6px 0;'&gt;Paired run transition counts and exact McNemar comparison support failure-pattern review&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" vertex="1">
+          <mxGeometry x="121" y="782" width="468" height="216" as="geometry" />
+        </mxCell>
+        <mxCell id="e_inputs_scalar" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.35;entryX=0;entryY=0.5;" edge="1" source="inputs" target="scalar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_inputs_image" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.72;entryX=0;entryY=0.5;" edge="1" source="inputs" target="image">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="580" y="420" />
+              <mxPoint x="620" y="755" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_inputs_logs" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="inputs" target="logs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_scalar_subject" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="scalar" target="subject">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_image_figures" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="image" target="figures">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_subject_figures" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="subject" target="figures">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1735" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

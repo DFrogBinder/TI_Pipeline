@@ -1,74 +1,165 @@
-<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.3.0 Chrome/140.0.7339.249 Electron/38.7.2 Safari/537.36" version="29.3.0">
-  <diagram id="ti-pipeline" name="Page-1">
-    <mxGraphModel dx="1426" dy="914" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">
+<mxfile host="Electron" agent="Codex">
+  <diagram id="ti_pipeline" name="Page-1">
+    <mxGraphModel dx="1664" dy="1035" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1780" pageHeight="1040" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="input_camcan" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=16" value="CamCan T1/T2 + Manual Corrections" vertex="1">
-          <mxGeometry height="80" width="260" x="60" y="120" as="geometry" />
+        <mxCell id="title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=38;fontFamily=Helvetica;fontColor=#0F172A;fontStyle=1;" value="Temporal interference pipeline overview" vertex="1">
+          <mxGeometry height="52" width="1620" x="80" y="28" as="geometry" />
         </mxCell>
-        <mxCell id="input_mni" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16" value="MNI152 Template TI Montage Optimization" vertex="1">
-          <mxGeometry height="80" width="300" x="880" y="230" as="geometry" />
+        <mxCell id="subtitle" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=center;verticalAlign=middle;fontSize=18;fontFamily=Helvetica;fontColor=#334155;" value="Context diagram from anatomical inputs and MNI montage selection through simulation, post-processing, and population outputs" vertex="1">
+          <mxGeometry height="36" width="1540" x="120" y="84" as="geometry" />
         </mxCell>
-        <mxCell id="atlas" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=16" value="FastSurfer + FreeSurfer Atlases (make_atlas.sh / run_atlasMaker.py)" vertex="1">
-          <mxGeometry height="80" width="380" x="400" y="120" as="geometry" />
+        <mxCell id="camcan" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="190" width="360" x="70" y="170" as="geometry" />
         </mxCell>
-        <mxCell id="mesh" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=16" value="Charm Mesh + Manual Seg Merge (TI_runner_* meshing stage)" vertex="1">
-          <mxGeometry height="80" width="380" x="400" y="230" as="geometry" />
+        <mxCell id="camcan_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#334155;strokeColor=#334155;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="358" x="71" y="171" as="geometry" />
         </mxCell>
-        <mxCell id="sim" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#82b366;fontSize=16" value="SimNIBS TI Simulations (TDCS pairs, TImax)" vertex="1">
-          <mxGeometry height="80" width="380" x="400" y="340" as="geometry" />
+        <mxCell id="camcan_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="CamCan anatomical inputs" vertex="1">
+          <mxGeometry height="42" width="344" x="78" y="178" as="geometry" />
         </mxCell>
-        <mxCell id="volumes" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16" value="TI Volumes + Labels (msh2nii)&#xa;ti_brain_only.nii.gz" vertex="1">
-          <mxGeometry height="80" width="380" x="400" y="450" as="geometry" />
+        <mxCell id="camcan_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;T1/T2 images with manual segmentation corrections&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Subject subset prepared for subject-specific simulation and atlas generation&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="126" width="358" x="71" y="232" as="geometry" />
         </mxCell>
-        <mxCell id="subject_post" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16" value="Subject Post-Processing (post_process.py)&#xa;ROI masks/CSVs/overlays, region_stats_fastsurfer.csv, subject_metrics.json" vertex="1">
-          <mxGeometry height="100" width="420" x="380" y="560" as="geometry" />
+        <mxCell id="atlas" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#ECFDF5;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="190" width="390" x="540" y="150" as="geometry" />
         </mxCell>
-        <mxCell id="population" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#6c8ebf;fontSize=16" value="Population Aggregation (post_population.py)&#xa;Hotspot &amp; robustness tables (IQR, CV, peak&gt;thr, worst cases)" vertex="1">
-          <mxGeometry height="100" width="420" x="380" y="700" as="geometry" />
+        <mxCell id="atlas_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#047857;strokeColor=#047857;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="388" x="541" y="151" as="geometry" />
         </mxCell>
-        <mxCell id="mesh_export" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16" value="Optional VTK/PLY/STL Exports (create3dmesh.py)" vertex="1">
-          <mxGeometry height="60" width="300" x="880" y="460" as="geometry" />
+        <mxCell id="atlas_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="Subject atlases" vertex="1">
+          <mxGeometry height="42" width="374" x="548" y="158" as="geometry" />
         </mxCell>
-        <mxCell id="S1VWLs27cwICe-bZ4_i--1" edge="1" parent="1" source="note_post" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="subject_post">
+        <mxCell id="atlas_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;FastSurfer and FreeSurfer atlas generation&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Atlas labels are consumed by post-processing and population hotspot analysis&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="126" width="388" x="541" y="212" as="geometry" />
+        </mxCell>
+        <mxCell id="mesh" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FEFCE8;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="190" width="390" x="540" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="mesh_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#A16207;strokeColor=#A16207;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="388" x="541" y="421" as="geometry" />
+        </mxCell>
+        <mxCell id="mesh_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="Subject mesh construction" vertex="1">
+          <mxGeometry height="42" width="374" x="548" y="428" as="geometry" />
+        </mxCell>
+        <mxCell id="mesh_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;CHARM mesh creation and manual segmentation merge&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Subject-specific FEM model is prepared for SimNIBS TI runs&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="126" width="388" x="541" y="482" as="geometry" />
+        </mxCell>
+        <mxCell id="mni" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="210" width="430" x="1060" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="mni_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="428" x="1061" y="271" as="geometry" />
+        </mxCell>
+        <mxCell id="mni_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="MNI152 montage context" vertex="1">
+          <mxGeometry height="42" width="414" x="1068" y="278" as="geometry" />
+        </mxCell>
+        <mxCell id="mni_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Template simulation supports montage selection and baseline comparison&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Template outputs can be used by subject-level and focality comparisons&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="146" width="428" x="1061" y="332" as="geometry" />
+        </mxCell>
+        <mxCell id="sim" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#FFF7ED;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="205" width="390" x="540" y="690" as="geometry" />
+        </mxCell>
+        <mxCell id="sim_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#C2410C;strokeColor=#C2410C;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="388" x="541" y="691" as="geometry" />
+        </mxCell>
+        <mxCell id="sim_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="SimNIBS TI simulations" vertex="1">
+          <mxGeometry height="42" width="374" x="548" y="698" as="geometry" />
+        </mxCell>
+        <mxCell id="sim_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;TDCS electrode pairs are simulated per subject or on the MNI152 template&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;TImax is computed and exported to subject-space volumes&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="141" width="388" x="541" y="752" as="geometry" />
+        </mxCell>
+        <mxCell id="post" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="230" width="490" x="1050" y="565" as="geometry" />
+        </mxCell>
+        <mxCell id="post_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#2563EB;strokeColor=#2563EB;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="488" x="1051" y="566" as="geometry" />
+        </mxCell>
+        <mxCell id="post_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="Subject post-processing" vertex="1">
+          <mxGeometry height="42" width="474" x="1058" y="573" as="geometry" />
+        </mxCell>
+        <mxCell id="post_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;ROI masks, CSVs, overlays, region_stats_fastsurfer.csv, and subject_metrics.json&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Grouped metrics feed population and repeatability analysis&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="166" width="488" x="1051" y="627" as="geometry" />
+        </mxCell>
+        <mxCell id="population" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F7FEE7;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="135" width="560" x="1015" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="population_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#4D7C0F;strokeColor=#4D7C0F;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="558" x="1016" y="841" as="geometry" />
+        </mxCell>
+        <mxCell id="population_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=20;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="Population and repeatability analysis" vertex="1">
+          <mxGeometry height="42" width="544" x="1015" y="847" as="geometry" />
+        </mxCell>
+        <mxCell id="population_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Within-run population summaries, complete-case cohort manifests, and robustness tables&lt;/li&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;Across-repeat scalar, image, report, and optional log-audit outputs&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="71" width="558" x="1016" y="902" as="geometry" />
+        </mxCell>
+        <mxCell id="export" parent="1" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#1E293B;strokeWidth=2;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="150" width="350" x="80" y="745" as="geometry" />
+        </mxCell>
+        <mxCell id="export_header" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#475569;strokeColor=#475569;fontFamily=Helvetica;" vertex="1">
+          <mxGeometry height="54" width="348" x="81" y="746" as="geometry" />
+        </mxCell>
+        <mxCell id="export_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;whiteSpace=wrap;align=left;verticalAlign=middle;spacingLeft=18;fontSize=22;fontStyle=1;fontFamily=Helvetica;fontColor=#FFFFFF;" value="Optional geometry exports" vertex="1">
+          <mxGeometry height="42" width="334" x="88" y="753" as="geometry" />
+        </mxCell>
+        <mxCell id="export_body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=14;spacingRight=14;spacingTop=10;strokeColor=none;fillColor=none;fontSize=16;fontFamily=Helvetica;fontColor=#0F172A;overflow=fill;" value="&lt;div style=&#39;font-size:16px;line-height:1.22;color:#0F172A;&#39;&gt;&lt;ul style=&#39;margin:4px 0 0 18px;padding-left:18px;&#39;&gt;&lt;li style=&#39;margin:0 0 6px 0;&#39;&gt;VTK, PLY, and STL outputs for external visualization workflows&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="86" width="348" x="81" y="807" as="geometry" />
+        </mxCell>
+        <mxCell id="e_camcan_atlas" edge="1" parent="1" source="camcan" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.42;entryX=0;entryY=0.5;" target="atlas">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="note_post" parent="1" style="text;html=1;strokeColor=none;fillColor=none;fontSize=12;fontColor=#0A1F33" value="Added: ROI overlays, region stats, subject metrics" vertex="1">
-          <mxGeometry height="30" width="320" x="920" y="595" as="geometry" />
+        <mxCell id="e_camcan_mesh" edge="1" parent="1" source="camcan" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=1;exitY=0.72;entryX=0;entryY=0.5;" target="mesh">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="470" y="275" />
+              <mxPoint x="500" y="515" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="S1VWLs27cwICe-bZ4_i--2" edge="1" parent="1" source="note_pop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="population">
+        <mxCell id="e_atlas_mesh" edge="1" parent="1" source="atlas" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="mesh">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="note_pop" parent="1" style="text;html=1;strokeColor=none;fillColor=none;fontSize=12;fontColor=#0A1F33" value="Added: Cohort aggregation &amp; robustness tables" vertex="1">
-          <mxGeometry height="30" width="300" x="920" y="735" as="geometry" />
+        <mxCell id="e_mni_mesh" edge="1" parent="1" source="mni" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0;exitY=0.5;entryX=1;entryY=0.3;" target="mesh">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1010" y="375" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="edge_mni_mesh" edge="1" parent="1" source="input_mni" style="endArrow=block;strokeColor=#6c8ebf" target="mesh">
+        <mxCell id="e_mesh_sim" edge="1" parent="1" source="mesh" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="sim">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="edge_camcan_atlas" edge="1" parent="1" source="input_camcan" style="endArrow=block;strokeColor=#b85450" target="atlas">
+        <mxCell id="e_sim_post" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;entryX=0;entryY=0.45;" target="post">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="985" y="770" />
+              <mxPoint x="985" y="669" />
+            </Array>
+            <mxPoint x="930" y="770" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_mni_post" edge="1" parent="1" source="mni" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="post">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1290" y="480" />
+              <mxPoint x="1290" y="565" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_post_population" edge="1" parent="1" source="post" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="population">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="edge_atlas_mesh" edge="1" parent="1" source="atlas" style="endArrow=block;strokeColor=#9673a6" target="mesh">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge_mesh_sim" edge="1" parent="1" source="mesh" style="endArrow=block;strokeColor=#d6b656" target="sim">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge_sim_vol" edge="1" parent="1" source="sim" style="endArrow=block;strokeColor=#82b366" target="volumes">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge_vol_post" edge="1" parent="1" source="volumes" style="endArrow=block;strokeColor=#6c8ebf" target="subject_post">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge_post_pop" edge="1" parent="1" source="subject_post" style="endArrow=block;strokeColor=#6c8ebf" target="population">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge_post_export" edge="1" parent="1" source="subject_post" style="endArrow=block;strokeColor=#82b366;edgeStyle=entityRelationEdgeStyle;" target="mesh_export">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="S1VWLs27cwICe-bZ4_i--5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;dashed=1;dashPattern=8 8;strokeWidth=2;" value="" vertex="1">
-          <mxGeometry height="225" width="320" x="900" y="560" as="geometry" />
+        <mxCell id="e_post_export" edge="1" parent="1" source="post" style="edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;rounded=0;jettySize=auto;html=1;strokeColor=#334155;strokeWidth=2.5;endArrow=block;endFill=1;fontFamily=Helvetica;exitX=0;exitY=0.65;entryX=1;entryY=0.5;" target="export">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1040" y="790" />
+              <mxPoint x="980" y="790" />
+              <mxPoint x="980" y="950" />
+              <mxPoint x="480" y="950" />
+              <mxPoint x="480" y="820" />
+            </Array>
+          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>

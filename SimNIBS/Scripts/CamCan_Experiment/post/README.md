@@ -827,6 +827,8 @@ If `mni_fixed_atlas_path` is configured but the file does not exist, the batch n
 ### Electrode distance CSV format
 
 Electrode distance metrics require either `electrode_csv` or `electrode_names`.
+Worked examples for both modes live in
+[`configs/electrode_examples/`](configs/electrode_examples/).
 
 When using `electrode_csv`, the required columns are:
 

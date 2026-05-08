@@ -359,8 +359,8 @@ def process_subject(subject_entry):
     electrode_conductivity = 1.4
 
     # Left_Pallidum
-    montage_right = ('Fpz', 2e-3, 'AF8', -2e-3) 
-    montage_left  = ('TP7', 1.261915e-3, 'PO9', -1.261915e-3)
+    # montage_right = ('Fpz', 2e-3, 'AF8', -2e-3) 
+    # montage_left  = ('TP7', 1.261915e-3, 'PO9', -1.261915e-3)
     
     # Right_Pallidum
     # montage_right = ('F8', 2e-3, 'F10', -2e-3) 
@@ -379,13 +379,17 @@ def process_subject(subject_entry):
     # montage_right = ('F10', 2e-3, 'P8', -2e-3)
     # montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
     
+    # Right M1 montage
+    montage_right = ('FC6', 2e-3, 'FT8', -2e3)
+    montage_left  = ('C2', 0.796214e-3, 'C4', -0.796214e-3)
+    
     # Left M1 montage
     # montage_right = ('FC1', 2e-3, 'FCz', -2e-3)
     # montage_left  = ('C3', 0.632456e-3, 'P5',  -0.632456e-3)
     
     # Right DLPFC montage
-    montage_right = ('AF4', 0.796214e-3, 'F4', -0.796214e-3)
-    montage_left  = ('C2', 2e-3, 'CP1', -2e-3)
+    # montage_right = ('AF4', 0.796214e-3, 'F4', -0.796214e-3)
+    # montage_left  = ('C2', 2e-3, 'CP1', -2e-3)
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))

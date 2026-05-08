@@ -24,7 +24,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Repository / environment
-REPO_DIR="/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"
+REPO_DIR="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"
 POST_REQUIREMENTS_FILE=""  # blank -> use <REPO_DIR>/requirements-post.txt
 POST_CONDA_ENV="ti-post"
 POST_CONDA_SH=""  # set when using a personal conda install
@@ -33,8 +33,7 @@ PYTHON=""  # set to an explicit interpreter to skip activation logic
 POST_ANACONDA_MODULE="Anaconda3/2022.05"
 
 # Batch discovery
-# Example below is configured for the local left-hippocampus repeatability dataset.
-BATCH_ROOT="/home/boyan/sandbox/Jake_Data/Simulation-Target-Data/Left-Hoppocampus-Post-Data"
+BATCH_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs"
 BATCH_DATASET_GLOB="*_Data_*"
 BATCH_REPEATS="01 02 03 04 05 06 07 08 09 10"
 BATCH_SUMMARY_FILENAME="post_processing_batch_summary.json"  # blank -> disable summary
@@ -42,7 +41,7 @@ BATCH_STOP_ON_ERROR="0"
 
 # Subject-level pipeline template
 PIPELINE_ATLAS_MODE="fastsurfer"
-PIPELINE_FASTSURFER_ROOT="/home/boyan/sandbox/Jake_Data/atlases"
+PIPELINE_FASTSURFER_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/atlases"
 PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # blank -> flat <FASTSURFER_ROOT>/<subject>.nii(.gz); set a relative path like mri/aparc.DKTatlas+aseg.deep.nii.gz for nested per-subject layouts
 PIPELINE_FS_MRI_PATH=""  # shared atlas path reused for every subject
 PIPELINE_T1_PATH=""  # blank -> infer T1 per subject
@@ -56,8 +55,8 @@ PIPELINE_OVERLAY_FULL_FIELD="1"
 PIPELINE_WRITE_REGION_TABLE="1"
 PIPELINE_REGION_PERCENTILE="95.0"
 PIPELINE_OFFTARGET_THRESHOLD="0.2"
-PIPELINE_MNI_BASELINE_ROOT="/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152_Hippocampus"
-PIPELINE_MNI_FIXED_ATLAS_PATH="/home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz"
+PIPELINE_MNI_BASELINE_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data/MNI152-left-hippocampus"
+PIPELINE_MNI_FIXED_ATLAS_PATH="/mnt/parscratch/users/cop23bi/ZIPs/atlases/sub-mni152.nii.gz"
 PIPELINE_NEIGHBOR_DILATION_ITER="1"
 PIPELINE_CSF_LABELS="24"  # space-separated label ids
 PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric

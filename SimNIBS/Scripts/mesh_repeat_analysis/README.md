@@ -157,6 +157,10 @@ The optional `analysis` section lets the simulation config also drive the report
 - `cohort_region_label`
 - `compare_metric`
 
+`atlas_dir` should point to the directory containing the subject atlases. The
+resolver accepts direct files such as `<subject>.nii.gz`, subject subdirectories,
+and common FreeSurfer layouts such as `<subject>/mri/aparc+aseg.mgz`.
+
 For your hippocampus study, the most natural defaults are:
 
 ```json

@@ -592,6 +592,63 @@ def _candidate_atlas_dirs(rootdir: Path | None) -> list[Path]:
     return unique_candidates
 
 
+def _subject_aliases(subject: str) -> list[str]:
+    aliases = [subject]
+    if subject.startswith("sub-"):
+        aliases.append(subject.removeprefix("sub-"))
+    if subject.startswith("sub-CC"):
+        aliases.append(subject.removeprefix("sub-CC"))
+
+    unique_aliases: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if alias and alias not in seen:
+            seen.add(alias)
+            unique_aliases.append(alias)
+    return unique_aliases
+
+
+def _atlas_candidates_for_dir(subject: str, directory: Path) -> list[Path]:
+    aliases = _subject_aliases(subject)
+    atlas_basenames = [
+        "aparc+aseg",
+        "aparc.DKTatlas+aseg",
+        "aseg",
+    ]
+    extensions = [".nii.gz", ".nii", ".mgz"]
+
+    candidates: list[Path] = []
+    for alias in aliases:
+        for extension in extensions:
+            candidates.append(directory / f"{alias}{extension}")
+            candidates.append(directory / f"{alias}_atlas{extension}")
+            for basename in atlas_basenames:
+                candidates.append(directory / f"{alias}_{basename}{extension}")
+
+        subject_dirs = [
+            directory / alias,
+            directory / f"{alias}_atlas",
+            directory / f"{alias}_freesurfer",
+        ]
+        for subject_dir in subject_dirs:
+            for extension in extensions:
+                candidates.append(subject_dir / f"{alias}{extension}")
+                candidates.append(subject_dir / f"{alias}_atlas{extension}")
+            for basename in atlas_basenames:
+                for extension in extensions:
+                    candidates.append(subject_dir / f"{basename}{extension}")
+                    candidates.append(subject_dir / "mri" / f"{basename}{extension}")
+
+    seen: set[Path] = set()
+    unique_candidates: list[Path] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique_candidates.append(candidate)
+    return unique_candidates
+
+
 def _resolve_atlas_path(subject: str, atlas: str | None, atlas_dir: str | None, rootdir: Path | None) -> Path:
     if atlas:
         atlas_path = Path(atlas).expanduser()
@@ -602,10 +659,10 @@ def _resolve_atlas_path(subject: str, atlas: str | None, atlas_dir: str | None, 
 
     candidates: list[Path] = []
     if atlas_dir:
-        candidates.append(Path(atlas_dir).expanduser() / f"{subject}.nii.gz")
+        candidates.extend(_atlas_candidates_for_dir(subject, Path(atlas_dir).expanduser()))
     else:
         for directory in _candidate_atlas_dirs(rootdir):
-            candidates.append(directory / f"{subject}.nii.gz")
+            candidates.extend(_atlas_candidates_for_dir(subject, directory))
 
     for candidate in candidates:
         if candidate.exists():
@@ -614,8 +671,8 @@ def _resolve_atlas_path(subject: str, atlas: str | None, atlas_dir: str | None, 
 
     attempted = ", ".join(str(path) for path in candidates[:6])
     raise SystemExit(
-        "Atlas not found. Provide --atlas or place the subject atlas at one of the "
-        f"expected locations (first candidates: {attempted})."
+        "Atlas not found. Provide --atlas or place the subject atlas in --atlas-dir "
+        f"using a subject-specific filename or FreeSurfer layout (first candidates: {attempted})."
     )
 
 
@@ -1729,7 +1786,10 @@ def main() -> None:
     parser.add_argument(
         "--atlas-dir",
         default=None,
-        help="Directory containing <subject>.nii.gz atlases. Used when --atlas is omitted.",
+        help=(
+            "Directory containing subject atlases. Supports <subject>.nii.gz, "
+            "subject subdirectories, and common FreeSurfer mri/aparc+aseg or aseg files."
+        ),
     )
     parser.add_argument(
         "--roi-preset",

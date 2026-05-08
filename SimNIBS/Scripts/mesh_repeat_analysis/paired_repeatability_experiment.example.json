@@ -26,5 +26,10 @@
       "repeat_count": 40,
       "description": "Generate one mesh once per subject, then reuse it across repeats to isolate FEM variation."
     }
-  ]
+  ],
+  "analysis": {
+    "roi_preset": "left-hippocampus",
+    "atlas_dir": "/mnt/parscratch/cop23bi/ZIPs/atlases",
+    "compare_metric": "median_roi"
+  }
 }

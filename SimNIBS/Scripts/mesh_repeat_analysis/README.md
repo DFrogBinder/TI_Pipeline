@@ -398,7 +398,20 @@ A dedicated wrapper is available:
 
 - `hpc_scripts/repeatability_experiment_report.slurm`
 
-Submit all subjects with ROI settings taken from the config:
+The wrapper has an editable settings block near the top. Set
+`EXPERIMENT_CONFIG_CONFIG`, ROI settings, optional subject limits, and optional
+cohort settings there once, then submit the post-processing job without command
+line exports:
+
+```bash
+sbatch hpc_scripts/repeatability_experiment_report.slurm
+```
+
+For a quick smoke test, set `SUBJECT_ID_CONFIG` or `MAX_SUBJECTS_CONFIG` in the
+script before submitting. Leave `SUBJECT_ID_CONFIG` blank to process every
+subject in the JSON config.
+
+One-off environment overrides are still supported when needed:
 
 ```bash
 sbatch \
@@ -406,7 +419,7 @@ sbatch \
   hpc_scripts/repeatability_experiment_report.slurm
 ```
 
-Submit all subjects while setting the ROI explicitly:
+For example, to override the ROI explicitly for one submission:
 
 ```bash
 sbatch \

@@ -30,7 +30,12 @@ from utils.ti_utils import (
     extract_table,
 )
 from utils.paths import fastsurfer_atlas_path
-from utils.roi_registry import FASTSURFER_DKT_LABELS, resolve_fastsurfer_roi_name
+from utils.roi_registry import (
+    FASTSURFER_DKT_LABELS,
+    fastsurfer_roi_component_names,
+    resolve_fastsurfer_roi_label_ids,
+    resolve_fastsurfer_roi_name,
+)
 
 
 
@@ -206,7 +211,7 @@ def _overlay_ti_thresholds_on_t1_with_roi(
     contour_linewidth: float = 0.5,
     cmap: str = "viridis",
     dpi: int = 150,
-) -> tuple[str, str, Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     ti_arr = load_ti_as_scalar(ti_img)
     ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
 
@@ -254,42 +259,52 @@ def _overlay_ti_thresholds_on_t1_with_roi(
         scale_values = arr[finite_pos]
     vmax = _robust_vmax(scale_values, scale_upper_percentile)
 
-    def _plot_overlay(thr_value: Optional[float], label: str):
+    def _plot_overlay(thr_value: Optional[float], label: str) -> Optional[str]:
         overlay_data, subset = _prepare_overlay_data(arr, thr_value)
         vmin = float(np.nanmin(subset)) if subset.size else 0.0
         local_vmax = max(vmax, float(np.nanmax(subset))) if subset.size else vmax
         vmin, local_vmax = _coerce_display_bounds(vmin, local_vmax)
         overlay_img = nib.Nifti1Image(overlay_data, ti_img.affine, ti_img.header)
 
-        display = plot_anat(
-            t1_on_ti,
-            display_mode="ortho",
-            dim=0,
-            annotate=True,
-            draw_cross=True,
-            colorbar=False,
-            black_bg=True,
-            cut_coords=cut_coords,
-            title=(
-                f"TI ≥ {thr_value:.3f} ({label}, {scale_title} scale)"
-                if thr_value is not None
-                else f"TI (full field, {scale_title} scale)"
-            ),
-        )
-        display.add_overlay(
-            overlay_img, colorbar=True, vmin=vmin, vmax=local_vmax, cmap=cmap
-        )
-        display.add_contours(
-            roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
-        )
-
         if subject:
             out_path = f"{out_prefix}_{subject}_{label}.png"
         else:
             out_path = f"{out_prefix}_{label}.png"
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-        display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
-        display.close()
+
+        display = None
+        try:
+            display = plot_anat(
+                t1_on_ti,
+                display_mode="ortho",
+                dim=0,
+                annotate=True,
+                draw_cross=True,
+                colorbar=False,
+                black_bg=True,
+                cut_coords=cut_coords,
+                title=(
+                    f"TI ≥ {thr_value:.3f} ({label}, {scale_title} scale)"
+                    if thr_value is not None
+                    else f"TI (full field, {scale_title} scale)"
+                ),
+            )
+            display.add_overlay(
+                overlay_img, colorbar=True, vmin=vmin, vmax=local_vmax, cmap=cmap
+            )
+            display.add_contours(
+                roi_on_ti, levels=[0.5], colors=[contour_color], linewidths=contour_linewidth
+            )
+            os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+            display.savefig(out_path, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+        except Exception as exc:
+            print(
+                f"[WARN] Skipped overlay '{label}' for prefix '{out_prefix}': "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
+        finally:
+            if display is not None:
+                display.close()
         return out_path
 
     png_full = _plot_overlay(None, "full") if include_full_field else None
@@ -371,7 +386,7 @@ def overlay_ti_thresholds_on_t1_with_roi(
     alpha: float = 0.85,
     scale_mask_img: Optional[nib.Nifti1Image] = None,
     scale_upper_percentile: float = 99.5,
-) -> tuple[str, str, Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     return _overlay_ti_thresholds_on_t1_with_roi(
         ti_img=ti_img,
         t1_img=t1_img,
@@ -408,7 +423,7 @@ def overlay_ti_thresholds_on_t1_with_roi_individual_scale(
     cmap: str = "viridis",
     dpi: int = 150,
     scale_upper_percentile: float = 99.0,
-) -> tuple[str, str, Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Overlay TI on T1 with ROI contour using a robust ROI-focused display scale.
     """
@@ -447,7 +462,7 @@ def overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
     cmap: str = "viridis",
     dpi: int = 150,
     scale_upper_percentile: float = 99.5,
-) -> tuple[str, str, Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Overlay TI on T1 with ROI contour using a robust whole-brain display scale.
     """
@@ -642,21 +657,48 @@ def roi_masks_on_ti_grid(
     atlas_img = load_custom_atlas(fs_atlas)
     atlas_data = np.asarray(atlas_img.dataobj).astype(int)
 
-    # Build reverse map name->id (case-insensitive)
-    id_to_name = fastsurfer_dkt_labels
-    name_to_id = {v.lower(): k for k, v in id_to_name.items()}
-
     requested_rois = roi_names or list(DEFAULT_FASTSURFER_ROI_NAMES)
     for requested_roi in requested_rois:
         resolved_roi = resolve_fastsurfer_roi_name(requested_roi)
         roi_name = resolved_roi.canonical_name
         roi_key = roi_name.lower()
 
-        if roi_key not in name_to_id:
+        ids = list(resolve_fastsurfer_roi_label_ids(roi_name))
+        if not ids:
             raise ValueError(f"No FastSurfer label matches '{roi_name}'.")
-        ids = [name_to_id[roi_key]]
+        component_names = fastsurfer_roi_component_names(roi_name)
+        present_label_ids = {
+            int(label_id)
+            for label_id in np.unique(atlas_data[np.isin(atlas_data, ids)])
+        }
+        missing_label_ids = sorted(set(ids) - present_label_ids)
+        if missing_label_ids:
+            message = (
+                f"FastSurfer ROI '{roi_name}' resolved from alias '{resolved_roi.matched_alias}' "
+                f"to label id(s) {ids} ({', '.join(component_names)}), but label id(s) "
+                f"{missing_label_ids} are absent from atlas '{fs_atlas}'."
+            )
+            if roi_name in {"ctx_lh_G_front_middle", "ctx_rh_G_front_middle"}:
+                message += (
+                    " This is a Destrieux/a2009s-style label; the DKT-compatible DLPC "
+                    "aliases now resolve to ctx-lh-dlpfc-dkt or ctx-rh-dlpfc-dkt."
+                )
+            raise ValueError(message)
 
         combined_mask = np.isin(atlas_data, ids).astype(np.uint8)
+        source_voxels = int(np.count_nonzero(combined_mask))
+        if source_voxels == 0:
+            message = (
+                f"FastSurfer ROI '{roi_name}' resolved from alias '{resolved_roi.matched_alias}' "
+                f"to label id(s) {ids} ({', '.join(component_names)}), but those label id(s) "
+                f"are absent from atlas '{fs_atlas}'."
+            )
+            if roi_name in {"ctx_lh_G_front_middle", "ctx_rh_G_front_middle"}:
+                message += (
+                    " This is a Destrieux/a2009s-style label; the DKT-compatible DLPC "
+                    "aliases now resolve to ctx-lh-dlpfc-dkt or ctx-rh-dlpfc-dkt."
+                )
+            raise ValueError(message)
 
         # resample to TI grid if needed
         cropped = try_fast_crop_to_target(atlas_img, ti_img, combined_mask.astype(bool))
@@ -668,6 +710,14 @@ def roi_masks_on_ti_grid(
             resampled = resample_from_to(nib.Nifti1Image(combined_mask, atlas_img.affine), ti_img, order=0)
             combined_mask = np.asarray(resampled.dataobj).astype(bool)
             resampled_img = resampled
+
+        resampled_voxels = int(np.count_nonzero(combined_mask))
+        if resampled_voxels == 0:
+            raise ValueError(
+                f"FastSurfer ROI '{roi_name}' has {source_voxels} voxel(s) in atlas '{fs_atlas}' "
+                "but 0 voxel(s) after mapping to the TI grid. Check that the subject atlas, "
+                "TI image, and affine/header belong to the same subject and coordinate space."
+            )
 
         roi_masks[roi_name] = combined_mask
         atlas_imgs[roi_name] = resampled_img

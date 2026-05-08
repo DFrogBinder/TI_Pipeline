@@ -7,7 +7,7 @@ import re
 from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Sequence, Set
+from typing import Dict, Iterable, Sequence, Set, Tuple
 
 
 FASTSURFER_DKT_LABELS: Dict[int, str] = {
@@ -124,6 +124,14 @@ FASTSURFER_DKT_LABELS: Dict[int, str] = {
     12115: "ctx_rh_G_front_middle",
 }
 
+FASTSURFER_COMPOSITE_ROIS: Dict[str, Tuple[int, ...]] = {
+    # DKT-compatible DLPFC/DLPC target. This intentionally replaces the old
+    # right_dlpc alias that pointed at the Destrieux/a2009s-only
+    # ctx_rh_G_front_middle label.
+    "ctx-lh-dlpfc-dkt": (1002, 1025),
+    "ctx-rh-dlpfc-dkt": (2002, 2025),
+}
+
 _HEMISPHERE_ALIASES = {
     "left": ("left", "lh", "l"),
     "right": ("right", "rigth", "rh", "r"),
@@ -139,23 +147,30 @@ _SPECIAL_REGION_ALIASES = {
 }
 
 _EXPLICIT_CANONICAL_ALIASES: Dict[str, Set[str]] = {
-    # Destrieux middle-frontal gyrus target used by the DLPFC/DLPC montage.
-    "ctx_lh_G_front_middle": {
+    # DKT composite middle-frontal target used by the DLPFC/DLPC montage.
+    "ctx-lh-dlpfc-dkt": {
         "left_dlpc",
         "left_dlpfc",
+        "left_dlpfc_dkt",
         "lh_dlpc",
         "lh_dlpfc",
         "l_dlpc",
         "l_dlpfc",
         "dlpc_left",
         "dlpfc_left",
+        "left_mfg",
+        "lh_mfg",
+        "left_middle_frontal",
+        "left_middle_frontal_gyrus",
+        "left_rostral_caudal_middle_frontal",
         "dorsolateral_prefrontal_left",
         "left_dorsolateral_prefrontal",
         "left_dorsolateral_prefrontal_cortex",
     },
-    "ctx_rh_G_front_middle": {
+    "ctx-rh-dlpfc-dkt": {
         "right_dlpc",
         "right_dlpfc",
+        "right_dlpfc_dkt",
         "rigth_dlpc",
         "rigth_dlpfc",
         "rh_dlpc",
@@ -164,6 +179,11 @@ _EXPLICIT_CANONICAL_ALIASES: Dict[str, Set[str]] = {
         "r_dlpfc",
         "dlpc_right",
         "dlpfc_right",
+        "right_mfg",
+        "rh_mfg",
+        "right_middle_frontal",
+        "right_middle_frontal_gyrus",
+        "right_rostral_caudal_middle_frontal",
         "dorsolateral_prefrontal_right",
         "right_dorsolateral_prefrontal",
         "right_dorsolateral_prefrontal_cortex",
@@ -247,7 +267,10 @@ def _generate_aliases(canonical_name: str) -> Set[str]:
 
 FASTSURFER_ROI_ALIASES: Dict[str, tuple[str, ...]] = {
     canonical_name: tuple(sorted(_generate_aliases(canonical_name)))
-    for canonical_name in sorted(set(FASTSURFER_DKT_LABELS.values()), key=str.lower)
+    for canonical_name in sorted(
+        set(FASTSURFER_DKT_LABELS.values()) | set(FASTSURFER_COMPOSITE_ROIS),
+        key=str.lower,
+    )
 }
 
 _fastsurfer_alias_index: Dict[str, Set[str]] = {}
@@ -294,6 +317,26 @@ def resolve_fastsurfer_roi_name(name: str) -> FastsurferRoiMatch:
     if len(canonical_names) != 1:
         raise ValueError(_format_ambiguity(alias, canonical_names))
     return FastsurferRoiMatch(canonical_name=canonical_names[0], matched_alias=alias)
+
+
+def resolve_fastsurfer_roi_label_ids(name: str) -> Tuple[int, ...]:
+    canonical_name = resolve_fastsurfer_roi_name(name).canonical_name
+    if canonical_name in FASTSURFER_COMPOSITE_ROIS:
+        return FASTSURFER_COMPOSITE_ROIS[canonical_name]
+    return tuple(
+        sorted(
+            label_id
+            for label_id, label_name in FASTSURFER_DKT_LABELS.items()
+            if label_name == canonical_name
+        )
+    )
+
+
+def fastsurfer_roi_component_names(name: str) -> Tuple[str, ...]:
+    return tuple(
+        FASTSURFER_DKT_LABELS.get(label_id, f"Label-{label_id}")
+        for label_id in resolve_fastsurfer_roi_label_ids(name)
+    )
 
 
 def match_fastsurfer_roi_from_directory(directory_name: str | Path) -> FastsurferRoiMatch:

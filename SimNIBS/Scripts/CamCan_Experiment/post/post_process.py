@@ -50,6 +50,7 @@ from post.metric_extensions import (
     json_ready_metric_value,
     load_subject_fastsurfer_atlas_data,
 )
+from utils.roi_registry import resolve_fastsurfer_roi_label_ids
 from utils.paths import post_root, ti_brain_path, t1_path
 from utils.ti_utils import (
     ensure_dir,
@@ -98,6 +99,146 @@ class PostProcessConfig:
 
     # Debug/logging
     verbose: bool = True
+
+
+BASE_EXPECTED_OVERLAY_TYPES = (
+    "context_top95",
+    "context_threshold",
+    "roi_focus_top95",
+    "roi_focus_threshold",
+    "whole_brain_reference_full",
+)
+FULL_FIELD_EXPECTED_OVERLAY_TYPES = (
+    "context_full",
+    "roi_focus_full",
+)
+
+
+def _expected_overlay_types(cfg: PostProcessConfig) -> Tuple[str, ...]:
+    expected = list(BASE_EXPECTED_OVERLAY_TYPES)
+    if cfg.overlay_full_field:
+        expected.extend(FULL_FIELD_EXPECTED_OVERLAY_TYPES)
+    return tuple(expected)
+
+
+def _overlay_type_from_path(path: str) -> Optional[str]:
+    name = Path(path).name
+    if "_TI_overlay_context_" in name and name.endswith("_full.png"):
+        return "context_full"
+    if "_TI_overlay_context_" in name and "_top" in name:
+        return "context_top95"
+    if "_TI_overlay_context_" in name and "_above" in name:
+        return "context_threshold"
+    if "_TI_overlay_roi_focus_" in name and name.endswith("_full.png"):
+        return "roi_focus_full"
+    if "_TI_overlay_roi_focus_" in name and "_top" in name:
+        return "roi_focus_top95"
+    if "_TI_overlay_roi_focus_" in name and "_above" in name:
+        return "roi_focus_threshold"
+    if "_TI_overlay_whole_brain_reference_" in name and name.endswith("_full.png"):
+        return "whole_brain_reference_full"
+    return None
+
+
+def _overlay_qc(
+    *,
+    cfg: PostProcessConfig,
+    overlay_paths: Sequence[str],
+    attempted: bool,
+    error: Optional[str],
+) -> Dict[str, Any]:
+    expected = _expected_overlay_types(cfg)
+    present = sorted(
+        overlay_type
+        for overlay_type in (_overlay_type_from_path(path) for path in overlay_paths)
+        if overlay_type is not None
+    )
+    missing = [overlay_type for overlay_type in expected if overlay_type not in present]
+    if not attempted:
+        status = "skipped"
+        message = "Overlay generation was skipped because no T1 background image was available."
+    elif error is not None:
+        status = "error"
+        message = error
+    elif missing:
+        status = "error"
+        message = (
+            f"Expected {len(expected)} overlay PNG(s), but wrote {len(present)}. "
+            f"Missing overlay type(s): {', '.join(missing)}."
+        )
+    else:
+        status = "ok"
+        message = None
+    return {
+        "status": status,
+        "message": message,
+        "expected_overlay_count": len(expected),
+        "written_overlay_count": len(present),
+        "expected_overlay_types": list(expected),
+        "written_overlay_types": present,
+        "missing_overlay_types": missing,
+        "overlay_paths": list(overlay_paths),
+    }
+
+
+def _fastsurfer_roi_label_ids(roi_name: Optional[str]) -> list[int]:
+    if not roi_name:
+        return []
+    try:
+        return [int(label_id) for label_id in resolve_fastsurfer_roi_label_ids(roi_name)]
+    except ValueError:
+        return []
+
+
+def _configured_path_status(path_value: Optional[str], *, must_be_file: bool) -> Dict[str, Any]:
+    if not path_value:
+        return {"configured": False, "exists": False, "is_file": False, "path": None}
+    path = Path(path_value).expanduser()
+    return {
+        "configured": True,
+        "exists": path.exists(),
+        "is_file": path.is_file(),
+        "path": str(path),
+        "valid": path.is_file() if must_be_file else path.exists(),
+    }
+
+
+def _build_subject_qc_meta(
+    *,
+    cfg: PostProcessConfig,
+    selected_roi: Optional[str],
+    roi_mask: Optional[np.ndarray],
+    overlay_qc: Dict[str, Any],
+) -> Dict[str, Any]:
+    roi_voxels = int(np.count_nonzero(roi_mask)) if roi_mask is not None else 0
+    roi_status = "ok" if roi_voxels > 0 else "error"
+    checks = {
+        "target_roi_mask": {
+            "status": roi_status,
+            "message": None
+            if roi_status == "ok"
+            else f"Target ROI '{selected_roi}' is missing or empty on the TI grid.",
+            "target_roi": selected_roi,
+            "label_ids": _fastsurfer_roi_label_ids(selected_roi),
+            "roi_voxels": roi_voxels,
+        },
+        "overlays": overlay_qc,
+        "mni_baseline_root": _configured_path_status(cfg.mni_baseline_root, must_be_file=False),
+        "mni_fixed_atlas_path": _configured_path_status(cfg.mni_fixed_atlas_path, must_be_file=True),
+        "electrode_csv": _configured_path_status(cfg.electrode_csv, must_be_file=True),
+    }
+    error_checks = [
+        name
+        for name, payload in checks.items()
+        if isinstance(payload, dict) and payload.get("status") in {"error", "skipped"}
+    ]
+    status = "partial" if error_checks else "complete"
+    return {
+        "schema_version": 1,
+        "status": status,
+        "error_checks": error_checks,
+        "checks": checks,
+    }
 
 
 def _infer_paths(cfg: PostProcessConfig) -> Tuple[str, str, Optional[str], str]:
@@ -216,21 +357,39 @@ def _generate_selected_roi_overlays(
     sel_norm = normalize_roi_name(roi_name)
     out_base = os.path.join(out_dir, f"{sel_norm}_TI_overlay")
 
-    png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
-        ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-        t1_img=t1_img_full,
-        roi_mask_img=roi_mask_img,
-        out_prefix=f"{out_base}_context",
-        subject=cfg.subject,
-        z_offset_mm=cfg.overlay_z_offset_mm,
-        include_full_field=cfg.overlay_full_field,
-        percentile=cfg.percentile,
-        hard_threshold=cfg.hard_threshold,
-        scale_mask_img=context_scale_mask_img,
-    )
+    def expected_triplet_present(
+        top_path: Optional[str],
+        threshold_path: Optional[str],
+        full_path: Optional[str],
+    ) -> bool:
+        return top_path is not None and threshold_path is not None and (
+            full_path is not None or not cfg.overlay_full_field
+        )
+
+    png_95 = png_02 = png_full = None
+    try:
+        png_95, png_02, png_full = overlay_ti_thresholds_on_t1_with_roi(
+            ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+            t1_img=t1_img_full,
+            roi_mask_img=roi_mask_img,
+            out_prefix=f"{out_base}_context",
+            subject=cfg.subject,
+            z_offset_mm=cfg.overlay_z_offset_mm,
+            include_full_field=cfg.overlay_full_field,
+            percentile=cfg.percentile,
+            hard_threshold=cfg.hard_threshold,
+            scale_mask_img=context_scale_mask_img,
+        )
+    except Exception as exc:
+        if cfg.verbose:
+            print(
+                f"[WARN] Context overlays failed for {cfg.subject}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     roi_base = f"{out_base}_roi_focus"
     roi_overlay_mode = "roi_focus"
+    roi_95 = roi_02 = roi_full = None
     try:
         roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_individual_scale(
             ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
@@ -243,6 +402,8 @@ def _generate_selected_roi_overlays(
             percentile=cfg.percentile,
             hard_threshold=cfg.hard_threshold,
         )
+        if not expected_triplet_present(roi_95, roi_02, roi_full):
+            raise ValueError("ROI-focused overlay generation did not write all expected PNGs.")
     except Exception as exc:
         roi_overlay_mode = "whole_brain_fallback"
         if cfg.verbose:
@@ -254,26 +415,42 @@ def _generate_selected_roi_overlays(
                 f"[INFO] Retrying ROI-focused overlays for {cfg.subject} "
                 "with whole-brain display scaling."
             )
-        roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
+        try:
+            roi_95, roi_02, roi_full = overlay_ti_thresholds_on_t1_with_roi_whole_brain_scale(
+                ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
+                t1_img=t1_img_full,
+                roi_mask_img=roi_mask_img,
+                out_prefix=roi_base,
+                subject=cfg.subject,
+                z_offset_mm=cfg.overlay_z_offset_mm,
+                include_full_field=cfg.overlay_full_field,
+                percentile=cfg.percentile,
+                hard_threshold=cfg.hard_threshold,
+            )
+        except Exception as fallback_exc:
+            roi_overlay_mode = "failed"
+            if cfg.verbose:
+                print(
+                    f"[WARN] ROI-focused fallback overlays failed for {cfg.subject}: "
+                    f"{type(fallback_exc).__name__}: {fallback_exc}"
+                )
+
+    reference_full = None
+    try:
+        reference_full = overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
             ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
             t1_img=t1_img_full,
             roi_mask_img=roi_mask_img,
-            out_prefix=roi_base,
+            out_prefix=f"{out_base}_whole_brain_reference",
             subject=cfg.subject,
             z_offset_mm=cfg.overlay_z_offset_mm,
-            include_full_field=cfg.overlay_full_field,
-            percentile=cfg.percentile,
-            hard_threshold=cfg.hard_threshold,
         )
-
-    reference_full = overlay_ti_full_field_true_vmax_reference_on_t1_with_roi(
-        ti_img=nib.Nifti1Image(ti_data, ti_img.affine, ti_img.header),
-        t1_img=t1_img_full,
-        roi_mask_img=roi_mask_img,
-        out_prefix=f"{out_base}_whole_brain_reference",
-        subject=cfg.subject,
-        z_offset_mm=cfg.overlay_z_offset_mm,
-    )
+    except Exception as exc:
+        if cfg.verbose:
+            print(
+                f"[WARN] Whole-brain reference overlay failed for {cfg.subject}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     overlay_paths = [
         path
@@ -369,11 +546,12 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         #     fs_atlas_path = None
     
     mask = roi_masks.get(selected_plot_roi)
-    print("[INFO]:MODE CHECK")
-    print("[INFO]:subject:", cfg.subject, "| atlas_mode:", cfg.atlas_mode)
-    print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, f"{cfg.subject}.nii.gz")))
-    print("[INFO]:mask dtype/shape:", mask.dtype, mask.shape if mask is not None else None)
-    print("[INFO]:mask voxels >0:", int(mask.sum()) if mask is not None else 0)
+    if cfg.verbose:
+        print("[INFO]:MODE CHECK")
+        print("[INFO]:subject:", cfg.subject, "| atlas_mode:", cfg.atlas_mode)
+        print("[INFO]:fs path:", cfg.fs_mri_path or (cfg.fastsurfer_root and os.path.join(cfg.fastsurfer_root, f"{cfg.subject}.nii.gz")))
+        print("[INFO]:mask dtype/shape:", mask.dtype if mask is not None else None, mask.shape if mask is not None else None)
+        print("[INFO]:mask voxels >0:", int(mask.sum()) if mask is not None else 0)
 
 
     # ---- Thresholds ----
@@ -931,26 +1109,59 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     # ---- Pretty overlays for selected ROI (optional) ----
     overlay_paths = {}
     overlay_strategy = None
+    overlay_attempted = False
+    overlay_error = None
     if t1_img_full is not None and sel in roi_masks:
-        overlay_paths[sel], overlay_strategy = _generate_selected_roi_overlays(
-            cfg=cfg,
-            ti_img=ti_img,
-            ti_data=ti_data,
-            t1_img_full=t1_img_full,
-            roi_mask=roi_masks[sel],
-            fs_atlas_img=fs_atlas_img,
-            out_dir=out_dir,
-            roi_name=sel,
-        )
+        overlay_attempted = True
+        try:
+            overlay_paths[sel], overlay_strategy = _generate_selected_roi_overlays(
+                cfg=cfg,
+                ti_img=ti_img,
+                ti_data=ti_data,
+                t1_img_full=t1_img_full,
+                roi_mask=roi_masks[sel],
+                fs_atlas_img=fs_atlas_img,
+                out_dir=out_dir,
+                roi_name=sel,
+            )
+        except Exception as exc:
+            overlay_paths[sel] = []
+            overlay_error = f"{type(exc).__name__}: {exc}"
+            if cfg.verbose:
+                print(f"[WARN] Overlay generation failed for {cfg.subject}: {overlay_error}")
     elif t1_img_full is None:
         if cfg.verbose:
             print("[INFO] Skipping overlays because no T1 background image could be loaded.")
+
+    selected_overlay_paths = overlay_paths.get(sel, [])
+    qc_meta = _build_subject_qc_meta(
+        cfg=cfg,
+        selected_roi=sel,
+        roi_mask=roi_masks.get(sel),
+        overlay_qc=_overlay_qc(
+            cfg=cfg,
+            overlay_paths=selected_overlay_paths,
+            attempted=overlay_attempted,
+            error=overlay_error,
+        ),
+    )
+    subject_status = (
+        "complete"
+        if extended_metrics_meta["status"] == "complete" and qc_meta["status"] == "complete"
+        else "partial"
+    )
 
     # ---- Subject-level robustness metrics ----
     subject_metrics = dict(
         schema_version=EXTENDED_METRIC_SCHEMA_VERSION,
         subject=cfg.subject,
+        subject_metrics_meta={
+            "status": subject_status,
+            "extended_metrics_status": extended_metrics_meta["status"],
+            "qc_status": qc_meta["status"],
+        },
         target_roi=sel,
+        target_roi_label_ids=_fastsurfer_roi_label_ids(sel),
         percentile=cfg.percentile,
         percentile_value=float(thr),
         region_percentile=cfg.region_percentile,
@@ -961,6 +1172,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         extended_metric_status=extended_metric_status,
         extended_metric_messages=extended_metric_messages,
         extended_metrics_meta=extended_metrics_meta,
+        qc_meta=qc_meta,
     )
     subject_metrics = json_ready_metric_value(subject_metrics)
 
@@ -986,6 +1198,8 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         extended_metric_status=extended_metric_status,
         extended_metric_messages=extended_metric_messages,
         extended_metrics_meta=extended_metrics_meta,
+        qc_meta=qc_meta,
+        subject_status=subject_status,
         neighbor_table_path=neighbor_table_path,
         electrode_table_path=electrode_table_path,
         overlay_strategy=overlay_strategy,

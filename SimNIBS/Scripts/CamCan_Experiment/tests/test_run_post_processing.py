@@ -6,6 +6,7 @@ from post.run_post_processing import (
     resolve_max_workers,
     resolve_subject_fastsurfer_atlas_path,
     run_subject_level_stage,
+    validate_post_batch_config,
 )
 
 
@@ -76,6 +77,24 @@ def test_cli_parser_accepts_atlas_filename_alias():
     )
 
     assert args.fastsurfer_atlas_filename == "mri/aparc.DKTatlas+aseg.deep.nii.gz"
+
+
+def test_validate_post_batch_config_rejects_electrode_csv_missing_columns(tmp_path):
+    electrode_csv = tmp_path / "electrodes.csv"
+    electrode_csv.write_text("subject,electrode,x,y\nsub-01,Fp1,1,2\n", encoding="utf-8")
+    cfg = PostBatchConfig(root="/tmp/example", electrode_csv=str(electrode_csv))
+
+    with pytest.raises(SystemExit, match="missing required column"):
+        validate_post_batch_config(cfg)
+
+
+def test_validate_post_batch_config_requires_fixed_atlas_with_mni_baseline(tmp_path):
+    baseline_root = tmp_path / "mni_baseline"
+    baseline_root.mkdir()
+    cfg = PostBatchConfig(root="/tmp/example", mni_baseline_root=str(baseline_root))
+
+    with pytest.raises(SystemExit, match="without mni_fixed_atlas_path"):
+        validate_post_batch_config(cfg)
 
 
 def test_run_subject_level_stage_marks_partial_when_some_subjects_are_usable(monkeypatch):

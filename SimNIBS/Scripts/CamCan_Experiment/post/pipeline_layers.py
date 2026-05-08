@@ -75,6 +75,10 @@ def load_subject_metrics_payload(path: Path) -> Dict[str, Any] | None:
 def subject_metrics_payload_status(payload: Dict[str, Any] | None) -> str | None:
     if not isinstance(payload, dict):
         return None
+    subject_meta = payload.get("subject_metrics_meta")
+    if isinstance(subject_meta, dict):
+        status = subject_meta.get("status")
+        return str(status) if isinstance(status, str) else None
     meta = payload.get("extended_metrics_meta")
     if not isinstance(meta, dict):
         return None

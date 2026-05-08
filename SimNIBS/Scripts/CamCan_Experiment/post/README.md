@@ -816,9 +816,69 @@ The baseline root should point to the SimNIBS output root for the MNI run of the
 - a direct subject-style root with `anat/SimNIBS/ti_brain_only.nii.gz`
 - a parent directory containing one baseline subject folder such as `MNI152/anat/SimNIBS/ti_brain_only.nii.gz`
 
+If `mni_baseline_root` is configured, `mni_fixed_atlas_path` must also be configured. The baseline root supplies the MNI field image; the fixed atlas supplies the ROI mask used to extract MNI ROI metrics.
+
 ### Missing fixed MNI atlas
 
 If `mni_fixed_atlas_path` is not configured, neighboring-region metrics and baseline-template comparisons cannot be defined from the fixed-template design. Those fields remain in the JSON scaffold and are marked `not_configured`.
+
+If `mni_fixed_atlas_path` is configured but the file does not exist, the batch now fails before subject processing starts. This prevents silent output where MNI comparison fields are present but all values are `null`.
+
+### Electrode distance CSV format
+
+Electrode distance metrics require either `electrode_csv` or `electrode_names`.
+
+When using `electrode_csv`, the required columns are:
+
+- `subject`
+- `electrode`
+- `x`
+- `y`
+- `z`
+
+The `x`, `y`, and `z` values must be electrode-centre coordinates in millimetres in the same world coordinate frame as the subject TI image. The subject values must match the subject folder names exactly, for example:
+
+```csv
+subject,electrode,x,y,z
+sub-CC110056,Fp2,30.0,75.0,60.0
+sub-CC110056,P8,60.0,-55.0,65.0
+```
+
+When using `electrode_names`, the pipeline reads positions from `eeg_positions.csv` under each subject's `m2m_<subject>` folder, or from `eeg_positions_path_template` when configured. If no matching electrode centre is found for a configured subject, the electrode metric group is marked as an error.
+
+### ROI alias and atlas mismatch
+
+FastSurfer ROI aliases are resolved before processing starts and the resolved canonical label plus numeric label id are printed in the log.
+
+Current important mappings:
+
+- `left_m1`, `lh_m1`, and `m1_left` resolve to `ctx-lh-precentral`, label id `1022`.
+- `right_m1`, `rh_m1`, and the typo alias `rigth_m1` resolve to `ctx-rh-precentral`, label id `2022`.
+- `right_dlpc` and `right_dlpfc` resolve to the DKT composite `ctx-rh-dlpfc-dkt`, label ids `2002` and `2025`.
+- `left_dlpc` and `left_dlpfc` resolve to the DKT composite `ctx-lh-dlpfc-dkt`, label ids `1002` and `1025`.
+
+DLPC is intentionally represented as a DKT composite because the current post-processing atlas is `aparc.DKTatlas+aseg.deep.nii.gz`. For right DLPC, the mask is the union of:
+
+- `ctx-rh-caudalmiddlefrontal`, label id `2002`
+- `ctx-rh-rostralmiddlefrontal`, label id `2025`
+
+For left DLPC, the mask is the union of:
+
+- `ctx-lh-caudalmiddlefrontal`, label id `1002`
+- `ctx-lh-rostralmiddlefrontal`, label id `1025`
+
+The old `ctx_rh_G_front_middle` and `ctx_lh_G_front_middle` labels remain available only when explicitly requested by name. They are Destrieux/a2009s-style middle frontal gyrus labels and are not expected to exist in DKT atlases. If one of those explicit labels is absent, the pipeline raises a clear ROI-mask error instead of producing empty DLPC masks and misleading zero-overlap metrics.
+
+### Overlay QC
+
+For each subject, `subject_metrics.json` now includes `qc_meta`. The overlay check records:
+
+- expected overlay count and types
+- written overlay count and types
+- missing overlay types
+- generated overlay paths
+
+With `overlay_full_field=True`, seven overlay PNGs are expected: context full, context top percentile, context threshold, ROI-focus full, ROI-focus top percentile, ROI-focus threshold, and whole-brain reference full. If only the two context overlays are written, the subject is marked `partial` via `subject_metrics_meta.status` and the batch summary reports the subject as incomplete.
 
 ### Old `subject_metrics.json` files
 
@@ -828,11 +888,11 @@ Older subject JSONs without `extended_metrics_meta` are no longer treated as com
 
 Subjects are now skipped only when all of the following are true:
 
-- `extended_metrics_meta.status == "complete"`
+- `subject_metrics_meta.status == "complete"` for new outputs, or `extended_metrics_meta.status == "complete"` for older outputs without subject-level QC metadata
 - the stored `config_fingerprint` matches the current post-processing configuration
 - `--force` was not requested
 
-This prevents partially failed extended-metric runs from being treated as valid cache hits.
+This prevents partially failed extended-metric runs or incomplete overlay/QC runs from being treated as valid cache hits.
 
 ### Image repeatability percentile assumptions
 

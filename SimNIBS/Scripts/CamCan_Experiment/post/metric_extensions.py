@@ -13,7 +13,10 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
-from utils.roi_registry import FASTSURFER_DKT_LABELS, resolve_fastsurfer_roi_name
+from utils.roi_registry import (
+    FASTSURFER_DKT_LABELS,
+    resolve_fastsurfer_roi_label_ids,
+)
 from utils.ti_utils import load_ti_as_scalar, resample_atlas_to_ti_grid, vol_mm3
 
 
@@ -182,10 +185,7 @@ def extended_metrics_config_fingerprint(
 
 @lru_cache(maxsize=None)
 def _canonical_label_ids(roi_name: str) -> Tuple[int, ...]:
-    canonical = resolve_fastsurfer_roi_name(roi_name).canonical_name
-    label_ids = tuple(
-        sorted(label_id for label_id, label_name in FASTSURFER_DKT_LABELS.items() if label_name == canonical)
-    )
+    label_ids = resolve_fastsurfer_roi_label_ids(roi_name)
     if not label_ids:
         raise ValueError(f"Could not resolve FastSurfer label ids for ROI '{roi_name}'.")
     return label_ids
@@ -258,10 +258,27 @@ def load_mni_baseline_metrics(
 
     baseline_root = Path(baseline_root_value).expanduser()
     atlas_path = Path(mni_fixed_atlas_path).expanduser()
-    if not baseline_root.exists() or not atlas_path.is_file():
-        return {}
+    if not baseline_root.exists():
+        raise FileNotFoundError(
+            f"MNI baseline root not found: {baseline_root}. "
+            "Set mni_baseline_root to a directory containing an MNI subject with "
+            "anat/SimNIBS/ti_brain_only.nii.gz."
+        )
+    if not atlas_path.is_file():
+        raise FileNotFoundError(
+            f"Fixed MNI FastSurfer atlas not found: {atlas_path}. "
+            "Set mni_fixed_atlas_path to the atlas used to define the baseline ROI mask."
+        )
 
-    for subject_root, subject_name in _baseline_subject_root_candidates(baseline_root):
+    candidates = _baseline_subject_root_candidates(baseline_root)
+    if not candidates:
+        raise FileNotFoundError(
+            f"No MNI baseline TI file found below {baseline_root}. Expected either "
+            "anat/SimNIBS/ti_brain_only.nii.gz directly below the root, or below a "
+            "subject directory such as MNI152/anat/SimNIBS/ti_brain_only.nii.gz."
+        )
+
+    for subject_root, subject_name in candidates:
         ti_path = subject_root / "anat" / "SimNIBS" / "ti_brain_only.nii.gz"
         if not ti_path.is_file():
             continue
@@ -281,6 +298,10 @@ def load_mni_baseline_metrics(
         roi_mask = roi_masks.get(roi_name)
         if roi_mask is None:
             continue
+        if not np.any(roi_mask):
+            raise ValueError(
+                f"MNI baseline ROI '{roi_name}' resolved to an empty mask using atlas '{atlas_path}'."
+            )
         return _compute_core_field_metrics(
             ti_img=ti_img,
             ti_data=ti_data,
@@ -289,7 +310,10 @@ def load_mni_baseline_metrics(
             focality_threshold=focality_threshold,
         )
 
-    return {}
+    raise ValueError(
+        f"Could not build MNI baseline metrics for ROI '{roi_name}' from root "
+        f"'{baseline_root}' and atlas '{atlas_path}'."
+    )
 
 
 @lru_cache(maxsize=None)
@@ -412,8 +436,13 @@ def resolve_electrode_centers(
 ) -> List[Tuple[str, np.ndarray]]:
     if electrode_csv:
         path = Path(electrode_csv).expanduser()
-        if path.is_file():
-            return _load_electrode_centers(path).get(subject, [])
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Electrode CSV not found: {path}. Required columns are "
+                "subject,electrode,x,y,z, with x/y/z in millimetres in the same "
+                "world coordinate frame as the TI image."
+            )
+        return _load_electrode_centers(path).get(subject, [])
 
     if not electrode_names:
         return []
@@ -703,6 +732,13 @@ def compute_electrode_distance_metrics(
             electrode_names=electrode_names,
             eeg_positions_path_template=eeg_positions_path_template,
         )
+        if (electrode_csv or electrode_names) and not centers:
+            raise ValueError(
+                f"No electrode centres were found for subject '{subject}'. "
+                "For electrode_csv, provide rows with columns subject,electrode,x,y,z. "
+                "For electrode_names, ensure the names exist in eeg_positions.csv or in "
+                "the configured eeg_positions_path_template."
+            )
         for name, coord in centers:
             electrode_entries.append(
                 {

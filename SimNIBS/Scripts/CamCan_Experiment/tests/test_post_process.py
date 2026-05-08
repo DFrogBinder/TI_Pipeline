@@ -28,7 +28,9 @@ ti_utils_stub = types.ModuleType("utils.ti_utils")
 ti_utils_stub.ensure_dir = lambda *args, **kwargs: None
 ti_utils_stub.extract_table = lambda *args, **kwargs: (None, None, None)
 ti_utils_stub.load_ti_as_scalar = lambda *args, **kwargs: None
-ti_utils_stub.normalize_roi_name = lambda value: value
+ti_utils_stub.normalize_roi_name = lambda value: "".join(
+    c if c.isalnum() else "_" for c in value.strip().replace(" ", "_")
+)
 ti_utils_stub.resample_atlas_to_ti_grid = lambda *args, **kwargs: None
 ti_utils_stub.save_masked_nii = lambda *args, **kwargs: None
 ti_utils_stub.summarize_atlas_regions = lambda *args, **kwargs: None
@@ -36,7 +38,7 @@ ti_utils_stub.vol_mm3 = lambda *args, **kwargs: 1.0
 sys.modules.setdefault("utils.ti_utils", ti_utils_stub)
 
 import post.post_process as post_process_module
-from post.post_process import PostProcessConfig, _generate_selected_roi_overlays, _load_t1_image
+from post.post_process import PostProcessConfig, _generate_selected_roi_overlays, _load_t1_image, _overlay_qc
 
 
 def test_load_t1_image_reads_standard_nifti(tmp_path):
@@ -126,3 +128,19 @@ def test_generate_selected_roi_overlays_retries_with_whole_brain_scale(monkeypat
         "roi_above200.png",
         "reference_full.png",
     ]
+
+
+def test_overlay_qc_marks_partial_overlay_set_as_error(tmp_path):
+    cfg = PostProcessConfig(root_dir=str(tmp_path), subject="sub-01", overlay_full_field=True)
+
+    qc = _overlay_qc(
+        cfg=cfg,
+        overlay_paths=["ctx_TI_overlay_context_sub-01_top95.png"],
+        attempted=True,
+        error=None,
+    )
+
+    assert qc["status"] == "error"
+    assert qc["expected_overlay_count"] == 7
+    assert qc["written_overlay_count"] == 1
+    assert "roi_focus_top95" in qc["missing_overlay_types"]

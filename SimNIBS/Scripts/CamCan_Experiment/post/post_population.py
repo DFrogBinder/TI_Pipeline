@@ -14,6 +14,7 @@ import pandas as pd
 
 from post.metric_extensions import flatten_subject_metric_payload
 from post.pipeline_layers import load_subject_metrics_payload, subject_metrics_payload_complete
+from utils.roi_registry import resolve_fastsurfer_roi_label_ids
 
 
 COHORT_MANIFEST_COLUMNS = [
@@ -421,10 +422,28 @@ def subject_target_table(
     template_peak: Optional[float],
 ) -> pd.DataFrame:
     target = all_regions[all_regions["label_name"].str.lower() == target_roi.lower()].copy()
-    if template_peak is not None and not target.empty:
+    flat_metrics = flatten_subject_metrics(subject_metrics, target_roi)
+    if target.empty and not flat_metrics.empty:
+        target = flat_metrics.loc[:, ["subject"]].copy()
+        try:
+            label_ids = ",".join(str(label_id) for label_id in resolve_fastsurfer_roi_label_ids(target_roi))
+        except ValueError:
+            label_ids = ""
+        target["label_id"] = label_ids
+        target["label_name"] = target_roi
+        metric_map = {
+            "roi_voxels": "voxels",
+            "roi_volume_mm3": "volume_mm3",
+            "roi_mean": "mean",
+            "roi_peak": "max",
+        }
+        for source, destination in metric_map.items():
+            if source in flat_metrics.columns:
+                target[destination] = flat_metrics[source]
+
+    if template_peak is not None and not target.empty and "max" in target.columns:
         target["drop_vs_template"] = (template_peak - target["max"]) / template_peak
 
-    flat_metrics = flatten_subject_metrics(subject_metrics, target_roi)
     if not flat_metrics.empty:
         rename_map = {
             "overlap_fraction": "roi_overlap_fraction",
@@ -451,9 +470,16 @@ def load_template_peak(template_csv: Optional[Path], target_roi: str) -> Optiona
         return None
     df = pd.read_csv(template_csv)
     match = df[df["label_name"].str.lower() == target_roi.lower()]
+    if match.empty and "label_id" in df.columns:
+        try:
+            label_ids = set(resolve_fastsurfer_roi_label_ids(target_roi))
+        except ValueError:
+            label_ids = set()
+        if label_ids:
+            match = df[pd.to_numeric(df["label_id"], errors="coerce").isin(label_ids)]
     if match.empty:
         return None
-    return float(match["max"].iloc[0])
+    return float(pd.to_numeric(match["max"], errors="coerce").max())
 
 
 def run_population(

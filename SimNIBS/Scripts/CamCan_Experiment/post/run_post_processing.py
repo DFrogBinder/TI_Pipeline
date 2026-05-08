@@ -9,6 +9,7 @@ Across-repeats-level metrics are orchestrated separately by run_post_processing_
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -32,7 +33,11 @@ from post.pipeline_layers import (
     stage_skipped,
     subject_metrics_payload_complete,
 )
-from utils.roi_registry import match_fastsurfer_roi_from_directory, resolve_fastsurfer_roi_name
+from utils.roi_registry import (
+    match_fastsurfer_roi_from_directory,
+    resolve_fastsurfer_roi_label_ids,
+    resolve_fastsurfer_roi_name,
+)
 
 if TYPE_CHECKING:
     from post.post_process import PostProcessConfig
@@ -129,6 +134,54 @@ def resolve_subject_fastsurfer_atlas_path(cfg: PostBatchConfig, subject: str) ->
     return str(Path(cfg.fastsurfer_root).expanduser() / subject / atlas_filename)
 
 
+def _label_ids_for_roi(roi_name: str) -> list[int]:
+    return [int(label_id) for label_id in resolve_fastsurfer_roi_label_ids(roi_name)]
+
+
+def validate_post_batch_config(cfg: PostBatchConfig) -> None:
+    if cfg.mni_baseline_root:
+        baseline_root = Path(cfg.mni_baseline_root).expanduser()
+        if not baseline_root.exists():
+            raise SystemExit(
+                f"Configured mni_baseline_root does not exist: {baseline_root}. "
+                "MNI baseline comparisons require a baseline root containing "
+                "anat/SimNIBS/ti_brain_only.nii.gz, either directly or below an MNI subject directory."
+            )
+        if not cfg.mni_fixed_atlas_path:
+            raise SystemExit(
+                "Configured mni_baseline_root without mni_fixed_atlas_path. "
+                "MNI baseline comparisons require both paths: the baseline simulation root "
+                "and the fixed MNI FastSurfer atlas used to build the ROI mask."
+            )
+
+    if cfg.mni_fixed_atlas_path:
+        atlas_path = Path(cfg.mni_fixed_atlas_path).expanduser()
+        if not atlas_path.is_file():
+            raise SystemExit(
+                f"Configured mni_fixed_atlas_path is not a file: {atlas_path}. "
+                "This path is used for fixed-template neighbor metrics and MNI baseline ROI masks."
+            )
+
+    if cfg.electrode_csv:
+        electrode_csv = Path(cfg.electrode_csv).expanduser()
+        if not electrode_csv.is_file():
+            raise SystemExit(
+                f"Configured electrode_csv is not a file: {electrode_csv}. "
+                "Required columns are subject,electrode,x,y,z."
+            )
+        with electrode_csv.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, [])
+        required = {"subject", "electrode", "x", "y", "z"}
+        missing = sorted(required - set(header))
+        if missing:
+            raise SystemExit(
+                f"Configured electrode_csv is missing required column(s): {', '.join(missing)}. "
+                "Expected columns: subject,electrode,x,y,z. Coordinates must be millimetres "
+                "in the same world coordinate frame as the subject TI image."
+            )
+
+
 def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) -> PostProcessConfig:
     from post.post_process import PostProcessConfig
 
@@ -202,6 +255,8 @@ def process_subject(pp_cfg: PostProcessConfig) -> dict:
     return {
         "subject": pp_cfg.subject,
         "extended_status": result["extended_metrics_meta"]["status"],
+        "qc_status": result["qc_meta"]["status"],
+        "subject_status": result["subject_status"],
         "metrics_path": result["metrics_path"],
     }
 
@@ -225,13 +280,14 @@ def _resolve_pipeline_rois(cfg: PipelineConfig) -> None:
                 plot_match = resolve_fastsurfer_roi_name(cfg.post.plot_roi)
                 print(
                     f"[INFO] Using configured ROI alias '{cfg.post.plot_roi}' -> "
-                    f"'{plot_match.canonical_name}'."
+                    f"'{plot_match.canonical_name}' label id(s) {_label_ids_for_roi(plot_match.canonical_name)}."
                 )
             else:
                 plot_match = match_fastsurfer_roi_from_directory(cfg.post.root)
                 print(
                     f"[INFO] Inferred ROI from directory '{Path(cfg.post.root).name}' via alias "
-                    f"'{plot_match.matched_alias}' -> '{plot_match.canonical_name}'."
+                    f"'{plot_match.matched_alias}' -> '{plot_match.canonical_name}' "
+                    f"label id(s) {_label_ids_for_roi(plot_match.canonical_name)}."
                 )
         except ValueError as exc:
             _abort_unknown_roi(cfg.post.root, str(exc))
@@ -244,7 +300,7 @@ def _resolve_pipeline_rois(cfg: PipelineConfig) -> None:
                 _abort_unknown_roi(cfg.post.root, str(exc))
             print(
                 f"[INFO] Using configured population ROI alias '{cfg.population.target_roi}' -> "
-                f"'{target_match.canonical_name}'."
+                f"'{target_match.canonical_name}' label id(s) {_label_ids_for_roi(target_match.canonical_name)}."
             )
             cfg.population.target_roi = target_match.canonical_name
         else:
@@ -255,6 +311,7 @@ def _resolve_pipeline_rois(cfg: PipelineConfig) -> None:
 
 
 def run_batch(cfg: PostBatchConfig) -> dict:
+    validate_post_batch_config(cfg)
     root = Path(cfg.root).expanduser().resolve()
     if not root.is_dir():
         raise SystemExit(f"Root directory not found: {root}")
@@ -288,10 +345,15 @@ def run_batch(cfg: PostBatchConfig) -> dict:
         for pp_cfg in pending:
             try:
                 subject_result = process_subject(pp_cfg)
-                if subject_result["extended_status"] == "complete":
+                if subject_result["subject_status"] == "complete":
                     processed.append(pp_cfg.subject)
                 else:
-                    incomplete.append((pp_cfg.subject, f"extended_metrics_meta.status={subject_result['extended_status']}"))
+                    incomplete.append((
+                        pp_cfg.subject,
+                        "subject_metrics_meta.status="
+                        f"{subject_result['subject_status']} "
+                        f"(extended={subject_result['extended_status']}, qc={subject_result['qc_status']})",
+                    ))
             except Exception as exc:
                 failed.append((pp_cfg.subject, f"{type(exc).__name__}: {exc}"))
     else:
@@ -307,10 +369,15 @@ def run_batch(cfg: PostBatchConfig) -> dict:
                 subj = future_to_subject[future]
                 try:
                     subject_result = future.result()
-                    if subject_result["extended_status"] == "complete":
+                    if subject_result["subject_status"] == "complete":
                         processed.append(subj)
                     else:
-                        incomplete.append((subj, f"extended_metrics_meta.status={subject_result['extended_status']}"))
+                        incomplete.append((
+                            subj,
+                            "subject_metrics_meta.status="
+                            f"{subject_result['subject_status']} "
+                            f"(extended={subject_result['extended_status']}, qc={subject_result['qc_status']})",
+                        ))
                 except Exception as exc:
                     failed.append((subj, f"{type(exc).__name__}: {exc}"))
 
@@ -357,7 +424,7 @@ def run_subject_level_stage(cfg: PostBatchConfig) -> dict:
                 SUBJECT_LEVEL_STAGE,
                 warning=(
                     f"{len(batch_result['failed'])} subject exception(s) and "
-                    f"{len(batch_result['incomplete'])} subject(s) with incomplete extended metrics. "
+                    f"{len(batch_result['incomplete'])} subject(s) with incomplete subject metrics/QC. "
                     "Later layers may still use the completed subject subset."
                 ),
                 **status_details,
@@ -366,7 +433,7 @@ def run_subject_level_stage(cfg: PostBatchConfig) -> dict:
             SUBJECT_LEVEL_STAGE,
             error=(
                 f"{len(batch_result['failed'])} subject exception(s) and "
-                f"{len(batch_result['incomplete'])} subject(s) with incomplete extended metrics. "
+                f"{len(batch_result['incomplete'])} subject(s) with incomplete subject metrics/QC. "
                 "No complete subject outputs were available for downstream stages."
             ),
             **status_details,

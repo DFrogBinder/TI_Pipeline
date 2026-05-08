@@ -3,6 +3,7 @@ import pytest
 from utils.roi_registry import (
     FASTSURFER_ROI_ALIASES,
     match_fastsurfer_roi_from_directory,
+    resolve_fastsurfer_roi_label_ids,
     resolve_fastsurfer_roi_name,
 )
 
@@ -65,14 +66,15 @@ def test_resolve_fastsurfer_roi_name_supports_shorthand_thalamus_aliases():
 
 def test_resolve_fastsurfer_roi_name_supports_right_dlpc_aliases():
     match = resolve_fastsurfer_roi_name("right_dlpc")
-    assert match.canonical_name == "ctx_rh_G_front_middle"
+    assert match.canonical_name == "ctx-rh-dlpfc-dkt"
+    assert resolve_fastsurfer_roi_label_ids("right_dlpc") == (2002, 2025)
 
     match = match_fastsurfer_roi_from_directory("/tmp/Right_DLPC_Runs")
-    assert match.canonical_name == "ctx_rh_G_front_middle"
+    assert match.canonical_name == "ctx-rh-dlpfc-dkt"
     assert match.matched_alias == "right_dlpc"
 
     typo_match = resolve_fastsurfer_roi_name("rigth_dlpfc")
-    assert typo_match.canonical_name == "ctx_rh_G_front_middle"
+    assert typo_match.canonical_name == "ctx-rh-dlpfc-dkt"
 
 
 def test_resolve_fastsurfer_roi_name_supports_destrieux_middle_frontal_labels():

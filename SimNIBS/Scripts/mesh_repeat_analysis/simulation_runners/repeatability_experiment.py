@@ -82,6 +82,11 @@ SIM_STRUCT = None
 SIM_TI = None
 MESH_LOCK_TIMEOUT_SEC = 12 * 60 * 60
 MESH_LOCK_POLL_SEC = 5.0
+SIM_INPUT_EXIT_CODE = 126
+
+
+class SimulationInputError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -234,7 +239,7 @@ def _validate_source_inputs(paths: SourceSubjectPaths) -> None:
         if not path.exists()
     ]
     if missing:
-        raise FileNotFoundError(
+        raise SimulationInputError(
             f"Subject '{paths.subject}' is missing required inputs: {', '.join(missing)}"
         )
 
@@ -875,13 +880,26 @@ def _command_run_task(args: argparse.Namespace) -> int:
         condition_name=args.condition,
         repeat_index=args.repeat_index,
     )
-    result = execute_task(
-        config,
-        task,
-        dry_run=args.dry_run,
-        overwrite=args.overwrite,
-        force_mesh=args.force_mesh,
-    )
+    try:
+        result = execute_task(
+            config,
+            task,
+            dry_run=args.dry_run,
+            overwrite=args.overwrite,
+            force_mesh=args.force_mesh,
+        )
+    except SimulationInputError as exc:
+        log_event(
+            "task_input_error",
+            subject=task.subject,
+            condition=task.condition_name,
+            repeat_index=task.repeat_index,
+            repeat_tag=task.repeat_tag,
+            error=str(exc),
+            exit_code=SIM_INPUT_EXIT_CODE,
+        )
+        print(f"[ERROR] {exc}")
+        return SIM_INPUT_EXIT_CODE
     print(json.dumps(result, indent=2))
     return 0
 

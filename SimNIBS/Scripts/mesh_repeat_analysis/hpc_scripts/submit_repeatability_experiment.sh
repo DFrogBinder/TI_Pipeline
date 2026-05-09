@@ -9,11 +9,15 @@ MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-16}"
 LOG_DIR="${LOG_DIR:-${PIPELINE_DIR}/logs}"
 OVERWRITE_OUTPUT="${OVERWRITE_OUTPUT:-0}"
 FORCE_MESH="${FORCE_MESH:-0}"
+MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
+# 0 or a negative value means keep requeueing incomplete tasks until validation passes.
+MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
 
 # Command/script settings. These normally do not need changing.
 PYTHON_BIN="${PYTHON_BIN:-python}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${PIPELINE_DIR}/hpc_scripts/repeatability_experiment_array.slurm}"
+COMPLETION_CHECK_PY="${COMPLETION_CHECK_PY:-${PIPELINE_DIR}/validate_repeatability_task.py}"
 
 if [ "$#" -ne 0 ]; then
     echo "[ERROR] This helper is configured from the variables at the top of the file."
@@ -39,11 +43,23 @@ PIPELINE_DIR="$(resolve_path "${PIPELINE_DIR}")"
 EXPERIMENT_CONFIG="$(resolve_path "${EXPERIMENT_CONFIG}")"
 LOG_DIR="$(resolve_path "${LOG_DIR}")"
 SLURM_SCRIPT="$(resolve_path "${SLURM_SCRIPT}")"
+COMPLETION_CHECK_PY="$(resolve_path "${COMPLETION_CHECK_PY}")"
 RUNNER_SCRIPT="${PIPELINE_DIR}/simulation_runners/repeatability_experiment.py"
 
 if ! [[ "${MAX_CONCURRENT_TASKS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] MAX_CONCURRENT_TASKS must be a positive integer: ${MAX_CONCURRENT_TASKS}"
     exit 1
+fi
+
+if ! [[ "${MESH_MAX_RETRIES}" =~ ^-?[0-9]+$ ]]; then
+    echo "[ERROR] TI_MESH_MAX_RETRIES must be an integer: ${MESH_MAX_RETRIES}"
+    exit 1
+fi
+
+if [ "${MESH_MAX_RETRIES}" -gt 0 ]; then
+    MESH_RETRY_LIMIT_LABEL="${MESH_MAX_RETRIES}"
+else
+    MESH_RETRY_LIMIT_LABEL="unlimited"
 fi
 
 case "${OVERWRITE_OUTPUT}" in
@@ -65,6 +81,7 @@ esac
 require_file "Experiment config" "${EXPERIMENT_CONFIG}"
 require_file "Repeatability runner" "${RUNNER_SCRIPT}"
 require_file "Slurm script" "${SLURM_SCRIPT}"
+require_file "Completion check" "${COMPLETION_CHECK_PY}"
 
 TASK_COUNT="$("${PYTHON_BIN}" "${RUNNER_SCRIPT}" \
     show-plan \
@@ -82,7 +99,7 @@ if [ "${TASK_COUNT}" -lt 1 ]; then
 fi
 
 ARRAY_SPEC="0-$((TASK_COUNT - 1))%${MAX_CONCURRENT_TASKS}"
-EXPORT_VARS="ALL,EXPERIMENT_CONFIG=${EXPERIMENT_CONFIG},PIPELINE_DIR=${PIPELINE_DIR},LOG_DIR=${LOG_DIR},OVERWRITE_OUTPUT=${OVERWRITE_OUTPUT},FORCE_MESH=${FORCE_MESH}"
+EXPORT_VARS="ALL,EXPERIMENT_CONFIG=${EXPERIMENT_CONFIG},PIPELINE_DIR=${PIPELINE_DIR},LOG_DIR=${LOG_DIR},OVERWRITE_OUTPUT=${OVERWRITE_OUTPUT},FORCE_MESH=${FORCE_MESH},COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY},TI_MESH_TIMEOUT_HOURS=${MESH_TIMEOUT_HOURS},TI_MESH_MAX_RETRIES=${MESH_MAX_RETRIES}"
 
 echo "[INFO] Pipeline root:     ${PIPELINE_DIR}"
 echo "[INFO] Experiment config: ${EXPERIMENT_CONFIG}"
@@ -92,6 +109,9 @@ echo "[INFO] Array spec:        ${ARRAY_SPEC}"
 echo "[INFO] Log dir:           ${LOG_DIR}"
 echo "[INFO] Overwrite output:  ${OVERWRITE_OUTPUT}"
 echo "[INFO] Force mesh:        ${FORCE_MESH}"
+echo "[INFO] Completion check:  ${COMPLETION_CHECK_PY}"
+echo "[INFO] Mesh timeout:      ${MESH_TIMEOUT_HOURS} hour(s)"
+echo "[INFO] Task retries:      ${MESH_RETRY_LIMIT_LABEL}"
 echo "[INFO] Slurm script:      ${SLURM_SCRIPT}"
 
 "${SBATCH_BIN}" \

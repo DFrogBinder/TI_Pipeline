@@ -17,6 +17,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries) and `utils/roi_registry.py` (FastSurfer ROI labels, aliases, dataset-name matching).
 - **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker; post-processing expects per-subject atlas files under `<fastsurfer_root>/<subject>.nii.gz`).
 - **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject), `simulation/TI_runner_single-core.py` (sequential/local debug), and `simulation/TI_runner_MNI152.py` (dedicated MNI152 template runner) create meshes or use the built-in MNI mesh, run SimNIBS TDCS pairs, compute TImax, and export TI volumes (`ti_brain_only.nii.gz`).
+- **Simulation repair planning**: `simulation/plan_simulation_repair.py` scans repeat dataset roots such as `Left_Hippocampus_Data_01` to `Left_Hippocampus_Data_10`, writes a per-subject repair count table, and creates a Slurm repair plan consumed by `HPC_scripts/submit_repair_jobArray.sh`.
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
 - **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
@@ -68,6 +69,32 @@ simnibs_python simulation/TI_runner_MNI152.py \
 ```
 
 The MNI152 runner does not perform subject-specific CHARM meshing or segmentation replacement. It is intended for fast switching between template-only montage configurations while keeping the same downstream output layout expected by the post-processing code.
+
+## Simulation repair workflow
+After a repeated simulation batch has partial failures, scan the parent directory
+for missing final outputs:
+```bash
+python simulation/plan_simulation_repair.py \
+  --batch-root /path/to/Left_Hippocampus_Post_Data \
+  --expected-repeat-count 10
+```
+
+The scanner writes `<batch-root>/simulation_repair_plan/repair_subject_counts.tsv`
+with one row per subject needing repair and
+`<batch-root>/simulation_repair_plan/repair_plan.tsv` with one runnable
+subject-repeat task per missing run. Rows with incomplete outputs but missing
+T1/T2/manual-seg inputs are written separately to `blocked_repair_tasks.tsv`.
+
+Submit the runnable repair rows with the same validation/requeue loop used by
+the normal simulation array:
+```bash
+TI_REPAIR_PLAN_FILE=/path/to/Left_Hippocampus_Post_Data/simulation_repair_plan/repair_plan.tsv \
+  HPC_scripts/submit_repair_jobArray.sh
+```
+
+Each repair-array task sets `TI_SIM_ROOT` to the repeat root from its plan row,
+runs the subject, validates the final outputs, and requeues itself until the
+subject-run is complete or `TI_MESH_MAX_RETRIES` is reached.
 
 ## Post-processing pipeline
 1) Edit the pipeline config in `post/run_post_processing.py`:

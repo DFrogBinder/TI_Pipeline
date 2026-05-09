@@ -25,6 +25,7 @@ MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
 MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
 MESH_TIMEOUT_EXIT_CODE=124
 SIM_INCOMPLETE_EXIT_CODE=125
+SIM_INPUT_EXIT_CODE=126
 SIM_ROOT="${TI_SIM_ROOT:-/mnt/parscratch/users/cop23bi/LM1}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/validate_simulation_outputs.py}"
 
@@ -159,6 +160,7 @@ echo "[INFO] Simulation retry: ${MESH_RETRY_COUNT}/${MESH_RETRY_LIMIT_LABEL}"
 LOG_DIR="/users/cop23bi/scripts/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/${SUBJECT}.log"
+SKIPPED_INPUTS_LOG="${LOG_DIR}/subjects_skipped_missing_inputs.tsv"
 
 requeue_or_fail() {
     local reason="$1"
@@ -192,6 +194,17 @@ python -u /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/sim
     --subject "$SUBJECT" \
     --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
 PY_EXIT=$?
+
+if [ "$PY_EXIT" -eq "$SIM_INPUT_EXIT_CODE" ]; then
+    echo "[WARN] Required simulation inputs are missing for ${SUBJECT}; dropping subject without requeue."
+    printf '%s\t%s\t%s\t%s\n' \
+        "$(date -Is)" \
+        "${SUBJECT}" \
+        "${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}" \
+        "${SLURM_ARRAY_TASK_ID}" >> "$SKIPPED_INPUTS_LOG"
+    rm -f "$RETRY_FILE" "$SUBJECT_FILE"
+    exit 0
+fi
 
 if [ -f "$COMPLETION_CHECK_PY" ]; then
     python -u "$COMPLETION_CHECK_PY" \

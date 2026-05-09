@@ -41,6 +41,7 @@ rootDIR = os.environ.get("TI_SIM_ROOT", "/mnt/parscratch/users/cop23bi/LM1")
 DEFAULT_MESH_TIMEOUT_HOURS = 4.0
 MESH_TOTAL_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
 MESH_TIMEOUT_EXIT_CODE = 124
+SIM_INPUT_EXIT_CODE = 126
 
 
 def log_event(event: str, **fields) -> None:
@@ -65,6 +66,10 @@ class MeshTimeoutError(RuntimeError):
         self.label = label
         self.cmd = cmd
         self.timeout_sec = timeout_sec
+
+
+class SimulationInputError(RuntimeError):
+    pass
 
 
 def _ensure_text(data: str | bytes | None) -> str:
@@ -149,6 +154,21 @@ def cleanup_subject_generated_outputs(output_root: str, subject: str) -> None:
                 error=str(exc),
             )
             raise
+
+
+def validate_subject_inputs(subject_dir: str, subject: str) -> None:
+    subject_path = Path(subject_dir)
+    required = [
+        subject_path,
+        subject_path / f"{subject}_T1w.nii",
+        subject_path / f"{subject}_T2w.nii",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        log_event("simulation_input_missing", subject=subject, missing=missing)
+        raise SimulationInputError(
+            f"Missing required simulation input(s) for {subject}: {', '.join(missing)}"
+        )
 
 
 def _remaining_timeout(deadline: float | None) -> float | None:
@@ -250,6 +270,7 @@ def process_subject(subject_entry):
     print(f"[INFO] Starting TI pipeline for {subject_source} (using '{subject}' resources).")
     log_file_info("t1", os.path.join(subject_dir, f"{subject}_T1w.nii"))
     log_file_info("t2", os.path.join(subject_dir, f"{subject}_T2w.nii"))
+    validate_subject_inputs(subject_dir, subject)
     cleanup_subject_generated_outputs(output_root, subject)
 
     # region Meshing
@@ -282,7 +303,7 @@ def process_subject(subject_entry):
             raise
         except Exception as e:
             log_event("error", stage="charm_init", subject=subject, error=str(e))
-            return
+            raise
 
         # Load images
         custom_seg_map_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks.nii")
@@ -381,6 +402,7 @@ def process_subject(subject_entry):
             raise
         except Exception as e:
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
+            raise
 
 
     electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
@@ -760,6 +782,17 @@ def main():
         print(f"[INFO] Running TI pipeline for single subject: {subject_id}")
         try:
             duration = process_subject(subject_id)
+        except SimulationInputError as exc:
+            total_runtime = time.time() - start
+            log_event(
+                "subject_input_error",
+                subject=subject_id,
+                error=str(exc),
+                total_runtime_sec=total_runtime,
+                exit_code=SIM_INPUT_EXIT_CODE,
+            )
+            print(f"[ERROR] {exc}")
+            sys.exit(SIM_INPUT_EXIT_CODE)
         except MeshTimeoutError as exc:
             total_runtime = time.time() - start
             log_event(

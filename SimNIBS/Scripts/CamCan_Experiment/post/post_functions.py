@@ -142,6 +142,82 @@ def make_overlay_png(out_png, overlay_img, bg_img=None, title=None, roi_mask_img
     disp.close()
 
 
+def overlay_neighbor_union_on_t1_with_roi(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    neighbor_mask_img: nib.Nifti1Image,
+    out_png: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    dpi: int = 180,
+) -> str:
+    """
+    Render the fixed-template neighbor union mask on the subject anatomy.
+
+    The cyan overlay is the union of subject-space atlas labels selected by
+    the fixed MNI neighbor template. The red contour is the target ROI used
+    by the ROI and neighbor metric calculations.
+    """
+    scalar_shape = load_ti_as_scalar(ti_img).shape
+    ti_scalar_img = nib.Nifti1Image(
+        np.zeros(scalar_shape, dtype=np.float32),
+        ti_img.affine,
+        ti_img.header,
+    )
+    t1_on_ti = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
+    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
+    neighbor_on_ti = resample_to_img(neighbor_mask_img, ti_scalar_img, interpolation="nearest")
+
+    roi_data = np.asarray(roi_on_ti.dataobj) > 0
+    if np.any(roi_data):
+        center_ijk = np.argwhere(roi_data).mean(axis=0)
+        center_xyz = np.asarray(nib.affines.apply_affine(roi_on_ti.affine, center_ijk), dtype=float)
+        center_xyz[2] += float(z_offset_mm)
+        cut_coords = tuple(float(value) for value in center_xyz)
+    else:
+        cut_coords = (0.0, 0.0, 0.0)
+
+    neighbor_data = (np.asarray(neighbor_on_ti.dataobj) > 0).astype(np.uint8)
+    neighbor_binary_img = nib.Nifti1Image(neighbor_data, ti_img.affine, ti_img.header)
+    title_subject = f" ({subject})" if subject else ""
+    display = plot_anat(
+        t1_on_ti,
+        display_mode="ortho",
+        dim=0,
+        annotate=True,
+        draw_cross=True,
+        colorbar=False,
+        black_bg=True,
+        cut_coords=cut_coords,
+        title=f"Fixed neighbor union mask{title_subject}",
+    )
+    display.add_overlay(
+        neighbor_binary_img,
+        threshold=0.5,
+        cmap="Blues",
+        alpha=0.55,
+        colorbar=False,
+    )
+    display.add_contours(
+        neighbor_binary_img,
+        levels=[0.5],
+        colors=["cyan"],
+        linewidths=0.8,
+    )
+    display.add_contours(
+        roi_on_ti,
+        levels=[0.5],
+        colors=["red"],
+        linewidths=1.2,
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(out_png)) or ".", exist_ok=True)
+    display.savefig(out_png, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+    display.close()
+    return out_png
+
+
 def build_context_scale_mask_from_fastsurfer(
     atlas_img: nib.Nifti1Image,
     *,

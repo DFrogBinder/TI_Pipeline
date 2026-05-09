@@ -230,10 +230,18 @@ Main fields:
 - `neighbor_min_of_max`
 - flattened fields such as `neighbor_mean__<label>` and `neighbor_peak__<label>`
 
+Visual confirmation outputs:
+
+- `<roi>_fixed_neighbor_union_mask.nii.gz`: binary union of the subject-space labels selected by the fixed MNI neighbor template
+- `<roi>_fixed_neighbor_categorical_mask.nii.gz`: same voxels retaining their FastSurfer label IDs
+- `<roi>_fixed_neighbor_visualization.json`: ROI label IDs, neighbor label IDs/names, dilation setting, and union voxel count
+- `<roi>_fixed_neighbor_union_overlay.png`: cyan neighbor union over subject anatomy with the target ROI in red, when a T1 background is available
+
 Interpretation:
 
 - these metrics describe how strongly field leaks into the immediately surrounding anatomy
 - the fixed-template design ensures every subject is compared against the same surrounding-region definition
+- the visualization masks are generated from the same fixed neighbor label list used by the numeric metrics
 
 ### 5. Anatomical context metrics
 
@@ -534,6 +542,10 @@ Typical files in `<dataset>/<subject>/anat/post/`:
 - ROI voxel tables
 - overlay PNGs
 - `<roi>_fixed_neighbors.json`
+- `<roi>_fixed_neighbor_union_mask.nii.gz`
+- `<roi>_fixed_neighbor_categorical_mask.nii.gz`
+- `<roi>_fixed_neighbor_visualization.json`
+- `<roi>_fixed_neighbor_union_overlay.png` when a T1 background is available
 - `<roi>_electrode_distances.json`
 
 ### Within-run outputs
@@ -628,6 +640,7 @@ Useful fields in `PostBatchConfig`:
 - `mni_baseline_root`
 - `mni_fixed_atlas_path`
 - `neighbor_dilation_iter`
+- `write_neighbor_visualization`
 - `csf_labels`
 - `skull_labels`
 - `electrode_csv`
@@ -649,6 +662,7 @@ Useful environment variables in `run_post_processing_batch_env.py`:
 - `PIPELINE_MNI_BASELINE_ROOT`
 - `PIPELINE_MNI_FIXED_ATLAS_PATH`
 - `PIPELINE_NEIGHBOR_DILATION_ITER`
+- `PIPELINE_WRITE_NEIGHBOR_VISUALIZATION`
 - `PIPELINE_CSF_LABELS`
 - `PIPELINE_SKULL_LABELS`
 - `PIPELINE_ELECTRODE_CSV`
@@ -681,6 +695,10 @@ python3 post/run_full_post_pipeline.py \
   --mni-fixed-atlas-path /path/to/mni_fastsurfer_atlas.nii.gz \
   --electrode-csv /path/to/electrode_centers.csv
 ```
+
+By default this also writes the fixed-neighbor union masks and, when a T1 is
+available, a visual QC overlay. Add `--no-neighbor-visualization` if you need
+to disable those extra visualization artefacts for a lightweight run.
 
 Use this mode when you want:
 

@@ -175,6 +175,15 @@ atlas on the subject TI grid.
 | `neighbor_voxels__<label_slug>` | Flattened per-neighbor voxel count for repeatability analysis. |
 
 When configured, `<roi>_fixed_neighbors.json` stores the `neighbors` rows.
+The subject-level post-processing stage also writes visualization artefacts from
+the same fixed neighbor label list:
+
+| Output | Meaning |
+| --- | --- |
+| `<roi>_fixed_neighbor_union_mask.nii.gz` | Binary subject-space union of all fixed-template neighbor labels. |
+| `<roi>_fixed_neighbor_categorical_mask.nii.gz` | Categorical subject-space neighbor mask retaining FastSurfer label IDs. |
+| `<roi>_fixed_neighbor_visualization.json` | Audit metadata: target ROI IDs, neighbor label IDs/names, dilation setting, and union voxel count. |
+| `<roi>_fixed_neighbor_union_overlay.png` | Visual QC overlay: cyan neighbor union on subject anatomy with the target ROI contour in red. Written only when a T1 background is available. |
 
 ### ROI Centroid And Anatomy-Distance Metrics
 

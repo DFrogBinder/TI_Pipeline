@@ -139,6 +139,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Neighbor-template dilation iterations on the fixed MNI atlas. Default: 1",
     )
     parser.add_argument(
+        "--no-neighbor-visualization",
+        action="store_true",
+        help=(
+            "Disable subject-level fixed-neighbor union mask and overlay exports. "
+            "Neighbor scalar metrics are still computed when mni_fixed_atlas_path is configured."
+        ),
+    )
+    parser.add_argument(
         "--csf-labels",
         nargs="*",
         type=int,
@@ -259,6 +267,7 @@ def build_pipeline_config(args: argparse.Namespace, root: Path) -> PipelineConfi
     cfg.post.mni_baseline_root = args.mni_baseline_root
     cfg.post.mni_fixed_atlas_path = args.mni_fixed_atlas_path
     cfg.post.neighbor_dilation_iter = args.neighbor_dilation_iter
+    cfg.post.write_neighbor_visualization = not args.no_neighbor_visualization
     cfg.post.csf_labels = args.csf_labels if args.csf_labels else [24]
     cfg.post.skull_labels = args.skull_labels
     cfg.post.electrode_csv = args.electrode_csv

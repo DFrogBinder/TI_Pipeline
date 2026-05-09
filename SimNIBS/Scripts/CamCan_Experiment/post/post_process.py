@@ -19,6 +19,7 @@ from post.post_functions import (
     build_context_scale_mask_from_fastsurfer,
     fastsurfer_dkt_labels,
     make_outline,
+    overlay_neighbor_union_on_t1_with_roi,
     overlay_ti_full_field_true_vmax_reference_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi_individual_scale,
@@ -39,6 +40,7 @@ from post.metric_extensions import (
     build_extended_metric_message_scaffold,
     build_extended_metric_status_scaffold,
     build_extended_metrics_scaffold,
+    build_fixed_neighbor_masks,
     compute_anatomy_distance_metrics,
     compute_baseline_delta_metrics,
     compute_centroid_metrics,
@@ -95,6 +97,7 @@ class PostProcessConfig:
     electrode_names: Optional[Sequence[str]] = None
     eeg_positions_path_template: Optional[str] = None
     write_neighbor_table: bool = True
+    write_neighbor_visualization: bool = True
     write_electrode_table: bool = True
 
     # Debug/logging
@@ -460,6 +463,110 @@ def _generate_selected_roi_overlays(
     return overlay_paths, roi_overlay_mode
 
 
+def _write_neighbor_visualization_outputs(
+    *,
+    cfg: PostProcessConfig,
+    ti_img: nib.Nifti1Image,
+    t1_img_full: Optional[nib.Nifti1Image],
+    roi_mask: np.ndarray,
+    subject_atlas_data: Optional[np.ndarray],
+    out_dir: str,
+    roi_name: str,
+) -> Dict[str, Any]:
+    if not cfg.write_neighbor_visualization:
+        return {
+            "status": "disabled",
+            "message": "Neighbor visualization export is disabled.",
+        }
+    if not cfg.mni_fixed_atlas_path:
+        return {
+            "status": "not_configured",
+            "message": "Neighbor visualization requires mni_fixed_atlas_path.",
+        }
+    if subject_atlas_data is None:
+        return {
+            "status": "error",
+            "message": "Neighbor visualization requires a subject FastSurfer atlas on the TI grid.",
+        }
+
+    roi_stub = normalize_roi_name(roi_name)
+    result: Dict[str, Any] = {
+        "status": "pending",
+        "message": None,
+        "neighbor_dilation_iter": int(cfg.neighbor_dilation_iter),
+        "neighbor_label_ids": [],
+        "neighbor_label_names": [],
+        "union_mask_path": None,
+        "categorical_mask_path": None,
+        "metadata_path": None,
+        "overlay_path": None,
+    }
+
+    try:
+        masks = build_fixed_neighbor_masks(
+            mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
+            roi_name=roi_name,
+            dilation_iter=cfg.neighbor_dilation_iter,
+            subject_atlas_data=subject_atlas_data,
+        )
+        neighbor_template = masks["neighbor_template"]
+        neighbor_union_mask = masks["neighbor_union_mask"]
+        neighbor_categorical_mask = masks["neighbor_categorical_mask"]
+
+        union_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_union_mask.nii.gz")
+        categorical_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_categorical_mask.nii.gz")
+        metadata_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_visualization.json")
+        nib.save(nib.Nifti1Image(neighbor_union_mask.astype(np.uint8), ti_img.affine), union_path)
+        nib.save(nib.Nifti1Image(neighbor_categorical_mask.astype(np.int32), ti_img.affine), categorical_path)
+
+        metadata = {
+            "roi_name": roi_name,
+            "roi_label_ids": _fastsurfer_roi_label_ids(roi_name),
+            "mni_fixed_atlas_path": cfg.mni_fixed_atlas_path,
+            "neighbor_dilation_iter": int(cfg.neighbor_dilation_iter),
+            "neighbor_template": neighbor_template,
+            "neighbor_union_voxels": int(np.count_nonzero(neighbor_union_mask)),
+        }
+        with open(metadata_path, "w", encoding="utf-8") as handle:
+            json.dump(json_ready_metric_value(metadata), handle, indent=2)
+
+        result.update(
+            {
+                "neighbor_label_ids": [int(row["label_id"]) for row in neighbor_template],
+                "neighbor_label_names": [str(row["label_name"]) for row in neighbor_template],
+                "union_mask_path": union_path,
+                "categorical_mask_path": categorical_path,
+                "metadata_path": metadata_path,
+            }
+        )
+
+        if t1_img_full is not None and np.any(neighbor_union_mask):
+            overlay_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_union_overlay.png")
+            overlay_neighbor_union_on_t1_with_roi(
+                ti_img=ti_img,
+                t1_img=t1_img_full,
+                roi_mask_img=nib.Nifti1Image(roi_mask.astype(np.uint8), ti_img.affine),
+                neighbor_mask_img=nib.Nifti1Image(neighbor_union_mask.astype(np.uint8), ti_img.affine),
+                out_png=overlay_path,
+                subject=cfg.subject,
+                z_offset_mm=cfg.overlay_z_offset_mm,
+            )
+            result["overlay_path"] = overlay_path
+            result["status"] = "complete"
+        elif np.any(neighbor_union_mask):
+            result["status"] = "mask_only"
+            result["message"] = "T1 background was unavailable, so only neighbor mask NIfTI files were written."
+        else:
+            result["status"] = "empty"
+            result["message"] = "Neighbor template resolved, but the subject atlas produced an empty neighbor union mask."
+    except Exception as exc:
+        result["status"] = "error"
+        result["message"] = f"{type(exc).__name__}: {exc}"
+        if cfg.verbose:
+            print(f"[WARN] Neighbor visualization export failed for {cfg.subject}: {result['message']}")
+    return result
+
+
 def extended_metrics_fingerprint_for_cfg(cfg: PostProcessConfig) -> str:
     _, ti_path, _, _ = _infer_paths(cfg)
     return extended_metrics_config_fingerprint(
@@ -476,6 +583,7 @@ def extended_metrics_fingerprint_for_cfg(cfg: PostProcessConfig) -> str:
         mni_baseline_root=cfg.mni_baseline_root,
         mni_fixed_atlas_path=cfg.mni_fixed_atlas_path,
         neighbor_dilation_iter=cfg.neighbor_dilation_iter,
+        write_neighbor_visualization=cfg.write_neighbor_visualization,
         csf_labels=cfg.csf_labels,
         skull_labels=cfg.skull_labels,
         electrode_csv=cfg.electrode_csv,
@@ -732,6 +840,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     extended_group_messages: Dict[str, Optional[str]] = {}
     extended_config_fingerprint = extended_metrics_fingerprint_for_cfg(cfg)
     neighbor_table_path = None
+    neighbor_visualization: Optional[Dict[str, Any]] = None
     electrode_table_path = None
     if sel in roi_masks:
         roi_mask = roi_masks[sel]
@@ -1059,6 +1168,22 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             neighbor_table_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbors.json")
             with open(neighbor_table_path, "w", encoding="utf-8") as handle:
                 json.dump(extended_metrics["neighbors"], handle, indent=2)
+        if cfg.write_neighbor_visualization:
+            if extended_group_status.get("neighbors") == "ok":
+                neighbor_visualization = _write_neighbor_visualization_outputs(
+                    cfg=cfg,
+                    ti_img=ti_img,
+                    t1_img_full=t1_img_full,
+                    roi_mask=roi_mask,
+                    subject_atlas_data=subject_atlas_data,
+                    out_dir=out_dir,
+                    roi_name=sel,
+                )
+            else:
+                neighbor_visualization = {
+                    "status": "skipped",
+                    "message": "Neighbor visualization skipped because neighbor metrics were not complete.",
+                }
         if cfg.write_electrode_table and extended_metrics.get("electrode_distances"):
             roi_stub = normalize_roi_name(sel)
             electrode_table_path = os.path.join(out_dir, f"{roi_stub}_electrode_distances.json")
@@ -1172,6 +1297,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         extended_metric_status=extended_metric_status,
         extended_metric_messages=extended_metric_messages,
         extended_metrics_meta=extended_metrics_meta,
+        neighbor_visualization=neighbor_visualization,
         qc_meta=qc_meta,
     )
     subject_metrics = json_ready_metric_value(subject_metrics)
@@ -1201,6 +1327,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         qc_meta=qc_meta,
         subject_status=subject_status,
         neighbor_table_path=neighbor_table_path,
+        neighbor_visualization=neighbor_visualization,
         electrode_table_path=electrode_table_path,
         overlay_strategy=overlay_strategy,
     )

@@ -1,4 +1,5 @@
 import gzip
+import json
 import sys
 import types
 
@@ -10,6 +11,7 @@ post_functions_stub._resolve_fastsurfer_atlas = lambda *args, **kwargs: None
 post_functions_stub.build_context_scale_mask_from_fastsurfer = lambda *args, **kwargs: None
 post_functions_stub.fastsurfer_dkt_labels = {}
 post_functions_stub.make_outline = lambda *args, **kwargs: None
+post_functions_stub.overlay_neighbor_union_on_t1_with_roi = lambda *args, **kwargs: "neighbor_overlay.png"
 post_functions_stub.overlay_ti_full_field_true_vmax_reference_on_t1_with_roi = (
     lambda *args, **kwargs: None
 )
@@ -38,7 +40,13 @@ ti_utils_stub.vol_mm3 = lambda *args, **kwargs: 1.0
 sys.modules.setdefault("utils.ti_utils", ti_utils_stub)
 
 import post.post_process as post_process_module
-from post.post_process import PostProcessConfig, _generate_selected_roi_overlays, _load_t1_image, _overlay_qc
+from post.post_process import (
+    PostProcessConfig,
+    _generate_selected_roi_overlays,
+    _load_t1_image,
+    _overlay_qc,
+    _write_neighbor_visualization_outputs,
+)
 
 
 def test_load_t1_image_reads_standard_nifti(tmp_path):
@@ -144,3 +152,62 @@ def test_overlay_qc_marks_partial_overlay_set_as_error(tmp_path):
     assert qc["expected_overlay_count"] == 7
     assert qc["written_overlay_count"] == 1
     assert "roi_focus_top95" in qc["missing_overlay_types"]
+
+
+def test_write_neighbor_visualization_outputs_writes_union_and_categorical_masks(monkeypatch, tmp_path):
+    neighbor_union = np.array(
+        [
+            [[False, True], [False, False]],
+            [[True, False], [False, False]],
+        ],
+        dtype=bool,
+    )
+    neighbor_categorical = np.array(
+        [
+            [[0, 1002], [0, 0]],
+            [[1003, 0], [0, 0]],
+        ],
+        dtype=np.int32,
+    )
+
+    def fake_build_fixed_neighbor_masks(**kwargs):
+        return {
+            "neighbor_template": [
+                {"label_id": 1002, "label_name": "ctx-lh-caudalmiddlefrontal"},
+                {"label_id": 1003, "label_name": "ctx-lh-cuneus"},
+            ],
+            "neighbor_label_ids": [1002, 1003],
+            "neighbor_union_mask": neighbor_union,
+            "neighbor_categorical_mask": neighbor_categorical,
+        }
+
+    monkeypatch.setattr(
+        post_process_module,
+        "build_fixed_neighbor_masks",
+        fake_build_fixed_neighbor_masks,
+    )
+
+    cfg = PostProcessConfig(
+        root_dir=str(tmp_path),
+        subject="sub-01",
+        mni_fixed_atlas_path=str(tmp_path / "mni_atlas.nii.gz"),
+        verbose=False,
+    )
+    ti_img = nib.Nifti1Image(np.zeros((2, 2, 2), dtype=np.float32), np.eye(4))
+    result = _write_neighbor_visualization_outputs(
+        cfg=cfg,
+        ti_img=ti_img,
+        t1_img_full=None,
+        roi_mask=np.zeros((2, 2, 2), dtype=bool),
+        subject_atlas_data=np.zeros((2, 2, 2), dtype=np.int32),
+        out_dir=str(tmp_path),
+        roi_name="ctx-lh-precentral",
+    )
+
+    assert result["status"] == "mask_only"
+    assert nib.load(result["union_mask_path"]).get_fdata().sum() == 2
+    assert set(np.unique(nib.load(result["categorical_mask_path"]).get_fdata())) == {0.0, 1002.0, 1003.0}
+
+    metadata = json.loads((tmp_path / "ctx_lh_precentral_fixed_neighbor_visualization.json").read_text())
+    assert metadata["neighbor_union_voxels"] == 2
+    assert metadata["neighbor_template"][0]["label_id"] == 1002

@@ -128,6 +128,10 @@ def build_configs():
         "PIPELINE_WRITE_NEIGHBOR_TABLE",
         default=pipeline_cfg.post.write_neighbor_table,
     )
+    pipeline_cfg.post.write_neighbor_visualization = read_bool(
+        "PIPELINE_WRITE_NEIGHBOR_VISUALIZATION",
+        default=pipeline_cfg.post.write_neighbor_visualization,
+    )
     pipeline_cfg.post.write_electrode_table = read_bool(
         "PIPELINE_WRITE_ELECTRODE_TABLE",
         default=pipeline_cfg.post.write_electrode_table,

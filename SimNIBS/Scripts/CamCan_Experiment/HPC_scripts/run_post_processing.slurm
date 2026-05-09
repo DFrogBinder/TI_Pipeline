@@ -56,6 +56,7 @@ PIPELINE_OFFTARGET_THRESHOLD="0.2"
 PIPELINE_MNI_BASELINE_ROOT="/home/boyan/sandbox/Jake_Data/MNI152-data/MNI152_Hippocampus"
 PIPELINE_MNI_FIXED_ATLAS_PATH="/home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz"
 PIPELINE_NEIGHBOR_DILATION_ITER="1"
+PIPELINE_WRITE_NEIGHBOR_VISUALIZATION="1"  # write fixed-neighbor union masks and overlay PNGs
 PIPELINE_CSF_LABELS="24"  # space-separated label ids
 PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric
 PIPELINE_ELECTRODE_CSV=""  # optional CSV with columns subject,electrode,x,y,z
@@ -280,6 +281,9 @@ if [[ -n "${PIPELINE_ELECTRODE_NAMES}" ]]; then
 fi
 if [[ -n "${PIPELINE_EEG_POSITIONS_PATH_TEMPLATE}" ]]; then
     CMD+=(--eeg-positions-path-template "${PIPELINE_EEG_POSITIONS_PATH_TEMPLATE}")
+fi
+if [[ "${PIPELINE_WRITE_NEIGHBOR_VISUALIZATION}" == "0" ]]; then
+    CMD+=(--no-neighbor-visualization)
 fi
 if [[ "${PIPELINE_POPULATION_ENABLED}" == "0" ]]; then
     CMD+=(--no-population)

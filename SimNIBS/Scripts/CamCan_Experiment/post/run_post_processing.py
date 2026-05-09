@@ -96,6 +96,7 @@ class PostBatchConfig:
     electrode_names: Optional[List[str]] = None
     eeg_positions_path_template: Optional[str] = None
     write_neighbor_table: bool = True
+    write_neighbor_visualization: bool = True
     write_electrode_table: bool = True
     force: bool = False
     verbose: bool = True
@@ -209,6 +210,7 @@ def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) ->
         electrode_names=cfg.electrode_names,
         eeg_positions_path_template=cfg.eeg_positions_path_template,
         write_neighbor_table=cfg.write_neighbor_table,
+        write_neighbor_visualization=cfg.write_neighbor_visualization,
         write_electrode_table=cfg.write_electrode_table,
         verbose=cfg.verbose,
     )
@@ -558,6 +560,7 @@ def make_default_config() -> PipelineConfig:
             electrode_names=None,
             eeg_positions_path_template=None,
             write_neighbor_table=True,
+            write_neighbor_visualization=True,
             write_electrode_table=True,
             force=False,
             verbose=True,

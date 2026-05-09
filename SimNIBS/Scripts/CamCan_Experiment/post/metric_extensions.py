@@ -148,6 +148,7 @@ def extended_metrics_config_fingerprint(
     mni_baseline_root: Optional[str],
     mni_fixed_atlas_path: Optional[str],
     neighbor_dilation_iter: int,
+    write_neighbor_visualization: bool,
     csf_labels: Optional[Sequence[int]],
     skull_labels: Optional[Sequence[int]],
     electrode_csv: Optional[str],
@@ -173,6 +174,7 @@ def extended_metrics_config_fingerprint(
         "mni_baseline_root": _norm_path(mni_baseline_root),
         "mni_fixed_atlas_path": _norm_path(mni_fixed_atlas_path),
         "neighbor_dilation_iter": int(neighbor_dilation_iter),
+        "write_neighbor_visualization": bool(write_neighbor_visualization),
         "csf_labels": sorted(int(value) for value in csf_labels) if csf_labels else None,
         "skull_labels": sorted(int(value) for value in skull_labels) if skull_labels else None,
         "electrode_csv": _norm_path(electrode_csv),
@@ -353,6 +355,46 @@ def fixed_neighbor_template(
             dilation_iter,
         )
     ]
+
+
+def build_fixed_neighbor_masks(
+    *,
+    mni_fixed_atlas_path: Optional[str],
+    roi_name: str,
+    dilation_iter: int,
+    subject_atlas_data: Optional[np.ndarray],
+) -> Dict[str, Any]:
+    """
+    Build subject-space masks for the exact fixed-template neighbors used by
+    ``compute_neighbor_metrics``.
+
+    The neighbor labels are selected in fixed MNI atlas space, then projected
+    into the subject by reusing the same label ids in the subject FastSurfer
+    atlas on the TI grid. The ROI labels are explicitly excluded so composite
+    ROIs do not bleed into the neighbor visualization.
+    """
+    if subject_atlas_data is None:
+        raise ValueError("Subject atlas data are required to build neighbor visualization masks.")
+
+    neighbor_template = fixed_neighbor_template(
+        mni_fixed_atlas_path,
+        roi_name,
+        dilation_iter,
+    )
+    neighbor_ids = tuple(int(row["label_id"]) for row in neighbor_template)
+    atlas_data = np.asarray(subject_atlas_data).astype(np.int32, copy=False)
+    roi_ids = set(_canonical_label_ids(roi_name))
+    neighbor_mask = np.isin(atlas_data, neighbor_ids)
+    if roi_ids:
+        neighbor_mask &= ~np.isin(atlas_data, tuple(roi_ids))
+
+    categorical_mask = np.where(neighbor_mask, atlas_data, 0).astype(np.int32, copy=False)
+    return {
+        "neighbor_template": neighbor_template,
+        "neighbor_label_ids": list(neighbor_ids),
+        "neighbor_union_mask": neighbor_mask.astype(bool, copy=False),
+        "neighbor_categorical_mask": categorical_mask,
+    }
 
 
 def _roi_centroid_world(mask: np.ndarray, affine: np.ndarray) -> Optional[np.ndarray]:

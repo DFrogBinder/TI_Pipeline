@@ -37,7 +37,7 @@ import time
 #? Set appropriate flags
 meshPresent = False
 runMNI152 = False
-rootDIR = '/mnt/parscratch/users/cop23bi/LM1'
+rootDIR = os.environ.get("TI_SIM_ROOT", "/mnt/parscratch/users/cop23bi/LM1")
 DEFAULT_MESH_TIMEOUT_HOURS = 4.0
 MESH_TOTAL_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
 MESH_TIMEOUT_EXIT_CODE = 124
@@ -121,6 +121,34 @@ def cleanup_subject_mesh_outputs(subject_dir: str, subject: str) -> None:
             log_event("mesh_cleanup", kind="file", path=str(path))
         except Exception as exc:
             log_event("mesh_cleanup_error", kind="file", path=str(path), error=str(exc))
+
+
+def cleanup_subject_generated_outputs(output_root: str, subject: str) -> None:
+    """Remove generated TI simulation outputs so retries cannot validate stale data."""
+    simnibs_path = Path(output_root)
+    candidates = [
+        simnibs_path / "Output" / subject,
+        simnibs_path / "ti_brain_only.nii.gz",
+    ]
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=False)
+                log_event("sim_output_cleanup", kind="dir", path=str(path))
+            else:
+                path.unlink()
+                log_event("sim_output_cleanup", kind="file", path=str(path))
+        except Exception as exc:
+            log_event(
+                "sim_output_cleanup_error",
+                kind="dir" if path.is_dir() else "file",
+                path=str(path),
+                error=str(exc),
+            )
+            raise
 
 
 def _remaining_timeout(deadline: float | None) -> float | None:
@@ -222,6 +250,7 @@ def process_subject(subject_entry):
     print(f"[INFO] Starting TI pipeline for {subject_source} (using '{subject}' resources).")
     log_file_info("t1", os.path.join(subject_dir, f"{subject}_T1w.nii"))
     log_file_info("t2", os.path.join(subject_dir, f"{subject}_T2w.nii"))
+    cleanup_subject_generated_outputs(output_root, subject)
 
     # region Meshing
     if meshPresent:

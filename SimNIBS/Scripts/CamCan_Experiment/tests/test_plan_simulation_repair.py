@@ -3,6 +3,7 @@ from pathlib import Path
 
 from simulation.plan_simulation_repair import (
     scan_repair_needs,
+    submit_repair_jobs,
     write_repair_outputs,
 )
 
@@ -63,6 +64,8 @@ def test_scan_repair_needs_builds_plan_and_subject_counts(tmp_path):
     paths = write_repair_outputs(result, out_dir=tmp_path / "plan")
     plan_rows = _read_tsv(Path(paths["repair_plan"]))
     count_rows = _read_tsv(Path(paths["repair_subject_counts"]))
+    per_repeat_dir = Path(paths["per_repeat_repair_plans_dir"])
+    per_repeat_plan = per_repeat_dir / "Left_Hippocampus_Data_02_repair_plan.tsv"
 
     assert plan_rows == [
         {
@@ -82,6 +85,7 @@ def test_scan_repair_needs_builds_plan_and_subject_counts(tmp_path):
     assert count_rows[0]["n_missing_runs"] == "1"
     assert count_rows[0]["n_repairable_runs"] == "1"
     assert count_rows[0]["repairable_repeats"] == "02"
+    assert _read_tsv(per_repeat_plan) == plan_rows
 
 
 def test_scan_repair_needs_blocks_incomplete_subject_without_inputs(tmp_path):
@@ -103,3 +107,33 @@ def test_scan_repair_needs_blocks_incomplete_subject_without_inputs(tmp_path):
     assert blocked.subject == "sub-01"
     assert blocked.dataset_name == "Left_Hippocampus_Data_02"
     assert any(path.endswith("sub-01/anat/sub-01_T1w.nii") for path in blocked.missing_inputs)
+
+
+def test_submit_repair_jobs_dry_run_uses_one_plan_per_repeat(tmp_path):
+    run_01 = tmp_path / "Left_Hippocampus_Data_01"
+    run_02 = tmp_path / "Left_Hippocampus_Data_02"
+
+    for run_root, subject in ((run_01, "sub-01"), (run_02, "sub-02")):
+        _write_runner_inputs(run_root, subject)
+
+    result = scan_repair_needs(
+        batch_root=tmp_path,
+        check_nifti=False,
+    )
+    paths = write_repair_outputs(result, out_dir=tmp_path / "plan")
+    submit_script = tmp_path / "submit_repair_jobArray.sh"
+    submit_script.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+
+    submissions = submit_repair_jobs(
+        output_dir=paths["output_dir"],
+        submit_script=submit_script,
+        dry_run=True,
+    )
+
+    assert [item["dataset_name"] for item in submissions] == [
+        "Left_Hippocampus_Data_01",
+        "Left_Hippocampus_Data_02",
+    ]
+    assert all(item["status"] == "dry_run" for item in submissions)
+    assert all(Path(str(item["repair_plan"])).is_file() for item in submissions)
+    assert (Path(paths["output_dir"]) / "submission_summary.json").is_file()

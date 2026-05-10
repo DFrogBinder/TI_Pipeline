@@ -71,15 +71,25 @@ simnibs_python simulation/TI_runner_MNI152.py \
 The MNI152 runner does not perform subject-specific CHARM meshing or segmentation replacement. It is intended for fast switching between template-only montage configurations while keeping the same downstream output layout expected by the post-processing code.
 
 ## Simulation repair workflow
-After a repeated simulation batch has partial failures, run the discovery stage
-first. This scans the parent directory for missing final outputs and submits
-nothing:
+After a repeated simulation batch has partial failures, the easiest launch path
+is the Slurm repair launcher. All routine configuration is set in the block at
+the top of `HPC_scripts/launch_simulation_repair.slurm`; edit that block,
+especially `REPAIR_BATCH_ROOT`, then submit:
 ```bash
-python simulation/plan_simulation_repair.py \
-  --stage discovery \
-  --batch-root /path/to/Left_Hippocampus_Post_Data \
-  --expected-repeat-count 10
+sbatch HPC_scripts/launch_simulation_repair.slurm
 ```
+
+By default this runs discovery and then submits one repair array per repeat. To
+preview without submitting repair arrays, set `REPAIR_DRY_RUN="1"` in the
+launcher and submit the same way:
+```bash
+sbatch HPC_scripts/launch_simulation_repair.slurm
+```
+
+For discovery only, set `REPAIR_STAGE="discovery"` in the launcher. For
+submitting arrays from a previously generated discovery report, set
+`REPAIR_STAGE="simulate"`. Set it back to `REPAIR_STAGE="all"` for the normal
+one-step discovery-and-submit workflow.
 
 The scanner writes `<batch-root>/simulation_repair_plan/repair_subject_counts.tsv`
 with one row per subject needing repair and
@@ -89,16 +99,10 @@ subject-repeat task per missing run. It also writes one plan per repeat under
 incomplete outputs but missing T1/T2/manual-seg inputs are written separately to
 `blocked_repair_tasks.tsv`.
 
-After reviewing the discovery outputs, submit the runnable repair rows. This
-simulation stage submits one job array per repeat, using the same
-validation/requeue loop as the normal simulation array:
-```bash
-python simulation/plan_simulation_repair.py \
-  --stage simulate \
-  --batch-root /path/to/Left_Hippocampus_Post_Data
-```
-
-To audit the Slurm submissions before launching them, add `--dry-run`. Each
+After reviewing the discovery outputs, the simulation stage submits one job
+array per repeat, using the same validation/requeue loop as the normal
+simulation array. To audit the Slurm submissions before launching them, set
+`REPAIR_DRY_RUN="1"` in the launcher. Each
 repair-array task sets `TI_SIM_ROOT` to the repeat root from its plan row, runs
 the subject, validates the final outputs, and requeues itself until the
 subject-run is complete or `TI_MESH_MAX_RETRIES` is reached.

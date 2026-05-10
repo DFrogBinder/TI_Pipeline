@@ -11,6 +11,12 @@ MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
 # simulation exits cleanly and validation passes.
 MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
 
+if [ "$#" -ne 0 ]; then
+    echo "[ERROR] This launcher is configured only by variables at the top of the file." >&2
+    echo "[ERROR] Remove command-line arguments and edit REPAIR_PLAN_FILE, BATCH_SCRIPT, MAX_CONCURRENT, or retry settings instead." >&2
+    exit 2
+fi
+
 if ! [[ "$MESH_MAX_RETRIES" =~ ^-?[0-9]+$ ]]; then
     echo "[ERROR] TI_MESH_MAX_RETRIES must be an integer; got '${MESH_MAX_RETRIES}'." >&2
     exit 1
@@ -64,5 +70,4 @@ echo "[INFO] Simulation retries: ${MESH_RETRY_LIMIT_LABEL}"
 sbatch \
     --array="$ARRAY_SPEC" \
     --export=ALL,TI_REPAIR_PLAN_FILE="$REPAIR_PLAN_FILE",TI_SIM_RUNNER_PY="$SIM_RUNNER_PY",TI_COMPLETION_CHECK_PY="$COMPLETION_CHECK_PY",TI_MESH_TIMEOUT_HOURS="$MESH_TIMEOUT_HOURS",TI_MESH_MAX_RETRIES="$MESH_MAX_RETRIES" \
-    "$@" \
     "$BATCH_SCRIPT"

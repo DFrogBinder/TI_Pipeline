@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from simulation.montage_presets import resolve_montage_preset
 from simulation.validate_simulation_outputs import validate_subject_outputs
 
 
@@ -55,6 +56,8 @@ class RepeatDataset:
     name: str
     roi_prefix: str
     repeat_id: str
+    resolved_roi: str
+    montage_preset: str
 
 
 @dataclass(frozen=True)
@@ -167,12 +170,22 @@ def discover_repeat_datasets(
         if selected_repeats is not None and repeat_value not in selected_repeats:
             continue
 
+        try:
+            montage = resolve_montage_preset("auto", dataset_root=path)
+        except ValueError as exc:
+            raise SystemExit(
+                f"Could not select a simulation montage for repeat dataset "
+                f"'{path.name}': {exc}"
+            ) from exc
+
         datasets.append(
             RepeatDataset(
                 root=path.resolve(),
                 name=path.name,
                 roi_prefix=match.group("roi_prefix"),
                 repeat_id=match.group("repeat"),
+                resolved_roi=montage.roi_name,
+                montage_preset=montage.name,
             )
         )
 
@@ -445,6 +458,8 @@ def _write_per_repeat_repair_plans(
                 "dataset_name": dataset.name,
                 "repeat_id": dataset.repeat_id,
                 "dataset_root": str(dataset.root),
+                "resolved_roi": dataset.resolved_roi,
+                "montage_preset": dataset.montage_preset,
                 "repairable_subject_runs": len(rows),
                 "repair_plan": str(plan_path),
             }
@@ -534,6 +549,8 @@ def write_repair_outputs(result: RepairScanResult, out_dir: str | Path | None = 
                 "name": dataset.name,
                 "repeat_id": dataset.repeat_id,
                 "roi_prefix": dataset.roi_prefix,
+                "resolved_roi": dataset.resolved_roi,
+                "montage_preset": dataset.montage_preset,
                 "root": str(dataset.root),
             }
             for dataset in result.datasets
@@ -803,6 +820,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         paths = write_repair_outputs(result, out_dir=args.out_dir)
         print(f"[INFO] Discovery stage complete.")
         print(f"[INFO] Repeat datasets scanned: {len(result.datasets)}")
+        for dataset in result.datasets:
+            print(
+                f"[INFO] {dataset.name}: ROI {dataset.resolved_roi} -> "
+                f"montage preset {dataset.montage_preset}"
+            )
         print(f"[INFO] Expected subjects: {len(result.expected_subjects)}")
         print(f"[INFO] Complete subject-runs: {len(result.complete_statuses)}")
         print(f"[INFO] Repairable subject-runs: {len(result.repairable_statuses)}")

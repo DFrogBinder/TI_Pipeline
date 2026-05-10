@@ -30,6 +30,10 @@ from utils.sim_utils import (
     atomic_replace,
     img_info,
 )
+from simulation.montage_presets import (
+    list_montage_presets,
+    resolve_montage_preset,
+)
 import time
 
 
@@ -38,6 +42,7 @@ import time
 meshPresent = False
 runMNI152 = False
 rootDIR = os.environ.get("TI_SIM_ROOT", "/mnt/parscratch/users/cop23bi/LM1")
+ACTIVE_MONTAGE_PRESET = os.environ.get("TI_MONTAGE_PRESET", "right-m1")
 DEFAULT_MESH_TIMEOUT_HOURS = 4.0
 MESH_TOTAL_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
 MESH_TIMEOUT_EXIT_CODE = 124
@@ -405,42 +410,46 @@ def process_subject(subject_entry):
             raise
 
 
-    electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
-    electrode_shape       = 'ellipse'
-    electrode_conductivity = 1.4
+    try:
+        selected_montage = resolve_montage_preset(
+            ACTIVE_MONTAGE_PRESET,
+            dataset_root=rootDIR,
+        )
+    except ValueError as exc:
+        log_event(
+            "montage_config_error",
+            requested=ACTIVE_MONTAGE_PRESET,
+            root=rootDIR,
+            error=str(exc),
+        )
+        raise
 
-    # Left_Pallidum
-    # montage_right = ('Fpz', 2e-3, 'AF8', -2e-3) 
-    # montage_left  = ('TP7', 1.261915e-3, 'PO9', -1.261915e-3)
-    
-    # Right_Pallidum
-    # montage_right = ('F8', 2e-3, 'F10', -2e-3) 
-    # montage_left  = ('FT7', 1.261915e-3, 'C3', -1.261915e-3)
- 
-    
-    # Left Thalamus 
-    # montage_right = ('F7', 1.588656e-3, 'P7', -1.588656e-3) 
-    # montage_left  = ('F8', 2e-3, 'P8', -2e-3)
-    
-    # Right Thalamus 
-    # montage_right = ('AF7', 2e-3, 'TP7', -2e-3) 
-    # montage_left  = ('T8', 2e-3, 'PO8', -2e-3)
-    
-    # Left Hippocampus montage
-    # montage_right = ('F10', 2e-3, 'P8', -2e-3)
-    # montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
-    
-    # Right M1 montage
-    montage_right = ('FC6', 2e-3, 'FT8', -2e3)
-    montage_left  = ('C2', 0.796214e-3, 'C4', -0.796214e-3)
-    
-    # Left M1 montage
-    # montage_right = ('FC1', 2e-3, 'FCz', -2e-3)
-    # montage_left  = ('C3', 0.632456e-3, 'P5',  -0.632456e-3)
-    
-    # Right DLPFC montage
-    # montage_right = ('AF4', 0.796214e-3, 'F4', -0.796214e-3)
-    # montage_left  = ('C2', 2e-3, 'CP1', -2e-3)
+    electrode_size = [
+        selected_montage.electrode_radius_mm,
+        selected_montage.electrode_thickness_mm,
+    ]
+    electrode_shape = selected_montage.electrode_shape
+    electrode_conductivity = selected_montage.electrode_conductivity
+    montage_right = selected_montage.pair1.as_signed_tuple()
+    montage_left = selected_montage.pair2.as_signed_tuple()
+
+    log_event(
+        "montage_config",
+        requested=ACTIVE_MONTAGE_PRESET,
+        preset=selected_montage.name,
+        roi_name=selected_montage.roi_name,
+        root=rootDIR,
+        pair1_anode=selected_montage.pair1.anode,
+        pair1_cathode=selected_montage.pair1.cathode,
+        pair1_current_a=selected_montage.pair1.current_amp,
+        pair2_anode=selected_montage.pair2.anode,
+        pair2_cathode=selected_montage.pair2.cathode,
+        pair2_current_a=selected_montage.pair2.current_amp,
+        electrode_radius_mm=selected_montage.electrode_radius_mm,
+        electrode_thickness_mm=selected_montage.electrode_thickness_mm,
+        electrode_shape=selected_montage.electrode_shape,
+        electrode_conductivity=selected_montage.electrode_conductivity,
+    )
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
@@ -733,6 +742,8 @@ def run_many_subjects(max_workers: int | None = None):
 
 
 def main():
+    global MESH_TOTAL_TIMEOUT_SECONDS, ACTIVE_MONTAGE_PRESET
+
     parser = argparse.ArgumentParser(
         description="Temporal Interference pipeline runner (single- or multi-subject)."
     )
@@ -761,13 +772,32 @@ def main():
             "Set to 0 or a negative value to disable the timeout."
         ),
     )
+    parser.add_argument(
+        "--montage-preset",
+        default=ACTIVE_MONTAGE_PRESET,
+        help=(
+            "Simulation montage preset, ROI alias, or 'auto'. "
+            "Use 'auto' to infer the ROI/montage from TI_SIM_ROOT, e.g. "
+            "Left_Hippocampus_Data_01 -> left-hippocampus. "
+            "Default is TI_MONTAGE_PRESET or right-m1 for backward compatibility."
+        ),
+    )
+    parser.add_argument(
+        "--list-montage-presets",
+        action="store_true",
+        help="Print available subject-specific montage presets and exit.",
+    )
 
     args = parser.parse_args()
+    if args.list_montage_presets:
+        print(list_montage_presets())
+        return
+
     start = time.time()
-    global MESH_TOTAL_TIMEOUT_SECONDS
     MESH_TOTAL_TIMEOUT_SECONDS = (
         args.mesh_timeout_hours * 60 * 60 if args.mesh_timeout_hours > 0 else None
     )
+    ACTIVE_MONTAGE_PRESET = args.montage_preset
     log_event(
         "mesh_timeout_config",
         mesh_timeout_hours=args.mesh_timeout_hours,

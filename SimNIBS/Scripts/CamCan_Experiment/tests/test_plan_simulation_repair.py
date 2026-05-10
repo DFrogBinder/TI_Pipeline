@@ -86,6 +86,7 @@ def test_scan_repair_needs_builds_plan_and_subject_counts(tmp_path):
     assert count_rows[0]["n_repairable_runs"] == "1"
     assert count_rows[0]["repairable_repeats"] == "02"
     assert _read_tsv(per_repeat_plan) == plan_rows
+    assert all(dataset.montage_preset == "left-hippocampus" for dataset in result.datasets)
 
 
 def test_scan_repair_needs_blocks_incomplete_subject_without_inputs(tmp_path):

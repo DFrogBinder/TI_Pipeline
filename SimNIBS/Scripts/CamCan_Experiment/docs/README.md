@@ -17,7 +17,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Shared utilities**: `ti_utils.py` (ROI name helpers, TI scalar loading, atlas resampling, region summaries) and `utils/roi_registry.py` (FastSurfer ROI labels, aliases, dataset-name matching).
 - **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker; post-processing expects per-subject atlas files under `<fastsurfer_root>/<subject>.nii.gz`).
 - **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject), `simulation/TI_runner_single-core.py` (sequential/local debug), and `simulation/TI_runner_MNI152.py` (dedicated MNI152 template runner) create meshes or use the built-in MNI mesh, run SimNIBS TDCS pairs, compute TImax, and export TI volumes (`ti_brain_only.nii.gz`).
-- **Simulation repair planning**: `simulation/plan_simulation_repair.py` scans repeat dataset roots such as `Left_Hippocampus_Data_01` to `Left_Hippocampus_Data_10`, writes discovery reports and per-repeat Slurm repair plans, then can submit one repair array per repeat when run in simulation mode.
+- **Simulation repair planning**: `simulation/plan_simulation_repair.py` scans repeat dataset roots such as `Left_Hippocampus_Data_01` to `Left_Hippocampus_Data_10`, detects the ROI/montage with the same alias logic as post-processing, writes discovery reports and per-repeat Slurm repair plans, then can submit one repair array per repeat when run in simulation mode.
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
 - **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
@@ -87,7 +87,9 @@ with one row per subject needing repair and
 subject-repeat task per missing run. It also writes one plan per repeat under
 `<batch-root>/simulation_repair_plan/per_repeat_repair_plans/`. Rows with
 incomplete outputs but missing T1/T2/manual-seg inputs are written separately to
-`blocked_repair_tasks.tsv`.
+`blocked_repair_tasks.tsv`. During discovery, each repeat root is also resolved
+to a simulation montage preset from the directory ROI alias, for example
+`Left_Hippocampus_Data_01 -> left-hippocampus`.
 
 After reviewing the discovery outputs, submit the runnable repair rows. This
 simulation stage submits one job array per repeat, using the same
@@ -100,7 +102,7 @@ python simulation/plan_simulation_repair.py \
 
 To audit the Slurm submissions before launching them, add `--dry-run`. Each
 repair-array task sets `TI_SIM_ROOT` to the repeat root from its plan row, runs
-the subject, validates the final outputs, and requeues itself until the
+the subject with `--montage-preset auto`, validates the final outputs, and requeues itself until the
 subject-run is complete or `TI_MESH_MAX_RETRIES` is reached.
 
 ## Post-processing pipeline

@@ -50,6 +50,12 @@ REPAIR_MESH_TIMEOUT_HOURS="4"
 # 0 or negative means unlimited retry/requeue attempts.
 REPAIR_MESH_MAX_RETRIES="0"
 
+# Simulation montage. Use "auto" to infer from REPAIR_BATCH_ROOT/repeat names.
+# Available explicit values are defined in simulation/TI_runner_multi-core.py.
+# Current presets include left-pallidum, right-pallidum, left-thalamus,
+# right-thalamus, left-hippocampus, right-m1, left-m1, and right-dlpfc.
+REPAIR_MONTAGE_PRESET="auto"
+
 # Repository/HPC script paths.
 REPAIR_REPO_ROOT="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"
 REPAIR_PLANNER_PY="${REPAIR_REPO_ROOT}/simulation/plan_simulation_repair.py"
@@ -80,6 +86,39 @@ truthy() {
     esac
 }
 
+normalize_key() {
+    tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//'
+}
+
+detect_montage_preset() {
+    local detection_text normalized
+
+    detection_text="$(basename "$REPAIR_BATCH_ROOT")"
+    while IFS= read -r dataset_name; do
+        detection_text="${detection_text} ${dataset_name}"
+    done < <(
+        find "$REPAIR_BATCH_ROOT" -maxdepth 1 -mindepth 1 -type d \
+            -name "$REPAIR_DATASET_GLOB" -printf '%f\n' 2>/dev/null | sort
+    )
+
+    normalized="$(printf '%s' "$detection_text" | normalize_key)"
+    case "$normalized" in
+        *right_dlpfc*|*right_dlpc*|*rigth_dlpfc*|*rigth_dlpc*) printf '%s\n' "right-dlpfc" ;;
+        *right_m1*|*rigth_m1*) printf '%s\n' "right-m1" ;;
+        *left_m1*) printf '%s\n' "left-m1" ;;
+        *left_hippocampus*) printf '%s\n' "left-hippocampus" ;;
+        *right_thalamus*) printf '%s\n' "right-thalamus" ;;
+        *left_thalamus*) printf '%s\n' "left-thalamus" ;;
+        *right_pallidum*) printf '%s\n' "right-pallidum" ;;
+        *left_pallidum*) printf '%s\n' "left-pallidum" ;;
+        *)
+            echo "[ERROR] Could not auto-detect montage preset from REPAIR_BATCH_ROOT or repeat directory names." >&2
+            echo "[ERROR] Set REPAIR_MONTAGE_PRESET explicitly in the launcher, e.g. \"right-dlpfc\"." >&2
+            return 1
+            ;;
+    esac
+}
+
 if [ -z "$REPAIR_BATCH_ROOT" ]; then
     echo "[ERROR] REPAIR_BATCH_ROOT is empty." >&2
     echo "[ERROR] Edit the configuration block at the top of HPC_scripts/launch_simulation_repair.slurm," >&2
@@ -94,6 +133,10 @@ case "$REPAIR_STAGE" in
         exit 2
         ;;
 esac
+
+if [ "$(normalize_key <<< "$REPAIR_MONTAGE_PRESET")" = "auto" ]; then
+    REPAIR_MONTAGE_PRESET="$(detect_montage_preset)"
+fi
 
 for required_file in "$REPAIR_PLANNER_PY" "$REPAIR_SUBMIT_SCRIPT" "$REPAIR_ARRAY_SCRIPT" "$REPAIR_SIM_RUNNER_PY" "$REPAIR_COMPLETION_CHECK_PY"; do
     if [ ! -f "$required_file" ]; then
@@ -115,6 +158,7 @@ export TI_COMPLETION_CHECK_PY="$REPAIR_COMPLETION_CHECK_PY"
 export TI_ARRAY_MAX_CONCURRENT="$REPAIR_ARRAY_MAX_CONCURRENT"
 export TI_MESH_TIMEOUT_HOURS="$REPAIR_MESH_TIMEOUT_HOURS"
 export TI_MESH_MAX_RETRIES="$REPAIR_MESH_MAX_RETRIES"
+export TI_MONTAGE_PRESET="$REPAIR_MONTAGE_PRESET"
 export TI_REPAIR_LOG_DIR="$REPAIR_LOG_DIR"
 export TI_REPAIR_STATE_DIR="$REPAIR_STATE_DIR"
 
@@ -169,6 +213,7 @@ echo "[INFO]   dry run:             $REPAIR_DRY_RUN"
 echo "[INFO]   array max concurrent:$REPAIR_ARRAY_MAX_CONCURRENT"
 echo "[INFO]   mesh timeout hours:  $REPAIR_MESH_TIMEOUT_HOURS"
 echo "[INFO]   mesh max retries:    $REPAIR_MESH_MAX_RETRIES"
+echo "[INFO]   montage preset:      $REPAIR_MONTAGE_PRESET"
 echo "[INFO]   repair array script: $REPAIR_ARRAY_SCRIPT"
 echo "[INFO]   simulation runner:   $REPAIR_SIM_RUNNER_PY"
 echo "[INFO]   completion checker:  $REPAIR_COMPLETION_CHECK_PY"

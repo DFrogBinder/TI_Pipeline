@@ -19,6 +19,7 @@ REPAIR_PLAN_FILE="${TI_REPAIR_PLAN_FILE:-/users/cop23bi/scripts/simulation_repai
 SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/validate_simulation_outputs.py}"
 MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
+MONTAGE_PRESET="${TI_MONTAGE_PRESET:-right-m1}"
 # 0 or a negative value means retry indefinitely. The retry-state file below
 # makes Slurm requeues behave like a while loop until final validation passes.
 MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
@@ -139,6 +140,7 @@ echo "[INFO] Repair plan:  ${REPAIR_PLAN_FILE}"
 echo "[INFO] Missing outputs: ${MISSING_OUTPUTS}"
 echo "[INFO] Completion check: ${COMPLETION_CHECK_PY}"
 echo "[INFO] Mesh timeout: ${MESH_TIMEOUT_HOURS} hour(s) total across meshing/remeshing"
+echo "[INFO] Montage preset: ${MONTAGE_PRESET}"
 echo "[INFO] Simulation retry: ${MESH_RETRY_COUNT}/${MESH_RETRY_LIMIT_LABEL}"
 
 SAFE_DATASET_NAME="${DATASET_NAME//[^A-Za-z0-9_.-]/_}"
@@ -175,6 +177,7 @@ requeue_or_fail() {
 
 TI_SIM_ROOT="$TASK_ROOT" python -u "$SIM_RUNNER_PY" \
     --subject "$SUBJECT" \
+    --montage-preset "$MONTAGE_PRESET" \
     --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
 PY_EXIT=$?
 

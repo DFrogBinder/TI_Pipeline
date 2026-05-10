@@ -8,6 +8,7 @@ from pathlib import Path
 import argparse
 import concurrent.futures
 import json
+from dataclasses import dataclass
 import numpy as np
 import simnibs as sim
 import subprocess
@@ -42,6 +43,83 @@ DEFAULT_MESH_TIMEOUT_HOURS = 4.0
 MESH_TOTAL_TIMEOUT_SECONDS = DEFAULT_MESH_TIMEOUT_HOURS * 60 * 60
 MESH_TIMEOUT_EXIT_CODE = 124
 SIM_INPUT_EXIT_CODE = 126
+DEFAULT_MONTAGE_PRESET = "right-m1"
+SELECTED_MONTAGE = None
+
+
+@dataclass(frozen=True)
+class PairSpec:
+    anode: str
+    cathode: str
+    current_a: float
+
+
+@dataclass(frozen=True)
+class MontageSpec:
+    name: str
+    description: str
+    pair1: PairSpec
+    pair2: PairSpec
+    electrode_radius_mm: float = 10.0
+    electrode_thickness_mm: float = 2.0
+    electrode_shape: str = "ellipse"
+    electrode_conductivity: float = 1.4
+
+
+MONTAGE_PRESETS: dict[str, MontageSpec] = {
+    "left-pallidum": MontageSpec(
+        name="left-pallidum",
+        description="Left pallidum montage from the original commented block.",
+        pair1=PairSpec("Fpz", "AF8", 2e-3),
+        pair2=PairSpec("TP7", "PO9", 1.261915e-3),
+    ),
+    "right-pallidum": MontageSpec(
+        name="right-pallidum",
+        description="Right pallidum montage from the original commented block.",
+        pair1=PairSpec("F8", "F10", 2e-3),
+        pair2=PairSpec("FT7", "C3", 1.261915e-3),
+    ),
+    "left-thalamus": MontageSpec(
+        name="left-thalamus",
+        description="Left thalamus montage from the original commented block.",
+        pair1=PairSpec("F7", "P7", 1.588656e-3),
+        pair2=PairSpec("F8", "P8", 2e-3),
+    ),
+    "right-thalamus": MontageSpec(
+        name="right-thalamus",
+        description="Right thalamus montage from the original commented block.",
+        pair1=PairSpec("AF7", "TP7", 2e-3),
+        pair2=PairSpec("T8", "PO8", 2e-3),
+    ),
+    "left-hippocampus": MontageSpec(
+        name="left-hippocampus",
+        description="Left hippocampus montage from the original commented block.",
+        pair1=PairSpec("F10", "P8", 2e-3),
+        pair2=PairSpec("T7", "P7", 1.588656e-3),
+    ),
+    "right-m1": MontageSpec(
+        name="right-m1",
+        description="Right M1 montage that was previously active in this runner.",
+        pair1=PairSpec("FC6", "FT8", 2e-3),
+        pair2=PairSpec("C2", "C4", 0.796214e-3),
+    ),
+    "left-m1": MontageSpec(
+        name="left-m1",
+        description="Left M1 montage from the original commented block.",
+        pair1=PairSpec("FC1", "FCz", 2e-3),
+        pair2=PairSpec("C3", "P5", 0.632456e-3),
+    ),
+    "right-dlpfc": MontageSpec(
+        name="right-dlpfc",
+        description="Right DLPFC montage from the original commented block.",
+        pair1=PairSpec("AF4", "F4", 0.796214e-3),
+        pair2=PairSpec("C2", "CP1", 2e-3),
+    ),
+}
+
+MONTAGE_ALIASES = {
+    "right-dlpc": "right-dlpfc",
+}
 
 
 def log_event(event: str, **fields) -> None:
@@ -58,6 +136,36 @@ def log_file_info(label: str, path: str) -> None:
         exists=p.exists(),
         size_bytes=p.stat().st_size if p.exists() else None,
     )
+
+
+def normalize_montage_preset(name: str) -> str:
+    key = name.strip().lower().replace("_", "-").replace(" ", "-")
+    return MONTAGE_ALIASES.get(key, key)
+
+
+def resolve_montage_preset(name: str) -> MontageSpec:
+    key = normalize_montage_preset(name)
+    try:
+        return MONTAGE_PRESETS[key]
+    except KeyError as exc:
+        available = ", ".join(sorted(MONTAGE_PRESETS))
+        aliases = ", ".join(f"{alias}->{target}" for alias, target in sorted(MONTAGE_ALIASES.items()))
+        alias_msg = f"; aliases: {aliases}" if aliases else ""
+        raise ValueError(
+            f"Unknown montage preset '{name}'. Available presets: {available}{alias_msg}."
+        ) from exc
+
+
+def list_montage_presets() -> None:
+    print("Available montage presets:")
+    for name in sorted(MONTAGE_PRESETS):
+        preset = MONTAGE_PRESETS[name]
+        print(
+            f"- {name}: "
+            f"pair1={preset.pair1.anode}->{preset.pair1.cathode} ({preset.pair1.current_a:.6g} A), "
+            f"pair2={preset.pair2.anode}->{preset.pair2.cathode} ({preset.pair2.current_a:.6g} A)"
+        )
+        print(f"  {preset.description}")
 
 
 class MeshTimeoutError(RuntimeError):
@@ -405,42 +513,38 @@ def process_subject(subject_entry):
             raise
 
 
-    electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
-    electrode_shape       = 'ellipse'
-    electrode_conductivity = 1.4
+    montage = SELECTED_MONTAGE or resolve_montage_preset(DEFAULT_MONTAGE_PRESET)
+    electrode_size = [montage.electrode_radius_mm, montage.electrode_thickness_mm]
+    electrode_shape = montage.electrode_shape
+    electrode_conductivity = montage.electrode_conductivity
 
-    # Left_Pallidum
-    # montage_right = ('Fpz', 2e-3, 'AF8', -2e-3) 
-    # montage_left  = ('TP7', 1.261915e-3, 'PO9', -1.261915e-3)
-    
-    # Right_Pallidum
-    # montage_right = ('F8', 2e-3, 'F10', -2e-3) 
-    # montage_left  = ('FT7', 1.261915e-3, 'C3', -1.261915e-3)
- 
-    
-    # Left Thalamus 
-    # montage_right = ('F7', 1.588656e-3, 'P7', -1.588656e-3) 
-    # montage_left  = ('F8', 2e-3, 'P8', -2e-3)
-    
-    # Right Thalamus 
-    # montage_right = ('AF7', 2e-3, 'TP7', -2e-3) 
-    # montage_left  = ('T8', 2e-3, 'PO8', -2e-3)
-    
-    # Left Hippocampus montage
-    # montage_right = ('F10', 2e-3, 'P8', -2e-3)
-    # montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
-    
-    # Right M1 montage
-    montage_right = ('FC6', 2e-3, 'FT8', -2e3)
-    montage_left  = ('C2', 0.796214e-3, 'C4', -0.796214e-3)
-    
-    # Left M1 montage
-    # montage_right = ('FC1', 2e-3, 'FCz', -2e-3)
-    # montage_left  = ('C3', 0.632456e-3, 'P5',  -0.632456e-3)
-    
-    # Right DLPFC montage
-    # montage_right = ('AF4', 0.796214e-3, 'F4', -0.796214e-3)
-    # montage_left  = ('C2', 2e-3, 'CP1', -2e-3)
+    montage_right = (
+        montage.pair1.anode,
+        montage.pair1.current_a,
+        montage.pair1.cathode,
+        -montage.pair1.current_a,
+    )
+    montage_left = (
+        montage.pair2.anode,
+        montage.pair2.current_a,
+        montage.pair2.cathode,
+        -montage.pair2.current_a,
+    )
+    log_event(
+        "montage_config",
+        subject=subject_source,
+        preset=montage.name,
+        pair1_anode=montage.pair1.anode,
+        pair1_cathode=montage.pair1.cathode,
+        pair1_current_a=montage.pair1.current_a,
+        pair2_anode=montage.pair2.anode,
+        pair2_cathode=montage.pair2.cathode,
+        pair2_current_a=montage.pair2.current_a,
+        electrode_radius_mm=montage.electrode_radius_mm,
+        electrode_thickness_mm=montage.electrode_thickness_mm,
+        electrode_shape=montage.electrode_shape,
+        electrode_conductivity=montage.electrode_conductivity,
+    )
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
@@ -761,12 +865,41 @@ def main():
             "Set to 0 or a negative value to disable the timeout."
         ),
     )
+    parser.add_argument(
+        "--montage-preset",
+        default=os.environ.get("TI_MONTAGE_PRESET", DEFAULT_MONTAGE_PRESET),
+        help=(
+            "Named montage preset to run. Can also be set with TI_MONTAGE_PRESET. "
+            "Use --list-montage-presets to print available values."
+        ),
+    )
+    parser.add_argument(
+        "--list-montage-presets",
+        action="store_true",
+        help="Print available montage presets and exit.",
+    )
 
     args = parser.parse_args()
+    if args.list_montage_presets:
+        list_montage_presets()
+        return
+
+    global SELECTED_MONTAGE
+    try:
+        SELECTED_MONTAGE = resolve_montage_preset(args.montage_preset)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     start = time.time()
     global MESH_TOTAL_TIMEOUT_SECONDS
     MESH_TOTAL_TIMEOUT_SECONDS = (
         args.mesh_timeout_hours * 60 * 60 if args.mesh_timeout_hours > 0 else None
+    )
+    print(f"[INFO] Montage preset: {SELECTED_MONTAGE.name}")
+    log_event(
+        "montage_preset_selected",
+        preset=SELECTED_MONTAGE.name,
+        requested=args.montage_preset,
     )
     log_event(
         "mesh_timeout_config",

@@ -86,6 +86,12 @@ launcher and submit the same way:
 sbatch HPC_scripts/launch_simulation_repair.slurm
 ```
 
+The launcher also controls the simulation montage. Leave
+`REPAIR_MONTAGE_PRESET="auto"` to infer the montage from the repeat-batch
+directory name, or set it explicitly to one of the runner presets such as
+`right-dlpfc`, `right-m1`, `left-m1`, `left-hippocampus`, `right-thalamus`, or
+`left-thalamus`.
+
 For discovery only, set `REPAIR_STAGE="discovery"` in the launcher. For
 submitting arrays from a previously generated discovery report, set
 `REPAIR_STAGE="simulate"`. Set it back to `REPAIR_STAGE="all"` for the normal
@@ -106,6 +112,13 @@ simulation array. To audit the Slurm submissions before launching them, set
 repair-array task sets `TI_SIM_ROOT` to the repeat root from its plan row, runs
 the subject, validates the final outputs, and requeues itself until the
 subject-run is complete or `TI_MESH_MAX_RETRIES` is reached.
+
+If a repair was launched with the wrong montage, do not run a fresh discovery
+and expect it to find those rows again: the wrong-montage outputs may still pass
+the file-completion checks. Instead, set `REPAIR_MONTAGE_PRESET` to the correct
+preset, set `REPAIR_STAGE="simulate"`, keep `REPAIR_OUT_DIR` pointed at the
+repair plan from the mistaken launch, and resubmit the launcher. The runner
+cleans each listed subject's existing SimNIBS outputs before rerunning it.
 
 ## Post-processing pipeline
 1) Edit the pipeline config in `post/run_post_processing.py`:

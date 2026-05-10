@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# FastSurfer → FreeSurfer segmentation pipeline (Docker)
+# FastSurfer -> FreeSurfer segmentation pipeline (Docker)
 #
 # Usage:
-#   ./make_atlas.sh <DATA_DIR> <THREADS> <LICENSE_PATH>
+#   ./make_atlas.sh <DATA_DIR> <THREADS> <LICENSE_PATH> [SUBJECT_ID]
 #
 # Example:
 #   ./make_atlas.sh ~/sandbox/Jake_Data 7 ~/sandbox/utils/freesurfer_licence.txt
+#   FASTSURFER_USE_GPU=1 FASTSURFER_DEVICE=cuda ./make_atlas.sh ~/sandbox/Jake_Data 9 ~/sandbox/utils/freesurfer_licence.txt sub-CC110033
 #
 set -euo pipefail
 
@@ -28,6 +29,13 @@ format_duration() {
   local minutes=$(( (total_seconds % 3600) / 60 ))
   local seconds=$(( total_seconds % 60 ))
   printf '%02d:%02d:%02d' "${hours}" "${minutes}" "${seconds}"
+}
+
+truthy() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|y|Y|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 report_progress() {
@@ -94,13 +102,15 @@ process_subject() {
   else
     log "[run] ${sid}: FastSurfer segmentation..."
     docker run --rm "${DOCKER_TERM_FLAGS[@]}" \
+      "${FASTSURFER_DOCKER_RUN_FLAGS[@]}" \
       -u "$(id -u):$(id -g)" -w /data \
       -v "${data_root}:/data" \
       "${fastsurfer_image}" \
       --t1 "${t1_container}" \
       --sd "${subjects_dir_container}" \
       --sid "${sid}" \
-      --seg_only --threads "${threads}" --no_cereb --no_hypothal || return 1
+      --seg_only --threads "${threads}" --no_cereb --no_hypothal \
+      "${FASTSURFER_RUN_EXTRA_ARGS[@]}" || return 1
     log "[done] ${sid}: FastSurfer segmentation."
   fi
 
@@ -143,14 +153,28 @@ process_subject() {
 DATA="${1:-}"
 THREADS="${2:-}"
 LICENSE="${3:-}"
+SUBJECT_FILTER="${4:-}"
 
 # default docker images
-FASTSURFER_IMAGE="deepmi/fastsurfer:latest"
-FREESURFER_IMAGE="freesurfer/freesurfer:7.4.1"
+FASTSURFER_IMAGE="${FASTSURFER_IMAGE:-deepmi/fastsurfer:latest}"
+FREESURFER_IMAGE="${FREESURFER_IMAGE:-freesurfer/freesurfer:7.4.1}"
+
+FASTSURFER_DOCKER_FLAGS_RAW="${FASTSURFER_DOCKER_FLAGS:-}"
+declare -a FASTSURFER_DOCKER_RUN_FLAGS=()
+if [[ -n "${FASTSURFER_DOCKER_FLAGS_RAW}" ]]; then
+  read -r -a FASTSURFER_DOCKER_RUN_FLAGS <<< "${FASTSURFER_DOCKER_FLAGS_RAW}"
+elif truthy "${FASTSURFER_USE_GPU:-0}"; then
+  FASTSURFER_DOCKER_RUN_FLAGS=(--gpus "${FASTSURFER_DOCKER_GPUS:-all}")
+fi
+
+declare -a FASTSURFER_RUN_EXTRA_ARGS=()
+if [[ -n "${FASTSURFER_DEVICE:-}" ]]; then
+  FASTSURFER_RUN_EXTRA_ARGS+=(--device "${FASTSURFER_DEVICE}")
+fi
 
 # ---------- validate ----------
 if [[ -z "${DATA}" || -z "${THREADS}" || -z "${LICENSE}" ]]; then
-  echo "Usage: $0 <DATA_DIR> <THREADS> <LICENSE_PATH>" >&2
+  echo "Usage: $0 <DATA_DIR> <THREADS> <LICENSE_PATH> [SUBJECT_ID]" >&2
   exit 1
 fi
 
@@ -197,14 +221,23 @@ log "Subjects dir  : ${SUBJECT_ROOT}"
 log "THREADS       : ${THREADS}"
 log "LICENSE_PATH  : ${LICENSE_PATH}"
 log "FastSurfer    : ${FASTSURFER_IMAGE}"
+log "FastSurfer GPU: ${FASTSURFER_DOCKER_RUN_FLAGS[*]:-<none>}"
+log "FastSurfer args: ${FASTSURFER_RUN_EXTRA_ARGS[*]:-<none>}"
 log "FreeSurfer    : ${FREESURFER_IMAGE}"
 log "Output dir    : ${FASTSURFER_OUT_DIR}"
+if [[ -n "${SUBJECT_FILTER}" ]]; then
+  log "Subject filter: ${SUBJECT_FILTER}"
+fi
 log "-----------------------------------------------"
 
 declare -a SUBJECT_IDS=()
-while IFS= read -r -d '' dir; do
-  SUBJECT_IDS+=("$(basename "${dir}")")
-done < <(find "${SUBJECT_ROOT}" -mindepth 1 -maxdepth 1 -type d ! -name "FastSurfer_out" -print0)
+if [[ -n "${SUBJECT_FILTER}" ]]; then
+  SUBJECT_IDS=("${SUBJECT_FILTER}")
+else
+  while IFS= read -r -d '' dir; do
+    SUBJECT_IDS+=("$(basename "${dir}")")
+  done < <(find "${SUBJECT_ROOT}" -mindepth 1 -maxdepth 1 -type d ! -name "FastSurfer_out" -print0)
+fi
 
 if (( ${#SUBJECT_IDS[@]} == 0 )); then
   log "No subject directories found beneath ${SUBJECT_ROOT}. Nothing to process."

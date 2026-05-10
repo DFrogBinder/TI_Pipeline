@@ -6,6 +6,7 @@ from post.run_post_processing import (
     resolve_max_workers,
     resolve_subject_fastsurfer_atlas_path,
     run_subject_level_stage,
+    should_skip_subject,
     validate_post_batch_config,
 )
 
@@ -95,6 +96,30 @@ def test_validate_post_batch_config_requires_fixed_atlas_with_mni_baseline(tmp_p
 
     with pytest.raises(SystemExit, match="without mni_fixed_atlas_path"):
         validate_post_batch_config(cfg)
+
+
+def test_should_skip_subject_reprocesses_old_metric_schema(monkeypatch, tmp_path):
+    out_dir = tmp_path / "sub-01" / "anat" / "post"
+    out_dir.mkdir(parents=True)
+    (out_dir / "subject_metrics.json").write_text(
+        """
+        {
+          "subject_metrics_meta": {"status": "complete"},
+          "extended_metrics_meta": {
+            "schema_version": 3,
+            "status": "complete",
+            "config_fingerprint": "expected"
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "post.post_process.extended_metrics_fingerprint_for_cfg",
+        lambda cfg: "expected",
+    )
+
+    assert not should_skip_subject(out_dir, object(), force=False)
 
 
 def test_run_subject_level_stage_marks_partial_when_some_subjects_are_usable(monkeypatch):

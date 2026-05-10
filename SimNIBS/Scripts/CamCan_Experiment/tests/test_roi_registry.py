@@ -17,9 +17,14 @@ def test_alias_dictionary_contains_expected_hippocampus_aliases():
 def test_resolve_fastsurfer_roi_name_supports_right_m1_aliases():
     match = resolve_fastsurfer_roi_name("right_m1")
     assert match.canonical_name == "ctx-rh-precentral"
+    assert resolve_fastsurfer_roi_label_ids("right_m1") == (2022,)
 
     typo_match = resolve_fastsurfer_roi_name("rigth_m1")
     assert typo_match.canonical_name == "ctx-rh-precentral"
+
+    directory_match = match_fastsurfer_roi_from_directory("/tmp/Right_M1_Data_01")
+    assert directory_match.canonical_name == "ctx-rh-precentral"
+    assert directory_match.matched_alias == "right_m1"
 
 
 def test_match_fastsurfer_roi_from_directory_uses_longest_specific_alias():
@@ -127,3 +132,26 @@ def test_pipeline_resolves_shorthand_dataset_roi_to_canonical_label():
 
     assert cfg.post.plot_roi == "Right-Thalamus-Proper"
     assert cfg.population.target_roi == "Right-Thalamus-Proper"
+
+
+def test_pipeline_resolves_right_m1_dataset_roi_to_canonical_label():
+    from post.run_post_processing import (
+        PipelineConfig,
+        PopulationConfig,
+        PostBatchConfig,
+        _resolve_pipeline_rois,
+    )
+
+    cfg = PipelineConfig(
+        post=PostBatchConfig(
+            root="/tmp/Right_M1_Data_01",
+            atlas_mode="fastsurfer",
+            plot_roi=None,
+        ),
+        population=PopulationConfig(enabled=False),
+    )
+
+    _resolve_pipeline_rois(cfg)
+
+    assert cfg.post.plot_roi == "ctx-rh-precentral"
+    assert cfg.population.target_roi == "ctx-rh-precentral"

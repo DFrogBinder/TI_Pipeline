@@ -85,6 +85,12 @@ For `Right_DLPC_Runs`, use the `right_dlpc` row:
 AF4 F4 C2 CP1
 ```
 
+For `Right_M1_Data_*` repeat datasets, use the `right_m1` row:
+
+```text
+FC6 FT8 C2 C4
+```
+
 The included example generator performs this extraction:
 
 ```bash

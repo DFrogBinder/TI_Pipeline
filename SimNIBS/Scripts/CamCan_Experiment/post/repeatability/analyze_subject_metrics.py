@@ -35,18 +35,27 @@ METRIC_LABELS = {
     "percentile": "Percentile",
     "percentile_value": "Percentile Value",
     "voxel_volume_mm3": "Voxel Volume",
+    "whole_brain_voxels": "Whole-Brain Voxels",
+    "whole_brain_volume_mm3": "Whole-Brain Volume",
     "top_percentile_voxels": "Top Percentile Voxels",
+    "top_percentile_percent_of_whole_brain": "Top Percentile % of Whole Brain",
     "roi_voxels": "ROI Voxels",
     "overlap_top_voxels": "Overlap Top Voxels",
     "roi_volume_mm3": "ROI Volume",
     "overlap_volume_mm3": "Overlap Volume",
     "overlap_fraction": "Overlap Fraction",
+    "roi_percent_of_whole_brain": "ROI % of Whole Brain",
+    "overlap_top_percent_of_whole_brain": "Top Percentile in ROI % of Whole Brain",
     "roi_peak": "ROI Peak Field",
     "roi_mean": "ROI Mean Field",
     "roi_peak_abs_delta_mni": "ROI Peak Absolute Delta vs MNI",
     "roi_mean_abs_delta_mni": "ROI Mean Absolute Delta vs MNI",
     "focality_voxels_gt_threshold": "Focality Voxels > Threshold",
     "focality_volume_mm3_gt_threshold": "Focality Volume > Threshold",
+    "focality_percent_of_whole_brain_gt_threshold": "Threshold % of Whole Brain",
+    "focality_in_roi_voxels_gt_threshold": "ROI Focality Voxels > Threshold",
+    "focality_in_roi_volume_mm3_gt_threshold": "ROI Focality Volume > Threshold",
+    "focality_in_roi_percent_of_whole_brain_gt_threshold": "Threshold in ROI % of Whole Brain",
     "focality_voxels_abs_delta_mni": "Focality Voxels Absolute Delta vs MNI",
     "focality_volume_mm3_abs_delta_mni": "Focality Volume Absolute Delta vs MNI",
     "neighbor_mean_of_means": "Neighbor Mean of Means",
@@ -63,18 +72,27 @@ METRIC_FORMATTERS = {
     "percentile": lambda x: f"{x:.1f}",
     "percentile_value": lambda x: f"{x:.6f}",
     "voxel_volume_mm3": lambda x: f"{x:.6f}",
+    "whole_brain_voxels": lambda x: f"{x:,.0f}",
+    "whole_brain_volume_mm3": lambda x: f"{x:,.3f}",
     "top_percentile_voxels": lambda x: f"{x:,.0f}",
+    "top_percentile_percent_of_whole_brain": lambda x: f"{x:.3f}%",
     "roi_voxels": lambda x: f"{x:,.0f}",
     "overlap_top_voxels": lambda x: f"{x:,.0f}",
     "roi_volume_mm3": lambda x: f"{x:,.3f}",
     "overlap_volume_mm3": lambda x: f"{x:,.3f}",
     "overlap_fraction": lambda x: f"{x:.4f}",
+    "roi_percent_of_whole_brain": lambda x: f"{x:.3f}%",
+    "overlap_top_percent_of_whole_brain": lambda x: f"{x:.3f}%",
     "roi_peak": lambda x: f"{x:.6f}",
     "roi_mean": lambda x: f"{x:.6f}",
     "roi_peak_abs_delta_mni": lambda x: f"{x:.6f}",
     "roi_mean_abs_delta_mni": lambda x: f"{x:.6f}",
     "focality_voxels_gt_threshold": lambda x: f"{x:,.0f}",
     "focality_volume_mm3_gt_threshold": lambda x: f"{x:,.3f}",
+    "focality_percent_of_whole_brain_gt_threshold": lambda x: f"{x:.3f}%",
+    "focality_in_roi_voxels_gt_threshold": lambda x: f"{x:,.0f}",
+    "focality_in_roi_volume_mm3_gt_threshold": lambda x: f"{x:,.3f}",
+    "focality_in_roi_percent_of_whole_brain_gt_threshold": lambda x: f"{x:.3f}%",
     "focality_voxels_abs_delta_mni": lambda x: f"{x:,.0f}",
     "focality_volume_mm3_abs_delta_mni": lambda x: f"{x:,.3f}",
     "neighbor_mean_of_means": lambda x: f"{x:.6f}",
@@ -92,6 +110,14 @@ PLOT_METRICS = [
     "top_percentile_voxels",
     "overlap_top_voxels",
     "overlap_fraction",
+]
+
+WHOLE_BRAIN_OCCUPANCY_METRICS = [
+    "roi_percent_of_whole_brain",
+    "top_percentile_percent_of_whole_brain",
+    "overlap_top_percent_of_whole_brain",
+    "focality_percent_of_whole_brain_gt_threshold",
+    "focality_in_roi_percent_of_whole_brain_gt_threshold",
 ]
 
 IMAGE_MASK_METRIC_LABELS = {
@@ -1463,6 +1489,10 @@ def thousands_formatter() -> FuncFormatter:
     return FuncFormatter(lambda value, _pos: f"{value:,.0f}")
 
 
+def percent_formatter() -> FuncFormatter:
+    return FuncFormatter(lambda value, _pos: f"{value:.2f}%")
+
+
 def add_figure_note(fig: plt.Figure, text: str) -> None:
     fig.text(
         0.01,
@@ -1941,6 +1971,75 @@ def save_repeat_distribution_plot(frame: pd.DataFrame, output_path: Path) -> Non
     )
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
+
+
+def save_whole_brain_occupancy_plot(frame: pd.DataFrame, output_path: Path) -> bool:
+    available_metrics = [
+        metric
+        for metric in WHOLE_BRAIN_OCCUPANCY_METRICS
+        if metric in frame.columns and pd.to_numeric(frame[metric], errors="coerce").notna().any()
+    ]
+    if not available_metrics:
+        return False
+
+    run_order = sorted(frame["run_short"].dropna().unique())
+    fig, axes = plt.subplots(2, 3, figsize=(20.0, 11.8))
+    axes_flat = axes.flatten()
+
+    for axis, metric in zip(axes_flat, available_metrics):
+        plot_data = frame[["run_short", metric]].copy()
+        plot_data[metric] = pd.to_numeric(plot_data[metric], errors="coerce")
+        plot_data = plot_data.dropna(subset=[metric])
+        sns.boxplot(
+            data=plot_data,
+            x="run_short",
+            y=metric,
+            order=run_order,
+            ax=axis,
+            color="#D7E6B5",
+            showfliers=False,
+            width=0.62,
+            boxprops={"facecolor": "#D7E6B5", "edgecolor": "#5B7F17"},
+            medianprops={"color": "#2F4810", "linewidth": 2},
+            whiskerprops={"color": "#5B7F17"},
+            capprops={"color": "#5B7F17"},
+        )
+        means = plot_data.groupby("run_short", sort=False)[metric].mean().reindex(run_order)
+        axis.scatter(
+            np.arange(len(run_order)),
+            means.to_numpy(),
+            marker="D",
+            s=48,
+            color="#C65D1B",
+            edgecolor="white",
+            linewidth=0.8,
+            zorder=5,
+            label="Run mean",
+        )
+        axis.set_title(METRIC_LABELS[metric])
+        axis.set_xlabel("Repeat")
+        axis.set_ylabel("Percent of finite whole-brain voxels")
+        axis.yaxis.set_major_formatter(percent_formatter())
+        if metric == available_metrics[0]:
+            axis.legend(frameon=False, loc="upper right")
+
+    for axis in axes_flat[len(available_metrics):]:
+        axis.axis("off")
+
+    apply_multi_panel_layout(fig, top=0.90, bottom=0.09, left=0.07, right=0.985, wspace=0.28, hspace=0.33)
+    fig.suptitle(
+        "Whole-Brain Occupancy Percentages",
+        fontsize=17,
+        fontweight="bold",
+        y=0.965,
+    )
+    add_figure_note(
+        fig,
+        "Percentages use finite TI voxels as the whole-brain denominator.",
+    )
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+    return True
 
 
 def save_repeat_mean_ci_plot(repeat_stats: pd.DataFrame, output_path: Path) -> None:
@@ -3061,7 +3160,7 @@ def write_report(
         "- `subject_level_variation.csv`, `subject_level_variation_summary.csv`, and `subject_cross_metric_instability.csv`: subject-level repeat-variation outputs.",
         "- `log_subject_run_details.csv`, `log_failure_summary_by_category.csv`, and `log_run_transition_summary.csv`: log-derived failure audit outputs.",
         "- `subject_level_variation_report.md` and `failure_report.md`: narrative interpretation of subject-level instability and operational failures.",
-        "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, and the failure audit.",
+        "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, whole-brain occupancy, and the failure audit.",
         "",
     ]
 
@@ -3090,7 +3189,7 @@ def write_report(
             "",
         ]
         figure_line_index = report_lines.index(
-            "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, and the failure audit."
+            "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, whole-brain occupancy, and the failure audit."
         )
         report_lines[figure_line_index:figure_line_index] = [
             "- `image_repeatability_run_level.csv`, `image_repeatability_pairwise_subject_run_pairs.csv`, `image_repeatability_subject_level.csv`, `image_repeatability_pairwise_run_summary.csv`, and `image_repeatability_cohort_summary.csv`: image-level repeatability tables for masks, within-ROI fields, and hotspot localization.",
@@ -3098,7 +3197,7 @@ def write_report(
             "",
         ]
         report_lines[figure_line_index + 3] = (
-            "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, the failure audit, and image-level repeatability."
+            "- `figures/*.png`: presentation-ready figures for coverage, repeat-level distributions, run means, pairwise differences, variation summaries, subject-level instability, whole-brain occupancy, the failure audit, and image-level repeatability."
         )
 
     report_path = output_dir / "analysis_summary.md"
@@ -3217,6 +3316,7 @@ def write_methodology_documentation(
         "- `top_percentile_voxels`: number of voxels entering the top-percentile mask.",
         "- `overlap_top_voxels`: count of top-percentile voxels that overlap the target ROI.",
         "- `overlap_fraction`: fraction of the ROI covered by the top-percentile voxels.",
+        "- Whole-brain occupancy percentages: ROI mask, top-percentile mask, top-percentile-in-ROI mask, threshold mask, and threshold-in-ROI mask, all divided by finite TI voxels.",
         "- `roi_voxels`, `roi_volume_mm3`, `voxel_volume_mm3`, `percentile`: retained as structural/reference metrics.",
         "",
         (
@@ -4291,6 +4391,10 @@ def run_analysis(
             figures_dir / "08_image_repeatability_summary.png",
             analysis_percentile=analysis_percentile,
         )
+    save_whole_brain_occupancy_plot(
+        analysis_frame,
+        figures_dir / "09_whole_brain_occupancy_percentages.png",
+    )
     report_path = write_report(
         dataset_root=dataset_root,
         output_dir=output_dir,

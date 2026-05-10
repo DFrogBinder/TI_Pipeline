@@ -161,12 +161,17 @@ Main fields:
 
 - `percentile_value`
 - `region_percentile`
+- `whole_brain_voxels`
 - `top_percentile_voxels`
+- `top_percentile_percent_of_whole_brain`
 - `rois[ROI].roi_voxels`
 - `rois[ROI].overlap_top_voxels`
 - `rois[ROI].roi_volume_mm3`
 - `rois[ROI].overlap_volume_mm3`
 - `rois[ROI].overlap_fraction`
+- `rois[ROI].roi_percent_of_whole_brain`
+- `rois[ROI].overlap_top_percent_of_whole_brain`
+- `rois[ROI].focality_in_roi_percent_of_whole_brain_gt_threshold`
 - `rois[ROI].roi_percentile_value`
 
 Interpretation:
@@ -174,6 +179,7 @@ Interpretation:
 - `percentile_value` is the whole-brain threshold used to define the top field mask
 - `top_percentile_voxels` is the size of that high-field mask
 - `overlap_fraction` is the fraction of the target ROI occupied by the top field
+- `*_percent_of_whole_brain` fields use finite TI voxels as the whole-brain denominator
 - `roi_percentile_value` is the same percentile computed only inside the target ROI for one subject and one repeat
 - `region_percentile` records which percentile level was used for the ROI-internal percentile calculation
 
@@ -205,6 +211,7 @@ Main fields:
 - `focality_threshold_v_per_m`
 - `focality_voxels_gt_threshold`
 - `focality_volume_mm3_gt_threshold`
+- `focality_percent_of_whole_brain_gt_threshold`
 - `focality_voxels_abs_delta_mni`
 - `focality_volume_mm3_abs_delta_mni`
 
@@ -476,14 +483,17 @@ Simplified shape:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "subject": "sub-CCxxxxxx",
   "target_roi": "Left-Hippocampus",
   "percentile": 95.0,
   "percentile_value": 0.214,
   "region_percentile": 95.0,
   "voxel_volume_mm3": 1.0,
+  "whole_brain_voxels": 1062000,
+  "whole_brain_volume_mm3": 1062000.0,
   "top_percentile_voxels": 53100,
+  "top_percentile_percent_of_whole_brain": 5.0,
   "rois": {
     "Left-Hippocampus": {
       "roi_voxels": 4200,
@@ -491,6 +501,11 @@ Simplified shape:
       "roi_volume_mm3": 4200.0,
       "overlap_volume_mm3": 1700.0,
       "overlap_fraction": 0.40,
+      "roi_percent_of_whole_brain": 0.395,
+      "overlap_top_percent_of_whole_brain": 0.160,
+      "focality_in_roi_voxels_gt_threshold": 1850,
+      "focality_in_roi_volume_mm3_gt_threshold": 1850.0,
+      "focality_in_roi_percent_of_whole_brain_gt_threshold": 0.174,
       "roi_percentile": 95.0,
       "roi_percentile_value": 0.267
     }
@@ -501,6 +516,7 @@ Simplified shape:
     "roi_peak_abs_delta_mni": 0.02,
     "roi_mean_abs_delta_mni": 0.01,
     "focality_voxels_gt_threshold": 51000,
+    "focality_percent_of_whole_brain_gt_threshold": 4.802,
     "csf_distance_mm": 4.8,
     "electrode_distance_mean_mm": 63.2,
     "neighbors": [...],
@@ -517,7 +533,7 @@ Simplified shape:
     "neighbor_mean_of_means": "FileNotFoundError: FastSurfer atlas not found: ..."
   },
   "extended_metrics_meta": {
-    "schema_version": 3,
+    "schema_version": 4,
     "status": "complete",
     "config_fingerprint": "0123abcd4567ef89",
     "group_statuses": {
@@ -865,6 +881,24 @@ sub-CC110056,P8,60.0,-55.0,65.0
 ```
 
 When using `electrode_names`, the pipeline reads positions from `eeg_positions.csv` under each subject's `m2m_<subject>` folder, or from `eeg_positions_path_template` when configured. If no matching electrode centre is found for a configured subject, the electrode metric group is marked as an error.
+
+For right-M1 post-processing, the target can be passed explicitly as
+`--roi right_m1` or inferred from repeat directories named like
+`Right_M1_Data_01`. This resolves to the FastSurfer DKT precentral-gyrus ROI
+`ctx-rh-precentral`, label id `2022`.
+
+If electrode-distance metrics are needed for right M1, use the right-M1 row in
+[`configs/electrode_examples/roi_electrode_sets.csv`](configs/electrode_examples/roi_electrode_sets.csv).
+The current subject-space right-M1 montage uses:
+
+```text
+FC6 FT8 C2 C4
+```
+
+MNI baseline comparison remains optional. When a right-M1 MNI152 baseline run is
+available, pass its root with `--mni-baseline-root` and keep using the fixed MNI
+FastSurfer atlas via `--mni-fixed-atlas-path`; the baseline extractor uses the
+same `ctx-rh-precentral` ROI mask as subject-level analysis.
 
 ### ROI alias and atlas mismatch
 

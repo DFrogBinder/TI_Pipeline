@@ -20,12 +20,22 @@ def _load_repeatability_module(monkeypatch):
             "percentile": payload.get("percentile"),
             "percentile_value": payload.get("percentile_value"),
             "voxel_volume_mm3": payload.get("voxel_volume_mm3"),
+            "whole_brain_voxels": payload.get("whole_brain_voxels"),
+            "whole_brain_volume_mm3": payload.get("whole_brain_volume_mm3"),
             "top_percentile_voxels": payload.get("top_percentile_voxels"),
+            "top_percentile_percent_of_whole_brain": payload.get("top_percentile_percent_of_whole_brain"),
             "roi_voxels": roi_metrics.get("roi_voxels"),
             "overlap_top_voxels": roi_metrics.get("overlap_top_voxels"),
             "roi_volume_mm3": roi_metrics.get("roi_volume_mm3"),
             "overlap_volume_mm3": roi_metrics.get("overlap_volume_mm3"),
             "overlap_fraction": roi_metrics.get("overlap_fraction"),
+            "roi_percent_of_whole_brain": roi_metrics.get("roi_percent_of_whole_brain"),
+            "overlap_top_percent_of_whole_brain": roi_metrics.get("overlap_top_percent_of_whole_brain"),
+            "focality_in_roi_voxels_gt_threshold": roi_metrics.get("focality_in_roi_voxels_gt_threshold"),
+            "focality_in_roi_volume_mm3_gt_threshold": roi_metrics.get("focality_in_roi_volume_mm3_gt_threshold"),
+            "focality_in_roi_percent_of_whole_brain_gt_threshold": roi_metrics.get(
+                "focality_in_roi_percent_of_whole_brain_gt_threshold"
+            ),
         }
         flattened.update(payload.get("extended_metrics", {}))
         return flattened
@@ -64,6 +74,15 @@ def _write_subject_run(
     post_dir.mkdir(parents=True, exist_ok=True)
     overlap_mask = roi_mask & top_mask
     percentile_tag = f"top{int(percentile)}pct"
+    finite_mask = np.isfinite(field)
+    whole_brain_voxels = int(np.count_nonzero(finite_mask))
+    top_percentile_voxels = int(np.count_nonzero(top_mask))
+    roi_voxels = int(np.count_nonzero(roi_mask))
+    overlap_top_voxels = int(np.count_nonzero(overlap_mask))
+    threshold_mask = finite_mask & (field > 0.2)
+    threshold_in_roi_mask = threshold_mask & roi_mask
+    threshold_voxels = int(np.count_nonzero(threshold_mask))
+    threshold_in_roi_voxels = int(np.count_nonzero(threshold_in_roi_mask))
 
     _save_nifti(post_dir / f"atlas_{roi_name}_mask.nii.gz", roi_mask.astype(np.float32))
     _save_nifti(post_dir / f"efield_{percentile_tag}_mask.nii.gz", top_mask.astype(np.float32))
@@ -75,27 +94,38 @@ def _write_subject_run(
 
     roi_values = field[roi_mask]
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "subject": subject,
         "target_roi": roi_name,
         "percentile": percentile,
         "percentile_value": percentile_value,
         "voxel_volume_mm3": 1.0,
-        "top_percentile_voxels": int(np.count_nonzero(top_mask)),
+        "whole_brain_voxels": whole_brain_voxels,
+        "whole_brain_volume_mm3": float(whole_brain_voxels),
+        "top_percentile_voxels": top_percentile_voxels,
+        "top_percentile_percent_of_whole_brain": float(top_percentile_voxels / whole_brain_voxels * 100.0),
         "rois": {
             roi_name: {
-                "roi_voxels": int(np.count_nonzero(roi_mask)),
-                "overlap_top_voxels": int(np.count_nonzero(overlap_mask)),
-                "roi_volume_mm3": float(np.count_nonzero(roi_mask)),
-                "overlap_volume_mm3": float(np.count_nonzero(overlap_mask)),
-                "overlap_fraction": float(
-                    np.count_nonzero(overlap_mask) / np.count_nonzero(roi_mask)
+                "roi_voxels": roi_voxels,
+                "overlap_top_voxels": overlap_top_voxels,
+                "roi_volume_mm3": float(roi_voxels),
+                "overlap_volume_mm3": float(overlap_top_voxels),
+                "overlap_fraction": float(overlap_top_voxels / roi_voxels),
+                "roi_percent_of_whole_brain": float(roi_voxels / whole_brain_voxels * 100.0),
+                "overlap_top_percent_of_whole_brain": float(overlap_top_voxels / whole_brain_voxels * 100.0),
+                "focality_in_roi_voxels_gt_threshold": threshold_in_roi_voxels,
+                "focality_in_roi_volume_mm3_gt_threshold": float(threshold_in_roi_voxels),
+                "focality_in_roi_percent_of_whole_brain_gt_threshold": float(
+                    threshold_in_roi_voxels / whole_brain_voxels * 100.0
                 ),
             }
         },
         "extended_metrics": {
             "roi_peak": float(np.nanmax(roi_values)),
             "roi_mean": float(np.nanmean(roi_values)),
+            "focality_percent_of_whole_brain_gt_threshold": float(
+                threshold_voxels / whole_brain_voxels * 100.0
+            ),
         },
         "extended_metric_status": {
             "roi_peak": "ok",
@@ -106,7 +136,7 @@ def _write_subject_run(
             "roi_mean": None,
         },
         "extended_metrics_meta": {
-            "schema_version": 3,
+            "schema_version": 4,
             "status": "complete",
             "config_fingerprint": "test-fixture",
             "group_statuses": {
@@ -202,6 +232,7 @@ def test_run_analysis_writes_image_repeatability_outputs(tmp_path, monkeypatch):
         "image_repeatability_report.md",
         "image_repeatability_methodology.md",
         "figures/08_image_repeatability_summary.png",
+        "figures/09_whole_brain_occupancy_percentages.png",
     ]:
         assert (output_dir / relative_path).exists()
 

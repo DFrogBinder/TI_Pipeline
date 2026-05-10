@@ -42,7 +42,7 @@ def _metric_slug(value: str) -> str:
     return slug.strip("_")
 
 
-EXTENDED_METRIC_SCHEMA_VERSION = 3
+EXTENDED_METRIC_SCHEMA_VERSION = 4
 EXTENDED_METRIC_LIST_FIELDS = ("neighbors", "electrode_distances")
 EXTENDED_METRIC_SCALAR_FIELDS = (
     "roi_peak",
@@ -54,6 +54,7 @@ EXTENDED_METRIC_SCALAR_FIELDS = (
     "focality_threshold_v_per_m",
     "focality_voxels_gt_threshold",
     "focality_volume_mm3_gt_threshold",
+    "focality_percent_of_whole_brain_gt_threshold",
     "focality_voxels_abs_delta_mni",
     "focality_volume_mm3_abs_delta_mni",
     "mni_baseline_focality_voxels_gt_threshold",
@@ -88,6 +89,7 @@ FOCALITY_METRIC_KEYS = (
     "focality_threshold_v_per_m",
     "focality_voxels_gt_threshold",
     "focality_volume_mm3_gt_threshold",
+    "focality_percent_of_whole_brain_gt_threshold",
 )
 NEIGHBOR_METRIC_KEYS = (
     "neighbor_template_count",
@@ -162,6 +164,7 @@ def extended_metrics_config_fingerprint(
 
     payload = {
         "root_dir": _norm_path(root_dir),
+        "extended_metric_schema_version": EXTENDED_METRIC_SCHEMA_VERSION,
         "subject": subject,
         "ti_path": _norm_path(ti_path),
         "atlas_mode": atlas_mode,
@@ -208,12 +211,18 @@ def _compute_core_field_metrics(
 
     focality_mask = finite_mask & (ti_data > focality_threshold)
     focality_voxels = int(np.sum(focality_mask))
+    whole_brain_voxels = int(np.sum(finite_mask))
     focality_volume_mm3 = float(focality_voxels * voxel_volume_mm3)
     return {
         "roi_peak": roi_peak,
         "roi_mean": roi_mean,
         "focality_voxels_gt_threshold": float(focality_voxels),
         "focality_volume_mm3_gt_threshold": focality_volume_mm3,
+        "focality_percent_of_whole_brain_gt_threshold": (
+            float((focality_voxels / whole_brain_voxels) * 100.0)
+            if whole_brain_voxels
+            else math.nan
+        ),
     }
 
 
@@ -603,10 +612,16 @@ def compute_focality_metrics(
     voxel_volume_mm3 = vol_mm3(ti_img)
     focality_mask = finite_mask & (ti_data > focality_threshold)
     focality_voxels = int(np.sum(focality_mask))
+    whole_brain_voxels = int(np.sum(finite_mask))
     return {
         "focality_threshold_v_per_m": float(focality_threshold),
         "focality_voxels_gt_threshold": focality_voxels,
         "focality_volume_mm3_gt_threshold": float(focality_voxels * voxel_volume_mm3),
+        "focality_percent_of_whole_brain_gt_threshold": (
+            float((focality_voxels / whole_brain_voxels) * 100.0)
+            if whole_brain_voxels
+            else math.nan
+        ),
     }
 
 
@@ -889,7 +904,10 @@ def flatten_subject_metric_payload(payload: Dict[str, Any], roi_key: str) -> Dic
         "percentile": payload.get("percentile"),
         "percentile_value": payload.get("percentile_value"),
         "voxel_volume_mm3": payload.get("voxel_volume_mm3"),
+        "whole_brain_voxels": payload.get("whole_brain_voxels"),
+        "whole_brain_volume_mm3": payload.get("whole_brain_volume_mm3"),
         "top_percentile_voxels": payload.get("top_percentile_voxels"),
+        "top_percentile_percent_of_whole_brain": payload.get("top_percentile_percent_of_whole_brain"),
     }
     roi_metrics = payload.get("rois", {}).get(roi_key, {})
     if isinstance(roi_metrics, dict):
@@ -901,6 +919,13 @@ def flatten_subject_metric_payload(payload: Dict[str, Any], roi_key: str) -> Dic
                 "overlap_volume_mm3": roi_metrics.get("overlap_volume_mm3"),
                 "overlap_fraction": roi_metrics.get("overlap_fraction"),
                 "roi_percentile_value": roi_metrics.get("roi_percentile_value"),
+                "roi_percent_of_whole_brain": roi_metrics.get("roi_percent_of_whole_brain"),
+                "overlap_top_percent_of_whole_brain": roi_metrics.get("overlap_top_percent_of_whole_brain"),
+                "focality_in_roi_voxels_gt_threshold": roi_metrics.get("focality_in_roi_voxels_gt_threshold"),
+                "focality_in_roi_volume_mm3_gt_threshold": roi_metrics.get("focality_in_roi_volume_mm3_gt_threshold"),
+                "focality_in_roi_percent_of_whole_brain_gt_threshold": roi_metrics.get(
+                    "focality_in_roi_percent_of_whole_brain_gt_threshold"
+                ),
             }
         )
 

@@ -62,11 +62,16 @@ def should_skip_subject(out_dir: Path, pp_cfg: "PostProcessConfig", force: bool)
         return False
     try:
         from post.post_process import extended_metrics_fingerprint_for_cfg
+        from post.metric_extensions import EXTENDED_METRIC_SCHEMA_VERSION
 
         expected_fingerprint = extended_metrics_fingerprint_for_cfg(pp_cfg)
     except Exception:
         return False
     meta = payload.get("extended_metrics_meta")
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("schema_version") != EXTENDED_METRIC_SCHEMA_VERSION:
+        return False
     return meta.get("config_fingerprint") == expected_fingerprint
 
 @dataclass

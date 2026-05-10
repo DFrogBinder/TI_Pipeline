@@ -33,13 +33,16 @@ def _write_subject(root, subject, index, *, status="complete"):
     ).to_csv(post_dir / "region_stats_fastsurfer.csv", index=False)
 
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "subject": subject,
         "target_roi": "Target",
         "percentile": 95.0,
         "percentile_value": 0.2 + (0.01 * index),
         "voxel_volume_mm3": 1.0,
+        "whole_brain_voxels": 1000 + index,
+        "whole_brain_volume_mm3": 1000.0 + index,
         "top_percentile_voxels": 100 + index,
+        "top_percentile_percent_of_whole_brain": 10.0 + (0.1 * index),
         "rois": {
             "Target": {
                 "roi_voxels": 10 + index,
@@ -47,6 +50,11 @@ def _write_subject(root, subject, index, *, status="complete"):
                 "roi_volume_mm3": 10.0 + index,
                 "overlap_volume_mm3": 3.0 + index,
                 "overlap_fraction": 0.20 + (0.05 * index),
+                "roi_percent_of_whole_brain": 1.0 + (0.1 * index),
+                "overlap_top_percent_of_whole_brain": 0.30 + (0.05 * index),
+                "focality_in_roi_voxels_gt_threshold": 2 + index,
+                "focality_in_roi_volume_mm3_gt_threshold": 2.0 + index,
+                "focality_in_roi_percent_of_whole_brain_gt_threshold": 0.20 + (0.05 * index),
                 "roi_percentile_value": 0.30 + (0.01 * index),
             }
         },
@@ -55,6 +63,7 @@ def _write_subject(root, subject, index, *, status="complete"):
             "roi_mean": 0.15 + (0.05 * index),
             "focality_voxels_gt_threshold": 20.0 + index,
             "focality_volume_mm3_gt_threshold": 20.0 + index,
+            "focality_percent_of_whole_brain_gt_threshold": 2.0 + (0.1 * index),
             "csf_distance_mm": 4.0 + index,
             "skull_distance_mm": 8.0 + index,
             "electrode_distance_mean_mm": 60.0 + index,
@@ -72,7 +81,7 @@ def _write_subject(root, subject, index, *, status="complete"):
             ],
         },
         "extended_metrics_meta": {
-            "schema_version": 3,
+            "schema_version": 4,
             "status": status,
         },
     }
@@ -138,6 +147,18 @@ def test_population_outputs_neighbor_stats_and_regional_correlations(tmp_path):
         ("Neighbor", "max"),
     }
     assert set(regional["subjects"]) == {3}
+
+    subject_values = pd.read_csv(out_dir / "subject_metric_values.csv")
+    assert "top_percentile_percent_of_whole_brain" in subject_values.columns
+    assert "focality_in_roi_percent_of_whole_brain_gt_threshold" in subject_values.columns
+    assert subject_values["roi_percent_of_whole_brain"].tolist() == pytest.approx([1.1, 1.2, 1.3])
+
+    subject_summary = pd.read_csv(out_dir / "population_subject_metric_summary.csv")
+    occupancy_summary = subject_summary.loc[
+        subject_summary["metric"] == "top_percentile_percent_of_whole_brain"
+    ].iloc[0]
+    assert occupancy_summary["subjects"] == 3
+    assert occupancy_summary["mean"] == pytest.approx(np.mean([10.1, 10.2, 10.3]))
 
 
 def test_incomplete_subjects_are_excluded_from_manifest_and_summaries(tmp_path):

@@ -2,9 +2,11 @@ import gzip
 import json
 import sys
 import types
+from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 post_functions_stub = types.ModuleType("post.post_functions")
 post_functions_stub._resolve_fastsurfer_atlas = lambda *args, **kwargs: None
@@ -46,6 +48,7 @@ from post.post_process import (
     _load_t1_image,
     _overlay_qc,
     _write_neighbor_visualization_outputs,
+    run_post_process,
 )
 
 
@@ -211,3 +214,58 @@ def test_write_neighbor_visualization_outputs_writes_union_and_categorical_masks
     metadata = json.loads((tmp_path / "ctx_lh_precentral_fixed_neighbor_visualization.json").read_text())
     assert metadata["neighbor_union_voxels"] == 2
     assert metadata["neighbor_template"][0]["label_id"] == 1002
+
+
+def test_run_post_process_writes_whole_brain_occupancy_metrics(monkeypatch, tmp_path):
+    ti_data = np.array(
+        [[[0.10, 0.30], [0.40, np.nan]], [[0.00, 0.25], [0.19, 0.50]]],
+        dtype=np.float32,
+    )
+    roi_mask = np.array(
+        [[[False, True], [True, False]], [[False, False], [False, True]]],
+        dtype=bool,
+    )
+    ti_path = tmp_path / "ti.nii.gz"
+    out_dir = tmp_path / "post"
+    nib.save(nib.Nifti1Image(ti_data, np.eye(4)), ti_path)
+
+    monkeypatch.setattr(
+        post_process_module,
+        "ensure_dir",
+        lambda directory: Path(directory).mkdir(parents=True, exist_ok=True),
+    )
+    monkeypatch.setattr(post_process_module, "load_ti_as_scalar", lambda img: ti_data)
+    monkeypatch.setattr(
+        post_process_module,
+        "roi_masks_on_ti_grid",
+        lambda *args, **kwargs: ({"Target": roi_mask}, {}),
+    )
+
+    cfg = PostProcessConfig(
+        root_dir=str(tmp_path),
+        subject="sub-01",
+        ti_path=str(ti_path),
+        out_dir=str(out_dir),
+        atlas_mode="mni",
+        plot_roi="Target",
+        percentile=95.0,
+        offtarget_threshold=0.2,
+        write_region_table=False,
+        write_neighbor_visualization=False,
+        overlay_full_field=False,
+        verbose=False,
+    )
+
+    result = run_post_process(cfg)
+    payload = json.loads(Path(result["metrics_path"]).read_text(encoding="utf-8"))
+    roi_metrics = payload["rois"]["Target"]
+
+    assert payload["whole_brain_voxels"] == 7
+    assert payload["whole_brain_volume_mm3"] == 7.0
+    assert payload["top_percentile_voxels"] == 1
+    assert payload["top_percentile_percent_of_whole_brain"] == pytest.approx(1 / 7 * 100.0)
+    assert roi_metrics["roi_percent_of_whole_brain"] == pytest.approx(3 / 7 * 100.0)
+    assert roi_metrics["overlap_top_percent_of_whole_brain"] == pytest.approx(1 / 7 * 100.0)
+    assert roi_metrics["focality_in_roi_voxels_gt_threshold"] == 3
+    assert roi_metrics["focality_in_roi_percent_of_whole_brain_gt_threshold"] == pytest.approx(3 / 7 * 100.0)
+    assert payload["extended_metrics"]["focality_percent_of_whole_brain_gt_threshold"] == pytest.approx(4 / 7 * 100.0)

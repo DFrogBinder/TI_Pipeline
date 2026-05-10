@@ -57,7 +57,10 @@ overlap value CSVs written by `post.post_functions.write_csv`.
 | --- | --- | --- |
 | `percentile` | `subject_metrics.json` | Configured percentile, for example `95.0`. |
 | `percentile_value` | `subject_metrics.json` | `np.nanpercentile(ti_data[finite], percentile)`. |
+| `whole_brain_voxels` | `subject_metrics.json` | Count of finite TI voxels; this is the denominator for whole-brain occupancy percentages. |
+| `whole_brain_volume_mm3` | `subject_metrics.json` | `whole_brain_voxels * voxel_volume_mm3`. |
 | `top_percentile_voxels` | `subject_metrics.json` | Count of voxels where `finite and ti_data >= percentile_value`. |
+| `top_percentile_percent_of_whole_brain` | `subject_metrics.json` | `100 * top_percentile_voxels / whole_brain_voxels`. |
 | `voxel_volume_mm3` | `subject_metrics.json` | Product of TI voxel sizes. |
 | `efield_top<P>pct_mask` | NIfTI mask | Binary mask where `finite and ti_data >= percentile_value`. |
 | `TI_in_Top<P>` | NIfTI field | TI data inside `efield_top<P>pct_mask`, zero elsewhere. |
@@ -73,6 +76,11 @@ These metrics are stored under `rois[ROI]` in `subject_metrics.json`.
 | `roi_volume_mm3` | `roi_voxels * voxel_volume_mm3`. |
 | `overlap_volume_mm3` | `overlap_top_voxels * voxel_volume_mm3`. |
 | `overlap_fraction` | `overlap_top_voxels / roi_voxels`; `0.0` when the ROI is empty. |
+| `roi_percent_of_whole_brain` | `100 * roi_voxels / whole_brain_voxels`. |
+| `overlap_top_percent_of_whole_brain` | `100 * overlap_top_voxels / whole_brain_voxels`. |
+| `focality_in_roi_voxels_gt_threshold` | Count of voxels where `ROI mask and finite and ti_data > focality_threshold_v_per_m`. |
+| `focality_in_roi_volume_mm3_gt_threshold` | `focality_in_roi_voxels_gt_threshold * voxel_volume_mm3`. |
+| `focality_in_roi_percent_of_whole_brain_gt_threshold` | `100 * focality_in_roi_voxels_gt_threshold / whole_brain_voxels`. |
 | `roi_percentile` | Configured within-ROI percentile, usually `region_percentile`. |
 | `roi_percentile_value` | `np.nanpercentile(ti_data[ROI and finite], roi_percentile)`, or `NaN` if no finite ROI values exist. |
 
@@ -122,6 +130,7 @@ Focality is computed over the whole finite TI volume, not just the target ROI.
 | `focality_threshold_v_per_m` | Configured focality threshold, `offtarget_threshold`. |
 | `focality_voxels_gt_threshold` | Count of voxels where `finite and ti_data > focality_threshold_v_per_m`. |
 | `focality_volume_mm3_gt_threshold` | `focality_voxels_gt_threshold * voxel_volume_mm3`. |
+| `focality_percent_of_whole_brain_gt_threshold` | `100 * focality_voxels_gt_threshold / whole_brain_voxels`. |
 
 ### MNI Baseline Comparison Metrics
 
@@ -675,6 +684,7 @@ field formulas, but they are part of the across-repeat layer's output contract.
 | `figures/06_subject_variation_summary.png` | Subject-level repeat variation figure. |
 | `figures/07_failure_summary.png` | Optional failure summary figure when logs are provided. |
 | `figures/08_image_repeatability_summary.png` | Image-level repeatability summary figure when image analysis succeeds. |
+| `figures/09_whole_brain_occupancy_percentages.png` | Repeat-level distributions for the five whole-brain occupancy percentage metrics. |
 
 ## Legacy Standalone Robustness Analysis
 

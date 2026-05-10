@@ -667,8 +667,16 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     if not np.any(finite):
         raise RuntimeError("[ERROR] No finite values in ti_data; check your masking.")
 
+    whole_brain_voxels = int(np.sum(finite))
     thr = float(np.nanpercentile(ti_data[finite], cfg.percentile))
     topP_mask = finite & (ti_data >= thr)
+    top_percentile_voxels = int(np.sum(topP_mask))
+    top_percentile_percent_of_whole_brain = (
+        float((top_percentile_voxels / whole_brain_voxels) * 100.0)
+        if whole_brain_voxels
+        else float("nan")
+    )
+    focality_mask = finite & (ti_data > cfg.offtarget_threshold)
 
     # Background for overlays (resampled to TI grid if available)
     t1_img_full = None
@@ -684,6 +692,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
 
     # Save global masks
     vox_vol = vol_mm3(ti_img)
+    whole_brain_volume_mm3 = float(whole_brain_voxels * vox_vol)
     topP_mask_path = os.path.join(out_dir, f"efield_top{int(cfg.percentile)}pct_mask.nii.gz")
     nib.save(nib.Nifti1Image(topP_mask.astype(np.uint8), ti_img.affine), topP_mask_path)
 
@@ -698,14 +707,18 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             continue
 
         overlap_mask = topP_mask & mask
+        focality_in_roi_mask = focality_mask & mask
+        roi_voxels = int(np.sum(mask))
+        overlap_top_voxels = int(np.sum(overlap_mask))
+        focality_in_roi_voxels = int(np.sum(focality_in_roi_mask))
         roi_mask_img = nib.Nifti1Image(mask.astype(np.uint8), ti_img.affine, ti_img.header)
         overlap_mask_img = nib.Nifti1Image(overlap_mask.astype(np.uint8), ti_img.affine, ti_img.header)
 
         if cfg.verbose:
             print(f"[ROI:{roi_name}] thr@{cfg.percentile}th = {thr:.6g}")
-            print(f"[ROI:{roi_name}] ROI voxels: {mask.sum():,} ({mask.sum()*vox_vol/1e3:.3f} mL)")
-            print(f"[ROI:{roi_name}] Overlap voxels: {overlap_mask.sum():,} "
-                  f"({overlap_mask.sum()*vox_vol/1e3:.3f} mL)")
+            print(f"[ROI:{roi_name}] ROI voxels: {roi_voxels:,} ({roi_voxels*vox_vol/1e3:.3f} mL)")
+            print(f"[ROI:{roi_name}] Overlap voxels: {overlap_top_voxels:,} "
+                  f"({overlap_top_voxels*vox_vol/1e3:.3f} mL)")
 
         # Tables
         ijk_r, xyz_r, vals_r = extract_table(mask,         ti_img, ti_data)
@@ -749,11 +762,28 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         )
 
         per_roi_metrics[roi_name] = dict(
-            roi_voxels=int(mask.sum()),
-            overlap_top_voxels=int(overlap_mask.sum()),
-            roi_volume_mm3=float(mask.sum() * vox_vol),
-            overlap_volume_mm3=float(overlap_mask.sum() * vox_vol),
-            overlap_fraction=float(overlap_mask.sum() / mask.sum()) if mask.sum() else 0.0,
+            roi_voxels=roi_voxels,
+            overlap_top_voxels=overlap_top_voxels,
+            roi_volume_mm3=float(roi_voxels * vox_vol),
+            overlap_volume_mm3=float(overlap_top_voxels * vox_vol),
+            overlap_fraction=float(overlap_top_voxels / roi_voxels) if roi_voxels else 0.0,
+            roi_percent_of_whole_brain=(
+                float((roi_voxels / whole_brain_voxels) * 100.0)
+                if whole_brain_voxels
+                else float("nan")
+            ),
+            overlap_top_percent_of_whole_brain=(
+                float((overlap_top_voxels / whole_brain_voxels) * 100.0)
+                if whole_brain_voxels
+                else float("nan")
+            ),
+            focality_in_roi_voxels_gt_threshold=focality_in_roi_voxels,
+            focality_in_roi_volume_mm3_gt_threshold=float(focality_in_roi_voxels * vox_vol),
+            focality_in_roi_percent_of_whole_brain_gt_threshold=(
+                float((focality_in_roi_voxels / whole_brain_voxels) * 100.0)
+                if whole_brain_voxels
+                else float("nan")
+            ),
             roi_percentile=cfg.region_percentile,
             roi_percentile_value=roi_percentile_value,
         )
@@ -1291,7 +1321,10 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         percentile_value=float(thr),
         region_percentile=cfg.region_percentile,
         voxel_volume_mm3=vox_vol,
-        top_percentile_voxels=int(topP_mask.sum()),
+        whole_brain_voxels=whole_brain_voxels,
+        whole_brain_volume_mm3=whole_brain_volume_mm3,
+        top_percentile_voxels=top_percentile_voxels,
+        top_percentile_percent_of_whole_brain=top_percentile_percent_of_whole_brain,
         rois=per_roi_metrics,
         extended_metrics=extended_metrics,
         extended_metric_status=extended_metric_status,

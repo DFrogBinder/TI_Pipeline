@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from atlas.collect_atlas_outputs import (
+    DEFAULT_MGZ_SOURCE_CANDIDATES,
     DEFAULT_SOURCE_CANDIDATES,
     DEFAULT_SOURCE_RELATIVE,
     build_atlas_export_plan,
@@ -117,7 +118,7 @@ def test_build_atlas_export_plan_reports_incomplete_recon_mri_contents(tmp_path)
     assert "rawavg.mgz" in missing[0].available
 
 
-def test_build_atlas_export_plan_reports_mgz_atlas_needs_conversion(tmp_path):
+def test_build_atlas_export_plan_converts_default_mgz_atlas_candidates(tmp_path):
     fastsurfer_out = tmp_path / "freesurfer"
     dest = tmp_path / "atlases"
     mri_dir = fastsurfer_out / "sub-01" / "mri"
@@ -128,12 +129,13 @@ def test_build_atlas_export_plan_reports_mgz_atlas_needs_conversion(tmp_path):
         fastsurfer_out=fastsurfer_out,
         dest=dest,
         source_relative=DEFAULT_SOURCE_CANDIDATES,
+        mgz_source_relative=DEFAULT_MGZ_SOURCE_CANDIDATES,
     )
 
-    assert items == []
-    assert len(missing) == 1
-    assert missing[0].reason.startswith("MGZ atlas exists but no NIfTI atlas was found")
-    assert "aparc+aseg.mgz" in missing[0].available
+    assert missing == []
+    assert [(item.subject, item.src.name, item.dst.name, item.action) for item in items] == [
+        ("sub-01", "aparc+aseg.mgz", "sub-01.nii.gz", "convert")
+    ]
 
 
 def test_copy_atlas_outputs_creates_flat_destination_files(tmp_path):

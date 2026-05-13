@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -40,6 +41,12 @@ DEFAULT_SOURCE_CANDIDATES = (
     Path("mri/aparc.a2009s+aseg.nii.gz"),
     Path("mri/aseg.nii.gz"),
 )
+DEFAULT_MGZ_SOURCE_CANDIDATES = (
+    Path("mri/aparc.DKTatlas+aseg.mgz"),
+    Path("mri/aparc+aseg.mgz"),
+    Path("mri/aparc.a2009s+aseg.mgz"),
+    Path("mri/aseg.mgz"),
+)
 SKIP_DIR_NAMES = {"logs", "fsaverage"}
 console = Console(markup=False)
 
@@ -50,6 +57,7 @@ class AtlasExportItem:
     src: Path
     dst: Path
     size_bytes: int
+    action: str = "copy"
 
 
 @dataclass(frozen=True)
@@ -140,6 +148,10 @@ def normalize_source_candidates(source_relative: Path | Sequence[Path]) -> tuple
     return tuple(source_relative)
 
 
+def normalize_optional_source_candidates(source_relative: Sequence[Path] | None) -> tuple[Path, ...]:
+    return tuple(source_relative or ())
+
+
 def find_first_existing_source(subject_dir: Path, source_candidates: Sequence[Path]) -> Path | None:
     for source_relative in source_candidates:
         candidate = subject_dir / source_relative
@@ -150,6 +162,10 @@ def find_first_existing_source(subject_dir: Path, source_candidates: Sequence[Pa
 
 def describe_expected_sources(subject_dir: Path, source_candidates: Sequence[Path]) -> str:
     return ", ".join(str(subject_dir / source_relative) for source_relative in source_candidates)
+
+
+def is_mgz_path(path: Path) -> bool:
+    return path.name.endswith(".mgz")
 
 
 def describe_available_mri_files(subject_dir: Path, limit: int = 12) -> str:
@@ -178,11 +194,14 @@ def build_atlas_export_plan(
     fastsurfer_out: Path,
     dest: Path,
     source_relative: Path | Sequence[Path] = DEFAULT_SOURCE_RELATIVE,
+    mgz_source_relative: Sequence[Path] | None = None,
+    convert_mgz: bool = True,
     subjects: Sequence[str] | None = None,
     output_suffix: str | None = None,
     on_subject_processed: Callable[[], None] | None = None,
 ) -> tuple[list[AtlasExportItem], list[MissingAtlas]]:
     source_candidates = normalize_source_candidates(source_relative)
+    mgz_source_candidates = normalize_optional_source_candidates(mgz_source_relative)
     suffix = output_suffix_for_candidates(source_candidates, output_suffix)
     items: list[AtlasExportItem] = []
     missing: list[MissingAtlas] = []
@@ -203,12 +222,19 @@ def build_atlas_export_plan(
                 on_subject_processed()
             continue
         src = find_first_existing_source(subject_dir, source_candidates)
+        action = "copy"
+        if src is not None and is_mgz_path(src):
+            action = "convert" if convert_mgz else "copy"
+        if src is None and convert_mgz:
+            src = find_first_existing_source(subject_dir, mgz_source_candidates)
+            if src is not None:
+                action = "convert"
         if src is None:
             available = describe_available_mri_files(subject_dir)
             if mri_dir_has_mgz_atlas(subject_dir):
                 reason = (
-                    "MGZ atlas exists but no NIfTI atlas was found; convert the MGZ "
-                    "atlas to .nii.gz before using it with the post-processing atlas root"
+                    "MGZ atlas exists but no matching NIfTI atlas was found; use "
+                    "--source-relative for that MGZ file or enable --convert-mgz"
                 )
             elif "aparc" not in available and "aseg" not in available:
                 reason = "no atlas segmentation file found; recon/segmentation appears incomplete"
@@ -245,6 +271,7 @@ def build_atlas_export_plan(
                 src=src,
                 dst=dst,
                 size_bytes=src.stat().st_size,
+                action=action,
             )
         )
         if on_subject_processed is not None:
@@ -261,10 +288,11 @@ def copy_atlas_outputs(
     dest: Path,
     dry_run: bool = False,
     overwrite: bool = True,
+    mri_convert: str = "mri_convert",
 ) -> None:
     if dry_run:
         for item in items:
-            console.log(f"{item.src} -> {item.dst}")
+            console.log(f"{item.action}: {item.src} -> {item.dst}")
         return
 
     dest.mkdir(parents=True, exist_ok=True)
@@ -278,11 +306,14 @@ def copy_atlas_outputs(
         console=console,
     )
     with progress:
-        task = progress.add_task("Copying atlas outputs", total=len(items))
+        task = progress.add_task("Collecting atlas outputs", total=len(items))
         for item in items:
             if item.dst.exists() and not overwrite:
                 raise FileExistsError(f"Destination exists: {item.dst}")
-            shutil.copy2(item.src, item.dst)
+            if item.action == "convert":
+                subprocess.run([mri_convert, str(item.src), str(item.dst)], check=True)
+            else:
+                shutil.copy2(item.src, item.dst)
             progress.advance(task)
 
 
@@ -291,7 +322,7 @@ def write_manifest(path: Path, items: Sequence[AtlasExportItem]) -> None:
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["subject", "source", "destination", "size_bytes"],
+            fieldnames=["subject", "source", "destination", "size_bytes", "action"],
         )
         writer.writeheader()
         for item in items:
@@ -301,6 +332,7 @@ def write_manifest(path: Path, items: Sequence[AtlasExportItem]) -> None:
                     "source": str(item.src),
                     "destination": str(item.dst),
                     "size_bytes": item.size_bytes,
+                    "action": item.action,
                 }
             )
 
@@ -354,6 +386,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "When --source-relative is not set, try common FreeSurfer/FastSurfer "
             "atlas filenames instead of one hardcoded path."
         ),
+    )
+    parser.add_argument(
+        "--convert-mgz",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Convert common MGZ atlas outputs to flat .nii.gz files with mri_convert "
+            "when matching NIfTI atlas files are absent."
+        ),
+    )
+    parser.add_argument(
+        "--mri-convert",
+        default="mri_convert",
+        help="mri_convert executable to use when --convert-mgz is enabled.",
     )
     parser.add_argument(
         "--output-suffix",
@@ -434,11 +480,17 @@ def main() -> int:
         items, missing = build_atlas_export_plan(
             fastsurfer_out=fastsurfer_out,
             dest=dest,
-        source_relative=(
-            args.source_relative
-            if args.source_relative != DEFAULT_SOURCE_RELATIVE or not args.try_default_atlas_candidates
-            else DEFAULT_SOURCE_CANDIDATES
-        ),
+            source_relative=(
+                args.source_relative
+                if args.source_relative != DEFAULT_SOURCE_RELATIVE or not args.try_default_atlas_candidates
+                else DEFAULT_SOURCE_CANDIDATES
+            ),
+            mgz_source_relative=(
+                None
+                if args.source_relative != DEFAULT_SOURCE_RELATIVE or not args.try_default_atlas_candidates
+                else DEFAULT_MGZ_SOURCE_CANDIDATES
+            ),
+            convert_mgz=args.convert_mgz,
             subjects=subjects or None,
             output_suffix=args.output_suffix,
             on_subject_processed=lambda: scan_progress.advance(scan_task),
@@ -450,6 +502,8 @@ def main() -> int:
         console.log(f"[INFO] Source relative path:   {args.source_relative}")
     else:
         console.log("[INFO] Source candidates:      common FreeSurfer/FastSurfer atlas outputs")
+        if args.convert_mgz:
+            console.log("[INFO] MGZ conversion:        enabled for common atlas outputs")
     console.log(f"[INFO] Atlas files found:      {len(items)}")
     console.log(f"[INFO] Missing atlas files:    {len(missing)}")
 
@@ -471,6 +525,7 @@ def main() -> int:
         dest=dest,
         dry_run=args.dry_run,
         overwrite=not args.no_overwrite,
+        mri_convert=args.mri_convert,
     )
 
     if args.write_manifest and not args.dry_run:

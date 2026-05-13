@@ -27,6 +27,7 @@ echo
 #   FREESURFER_MODULE=FreeSurfer/7.4.1-centos7_x86_64
 #   SOURCE_ATLAS=aparc.a2009s+aseg.mgz
 #   OUTPUT_FILENAME=sub-mni152.nii.gz
+#   RECON_ALL_EXTRA_ARGS="-cw256"
 
 MNI_T1="${MNI_T1:-}"
 MNI_SUBJECT_ID="${MNI_SUBJECT_ID:-sub-mni152}"
@@ -36,6 +37,7 @@ FS_LICENSE="${FS_LICENSE:-/users/cop23bi/freesurfer_licence.txt}"
 FREESURFER_MODULE="${FREESURFER_MODULE:-FreeSurfer/7.4.1-centos7_x86_64}"
 SOURCE_ATLAS="${SOURCE_ATLAS:-aparc.a2009s+aseg.mgz}"
 OUTPUT_FILENAME="${OUTPUT_FILENAME:-${MNI_SUBJECT_ID}.nii.gz}"
+RECON_ALL_EXTRA_ARGS="${RECON_ALL_EXTRA_ARGS:--cw256}"
 
 # FreeSurfer modules often set SUBJECTS_DIR to the installation's own
 # read-only subjects directory. Preserve the requested job paths before
@@ -93,6 +95,7 @@ FS_LICENSE="${REQUESTED_FS_LICENSE}"
 export SUBJECTS_DIR
 export FS_LICENSE
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-10}"
+read -r -a RECON_ALL_EXTRA_ARGS_ARRAY <<< "${RECON_ALL_EXTRA_ARGS}"
 
 SUBJECT_DIR="${SUBJECTS_DIR}/${MNI_SUBJECT_ID}"
 SOURCE_ATLAS_PATH="${SUBJECT_DIR}/mri/${SOURCE_ATLAS}"
@@ -105,6 +108,7 @@ echo "[INFO] FS license:    ${FS_LICENSE}"
 echo "[INFO] Source atlas:  ${SOURCE_ATLAS_PATH}"
 echo "[INFO] Output atlas:  ${OUTPUT_ATLAS_PATH}"
 echo "[INFO] Threads:       ${OMP_NUM_THREADS}"
+echo "[INFO] Extra recon-all args: ${RECON_ALL_EXTRA_ARGS:-<none>}"
 echo
 
 mkdir -p "${SUBJECTS_DIR}"
@@ -113,10 +117,10 @@ if [[ -f "${SUBJECT_DIR}/scripts/recon-all.done" && -f "${SOURCE_ATLAS_PATH}" ]]
     echo "[INFO] Existing completed recon found; skipping recon-all."
 elif [[ -d "${SUBJECT_DIR}" ]]; then
     echo "[INFO] Existing subject directory found; continuing recon-all without -i."
-    recon-all -s "${MNI_SUBJECT_ID}" -all -openmp "${OMP_NUM_THREADS}"
+    recon-all -s "${MNI_SUBJECT_ID}" -all -openmp "${OMP_NUM_THREADS}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}"
 else
     echo "[INFO] Starting new recon-all from MNI_T1."
-    recon-all -s "${MNI_SUBJECT_ID}" -i "${MNI_T1}" -all -openmp "${OMP_NUM_THREADS}"
+    recon-all -s "${MNI_SUBJECT_ID}" -i "${MNI_T1}" -all -openmp "${OMP_NUM_THREADS}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}"
 fi
 
 if [[ ! -f "${SOURCE_ATLAS_PATH}" ]]; then

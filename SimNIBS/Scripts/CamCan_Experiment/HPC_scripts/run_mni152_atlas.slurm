@@ -37,6 +37,12 @@ FREESURFER_MODULE="${FREESURFER_MODULE:-FreeSurfer/7.4.1-centos7_x86_64}"
 SOURCE_ATLAS="${SOURCE_ATLAS:-aparc.a2009s+aseg.mgz}"
 OUTPUT_FILENAME="${OUTPUT_FILENAME:-${MNI_SUBJECT_ID}.nii.gz}"
 
+# FreeSurfer modules often set SUBJECTS_DIR to the installation's own
+# read-only subjects directory. Preserve the requested job paths before
+# module load and restore them afterwards.
+REQUESTED_SUBJECTS_DIR="${SUBJECTS_DIR}"
+REQUESTED_FS_LICENSE="${FS_LICENSE}"
+
 if [[ -z "${MNI_T1}" ]]; then
     echo "[ERROR] MNI_T1 is required." >&2
     echo "[ERROR] Example: sbatch --export=ALL,MNI_T1=/path/to/MNI152_T1_1mm.nii.gz $0" >&2
@@ -82,6 +88,8 @@ if ! command -v mri_convert >/dev/null 2>&1; then
     exit 2
 fi
 
+SUBJECTS_DIR="${REQUESTED_SUBJECTS_DIR}"
+FS_LICENSE="${REQUESTED_FS_LICENSE}"
 export SUBJECTS_DIR
 export FS_LICENSE
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-10}"

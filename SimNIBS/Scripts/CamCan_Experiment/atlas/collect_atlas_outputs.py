@@ -33,6 +33,13 @@ from rich.progress import (
 DEFAULT_FASTSURFER_OUT_DIR_NAME = "FastSurfer_out"
 DEFAULT_DEST_DIR_NAME = "atlases"
 DEFAULT_SOURCE_RELATIVE = Path("mri/aparc.DKTatlas+aseg.deep.nii.gz")
+DEFAULT_SOURCE_CANDIDATES = (
+    Path("mri/aparc.DKTatlas+aseg.deep.nii.gz"),
+    Path("mri/aparc.DKTatlas+aseg.nii.gz"),
+    Path("mri/aparc+aseg.nii.gz"),
+    Path("mri/aparc.a2009s+aseg.nii.gz"),
+    Path("mri/aseg.nii.gz"),
+)
 SKIP_DIR_NAMES = {"logs", "fsaverage"}
 console = Console(markup=False)
 
@@ -48,8 +55,9 @@ class AtlasExportItem:
 @dataclass(frozen=True)
 class MissingAtlas:
     subject: str
-    expected: Path
+    expected: str
     reason: str
+    available: str = ""
 
 
 def parse_subjects(raw: str) -> list[str]:
@@ -103,6 +111,15 @@ def output_suffix_for(source_relative: Path, output_suffix: str | None = None) -
     return ""
 
 
+def output_suffix_for_candidates(
+    source_candidates: Sequence[Path],
+    output_suffix: str | None = None,
+) -> str:
+    if output_suffix:
+        return output_suffix_for(source_candidates[0], output_suffix)
+    return ".nii.gz"
+
+
 def discover_subject_dirs(fastsurfer_out: Path) -> list[Path]:
     return sorted(
         path
@@ -117,33 +134,107 @@ def _subject_dirs_for_request(fastsurfer_out: Path, subjects: Sequence[str] | No
     return discover_subject_dirs(fastsurfer_out)
 
 
+def normalize_source_candidates(source_relative: Path | Sequence[Path]) -> tuple[Path, ...]:
+    if isinstance(source_relative, Path):
+        return (source_relative,)
+    return tuple(source_relative)
+
+
+def find_first_existing_source(subject_dir: Path, source_candidates: Sequence[Path]) -> Path | None:
+    for source_relative in source_candidates:
+        candidate = subject_dir / source_relative
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def describe_expected_sources(subject_dir: Path, source_candidates: Sequence[Path]) -> str:
+    return ", ".join(str(subject_dir / source_relative) for source_relative in source_candidates)
+
+
+def describe_available_mri_files(subject_dir: Path, limit: int = 12) -> str:
+    mri_dir = subject_dir / "mri"
+    if not mri_dir.is_dir():
+        return "mri directory is missing"
+
+    files = sorted(path.name for path in mri_dir.iterdir() if path.is_file())
+    if not files:
+        return "mri directory contains no files"
+
+    displayed = files[:limit]
+    suffix = f"; ... {len(files) - limit} more" if len(files) > limit else ""
+    return ", ".join(displayed) + suffix
+
+
+def mri_dir_has_mgz_atlas(subject_dir: Path) -> bool:
+    mri_dir = subject_dir / "mri"
+    if not mri_dir.is_dir():
+        return False
+    return any(path.is_file() and "aseg" in path.name for path in mri_dir.glob("*.mgz"))
+
+
 def build_atlas_export_plan(
     *,
     fastsurfer_out: Path,
     dest: Path,
-    source_relative: Path = DEFAULT_SOURCE_RELATIVE,
+    source_relative: Path | Sequence[Path] = DEFAULT_SOURCE_RELATIVE,
     subjects: Sequence[str] | None = None,
     output_suffix: str | None = None,
     on_subject_processed: Callable[[], None] | None = None,
 ) -> tuple[list[AtlasExportItem], list[MissingAtlas]]:
-    suffix = output_suffix_for(source_relative, output_suffix)
+    source_candidates = normalize_source_candidates(source_relative)
+    suffix = output_suffix_for_candidates(source_candidates, output_suffix)
     items: list[AtlasExportItem] = []
     missing: list[MissingAtlas] = []
 
     for subject_dir in _subject_dirs_for_request(fastsurfer_out, subjects):
         subject = subject_dir.name
-        src = subject_dir / source_relative
         dst = dest / f"{subject}{suffix}"
 
         if not subject_dir.is_dir():
             missing.append(
-                MissingAtlas(subject=subject, expected=src, reason="subject directory is missing")
+                MissingAtlas(
+                    subject=subject,
+                    expected=describe_expected_sources(subject_dir, source_candidates),
+                    reason="subject directory is missing",
+                )
             )
             if on_subject_processed is not None:
                 on_subject_processed()
             continue
+        src = find_first_existing_source(subject_dir, source_candidates)
+        if src is None:
+            available = describe_available_mri_files(subject_dir)
+            if mri_dir_has_mgz_atlas(subject_dir):
+                reason = (
+                    "MGZ atlas exists but no NIfTI atlas was found; convert the MGZ "
+                    "atlas to .nii.gz before using it with the post-processing atlas root"
+                )
+            elif "aparc" not in available and "aseg" not in available:
+                reason = "no atlas segmentation file found; recon/segmentation appears incomplete"
+            else:
+                reason = "atlas file is missing"
+            missing.append(
+                MissingAtlas(
+                    subject=subject,
+                    expected=describe_expected_sources(subject_dir, source_candidates),
+                    reason=reason,
+                    available=available,
+                )
+            )
+            if on_subject_processed is not None:
+                on_subject_processed()
+            continue
+
         if not src.is_file():
-            missing.append(MissingAtlas(subject=subject, expected=src, reason="atlas file is missing"))
+            missing.append(
+                MissingAtlas(
+                    subject=subject,
+                    expected=describe_expected_sources(subject_dir, source_candidates),
+                    reason="atlas file is missing",
+                    available=describe_available_mri_files(subject_dir),
+                )
+            )
             if on_subject_processed is not None:
                 on_subject_processed()
             continue
@@ -217,7 +308,7 @@ def write_manifest(path: Path, items: Sequence[AtlasExportItem]) -> None:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Copy one atlas output per subject from atlas-maker/FastSurfer output "
+            "Copy one atlas output per subject from FreeSurfer/FastSurfer output "
             "folders into a flat atlas root named <subject>.nii.gz."
         )
     )
@@ -251,8 +342,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_SOURCE_RELATIVE,
         help=(
-            "Relative atlas path inside each subject directory. "
-            "Default: mri/aparc.DKTatlas+aseg.deep.nii.gz"
+            "Relative atlas path inside each subject directory. If omitted, the "
+            "extractor tries common DKT, aparc+aseg, a2009s, and aseg outputs."
+        ),
+    )
+    parser.add_argument(
+        "--try-default-atlas-candidates",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When --source-relative is not set, try common FreeSurfer/FastSurfer "
+            "atlas filenames instead of one hardcoded path."
         ),
     )
     parser.add_argument(
@@ -334,7 +434,11 @@ def main() -> int:
         items, missing = build_atlas_export_plan(
             fastsurfer_out=fastsurfer_out,
             dest=dest,
-            source_relative=args.source_relative,
+        source_relative=(
+            args.source_relative
+            if args.source_relative != DEFAULT_SOURCE_RELATIVE or not args.try_default_atlas_candidates
+            else DEFAULT_SOURCE_CANDIDATES
+        ),
             subjects=subjects or None,
             output_suffix=args.output_suffix,
             on_subject_processed=lambda: scan_progress.advance(scan_task),
@@ -342,12 +446,18 @@ def main() -> int:
 
     console.log(f"[INFO] FastSurfer output root: {fastsurfer_out}")
     console.log(f"[INFO] Destination atlas root: {dest}")
-    console.log(f"[INFO] Source relative path:   {args.source_relative}")
+    if args.source_relative != DEFAULT_SOURCE_RELATIVE or not args.try_default_atlas_candidates:
+        console.log(f"[INFO] Source relative path:   {args.source_relative}")
+    else:
+        console.log("[INFO] Source candidates:      common FreeSurfer/FastSurfer atlas outputs")
     console.log(f"[INFO] Atlas files found:      {len(items)}")
     console.log(f"[INFO] Missing atlas files:    {len(missing)}")
 
     for entry in missing[:20]:
-        console.log(f"[WARN] {entry.subject}: {entry.reason}: {entry.expected}")
+        console.log(f"[WARN] {entry.subject}: {entry.reason}")
+        console.log(f"[WARN] Expected one of: {entry.expected}")
+        if entry.available:
+            console.log(f"[WARN] Available MRI files: {entry.available}")
     if len(missing) > 20:
         console.log(f"[WARN] ... {len(missing) - 20} additional missing atlas file(s).")
 

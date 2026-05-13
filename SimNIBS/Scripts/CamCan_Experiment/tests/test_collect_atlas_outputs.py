@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from atlas.collect_atlas_outputs import (
+    DEFAULT_SOURCE_CANDIDATES,
     DEFAULT_SOURCE_RELATIVE,
     build_atlas_export_plan,
     copy_atlas_outputs,
@@ -69,6 +70,70 @@ def test_build_atlas_export_plan_reports_requested_missing_subject(tmp_path):
     assert [(entry.subject, entry.reason) for entry in missing] == [
         ("sub-02", "subject directory is missing")
     ]
+
+
+def test_build_atlas_export_plan_tries_default_nifti_candidates(tmp_path):
+    fastsurfer_out = tmp_path / "freesurfer"
+    dest = tmp_path / "atlases"
+    atlas_path = fastsurfer_out / "sub-01" / "mri" / "aparc+aseg.nii.gz"
+    atlas_path.parent.mkdir(parents=True)
+    atlas_path.write_text("dk atlas", encoding="utf-8")
+
+    items, missing = build_atlas_export_plan(
+        fastsurfer_out=fastsurfer_out,
+        dest=dest,
+        source_relative=DEFAULT_SOURCE_CANDIDATES,
+    )
+
+    assert missing == []
+    assert [(item.subject, item.src.name, item.dst.name) for item in items] == [
+        ("sub-01", "aparc+aseg.nii.gz", "sub-01.nii.gz")
+    ]
+
+
+def test_build_atlas_export_plan_reports_incomplete_recon_mri_contents(tmp_path):
+    fastsurfer_out = tmp_path / "freesurfer"
+    dest = tmp_path / "atlases"
+    mri_dir = fastsurfer_out / "sub-CC110056" / "mri"
+    mri_dir.mkdir(parents=True)
+    for name in (
+        "mri_nu_correct.mni.log",
+        "orig.mgz",
+        "rawavg.mgz",
+    ):
+        (mri_dir / name).write_text("not an atlas", encoding="utf-8")
+
+    items, missing = build_atlas_export_plan(
+        fastsurfer_out=fastsurfer_out,
+        dest=dest,
+        source_relative=DEFAULT_SOURCE_CANDIDATES,
+    )
+
+    assert items == []
+    assert len(missing) == 1
+    assert missing[0].subject == "sub-CC110056"
+    assert missing[0].reason == "no atlas segmentation file found; recon/segmentation appears incomplete"
+    assert "orig.mgz" in missing[0].available
+    assert "rawavg.mgz" in missing[0].available
+
+
+def test_build_atlas_export_plan_reports_mgz_atlas_needs_conversion(tmp_path):
+    fastsurfer_out = tmp_path / "freesurfer"
+    dest = tmp_path / "atlases"
+    mri_dir = fastsurfer_out / "sub-01" / "mri"
+    mri_dir.mkdir(parents=True)
+    (mri_dir / "aparc+aseg.mgz").write_text("mgz atlas", encoding="utf-8")
+
+    items, missing = build_atlas_export_plan(
+        fastsurfer_out=fastsurfer_out,
+        dest=dest,
+        source_relative=DEFAULT_SOURCE_CANDIDATES,
+    )
+
+    assert items == []
+    assert len(missing) == 1
+    assert missing[0].reason.startswith("MGZ atlas exists but no NIfTI atlas was found")
+    assert "aparc+aseg.mgz" in missing[0].available
 
 
 def test_copy_atlas_outputs_creates_flat_destination_files(tmp_path):

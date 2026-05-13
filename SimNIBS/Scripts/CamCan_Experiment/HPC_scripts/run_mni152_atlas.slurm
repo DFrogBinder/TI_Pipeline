@@ -53,8 +53,23 @@ if [[ ! -f "${FS_LICENSE}" ]]; then
     exit 2
 fi
 
+if ! type module >/dev/null 2>&1; then
+    if [[ -f /etc/profile.d/modules.sh ]]; then
+        # Some Slurm batch shells do not initialize the module command by default.
+        # shellcheck disable=SC1091
+        source /etc/profile.d/modules.sh
+    elif [[ -f /usr/share/Modules/init/bash ]]; then
+        # shellcheck disable=SC1091
+        source /usr/share/Modules/init/bash
+    fi
+fi
+
 if type module >/dev/null 2>&1; then
+    echo "[INFO] Loading FreeSurfer module: ${FREESURFER_MODULE}"
     module load "${FREESURFER_MODULE}"
+else
+    echo "[ERROR] Environment modules are not available; cannot load ${FREESURFER_MODULE}." >&2
+    exit 2
 fi
 
 if ! command -v recon-all >/dev/null 2>&1; then

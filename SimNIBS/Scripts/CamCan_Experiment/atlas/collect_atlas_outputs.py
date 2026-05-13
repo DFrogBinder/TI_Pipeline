@@ -317,6 +317,17 @@ def copy_atlas_outputs(
             progress.advance(task)
 
 
+def any_conversion_needed(items: Sequence[AtlasExportItem]) -> bool:
+    return any(item.action == "convert" for item in items)
+
+
+def resolve_executable(command: str) -> str | None:
+    candidate = Path(command).expanduser()
+    if candidate.parent != Path(".") and candidate.is_file():
+        return str(candidate)
+    return shutil.which(command)
+
+
 def write_manifest(path: Path, items: Sequence[AtlasExportItem]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -519,6 +530,20 @@ def main() -> int:
         return 1
     if not items:
         return 1
+    if any_conversion_needed(items) and not args.dry_run:
+        resolved_mri_convert = resolve_executable(args.mri_convert)
+        if resolved_mri_convert is None:
+            console.log(
+                "[ERROR] MGZ conversion is required, but mri_convert was not found. "
+                "Load FreeSurfer first or pass --mri-convert /path/to/mri_convert."
+            )
+            console.log(
+                "[ERROR] On Stanage this is typically fixed with: "
+                "module load FreeSurfer/7.4.1-centos7_x86_64"
+            )
+            return 2
+        args.mri_convert = resolved_mri_convert
+        console.log(f"[INFO] mri_convert:           {args.mri_convert}")
 
     copy_atlas_outputs(
         items,

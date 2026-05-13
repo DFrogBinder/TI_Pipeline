@@ -19,7 +19,9 @@ from post.post_functions import (
     build_context_scale_mask_from_fastsurfer,
     fastsurfer_dkt_labels,
     make_outline,
-    overlay_neighbor_union_on_t1_with_roi,
+    neighbor_overlay_color_map,
+    overlay_neighbor_regions_and_efield_on_t1_with_roi,
+    overlay_neighbor_regions_on_t1_with_roi,
     overlay_ti_full_field_true_vmax_reference_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi,
     overlay_ti_thresholds_on_t1_with_roi_individual_scale,
@@ -500,6 +502,8 @@ def _write_neighbor_visualization_outputs(
         "categorical_mask_path": None,
         "metadata_path": None,
         "overlay_path": None,
+        "efield_overlay_path": None,
+        "neighbor_overlay_colors": [],
     }
 
     try:
@@ -512,6 +516,16 @@ def _write_neighbor_visualization_outputs(
         neighbor_template = masks["neighbor_template"]
         neighbor_union_mask = masks["neighbor_union_mask"]
         neighbor_categorical_mask = masks["neighbor_categorical_mask"]
+        neighbor_label_ids = [int(row["label_id"]) for row in neighbor_template]
+        neighbor_color_map = neighbor_overlay_color_map(neighbor_label_ids)
+        neighbor_overlay_colors = [
+            {
+                "label_id": int(row["label_id"]),
+                "label_name": str(row["label_name"]),
+                "color": neighbor_color_map[int(row["label_id"])],
+            }
+            for row in neighbor_template
+        ]
 
         union_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_union_mask.nii.gz")
         categorical_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_categorical_mask.nii.gz")
@@ -525,6 +539,7 @@ def _write_neighbor_visualization_outputs(
             "mni_fixed_atlas_path": cfg.mni_fixed_atlas_path,
             "neighbor_dilation_iter": int(cfg.neighbor_dilation_iter),
             "neighbor_template": neighbor_template,
+            "neighbor_overlay_colors": neighbor_overlay_colors,
             "neighbor_union_voxels": int(np.count_nonzero(neighbor_union_mask)),
         }
         with open(metadata_path, "w", encoding="utf-8") as handle:
@@ -532,27 +547,50 @@ def _write_neighbor_visualization_outputs(
 
         result.update(
             {
-                "neighbor_label_ids": [int(row["label_id"]) for row in neighbor_template],
+                "neighbor_label_ids": neighbor_label_ids,
                 "neighbor_label_names": [str(row["label_name"]) for row in neighbor_template],
                 "union_mask_path": union_path,
                 "categorical_mask_path": categorical_path,
                 "metadata_path": metadata_path,
+                "neighbor_overlay_colors": neighbor_overlay_colors,
             }
         )
 
         if t1_img_full is not None and np.any(neighbor_union_mask):
-            overlay_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_union_overlay.png")
-            overlay_neighbor_union_on_t1_with_roi(
+            overlay_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_categorical_overlay.png")
+            overlay_neighbor_regions_on_t1_with_roi(
                 ti_img=ti_img,
                 t1_img=t1_img_full,
                 roi_mask_img=nib.Nifti1Image(roi_mask.astype(np.uint8), ti_img.affine),
-                neighbor_mask_img=nib.Nifti1Image(neighbor_union_mask.astype(np.uint8), ti_img.affine),
+                neighbor_mask_img=nib.Nifti1Image(neighbor_categorical_mask.astype(np.int32), ti_img.affine),
                 out_png=overlay_path,
                 subject=cfg.subject,
                 z_offset_mm=cfg.overlay_z_offset_mm,
+                neighbor_label_ids=neighbor_label_ids,
             )
             result["overlay_path"] = overlay_path
-            result["status"] = "complete"
+            efield_overlay_path = os.path.join(out_dir, f"{roi_stub}_fixed_neighbor_efield_overlay.png")
+            try:
+                overlay_neighbor_regions_and_efield_on_t1_with_roi(
+                    ti_img=ti_img,
+                    t1_img=t1_img_full,
+                    roi_mask_img=nib.Nifti1Image(roi_mask.astype(np.uint8), ti_img.affine),
+                    neighbor_mask_img=nib.Nifti1Image(neighbor_categorical_mask.astype(np.int32), ti_img.affine),
+                    out_png=efield_overlay_path,
+                    subject=cfg.subject,
+                    z_offset_mm=cfg.overlay_z_offset_mm,
+                    neighbor_label_ids=neighbor_label_ids,
+                )
+                result["efield_overlay_path"] = efield_overlay_path
+                result["status"] = "complete"
+            except Exception as exc:
+                result["status"] = "partial"
+                result["message"] = (
+                    "Categorical neighbor overlay was written, but the cropped e-field "
+                    f"overlay failed: {type(exc).__name__}: {exc}"
+                )
+                if cfg.verbose:
+                    print(f"[WARN] {result['message']}")
         elif np.any(neighbor_union_mask):
             result["status"] = "mask_only"
             result["message"] = "T1 background was unavailable, so only neighbor mask NIfTI files were written."

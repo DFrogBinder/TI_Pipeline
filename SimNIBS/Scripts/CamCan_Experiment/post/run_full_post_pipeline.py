@@ -142,7 +142,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--no-neighbor-visualization",
         action="store_true",
         help=(
-            "Disable subject-level fixed-neighbor union mask and overlay exports. "
+            "Disable subject-level fixed-neighbor mask and overlay exports. "
             "Neighbor scalar metrics are still computed when mni_fixed_atlas_path is configured."
         ),
     )

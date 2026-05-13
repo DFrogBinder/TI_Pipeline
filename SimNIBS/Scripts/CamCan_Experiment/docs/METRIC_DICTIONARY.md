@@ -191,8 +191,9 @@ the same fixed neighbor label list:
 | --- | --- |
 | `<roi>_fixed_neighbor_union_mask.nii.gz` | Binary subject-space union of all fixed-template neighbor labels. |
 | `<roi>_fixed_neighbor_categorical_mask.nii.gz` | Categorical subject-space neighbor mask retaining FastSurfer label IDs. |
-| `<roi>_fixed_neighbor_visualization.json` | Audit metadata: target ROI IDs, neighbor label IDs/names, dilation setting, and union voxel count. |
-| `<roi>_fixed_neighbor_union_overlay.png` | Visual QC overlay: cyan neighbor union on subject anatomy with the target ROI contour in red. Written only when a T1 background is available. |
+| `<roi>_fixed_neighbor_visualization.json` | Audit metadata: target ROI IDs, neighbor label IDs/names, dilation setting, union voxel count, and neighbor overlay colors. |
+| `<roi>_fixed_neighbor_categorical_overlay.png` | Visual QC overlay: each fixed-template neighbor is rendered as a separate colored mask on subject anatomy, with the target ROI contour in red. Written only when a T1 background is available. |
+| `<roi>_fixed_neighbor_efield_overlay.png` | Visual QC overlay: TI/e-field values cropped to the fixed-template neighbor regions, with faint colored neighbor masks/contours retained for anatomical attribution. Written only when a T1 background is available. |
 
 ### ROI Centroid And Anatomy-Distance Metrics
 

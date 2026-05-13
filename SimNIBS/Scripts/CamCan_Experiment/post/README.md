@@ -241,8 +241,9 @@ Visual confirmation outputs:
 
 - `<roi>_fixed_neighbor_union_mask.nii.gz`: binary union of the subject-space labels selected by the fixed MNI neighbor template
 - `<roi>_fixed_neighbor_categorical_mask.nii.gz`: same voxels retaining their FastSurfer label IDs
-- `<roi>_fixed_neighbor_visualization.json`: ROI label IDs, neighbor label IDs/names, dilation setting, and union voxel count
-- `<roi>_fixed_neighbor_union_overlay.png`: cyan neighbor union over subject anatomy with the target ROI in red, when a T1 background is available
+- `<roi>_fixed_neighbor_visualization.json`: ROI label IDs, neighbor label IDs/names, dilation setting, union voxel count, and overlay color assignments
+- `<roi>_fixed_neighbor_categorical_overlay.png`: one colored overlay per neighboring region over subject anatomy with the target ROI in red, when a T1 background is available
+- `<roi>_fixed_neighbor_efield_overlay.png`: TI/e-field values cropped to the neighboring regions, with faint colored neighbor overlays retained for attribution, when a T1 background is available
 
 Interpretation:
 
@@ -561,7 +562,8 @@ Typical files in `<dataset>/<subject>/anat/post/`:
 - `<roi>_fixed_neighbor_union_mask.nii.gz`
 - `<roi>_fixed_neighbor_categorical_mask.nii.gz`
 - `<roi>_fixed_neighbor_visualization.json`
-- `<roi>_fixed_neighbor_union_overlay.png` when a T1 background is available
+- `<roi>_fixed_neighbor_categorical_overlay.png` when a T1 background is available
+- `<roi>_fixed_neighbor_efield_overlay.png` when a T1 background is available
 - `<roi>_electrode_distances.json`
 
 ### Within-run outputs
@@ -712,9 +714,10 @@ python3 post/run_full_post_pipeline.py \
   --electrode-csv /path/to/electrode_centers.csv
 ```
 
-By default this also writes the fixed-neighbor union masks and, when a T1 is
-available, a visual QC overlay. Add `--no-neighbor-visualization` if you need
-to disable those extra visualization artefacts for a lightweight run.
+By default this also writes the fixed-neighbor masks and, when a T1 is
+available, categorical neighbor and cropped e-field visual QC overlays. Add
+`--no-neighbor-visualization` if you need to disable those extra visualization
+artefacts for a lightweight run.
 
 Use this mode when you want:
 

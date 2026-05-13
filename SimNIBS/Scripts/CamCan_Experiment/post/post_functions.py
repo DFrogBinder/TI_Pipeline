@@ -4,11 +4,12 @@ import json
 import tempfile
 import subprocess
 from pathlib import Path
-from typing import Tuple, Union, Optional, Dict, Any, List, Literal
+from typing import Tuple, Union, Optional, Dict, Any, List, Literal, Sequence
 
 import numpy as np
 import pandas as pd
 import nibabel as nib
+from matplotlib.colors import ListedColormap
 from scipy.ndimage import binary_erosion
 from nibabel.processing import resample_from_to
 from nilearn import datasets, plotting
@@ -61,6 +62,141 @@ WRITE_PER_VOXEL_CSV = True
 fastsurfer_dkt_labels = FASTSURFER_DKT_LABELS
 
 # ------------------ Overlay helpers ------------------
+
+NEIGHBOR_OVERLAY_COLORS = (
+    "#1F77B4",
+    "#FF7F0E",
+    "#2CA02C",
+    "#D62728",
+    "#9467BD",
+    "#8C564B",
+    "#E377C2",
+    "#7F7F7F",
+    "#BCBD22",
+    "#17BECF",
+    "#AEC7E8",
+    "#FFBB78",
+    "#98DF8A",
+    "#FF9896",
+    "#C5B0D5",
+    "#C49C94",
+    "#F7B6D2",
+    "#C7C7C7",
+    "#DBDB8D",
+    "#9EDAE5",
+)
+
+
+def neighbor_overlay_color_map(label_ids: Sequence[int]) -> Dict[int, str]:
+    return {
+        int(label_id): NEIGHBOR_OVERLAY_COLORS[index % len(NEIGHBOR_OVERLAY_COLORS)]
+        for index, label_id in enumerate(label_ids)
+    }
+
+
+def _ordered_positive_labels(
+    data: np.ndarray,
+    label_ids: Optional[Sequence[int]] = None,
+) -> list[int]:
+    present = {int(value) for value in np.unique(data) if int(value) > 0}
+    ordered: list[int] = []
+    if label_ids is not None:
+        for label_id in label_ids:
+            label_int = int(label_id)
+            if label_int in present and label_int not in ordered:
+                ordered.append(label_int)
+    ordered.extend(label_id for label_id in sorted(present) if label_id not in ordered)
+    return ordered
+
+
+def _neighbor_index_data(
+    categorical_data: np.ndarray,
+    label_ids: Optional[Sequence[int]] = None,
+) -> tuple[np.ndarray, list[int], list[str]]:
+    labels = _ordered_positive_labels(categorical_data, label_ids)
+    index_data = np.zeros(categorical_data.shape, dtype=np.uint16)
+    colors = neighbor_overlay_color_map(label_ids if label_ids is not None else labels)
+    for index, label_id in enumerate(labels, start=1):
+        index_data[categorical_data == label_id] = index
+        if label_id not in colors:
+            colors[label_id] = NEIGHBOR_OVERLAY_COLORS[(index - 1) % len(NEIGHBOR_OVERLAY_COLORS)]
+    return index_data, labels, [colors[label_id] for label_id in labels]
+
+
+def _neighbor_display_bounds(n_labels: int) -> tuple[float, float]:
+    if n_labels <= 1:
+        return 0.5, 1.5
+    return 1.0, float(n_labels)
+
+
+def _roi_or_mask_cut_coords(
+    roi_img: nib.Nifti1Image,
+    fallback_mask: Optional[np.ndarray],
+    *,
+    z_offset_mm: float,
+) -> tuple[float, float, float]:
+    roi_data = np.asarray(roi_img.dataobj) > 0
+    coords = np.argwhere(roi_data)
+    affine = roi_img.affine
+    if not coords.size and fallback_mask is not None:
+        coords = np.argwhere(fallback_mask)
+    if coords.size:
+        center_ijk = coords.mean(axis=0)
+        center_xyz = np.asarray(nib.affines.apply_affine(affine, center_ijk), dtype=float)
+        center_xyz[2] += float(z_offset_mm)
+        return tuple(float(value) for value in center_xyz)
+    return (0.0, 0.0, 0.0)
+
+
+def _resample_neighbor_visualization_inputs(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    neighbor_mask_img: nib.Nifti1Image,
+) -> tuple[np.ndarray, nib.Nifti1Image, nib.Nifti1Image, np.ndarray]:
+    ti_arr = load_ti_as_scalar(ti_img)
+    ti_scalar_img = nib.Nifti1Image(ti_arr, ti_img.affine, ti_img.header)
+    t1_on_ti = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
+    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
+    neighbor_on_ti = resample_to_img(neighbor_mask_img, ti_scalar_img, interpolation="nearest")
+    neighbor_data = np.asarray(neighbor_on_ti.dataobj).astype(np.int32, copy=False)
+    return ti_arr, t1_on_ti, roi_on_ti, neighbor_data
+
+
+def _add_neighbor_region_layers(
+    display,
+    *,
+    index_data: np.ndarray,
+    colors: Sequence[str],
+    affine: np.ndarray,
+    fill_alpha: float,
+    contour_linewidth: float,
+) -> None:
+    if not colors:
+        return
+
+    n_labels = len(colors)
+    vmin, vmax = _neighbor_display_bounds(n_labels)
+    index_img = nib.Nifti1Image(index_data.astype(np.float32, copy=False), affine)
+    display.add_overlay(
+        index_img,
+        threshold=0.5,
+        cmap=ListedColormap(list(colors)),
+        alpha=fill_alpha,
+        colorbar=False,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    for index, color in enumerate(colors, start=1):
+        region_img = nib.Nifti1Image((index_data == index).astype(np.uint8), affine)
+        display.add_contours(
+            region_img,
+            levels=[0.5],
+            colors=[color],
+            linewidths=contour_linewidth,
+        )
+
 
 def try_fast_crop_to_target(atlas_img: nib.Nifti1Image, target_img: nib.Nifti1Image, mask_bool: np.ndarray):
     # Fast crop only if affines (orientation & voxel size) match exactly (within tolerance)
@@ -153,34 +289,51 @@ def overlay_neighbor_union_on_t1_with_roi(
     z_offset_mm: float = 0.0,
     dpi: int = 180,
 ) -> str:
-    """
-    Render the fixed-template neighbor union mask on the subject anatomy.
-
-    The cyan overlay is the union of subject-space atlas labels selected by
-    the fixed MNI neighbor template. The red contour is the target ROI used
-    by the ROI and neighbor metric calculations.
-    """
-    scalar_shape = load_ti_as_scalar(ti_img).shape
-    ti_scalar_img = nib.Nifti1Image(
-        np.zeros(scalar_shape, dtype=np.float32),
-        ti_img.affine,
-        ti_img.header,
+    return overlay_neighbor_regions_on_t1_with_roi(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        neighbor_mask_img=neighbor_mask_img,
+        out_png=out_png,
+        subject=subject,
+        z_offset_mm=z_offset_mm,
+        dpi=dpi,
     )
-    t1_on_ti = resample_to_img(t1_img, ti_scalar_img, interpolation="continuous")
-    roi_on_ti = resample_to_img(roi_mask_img, ti_scalar_img, interpolation="nearest")
-    neighbor_on_ti = resample_to_img(neighbor_mask_img, ti_scalar_img, interpolation="nearest")
 
-    roi_data = np.asarray(roi_on_ti.dataobj) > 0
-    if np.any(roi_data):
-        center_ijk = np.argwhere(roi_data).mean(axis=0)
-        center_xyz = np.asarray(nib.affines.apply_affine(roi_on_ti.affine, center_ijk), dtype=float)
-        center_xyz[2] += float(z_offset_mm)
-        cut_coords = tuple(float(value) for value in center_xyz)
-    else:
-        cut_coords = (0.0, 0.0, 0.0)
 
-    neighbor_data = (np.asarray(neighbor_on_ti.dataobj) > 0).astype(np.uint8)
-    neighbor_binary_img = nib.Nifti1Image(neighbor_data, ti_img.affine, ti_img.header)
+def overlay_neighbor_regions_on_t1_with_roi(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    neighbor_mask_img: nib.Nifti1Image,
+    out_png: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    dpi: int = 180,
+    neighbor_label_ids: Optional[Sequence[int]] = None,
+    fill_alpha: float = 0.58,
+) -> str:
+    """
+    Render fixed-template neighbor masks on the subject anatomy.
+
+    Each positive value in ``neighbor_mask_img`` is treated as a separate
+    neighbor region, so callers should pass the categorical neighbor mask when
+    available. Binary masks still render as a single region for backwards
+    compatibility.
+    """
+    _ti_arr, t1_on_ti, roi_on_ti, neighbor_data = _resample_neighbor_visualization_inputs(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        neighbor_mask_img=neighbor_mask_img,
+    )
+    index_data, _labels, colors = _neighbor_index_data(neighbor_data, neighbor_label_ids)
+    cut_coords = _roi_or_mask_cut_coords(
+        roi_on_ti,
+        index_data > 0,
+        z_offset_mm=z_offset_mm,
+    )
     title_subject = f" ({subject})" if subject else ""
     display = plot_anat(
         t1_on_ti,
@@ -191,26 +344,111 @@ def overlay_neighbor_union_on_t1_with_roi(
         colorbar=False,
         black_bg=True,
         cut_coords=cut_coords,
-        title=f"Fixed neighbor union mask{title_subject}",
+        title=f"Fixed neighbor region masks{title_subject}",
     )
-    display.add_overlay(
-        neighbor_binary_img,
-        threshold=0.5,
-        cmap="Blues",
-        alpha=0.55,
-        colorbar=False,
-    )
-    display.add_contours(
-        neighbor_binary_img,
-        levels=[0.5],
-        colors=["cyan"],
-        linewidths=0.8,
+    _add_neighbor_region_layers(
+        display,
+        index_data=index_data,
+        colors=colors,
+        affine=ti_img.affine,
+        fill_alpha=fill_alpha,
+        contour_linewidth=0.8,
     )
     display.add_contours(
         roi_on_ti,
         levels=[0.5],
         colors=["red"],
         linewidths=1.2,
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(out_png)) or ".", exist_ok=True)
+    display.savefig(out_png, dpi=dpi, bbox_inches="tight", pad_inches=0.01)
+    display.close()
+    return out_png
+
+
+def overlay_neighbor_regions_and_efield_on_t1_with_roi(
+    *,
+    ti_img: nib.Nifti1Image,
+    t1_img: nib.Nifti1Image,
+    roi_mask_img: nib.Nifti1Image,
+    neighbor_mask_img: nib.Nifti1Image,
+    out_png: str,
+    subject: Optional[str] = None,
+    z_offset_mm: float = 0.0,
+    dpi: int = 180,
+    neighbor_label_ids: Optional[Sequence[int]] = None,
+    efield_cmap: str = "viridis",
+    neighbor_fill_alpha: float = 0.18,
+    efield_upper_percentile: float = 99.5,
+) -> str:
+    """
+    Render TI/e-field values cropped to fixed-template neighbor regions.
+
+    The e-field keeps the main color scale. Neighbor regions are added as faint
+    categorical fills plus colored contours so their boundaries remain visible
+    without dominating the e-field overlay.
+    """
+    ti_arr, t1_on_ti, roi_on_ti, neighbor_data = _resample_neighbor_visualization_inputs(
+        ti_img=ti_img,
+        t1_img=t1_img,
+        roi_mask_img=roi_mask_img,
+        neighbor_mask_img=neighbor_mask_img,
+    )
+    index_data, _labels, colors = _neighbor_index_data(neighbor_data, neighbor_label_ids)
+    neighbor_union = index_data > 0
+    cut_coords = _roi_or_mask_cut_coords(
+        roi_on_ti,
+        neighbor_union,
+        z_offset_mm=z_offset_mm,
+    )
+
+    arr = np.asarray(ti_arr, dtype=float)
+    finite_neighbor = neighbor_union & np.isfinite(arr)
+    if not np.any(finite_neighbor):
+        raise ValueError("No finite TI/e-field voxels were found inside the neighbor regions.")
+
+    positive_neighbor = finite_neighbor & (arr > 0)
+    display_values = arr[positive_neighbor] if np.any(positive_neighbor) else arr[finite_neighbor]
+    efield_data = np.where(finite_neighbor, arr, 0.0).astype(np.float32, copy=False)
+    efield_img = nib.Nifti1Image(efield_data, ti_img.affine)
+    vmin = float(np.nanmin(display_values))
+    vmax = _robust_vmax(display_values, efield_upper_percentile)
+    vmin, vmax = _coerce_display_bounds(vmin, vmax)
+
+    title_subject = f" ({subject})" if subject else ""
+    display = plot_anat(
+        t1_on_ti,
+        display_mode="ortho",
+        dim=0,
+        annotate=True,
+        draw_cross=True,
+        colorbar=False,
+        black_bg=True,
+        cut_coords=cut_coords,
+        title=f"TI/e-field in fixed neighbor regions{title_subject}",
+    )
+    display.add_overlay(
+        efield_img,
+        threshold=1e-12,
+        colorbar=True,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=efield_cmap,
+        alpha=0.86,
+    )
+    _add_neighbor_region_layers(
+        display,
+        index_data=index_data,
+        colors=colors,
+        affine=ti_img.affine,
+        fill_alpha=neighbor_fill_alpha,
+        contour_linewidth=0.65,
+    )
+    display.add_contours(
+        roi_on_ti,
+        levels=[0.5],
+        colors=["red"],
+        linewidths=1.0,
     )
     os.makedirs(os.path.dirname(os.path.abspath(out_png)) or ".", exist_ok=True)
     display.savefig(out_png, dpi=dpi, bbox_inches="tight", pad_inches=0.01)

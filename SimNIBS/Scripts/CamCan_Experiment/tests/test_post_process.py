@@ -13,7 +13,15 @@ post_functions_stub._resolve_fastsurfer_atlas = lambda *args, **kwargs: None
 post_functions_stub.build_context_scale_mask_from_fastsurfer = lambda *args, **kwargs: None
 post_functions_stub.fastsurfer_dkt_labels = {}
 post_functions_stub.make_outline = lambda *args, **kwargs: None
-post_functions_stub.overlay_neighbor_union_on_t1_with_roi = lambda *args, **kwargs: "neighbor_overlay.png"
+post_functions_stub.neighbor_overlay_color_map = lambda label_ids: {
+    int(label_id): f"color-{index}" for index, label_id in enumerate(label_ids)
+}
+post_functions_stub.overlay_neighbor_regions_on_t1_with_roi = (
+    lambda *args, **kwargs: "neighbor_overlay.png"
+)
+post_functions_stub.overlay_neighbor_regions_and_efield_on_t1_with_roi = (
+    lambda *args, **kwargs: "neighbor_efield_overlay.png"
+)
 post_functions_stub.overlay_ti_full_field_true_vmax_reference_on_t1_with_roi = (
     lambda *args, **kwargs: None
 )
@@ -210,10 +218,86 @@ def test_write_neighbor_visualization_outputs_writes_union_and_categorical_masks
     assert result["status"] == "mask_only"
     assert nib.load(result["union_mask_path"]).get_fdata().sum() == 2
     assert set(np.unique(nib.load(result["categorical_mask_path"]).get_fdata())) == {0.0, 1002.0, 1003.0}
+    assert result["efield_overlay_path"] is None
 
     metadata = json.loads((tmp_path / "ctx_lh_precentral_fixed_neighbor_visualization.json").read_text())
     assert metadata["neighbor_union_voxels"] == 2
     assert metadata["neighbor_template"][0]["label_id"] == 1002
+    assert metadata["neighbor_overlay_colors"][0]["label_id"] == 1002
+
+
+def test_write_neighbor_visualization_outputs_uses_categorical_overlay_and_efield(monkeypatch, tmp_path):
+    neighbor_union = np.array(
+        [
+            [[False, True], [False, False]],
+            [[True, False], [False, False]],
+        ],
+        dtype=bool,
+    )
+    neighbor_categorical = np.array(
+        [
+            [[0, 1002], [0, 0]],
+            [[1003, 0], [0, 0]],
+        ],
+        dtype=np.int32,
+    )
+
+    def fake_build_fixed_neighbor_masks(**kwargs):
+        return {
+            "neighbor_template": [
+                {"label_id": 1002, "label_name": "ctx-lh-caudalmiddlefrontal"},
+                {"label_id": 1003, "label_name": "ctx-lh-cuneus"},
+            ],
+            "neighbor_label_ids": [1002, 1003],
+            "neighbor_union_mask": neighbor_union,
+            "neighbor_categorical_mask": neighbor_categorical,
+        }
+
+    overlay_calls = []
+
+    def fake_neighbor_overlay(**kwargs):
+        overlay_calls.append(("categorical", kwargs))
+        data = np.asarray(kwargs["neighbor_mask_img"].dataobj)
+        assert set(np.unique(data)) == {0, 1002, 1003}
+        return kwargs["out_png"]
+
+    def fake_efield_overlay(**kwargs):
+        overlay_calls.append(("efield", kwargs))
+        data = np.asarray(kwargs["neighbor_mask_img"].dataobj)
+        assert set(np.unique(data)) == {0, 1002, 1003}
+        assert kwargs["ti_img"].shape == (2, 2, 2)
+        return kwargs["out_png"]
+
+    monkeypatch.setattr(post_process_module, "build_fixed_neighbor_masks", fake_build_fixed_neighbor_masks)
+    monkeypatch.setattr(post_process_module, "overlay_neighbor_regions_on_t1_with_roi", fake_neighbor_overlay)
+    monkeypatch.setattr(
+        post_process_module,
+        "overlay_neighbor_regions_and_efield_on_t1_with_roi",
+        fake_efield_overlay,
+    )
+
+    cfg = PostProcessConfig(
+        root_dir=str(tmp_path),
+        subject="sub-01",
+        mni_fixed_atlas_path=str(tmp_path / "mni_atlas.nii.gz"),
+        verbose=False,
+    )
+    ti_img = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.float32), np.eye(4))
+    t1_img = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.float32), np.eye(4))
+    result = _write_neighbor_visualization_outputs(
+        cfg=cfg,
+        ti_img=ti_img,
+        t1_img_full=t1_img,
+        roi_mask=np.zeros((2, 2, 2), dtype=bool),
+        subject_atlas_data=np.zeros((2, 2, 2), dtype=np.int32),
+        out_dir=str(tmp_path),
+        roi_name="ctx-lh-precentral",
+    )
+
+    assert result["status"] == "complete"
+    assert result["overlay_path"].endswith("_fixed_neighbor_categorical_overlay.png")
+    assert result["efield_overlay_path"].endswith("_fixed_neighbor_efield_overlay.png")
+    assert [kind for kind, _kwargs in overlay_calls] == ["categorical", "efield"]
 
 
 def test_run_post_process_writes_whole_brain_occupancy_metrics(monkeypatch, tmp_path):

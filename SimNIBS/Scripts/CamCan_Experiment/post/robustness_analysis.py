@@ -51,6 +51,7 @@ class RobustnessConfig:
 
     # Electrode centers (world mm): CSV with columns subject,electrode,x,y,z
     electrode_csv: Optional[str] = None
+    electrode_dataset_dir: Optional[str] = None
     # If electrode_csv is not provided, look up names in EEG positions files.
     electrode_names: Optional[List[str]] = None
     eeg_positions_path_template: Optional[str] = None  # e.g. "{root}/{subject}/anat/m2m_{subject}/eeg_positions.csv"
@@ -267,6 +268,7 @@ def run_robustness(cfg: RobustnessConfig) -> Path:
             csf_labels=csf_labels,
             skull_labels=cfg.skull_labels,
             electrode_csv=cfg.electrode_csv,
+            electrode_dataset_dir=cfg.electrode_dataset_dir,
             electrode_names=cfg.electrode_names,
             eeg_positions_path_template=cfg.eeg_positions_path_template,
         )

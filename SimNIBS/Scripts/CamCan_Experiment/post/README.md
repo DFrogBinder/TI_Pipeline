@@ -861,10 +861,10 @@ If `mni_fixed_atlas_path` is not configured, neighboring-region metrics and base
 
 If `mni_fixed_atlas_path` is configured but the file does not exist, the batch now fails before subject processing starts. This prevents silent output where MNI comparison fields are present but all values are `null`.
 
-### Electrode distance CSV format
+### Electrode distance input format
 
-Electrode distance metrics require either `electrode_csv` or `electrode_names`.
-Worked examples for both modes live in
+Electrode distance metrics require `electrode_csv`, `electrode_dataset_dir`, or
+`electrode_names`. Worked examples for these modes live in
 [`configs/electrode_examples/`](configs/electrode_examples/).
 
 When using `electrode_csv`, the required columns are:
@@ -882,6 +882,18 @@ subject,electrode,x,y,z
 sub-CC110056,Fp2,30.0,75.0,60.0
 sub-CC110056,P8,60.0,-55.0,65.0
 ```
+
+When using `electrode_dataset_dir`, the pipeline looks for per-ROI and
+per-subject files in this order:
+
+```text
+<electrode_dataset_dir>/<roi>/<subject>/electrodes.csv
+<electrode_dataset_dir>/<roi>/<subject>.csv
+<electrode_dataset_dir>/<roi>/electrode_centers.csv
+```
+
+The same required columns apply. The prepared v8 dataset lives in
+[`configs/electrode_dataset/`](configs/electrode_dataset/).
 
 When using `electrode_names`, the pipeline reads positions from `eeg_positions.csv` under each subject's `m2m_<subject>` folder, or from `eeg_positions_path_template` when configured. If no matching electrode centre is found for a configured subject, the electrode metric group is marked as an error.
 

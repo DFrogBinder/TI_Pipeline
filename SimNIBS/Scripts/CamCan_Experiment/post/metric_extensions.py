@@ -17,7 +17,12 @@ from utils.roi_registry import (
     FASTSURFER_DKT_LABELS,
     resolve_fastsurfer_roi_label_ids,
 )
-from utils.ti_utils import load_ti_as_scalar, resample_atlas_to_ti_grid, vol_mm3
+from utils.ti_utils import (
+    load_ti_as_scalar,
+    normalize_roi_name,
+    resample_atlas_to_ti_grid,
+    vol_mm3,
+)
 
 
 def _safe_float(value: Any) -> float:
@@ -154,6 +159,7 @@ def extended_metrics_config_fingerprint(
     csf_labels: Optional[Sequence[int]],
     skull_labels: Optional[Sequence[int]],
     electrode_csv: Optional[str],
+    electrode_dataset_dir: Optional[str],
     electrode_names: Optional[Sequence[str]],
     eeg_positions_path_template: Optional[str],
 ) -> str:
@@ -181,6 +187,7 @@ def extended_metrics_config_fingerprint(
         "csf_labels": sorted(int(value) for value in csf_labels) if csf_labels else None,
         "skull_labels": sorted(int(value) for value in skull_labels) if skull_labels else None,
         "electrode_csv": _norm_path(electrode_csv),
+        "electrode_dataset_dir": _norm_path(electrode_dataset_dir),
         "electrode_names": list(electrode_names) if electrode_names else None,
         "eeg_positions_path_template": eeg_positions_path_template,
     }
@@ -447,6 +454,82 @@ def _load_electrode_centers(path: Path) -> Dict[str, List[Tuple[str, np.ndarray]
     return by_subject
 
 
+def _electrode_dataset_roi_keys(roi_name: Optional[str]) -> List[str]:
+    if not roi_name:
+        return []
+
+    normalized = normalize_roi_name(roi_name)
+    snake = re.sub(r"[^0-9a-zA-Z]+", "_", roi_name.strip().lower()).strip("_")
+    compact = snake.replace("_", "")
+    candidates = [normalized, snake, normalized.replace("_", "-"), snake.replace("_", "-")]
+
+    if "hippocampus" in snake:
+        if snake.startswith("left") or "_left" in snake or "lh_" in snake:
+            candidates.append("left-hippocampus")
+        if snake.startswith("right") or "_right" in snake or "rh_" in snake:
+            candidates.append("right-hippocampus")
+    if "thalamus" in snake:
+        if snake.startswith("right") or "_right" in snake or "rh_" in snake:
+            candidates.append("right-thalamus")
+        if snake.startswith("left") or "_left" in snake or "lh_" in snake:
+            candidates.append("left-thalamus")
+    if "precentral" in snake or compact in {"leftm1", "lhm1", "m1left"}:
+        if snake.startswith(("ctx_lh", "ctx-lh", "left", "lh")) or "left" in snake:
+            candidates.append("left-m1")
+        if snake.startswith(("ctx_rh", "ctx-rh", "right", "rh")) or "right" in snake:
+            candidates.append("right-m1")
+    if "front_middle" in snake or "dlpfc" in snake or "dlpc" in snake:
+        if snake.startswith(("ctx_rh", "ctx-rh", "right", "rh")) or "right" in snake:
+            candidates.append("right-dlpc")
+        if snake.startswith(("ctx_lh", "ctx-lh", "left", "lh")) or "left" in snake:
+            candidates.append("left-dlpc")
+
+    out: List[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def _load_electrode_centers_from_dataset_dir(
+    *,
+    path: Path,
+    subject: str,
+    roi_name: Optional[str],
+) -> List[Tuple[str, np.ndarray]]:
+    root = path.expanduser()
+    if not root.is_dir():
+        raise FileNotFoundError(f"Electrode dataset directory not found: {root}")
+
+    candidates: List[Path] = []
+    for roi_key in _electrode_dataset_roi_keys(roi_name):
+        roi_dir = root / roi_key
+        candidates.extend(
+            [
+                roi_dir / subject / "electrodes.csv",
+                roi_dir / f"{subject}.csv",
+                roi_dir / "electrode_centers.csv",
+            ]
+        )
+    candidates.extend(
+        [
+            root / subject / "electrodes.csv",
+            root / f"{subject}.csv",
+            root / "electrode_centers.csv",
+        ]
+    )
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+        centers = _load_electrode_centers(candidate).get(subject, [])
+        if centers:
+            return centers
+    return []
+
+
 def _read_eeg_positions(path: Path) -> Dict[str, np.ndarray]:
     if not path.is_file():
         return {}
@@ -481,7 +564,9 @@ def resolve_electrode_centers(
     *,
     root_dir: str,
     subject: str,
+    roi_name: Optional[str],
     electrode_csv: Optional[str],
+    electrode_dataset_dir: Optional[str],
     electrode_names: Optional[Sequence[str]],
     eeg_positions_path_template: Optional[str],
 ) -> List[Tuple[str, np.ndarray]]:
@@ -492,8 +577,15 @@ def resolve_electrode_centers(
                 f"Electrode CSV not found: {path}. Required columns are "
                 "subject,electrode,x,y,z, with x/y/z in millimetres in the same "
                 "world coordinate frame as the TI image."
-            )
+        )
         return _load_electrode_centers(path).get(subject, [])
+
+    if electrode_dataset_dir:
+        return _load_electrode_centers_from_dataset_dir(
+            path=Path(electrode_dataset_dir),
+            subject=subject,
+            roi_name=roi_name,
+        )
 
     if not electrode_names:
         return []
@@ -775,8 +867,10 @@ def compute_electrode_distance_metrics(
     *,
     root_dir: str,
     subject: str,
+    roi_name: Optional[str],
     roi_centroid_xyz: Optional[np.ndarray],
     electrode_csv: Optional[str],
+    electrode_dataset_dir: Optional[str],
     electrode_names: Optional[Sequence[str]],
     eeg_positions_path_template: Optional[str],
 ) -> Dict[str, Any]:
@@ -785,14 +879,18 @@ def compute_electrode_distance_metrics(
         centers = resolve_electrode_centers(
             root_dir=root_dir,
             subject=subject,
+            roi_name=roi_name,
             electrode_csv=electrode_csv,
+            electrode_dataset_dir=electrode_dataset_dir,
             electrode_names=electrode_names,
             eeg_positions_path_template=eeg_positions_path_template,
         )
-        if (electrode_csv or electrode_names) and not centers:
+        if (electrode_csv or electrode_dataset_dir or electrode_names) and not centers:
             raise ValueError(
                 f"No electrode centres were found for subject '{subject}'. "
                 "For electrode_csv, provide rows with columns subject,electrode,x,y,z. "
+                "For electrode_dataset_dir, provide <roi>/<subject>/electrodes.csv "
+                "or <roi>/electrode_centers.csv with the same columns. "
                 "For electrode_names, ensure the names exist in eeg_positions.csv or in "
                 "the configured eeg_positions_path_template."
             )
@@ -826,6 +924,7 @@ def compute_extended_subject_metrics(
     csf_labels: Optional[Sequence[int]],
     skull_labels: Optional[Sequence[int]],
     electrode_csv: Optional[str],
+    electrode_dataset_dir: Optional[str],
     electrode_names: Optional[Sequence[str]],
     eeg_positions_path_template: Optional[str],
 ) -> Dict[str, Any]:
@@ -887,8 +986,10 @@ def compute_extended_subject_metrics(
         compute_electrode_distance_metrics(
             root_dir=root_dir,
             subject=subject,
+            roi_name=roi_name,
             roi_centroid_xyz=roi_centroid_xyz,
             electrode_csv=electrode_csv,
+            electrode_dataset_dir=electrode_dataset_dir,
             electrode_names=electrode_names,
             eeg_positions_path_template=eeg_positions_path_template,
         )

@@ -98,6 +98,7 @@ class PostBatchConfig:
     csf_labels: Optional[List[int]] = None
     skull_labels: Optional[List[int]] = None
     electrode_csv: Optional[str] = None
+    electrode_dataset_dir: Optional[str] = None
     electrode_names: Optional[List[str]] = None
     eeg_positions_path_template: Optional[str] = None
     write_neighbor_table: bool = True
@@ -187,6 +188,14 @@ def validate_post_batch_config(cfg: PostBatchConfig) -> None:
                 "in the same world coordinate frame as the subject TI image."
             )
 
+    if cfg.electrode_dataset_dir:
+        electrode_dataset_dir = Path(cfg.electrode_dataset_dir).expanduser()
+        if not electrode_dataset_dir.is_dir():
+            raise SystemExit(
+                f"Configured electrode_dataset_dir is not a directory: {electrode_dataset_dir}. "
+                "Expected files such as <electrode_dataset_dir>/<roi>/<subject>/electrodes.csv."
+            )
+
 
 def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) -> PostProcessConfig:
     from post.post_process import PostProcessConfig
@@ -212,6 +221,7 @@ def build_post_process_config(root: Path, subject: str, cfg: PostBatchConfig) ->
         csf_labels=cfg.csf_labels,
         skull_labels=cfg.skull_labels,
         electrode_csv=cfg.electrode_csv,
+        electrode_dataset_dir=cfg.electrode_dataset_dir,
         electrode_names=cfg.electrode_names,
         eeg_positions_path_template=cfg.eeg_positions_path_template,
         write_neighbor_table=cfg.write_neighbor_table,
@@ -563,6 +573,7 @@ def make_default_config() -> PipelineConfig:
             csf_labels=[24],
             skull_labels=None,
             electrode_csv=None,
+            electrode_dataset_dir=None,
             electrode_names=None,
             eeg_positions_path_template=None,
             write_neighbor_table=True,

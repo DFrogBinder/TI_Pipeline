@@ -89,6 +89,16 @@ def test_validate_post_batch_config_rejects_electrode_csv_missing_columns(tmp_pa
         validate_post_batch_config(cfg)
 
 
+def test_validate_post_batch_config_rejects_missing_electrode_dataset_dir(tmp_path):
+    cfg = PostBatchConfig(
+        root="/tmp/example",
+        electrode_dataset_dir=str(tmp_path / "missing-electrodes"),
+    )
+
+    with pytest.raises(SystemExit, match="electrode_dataset_dir is not a directory"):
+        validate_post_batch_config(cfg)
+
+
 def test_validate_post_batch_config_requires_fixed_atlas_with_mni_baseline(tmp_path):
     baseline_root = tmp_path / "mni_baseline"
     baseline_root.mkdir()

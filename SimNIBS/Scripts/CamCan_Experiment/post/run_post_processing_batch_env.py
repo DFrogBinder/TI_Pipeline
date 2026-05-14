@@ -120,6 +120,7 @@ def build_configs():
         int(value) for value in read_optional_list("PIPELINE_SKULL_LABELS") or []
     ] or None
     pipeline_cfg.post.electrode_csv = read_optional_text("PIPELINE_ELECTRODE_CSV")
+    pipeline_cfg.post.electrode_dataset_dir = read_optional_text("PIPELINE_ELECTRODE_DATASET_DIR")
     pipeline_cfg.post.electrode_names = read_optional_list("PIPELINE_ELECTRODE_NAMES")
     pipeline_cfg.post.eeg_positions_path_template = read_optional_text(
         "PIPELINE_EEG_POSITIONS_PATH_TEMPLATE"

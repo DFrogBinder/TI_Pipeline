@@ -4,6 +4,7 @@ import pytest
 
 from post.metric_extensions import (
     build_fixed_neighbor_masks,
+    compute_electrode_distance_metrics,
     compute_focality_metrics,
     flatten_subject_metric_payload,
 )
@@ -80,6 +81,34 @@ def test_focality_percent_uses_finite_ti_voxels_as_whole_brain_denominator():
 
     assert metrics["focality_voxels_gt_threshold"] == 4
     assert metrics["focality_percent_of_whole_brain_gt_threshold"] == pytest.approx(4 / 7 * 100.0)
+
+
+def test_electrode_distances_load_from_roi_subject_dataset_dir(tmp_path):
+    electrode_file = tmp_path / "left-hippocampus" / "sub-01" / "electrodes.csv"
+    electrode_file.parent.mkdir(parents=True)
+    electrode_file.write_text(
+        "subject,electrode,x,y,z\n"
+        "sub-01,F10,3,0,0\n"
+        "sub-01,P8,0,4,0\n",
+        encoding="utf-8",
+    )
+
+    metrics = compute_electrode_distance_metrics(
+        root_dir=str(tmp_path),
+        subject="sub-01",
+        roi_name="Left-Hippocampus",
+        roi_centroid_xyz=np.array([0.0, 0.0, 0.0]),
+        electrode_csv=None,
+        electrode_dataset_dir=str(tmp_path),
+        electrode_names=None,
+        eeg_positions_path_template=None,
+    )
+
+    assert metrics["electrode_distance_count"] == 2
+    assert metrics["electrode_distance_min_mm"] == pytest.approx(3.0)
+    assert metrics["electrode_distance_max_mm"] == pytest.approx(4.0)
+    assert metrics["electrode_distance_mean_mm"] == pytest.approx(3.5)
+    assert [row["electrode"] for row in metrics["electrode_distances"]] == ["F10", "P8"]
 
 
 def test_flatten_subject_metric_payload_includes_whole_brain_occupancy_fields():

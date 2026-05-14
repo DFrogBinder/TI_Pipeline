@@ -60,6 +60,7 @@ PIPELINE_WRITE_NEIGHBOR_VISUALIZATION="1"  # write fixed-neighbor masks and over
 PIPELINE_CSF_LABELS="24"  # space-separated label ids
 PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric
 PIPELINE_ELECTRODE_CSV=""  # optional CSV with columns subject,electrode,x,y,z
+PIPELINE_ELECTRODE_DATASET_DIR=""  # optional directory with <roi>/<subject>/electrodes.csv files
 PIPELINE_ELECTRODE_NAMES=""  # optional space-separated EEG position names
 PIPELINE_EEG_POSITIONS_PATH_TEMPLATE=""  # optional template, e.g. /path/{subject}/eeg_positions.csv
 PIPELINE_FORCE="0"
@@ -273,6 +274,9 @@ if [[ -n "${PIPELINE_SKULL_LABELS}" ]]; then
 fi
 if [[ -n "${PIPELINE_ELECTRODE_CSV}" ]]; then
     CMD+=(--electrode-csv "${PIPELINE_ELECTRODE_CSV}")
+fi
+if [[ -n "${PIPELINE_ELECTRODE_DATASET_DIR}" ]]; then
+    CMD+=(--electrode-dataset-dir "${PIPELINE_ELECTRODE_DATASET_DIR}")
 fi
 if [[ -n "${PIPELINE_ELECTRODE_NAMES}" ]]; then
     # shellcheck disable=SC2206

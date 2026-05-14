@@ -96,6 +96,7 @@ class PostProcessConfig:
     csf_labels: Optional[Sequence[int]] = None
     skull_labels: Optional[Sequence[int]] = None
     electrode_csv: Optional[str] = None
+    electrode_dataset_dir: Optional[str] = None
     electrode_names: Optional[Sequence[str]] = None
     eeg_positions_path_template: Optional[str] = None
     write_neighbor_table: bool = True
@@ -231,6 +232,7 @@ def _build_subject_qc_meta(
         "mni_baseline_root": _configured_path_status(cfg.mni_baseline_root, must_be_file=False),
         "mni_fixed_atlas_path": _configured_path_status(cfg.mni_fixed_atlas_path, must_be_file=True),
         "electrode_csv": _configured_path_status(cfg.electrode_csv, must_be_file=True),
+        "electrode_dataset_dir": _configured_path_status(cfg.electrode_dataset_dir, must_be_file=False),
     }
     error_checks = [
         name
@@ -625,6 +627,7 @@ def extended_metrics_fingerprint_for_cfg(cfg: PostProcessConfig) -> str:
         csf_labels=cfg.csf_labels,
         skull_labels=cfg.skull_labels,
         electrode_csv=cfg.electrode_csv,
+        electrode_dataset_dir=cfg.electrode_dataset_dir,
         electrode_names=cfg.electrode_names,
         eeg_positions_path_template=cfg.eeg_positions_path_template,
     )
@@ -1195,7 +1198,10 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
                 ),
             )
 
-        if centroid_failed and (cfg.electrode_csv or cfg.electrode_names):
+        electrodes_configured = bool(
+            cfg.electrode_csv or cfg.electrode_dataset_dir or cfg.electrode_names
+        )
+        if centroid_failed and electrodes_configured:
             message = f"Centroid metrics failed, so electrode distances could not be computed: {centroid_failure_message}"
             extended_group_status["electrodes"] = "error"
             extended_group_messages["electrodes"] = message
@@ -1211,15 +1217,17 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
                     f"[WARN] Extended metric group 'electrodes' failed for {cfg.subject}: "
                     f"{message}"
                 )
-        elif cfg.electrode_csv or cfg.electrode_names:
+        elif electrodes_configured:
             execute_metric_group(
                 "electrodes",
                 ELECTRODE_METRIC_KEYS,
                 lambda: compute_electrode_distance_metrics(
                     root_dir=cfg.root_dir,
                     subject=cfg.subject,
+                    roi_name=sel,
                     roi_centroid_xyz=roi_centroid_xyz,
                     electrode_csv=cfg.electrode_csv,
+                    electrode_dataset_dir=cfg.electrode_dataset_dir,
                     electrode_names=cfg.electrode_names,
                     eeg_positions_path_template=cfg.eeg_positions_path_template,
                 ),
@@ -1228,7 +1236,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             mark_metric_group_not_configured(
                 "electrodes",
                 ELECTRODE_METRIC_KEYS,
-                "Electrode distance metrics require electrode_csv or electrode_names.",
+                "Electrode distance metrics require electrode_csv, electrode_dataset_dir, or electrode_names.",
             )
 
         if cfg.write_neighbor_table and extended_metrics.get("neighbors"):

@@ -61,6 +61,7 @@ PIPELINE_NEIGHBOR_DILATION_ITER="1"
 PIPELINE_CSF_LABELS="24"  # space-separated label ids
 PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric
 PIPELINE_ELECTRODE_CSV=""  # optional CSV with columns subject,electrode,x,y,z; leave blank until a study-specific table is available
+PIPELINE_ELECTRODE_DATASET_DIR=""  # optional directory with <roi>/<subject>/electrodes.csv files
 PIPELINE_ELECTRODE_NAMES=""  # optional space-separated EEG position names
 PIPELINE_EEG_POSITIONS_PATH_TEMPLATE=""  # optional template, e.g. /path/{subject}/eeg_positions.csv
 PIPELINE_WRITE_NEIGHBOR_TABLE="1"
@@ -152,6 +153,7 @@ export PIPELINE_NEIGHBOR_DILATION_ITER
 export PIPELINE_CSF_LABELS
 export PIPELINE_SKULL_LABELS
 export PIPELINE_ELECTRODE_CSV
+export PIPELINE_ELECTRODE_DATASET_DIR
 export PIPELINE_ELECTRODE_NAMES
 export PIPELINE_EEG_POSITIONS_PATH_TEMPLATE
 export PIPELINE_WRITE_NEIGHBOR_TABLE

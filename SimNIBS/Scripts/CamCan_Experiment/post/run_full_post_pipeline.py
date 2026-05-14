@@ -166,6 +166,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Optional CSV with columns subject,electrode,x,y,z.",
     )
     parser.add_argument(
+        "--electrode-dataset-dir",
+        default=None,
+        help=(
+            "Optional directory with per-ROI/per-subject electrode CSVs, "
+            "for example <dir>/<roi>/<subject>/electrodes.csv."
+        ),
+    )
+    parser.add_argument(
         "--electrode-names",
         nargs="*",
         default=None,
@@ -271,6 +279,7 @@ def build_pipeline_config(args: argparse.Namespace, root: Path) -> PipelineConfi
     cfg.post.csf_labels = args.csf_labels if args.csf_labels else [24]
     cfg.post.skull_labels = args.skull_labels
     cfg.post.electrode_csv = args.electrode_csv
+    cfg.post.electrode_dataset_dir = args.electrode_dataset_dir
     cfg.post.electrode_names = args.electrode_names
     cfg.post.eeg_positions_path_template = args.eeg_positions_path_template
     cfg.post.force = args.force

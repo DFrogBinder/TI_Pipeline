@@ -75,6 +75,12 @@ MONTAGE_PRESETS: dict[str, MontageSpec] = {
         description="Right-dlpc preset from the existing MNI152 runner.",
         pair1=PairSpec("AF4", "F4", 0.796214e-3),
         pair2=PairSpec("C2", "CP1", 2e-3),
+    ),
+    "right-m1": MontageSpec(
+        name="right-m1",
+        description="Right M1 montage that was previously active in this runner.",
+        pair1=PairSpec("FC6", "FT8", 2e-3),
+        pair2=PairSpec("C2", "C4", 0.796214e-3),
     )
 }
 

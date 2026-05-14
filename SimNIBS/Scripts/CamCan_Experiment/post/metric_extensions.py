@@ -42,7 +42,7 @@ def _metric_slug(value: str) -> str:
     return slug.strip("_")
 
 
-EXTENDED_METRIC_SCHEMA_VERSION = 4
+EXTENDED_METRIC_SCHEMA_VERSION = 5
 EXTENDED_METRIC_LIST_FIELDS = ("neighbors", "electrode_distances")
 EXTENDED_METRIC_SCALAR_FIELDS = (
     "roi_peak",

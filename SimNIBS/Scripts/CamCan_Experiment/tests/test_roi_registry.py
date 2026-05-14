@@ -16,14 +16,14 @@ def test_alias_dictionary_contains_expected_hippocampus_aliases():
 
 def test_resolve_fastsurfer_roi_name_supports_right_m1_aliases():
     match = resolve_fastsurfer_roi_name("right_m1")
-    assert match.canonical_name == "ctx-rh-precentral"
-    assert resolve_fastsurfer_roi_label_ids("right_m1") == (2022,)
+    assert match.canonical_name == "ctx_rh_G_precentral"
+    assert resolve_fastsurfer_roi_label_ids("right_m1") == (12129,)
 
     typo_match = resolve_fastsurfer_roi_name("rigth_m1")
-    assert typo_match.canonical_name == "ctx-rh-precentral"
+    assert typo_match.canonical_name == "ctx_rh_G_precentral"
 
     directory_match = match_fastsurfer_roi_from_directory("/tmp/Right_M1_Data_01")
-    assert directory_match.canonical_name == "ctx-rh-precentral"
+    assert directory_match.canonical_name == "ctx_rh_G_precentral"
     assert directory_match.matched_alias == "right_m1"
 
 
@@ -71,15 +71,25 @@ def test_resolve_fastsurfer_roi_name_supports_shorthand_thalamus_aliases():
 
 def test_resolve_fastsurfer_roi_name_supports_right_dlpc_aliases():
     match = resolve_fastsurfer_roi_name("right_dlpc")
-    assert match.canonical_name == "ctx-rh-dlpfc-dkt"
-    assert resolve_fastsurfer_roi_label_ids("right_dlpc") == (2002, 2025)
+    assert match.canonical_name == "ctx_rh_G_front_middle"
+    assert resolve_fastsurfer_roi_label_ids("right_dlpc") == (12115,)
 
     match = match_fastsurfer_roi_from_directory("/tmp/Right_DLPC_Runs")
-    assert match.canonical_name == "ctx-rh-dlpfc-dkt"
+    assert match.canonical_name == "ctx_rh_G_front_middle"
     assert match.matched_alias == "right_dlpc"
 
     typo_match = resolve_fastsurfer_roi_name("rigth_dlpfc")
-    assert typo_match.canonical_name == "ctx-rh-dlpfc-dkt"
+    assert typo_match.canonical_name == "ctx_rh_G_front_middle"
+
+
+def test_dkt_fallback_aliases_are_explicit():
+    match = resolve_fastsurfer_roi_name("right_dlpfc_dkt")
+    assert match.canonical_name == "ctx-rh-dlpfc-dkt"
+    assert resolve_fastsurfer_roi_label_ids("right_dlpfc_dkt") == (2002, 2025)
+
+    match = resolve_fastsurfer_roi_name("right_m1_dkt")
+    assert match.canonical_name == "ctx-rh-precentral"
+    assert resolve_fastsurfer_roi_label_ids("right_m1_dkt") == (2022,)
 
 
 def test_resolve_fastsurfer_roi_name_supports_destrieux_middle_frontal_labels():
@@ -88,6 +98,14 @@ def test_resolve_fastsurfer_roi_name_supports_destrieux_middle_frontal_labels():
 
     right_match = resolve_fastsurfer_roi_name("right_g_front_middle")
     assert right_match.canonical_name == "ctx_rh_G_front_middle"
+
+
+def test_resolve_fastsurfer_roi_name_supports_destrieux_precentral_labels():
+    left_match = resolve_fastsurfer_roi_name("left_m1")
+    assert left_match.canonical_name == "ctx_lh_G_precentral"
+
+    right_match = resolve_fastsurfer_roi_name("ctx_rh_G_precentral")
+    assert right_match.canonical_name == "ctx_rh_G_precentral"
 
 
 def test_pipeline_exits_before_analysis_for_unknown_dataset_roi():
@@ -153,5 +171,5 @@ def test_pipeline_resolves_right_m1_dataset_roi_to_canonical_label():
 
     _resolve_pipeline_rois(cfg)
 
-    assert cfg.post.plot_roi == "ctx-rh-precentral"
-    assert cfg.population.target_roi == "ctx-rh-precentral"
+    assert cfg.post.plot_roi == "ctx_rh_G_precentral"
+    assert cfg.population.target_roi == "ctx_rh_G_precentral"

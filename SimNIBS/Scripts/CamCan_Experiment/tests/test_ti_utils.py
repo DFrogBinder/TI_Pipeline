@@ -30,3 +30,20 @@ def test_summarize_atlas_regions_simple_case():
     # Check one region's mean
     mean_a = df[df["label_name"] == "A"]["mean"].iloc[0]
     assert np.isclose(mean_a, (1 + 3 + 1) / 3)
+
+
+def test_summarize_atlas_regions_includes_unmapped_destrieux_labels():
+    ti_img = nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.float32), np.eye(4))
+    atlas_data = np.zeros((2, 2, 2), dtype=np.int32)
+    atlas_data[0, 0, 0] = 12115
+    atlas_data[1, 1, 1] = 12154
+    atlas_img = nib.Nifti1Image(atlas_data, np.eye(4))
+
+    frame = t.summarize_atlas_regions(
+        ti_img,
+        atlas_img,
+        {12115: "ctx_rh_G_front_middle"},
+    )
+
+    assert set(frame["label_id"]) == {12115, 12154}
+    assert frame.set_index("label_id").loc[12154, "label_name"] == "Label-12154"

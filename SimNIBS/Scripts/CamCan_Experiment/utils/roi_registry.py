@@ -119,15 +119,19 @@ FASTSURFER_DKT_LABELS: Dict[int, str] = {
     2031: "ctx-rh-temporalpole",
     2032: "ctx-rh-transversetemporal",
     2033: "ctx-rh-insula",
-    # Destrieux/a2009s middle frontal gyrus labels used by some DLPC analyses.
+    # Destrieux/a2009s labels used by the direct cortical ROI atlases.
     11115: "ctx_lh_G_front_middle",
+    11129: "ctx_lh_G_precentral",
+    11154: "ctx_lh_S_front_middle",
     12115: "ctx_rh_G_front_middle",
+    12129: "ctx_rh_G_precentral",
+    12154: "ctx_rh_S_front_middle",
 }
 
 FASTSURFER_COMPOSITE_ROIS: Dict[str, Tuple[int, ...]] = {
-    # DKT-compatible DLPFC/DLPC target. This intentionally replaces the old
-    # right_dlpc alias that pointed at the Destrieux/a2009s-only
-    # ctx_rh_G_front_middle label.
+    # Explicit DKT fallback targets. These are kept for legacy coarse-atlas
+    # analyses, but the default DLPC/DLPFC aliases now resolve to direct
+    # Destrieux/a2009s ROI labels when the new atlases are used.
     "ctx-lh-dlpfc-dkt": (1002, 1025),
     "ctx-rh-dlpfc-dkt": (2002, 2025),
 }
@@ -138,20 +142,33 @@ _HEMISPHERE_ALIASES = {
 }
 
 _SPECIAL_REGION_ALIASES = {
-    "precentral": {
-        "m1",
-        "motor_cortex",
-        "primary_motor_cortex",
-        "primary_motor",
-    },
 }
 
 _EXPLICIT_CANONICAL_ALIASES: Dict[str, Set[str]] = {
-    # DKT composite middle-frontal target used by the DLPFC/DLPC montage.
-    "ctx-lh-dlpfc-dkt": {
+    # Direct Destrieux precentral gyrus M1 target.
+    "ctx_lh_G_precentral": {
+        "left_m1",
+        "lh_m1",
+        "l_m1",
+        "m1_left",
+        "left_motor_cortex",
+        "left_primary_motor_cortex",
+        "left_primary_motor",
+    },
+    "ctx_rh_G_precentral": {
+        "right_m1",
+        "rigth_m1",
+        "rh_m1",
+        "r_m1",
+        "m1_right",
+        "right_motor_cortex",
+        "right_primary_motor_cortex",
+        "right_primary_motor",
+    },
+    # Direct Destrieux middle-frontal DLPC/DLPFC target.
+    "ctx_lh_G_front_middle": {
         "left_dlpc",
         "left_dlpfc",
-        "left_dlpfc_dkt",
         "lh_dlpc",
         "lh_dlpfc",
         "l_dlpc",
@@ -162,15 +179,13 @@ _EXPLICIT_CANONICAL_ALIASES: Dict[str, Set[str]] = {
         "lh_mfg",
         "left_middle_frontal",
         "left_middle_frontal_gyrus",
-        "left_rostral_caudal_middle_frontal",
         "dorsolateral_prefrontal_left",
         "left_dorsolateral_prefrontal",
         "left_dorsolateral_prefrontal_cortex",
     },
-    "ctx-rh-dlpfc-dkt": {
+    "ctx_rh_G_front_middle": {
         "right_dlpc",
         "right_dlpfc",
-        "right_dlpfc_dkt",
         "rigth_dlpc",
         "rigth_dlpfc",
         "rh_dlpc",
@@ -183,10 +198,39 @@ _EXPLICIT_CANONICAL_ALIASES: Dict[str, Set[str]] = {
         "rh_mfg",
         "right_middle_frontal",
         "right_middle_frontal_gyrus",
-        "right_rostral_caudal_middle_frontal",
         "dorsolateral_prefrontal_right",
         "right_dorsolateral_prefrontal",
         "right_dorsolateral_prefrontal_cortex",
+    },
+    # Explicit DKT composite middle-frontal fallback target.
+    "ctx-lh-dlpfc-dkt": {
+        "left_dlpfc_dkt",
+        "left_dlpc_dkt",
+        "lh_dlpfc_dkt",
+        "lh_dlpc_dkt",
+        "left_rostral_caudal_middle_frontal",
+        "left_dkt_dlpfc",
+        "left_dkt_dlpc",
+    },
+    "ctx-rh-dlpfc-dkt": {
+        "right_dlpfc_dkt",
+        "right_dlpc_dkt",
+        "rh_dlpfc_dkt",
+        "rh_dlpc_dkt",
+        "right_rostral_caudal_middle_frontal",
+        "right_dkt_dlpfc",
+        "right_dkt_dlpc",
+    },
+    "ctx-lh-precentral": {
+        "left_m1_dkt",
+        "lh_m1_dkt",
+        "left_dkt_m1",
+    },
+    "ctx-rh-precentral": {
+        "right_m1_dkt",
+        "rigth_m1_dkt",
+        "rh_m1_dkt",
+        "right_dkt_m1",
     },
 }
 

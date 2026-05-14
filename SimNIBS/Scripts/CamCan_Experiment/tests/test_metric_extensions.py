@@ -36,6 +36,33 @@ def test_build_fixed_neighbor_masks_uses_fixed_template_labels_in_subject_space(
     assert set(np.unique(masks["neighbor_categorical_mask"])) == {0, 1002, 1003}
 
 
+def test_build_fixed_neighbor_masks_supports_direct_destrieux_roi_labels(tmp_path):
+    mni_atlas = np.zeros((5, 5, 5), dtype=np.int32)
+    mni_atlas[2, 2, 2] = 12115  # ctx_rh_G_front_middle target
+    mni_atlas[1, 2, 2] = 12154  # neighboring Destrieux sulcus
+    mni_atlas[3, 2, 2] = 12116  # neighboring Destrieux gyrus
+    mni_path = tmp_path / "mni_destrieux_atlas.nii.gz"
+    nib.save(nib.Nifti1Image(mni_atlas, np.eye(4)), mni_path)
+
+    subject_atlas = np.zeros((5, 5, 5), dtype=np.int32)
+    subject_atlas[2, 2, 2] = 12115
+    subject_atlas[0, 0, 0] = 12154
+    subject_atlas[4, 4, 4] = 12116
+
+    masks = build_fixed_neighbor_masks(
+        mni_fixed_atlas_path=str(mni_path),
+        roi_name="right_dlpc",
+        dilation_iter=1,
+        subject_atlas_data=subject_atlas,
+    )
+
+    assert masks["neighbor_label_ids"] == [12116, 12154]
+    assert masks["neighbor_union_mask"][0, 0, 0]
+    assert masks["neighbor_union_mask"][4, 4, 4]
+    assert not masks["neighbor_union_mask"][2, 2, 2]
+    assert set(np.unique(masks["neighbor_categorical_mask"])) == {0, 12116, 12154}
+
+
 def test_focality_percent_uses_finite_ti_voxels_as_whole_brain_denominator():
     ti_data = np.array(
         [[[0.10, 0.30], [0.40, np.nan]], [[0.00, 0.25], [0.19, 0.50]]],

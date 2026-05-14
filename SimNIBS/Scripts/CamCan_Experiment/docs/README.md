@@ -126,12 +126,12 @@ cleans each listed subject's existing SimNIBS outputs before rerunning it.
    - `post.subjects`: list of subject IDs or `None` for all.
    - `post.atlas_mode`: `auto` (prefer FastSurfer if present), `fastsurfer`, or `mni`.
    - `post.fastsurfer_root` / `post.fs_mri_path`: where to find the subject atlas NIfTI. `fastsurfer_root` is resolved as `<fastsurfer_root>/<subject>.nii.gz`.
-   - `--atlas-filename` or `post.fastsurfer_atlas_filename`: optional atlas override for all subjects. Use an absolute atlas path to reuse one atlas for every subject, or a relative path such as `mri/aparc.DKTatlas+aseg.deep.nii.gz` to resolve `<fastsurfer_root>/<subject>/mri/aparc.DKTatlas+aseg.deep.nii.gz`.
+   - `--atlas-filename` or `post.fastsurfer_atlas_filename`: optional atlas override for all subjects. Use an absolute atlas path to reuse one atlas for every subject, or a relative path such as `mri/aparc.a2009s+aseg.nii.gz` or `mri/aparc.DKTatlas+aseg.deep.nii.gz` to resolve `<fastsurfer_root>/<subject>/<relative-atlas>`.
    - `post.plot_roi`: set to `None` to infer the ROI from `post.root`, or provide an alias/canonical FastSurfer ROI name directly.
    - `post.overlay_full_field`: defaults to `True`, so each subject now gets `full`, `topXX`, and `aboveHHH` overlays for both scale modes, plus one whole-brain reference full-field overlay.
    - `population.target_roi`: set to `None` to reuse the resolved post ROI.
    - `population.enabled`: toggle population aggregation.
-   - FastSurfer alias matching expects snake_case names such as `left_hippocampus`, `right_m1`, or `ctx_rh_precentral`.
+   - FastSurfer alias matching expects snake_case names such as `left_hippocampus`, `right_m1`, or `ctx_rh_G_precentral`. Default cortical aliases now target direct Destrieux/a2009s labels; use explicit `_dkt` aliases for legacy DKT composites.
    - If no alias can be resolved, the pipeline exits before any subject analysis starts for that dataset.
 2) Run:
 ```bash
@@ -139,7 +139,7 @@ python post/run_post_processing.py
 ```
 Example with per-subject atlas filename override:
 ```bash
-python post/run_post_processing.py --atlas-filename mri/aparc.DKTatlas+aseg.deep.nii.gz
+python post/run_post_processing.py --atlas-filename mri/aparc.a2009s+aseg.nii.gz
 ```
 HPC launch (single-node parallel batch):
 ```bash

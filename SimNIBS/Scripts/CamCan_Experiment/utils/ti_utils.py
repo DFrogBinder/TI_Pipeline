@@ -71,8 +71,11 @@ def summarize_atlas_regions(
     atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32)
     finite = np.isfinite(ti_data)
 
+    present_labels = sorted(int(value) for value in np.unique(atlas_data) if int(value) > 0)
+
     records: list[dict[str, Any]] = []
-    for lab_id, lab_name in label_map.items():
+    for lab_id in present_labels:
+        lab_name = label_map.get(lab_id, f"Label-{lab_id}")
         mask = atlas_data == lab_id
         if mask.sum() < min_voxels:
             continue

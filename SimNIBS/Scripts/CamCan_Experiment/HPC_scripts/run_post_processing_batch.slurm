@@ -42,7 +42,7 @@ BATCH_STOP_ON_ERROR="0"
 # Subject-level pipeline template
 PIPELINE_ATLAS_MODE="fastsurfer"
 PIPELINE_FASTSURFER_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/atlases"
-PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # blank -> flat <FASTSURFER_ROOT>/<subject>.nii(.gz); set a relative path like mri/aparc.DKTatlas+aseg.deep.nii.gz for nested per-subject layouts
+PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # blank -> flat <FASTSURFER_ROOT>/<subject>.nii(.gz); set a relative path like mri/aparc.a2009s+aseg.nii.gz for nested Destrieux layouts, or mri/aparc.DKTatlas+aseg.deep.nii.gz for legacy DKT layouts
 PIPELINE_FS_MRI_PATH=""  # shared atlas path reused for every subject
 PIPELINE_T1_PATH=""  # blank -> infer T1 per subject
 PIPELINE_SUBJECTS=""  # blank -> all subjects in each dataset

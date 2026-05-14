@@ -652,8 +652,11 @@ def summarize_atlas_regions(
     atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32)
     finite = np.isfinite(ti_data)
 
+    present_labels = sorted(int(value) for value in np.unique(atlas_data) if int(value) > 0)
+
     records: list[dict[str, Any]] = []
-    for lab_id, lab_name in label_map.items():
+    for lab_id in present_labels:
+        lab_name = label_map.get(lab_id, f"Label-{lab_id}")
         mask = atlas_data == lab_id
         if mask.sum() < min_voxels:
             continue
@@ -965,7 +968,7 @@ def roi_masks_on_ti_grid(
         return roi_masks, atlas_imgs
 
     # ---- FastSurfer path (chosen_mode == "fastsurfer") ----
-    print(f"[INFO] Using FastSurfer segementation for subject '{subject}'")
+    print(f"[INFO] Using FastSurfer/FreeSurfer atlas segmentation for subject '{subject}'")
     assert fs_atlas is not None, "Internal: fs_atlas must be resolved here."
 
     atlas_img = load_custom_atlas(fs_atlas)
@@ -992,10 +995,11 @@ def roi_masks_on_ti_grid(
                 f"to label id(s) {ids} ({', '.join(component_names)}), but label id(s) "
                 f"{missing_label_ids} are absent from atlas '{fs_atlas}'."
             )
-            if roi_name in {"ctx_lh_G_front_middle", "ctx_rh_G_front_middle"}:
+            if any(label_id >= 11000 for label_id in ids):
                 message += (
-                    " This is a Destrieux/a2009s-style label; the DKT-compatible DLPC "
-                    "aliases now resolve to ctx-lh-dlpfc-dkt or ctx-rh-dlpfc-dkt."
+                    " This is a Destrieux/a2009s-style label. Use an aparc.a2009s+aseg "
+                    "atlas for direct ROI comparisons, or request an explicit *_dkt "
+                    "fallback alias when intentionally using a DKT/coarse atlas."
                 )
             raise ValueError(message)
 
@@ -1007,10 +1011,11 @@ def roi_masks_on_ti_grid(
                 f"to label id(s) {ids} ({', '.join(component_names)}), but those label id(s) "
                 f"are absent from atlas '{fs_atlas}'."
             )
-            if roi_name in {"ctx_lh_G_front_middle", "ctx_rh_G_front_middle"}:
+            if any(label_id >= 11000 for label_id in ids):
                 message += (
-                    " This is a Destrieux/a2009s-style label; the DKT-compatible DLPC "
-                    "aliases now resolve to ctx-lh-dlpfc-dkt or ctx-rh-dlpfc-dkt."
+                    " This is a Destrieux/a2009s-style label. Use an aparc.a2009s+aseg "
+                    "atlas for direct ROI comparisons, or request an explicit *_dkt "
+                    "fallback alias when intentionally using a DKT/coarse atlas."
                 )
             raise ValueError(message)
 

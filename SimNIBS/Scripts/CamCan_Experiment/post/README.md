@@ -484,7 +484,7 @@ Simplified shape:
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "subject": "sub-CCxxxxxx",
   "target_roi": "Left-Hippocampus",
   "percentile": 95.0,
@@ -534,7 +534,7 @@ Simplified shape:
     "neighbor_mean_of_means": "FileNotFoundError: FastSurfer atlas not found: ..."
   },
   "extended_metrics_meta": {
-    "schema_version": 4,
+    "schema_version": 5,
     "status": "complete",
     "config_fingerprint": "0123abcd4567ef89",
     "group_statuses": {
@@ -887,8 +887,10 @@ When using `electrode_names`, the pipeline reads positions from `eeg_positions.c
 
 For right-M1 post-processing, the target can be passed explicitly as
 `--roi right_m1` or inferred from repeat directories named like
-`Right_M1_Data_01`. This resolves to the FastSurfer DKT precentral-gyrus ROI
-`ctx-rh-precentral`, label id `2022`.
+`Right_M1_Data_01`. With the current Destrieux/a2009s atlas workflow this
+resolves directly to the precentral-gyrus ROI `ctx_rh_G_precentral`, label id
+`12129`. Use `right_m1_dkt` only when intentionally falling back to the older
+DKT/coarse atlas target `ctx-rh-precentral`, label id `2022`.
 
 If electrode-distance metrics are needed for right M1, use the right-M1 row in
 [`configs/electrode_examples/roi_electrode_sets.csv`](configs/electrode_examples/roi_electrode_sets.csv).
@@ -901,7 +903,7 @@ FC6 FT8 C2 C4
 MNI baseline comparison remains optional. When a right-M1 MNI152 baseline run is
 available, pass its root with `--mni-baseline-root` and keep using the fixed MNI
 FastSurfer atlas via `--mni-fixed-atlas-path`; the baseline extractor uses the
-same `ctx-rh-precentral` ROI mask as subject-level analysis.
+same resolved ROI mask as subject-level analysis.
 
 ### ROI alias and atlas mismatch
 
@@ -909,22 +911,34 @@ FastSurfer ROI aliases are resolved before processing starts and the resolved ca
 
 Current important mappings:
 
-- `left_m1`, `lh_m1`, and `m1_left` resolve to `ctx-lh-precentral`, label id `1022`.
-- `right_m1`, `rh_m1`, and the typo alias `rigth_m1` resolve to `ctx-rh-precentral`, label id `2022`.
-- `right_dlpc` and `right_dlpfc` resolve to the DKT composite `ctx-rh-dlpfc-dkt`, label ids `2002` and `2025`.
-- `left_dlpc` and `left_dlpfc` resolve to the DKT composite `ctx-lh-dlpfc-dkt`, label ids `1002` and `1025`.
+- `left_m1`, `lh_m1`, and `m1_left` resolve to direct Destrieux `ctx_lh_G_precentral`, label id `11129`.
+- `right_m1`, `rh_m1`, and the typo alias `rigth_m1` resolve to direct Destrieux `ctx_rh_G_precentral`, label id `12129`.
+- `right_dlpc` and `right_dlpfc` resolve to direct Destrieux `ctx_rh_G_front_middle`, label id `12115`.
+- `left_dlpc` and `left_dlpfc` resolve to direct Destrieux `ctx_lh_G_front_middle`, label id `11115`.
+- Explicit fallback aliases ending in `_dkt`, such as `right_dlpfc_dkt` or `right_m1_dkt`, remain available for legacy DKT/coarse atlases.
 
-DLPC is intentionally represented as a DKT composite because the current post-processing atlas is `aparc.DKTatlas+aseg.deep.nii.gz`. For right DLPC, the mask is the union of:
+DLPC is no longer represented as a composite by default. The new
+Destrieux/a2009s atlases provide a direct ROI label, so plotting, ROI masks,
+MNI baseline comparison, population matching, and neighbor templates all use
+the same single ROI label. This avoids comparing a direct ROI in one atlas
+against a summed proxy in another.
+
+The legacy DKT fallback is still explicit. For right DLPC, `right_dlpfc_dkt`
+uses the union of:
 
 - `ctx-rh-caudalmiddlefrontal`, label id `2002`
 - `ctx-rh-rostralmiddlefrontal`, label id `2025`
 
-For left DLPC, the mask is the union of:
+For left DLPC, `left_dlpfc_dkt` uses the union of:
 
 - `ctx-lh-caudalmiddlefrontal`, label id `1002`
 - `ctx-lh-rostralmiddlefrontal`, label id `1025`
 
-The old `ctx_rh_G_front_middle` and `ctx_lh_G_front_middle` labels remain available only when explicitly requested by name. They are Destrieux/a2009s-style middle frontal gyrus labels and are not expected to exist in DKT atlases. If one of those explicit labels is absent, the pipeline raises a clear ROI-mask error instead of producing empty DLPC masks and misleading zero-overlap metrics.
+If a direct Destrieux alias is used with a DKT atlas, the pipeline raises a
+clear ROI-mask error instead of silently producing empty DLPC/M1 masks and
+misleading zero-overlap metrics. Conversely, if a DKT fallback alias is used
+with a Destrieux-only atlas, the DKT labels must be present or the run fails
+early.
 
 ### Overlay QC
 

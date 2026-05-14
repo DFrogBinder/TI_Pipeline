@@ -533,7 +533,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Atlas override for all subjects. Use either an absolute atlas path "
             "shared by every subject, or a relative path under each subject "
             "directory inside fastsurfer_root, for example "
-            "'mri/aparc.DKTatlas+aseg.deep.nii.gz'."
+            "'mri/aparc.a2009s+aseg.nii.gz' for Destrieux/a2009s atlases "
+            "or 'mri/aparc.DKTatlas+aseg.deep.nii.gz' for legacy DKT atlases."
         ),
     )
     return parser

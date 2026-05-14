@@ -102,7 +102,7 @@ and region-table output is enabled. For each atlas label with at least
 | Metric | Computation |
 | --- | --- |
 | `label_id` | Integer atlas label. |
-| `label_name` | Label name from the FastSurfer DKT label map. |
+| `label_name` | Label name from the FastSurfer/FreeSurfer label map when known; otherwise `Label-<id>` so Destrieux/a2009s labels are still retained in the table. |
 | `voxels` | Count of voxels in that atlas label mask. |
 | `volume_mm3` | `voxels * voxel_volume_mm3`. |
 | `mean` | Mean TI value over finite voxels in the label. |

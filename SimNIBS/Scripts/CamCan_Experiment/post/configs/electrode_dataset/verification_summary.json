@@ -1,0 +1,11 @@
+{
+  "dataset_dir": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/electrode_dataset",
+  "errors": [],
+  "report_csv": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/electrode_dataset/verification_report.csv",
+  "roi_count": 10,
+  "roi_electrode_sets_csv": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/electrode_examples/roi_electrode_sets.csv",
+  "rows": 7000,
+  "status": "ok",
+  "subject_files": 1750,
+  "targets_csv": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv"
+}

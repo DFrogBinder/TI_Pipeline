@@ -34,6 +34,22 @@ For the current generated dataset, coordinates come from the SimNIBS MNI152
 include per-subject `m2m_*` EEG cap files. If subject-space cap files are
 restored, rerun the build script after updating its coordinate source logic.
 
+The prepared ROI aliases mirror the targets listed in
+`/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv`:
+
+```text
+left-m1
+left-dlpc
+left-hippocampus
+left-thalamus
+left-pallidum
+right-m1
+right-dlpc
+right-hippocampus
+right-thalamus
+right-pallidum
+```
+
 To use this dataset in post-processing:
 
 ```bash

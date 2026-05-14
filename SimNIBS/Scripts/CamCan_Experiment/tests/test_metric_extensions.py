@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from post.metric_extensions import (
+    _electrode_dataset_roi_keys,
     build_fixed_neighbor_masks,
     compute_electrode_distance_metrics,
     compute_focality_metrics,
@@ -109,6 +110,28 @@ def test_electrode_distances_load_from_roi_subject_dataset_dir(tmp_path):
     assert metrics["electrode_distance_max_mm"] == pytest.approx(4.0)
     assert metrics["electrode_distance_mean_mm"] == pytest.approx(3.5)
     assert [row["electrode"] for row in metrics["electrode_distances"]] == ["F10", "P8"]
+
+
+@pytest.mark.parametrize(
+    ("roi_name", "dataset_key"),
+    [
+        ("ctx_lh_G_precentral", "left-m1"),
+        ("ctx_lh_G_front_middle", "left-dlpc"),
+        ("Left_Hippocampus", "left-hippocampus"),
+        ("Left_Thalamus", "left-thalamus"),
+        ("Left_Pallidum", "left-pallidum"),
+        ("ctx_rh_G_precentral", "right-m1"),
+        ("ctx_rh_G_front_middle", "right-dlpc"),
+        ("Right_Hippocampus", "right-hippocampus"),
+        ("Right_Thalamus", "right-thalamus"),
+        ("Right_Pallidum", "right-pallidum"),
+    ],
+)
+def test_electrode_dataset_roi_keys_cover_targets_csv_aliases(
+    roi_name: str,
+    dataset_key: str,
+):
+    assert dataset_key in _electrode_dataset_roi_keys(roi_name)
 
 
 def test_flatten_subject_metric_payload_includes_whole_brain_occupancy_fields():

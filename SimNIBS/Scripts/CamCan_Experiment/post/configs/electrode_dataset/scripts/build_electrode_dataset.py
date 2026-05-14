@@ -20,7 +20,20 @@ DEFAULT_ROI_ELECTRODE_SETS = (
     / "electrode_examples"
     / "roi_electrode_sets.csv"
 )
+DEFAULT_TARGETS_CSV = Path(__file__).resolve().parents[5] / "utils" / "targets.csv"
 DEFAULT_OUT = Path(__file__).resolve().parents[1]
+TARGET_ROI_ALIASES = {
+    "ctx-lh-g-precentral": "left-m1",
+    "ctx-lh-g-front-middle": "left-dlpc",
+    "left-hippocampus": "left-hippocampus",
+    "left-thalamus": "left-thalamus",
+    "left-pallidum": "left-pallidum",
+    "ctx-rh-g-precentral": "right-m1",
+    "ctx-rh-g-front-middle": "right-dlpc",
+    "right-hippocampus": "right-hippocampus",
+    "right-thalamus": "right-thalamus",
+    "right-pallidum": "right-pallidum",
+}
 
 
 def slug(value: str) -> str:
@@ -38,6 +51,24 @@ def read_roi_electrode_sets(path: Path) -> dict[str, dict[str, str | list[str]]]
             "montage_preset": row["montage_preset"],
             "electrode_names": row["electrode_names"].split(),
             "notes": row.get("notes", ""),
+        }
+    return out
+
+
+def read_target_electrode_sets(path: Path) -> dict[str, dict[str, str | list[str]]]:
+    with path.open("r", newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle))
+
+    out: dict[str, dict[str, str | list[str]]] = {}
+    for row in rows:
+        target_key = slug(row["roi"])
+        roi_alias = TARGET_ROI_ALIASES.get(target_key, target_key)
+        electrode_names = row["pair1"].split("-") + row["pair2"].split("-")
+        out[roi_alias] = {
+            "roi_alias": roi_alias,
+            "montage_preset": roi_alias,
+            "electrode_names": electrode_names,
+            "notes": f"Electrodes from targets.csv row {row['roi']}",
         }
     return out
 
@@ -66,6 +97,20 @@ def discover_subjects(post_data_root: Path, roi_alias: str) -> list[str]:
     return sorted(subjects)
 
 
+def discover_all_subjects(post_data_root: Path) -> list[str]:
+    subjects: set[str] = set()
+    if not post_data_root.is_dir():
+        return []
+
+    for roi_root in post_data_root.iterdir():
+        if not roi_root.is_dir():
+            continue
+        for dataset_root in roi_root.glob("*_Data_*"):
+            if dataset_root.is_dir():
+                subjects.update(path.name for path in dataset_root.glob("sub-*") if path.is_dir())
+    return sorted(subjects)
+
+
 def write_csv(path: Path, rows: list[dict[str, str | float]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -90,24 +135,32 @@ def build_dataset(
     post_data_root: Path,
     cap_csv: Path,
     roi_electrode_sets_csv: Path,
+    targets_csv: Path | None,
     out_dir: Path,
     selected_rois: set[str] | None,
 ) -> dict[str, object]:
-    roi_sets = read_roi_electrode_sets(roi_electrode_sets_csv)
+    roi_sets: dict[str, dict[str, str | list[str]]] = {}
+    if roi_electrode_sets_csv.is_file():
+        roi_sets.update(read_roi_electrode_sets(roi_electrode_sets_csv))
+    if targets_csv and targets_csv.is_file():
+        roi_sets.update(read_target_electrode_sets(targets_csv))
     cap_positions = read_simnibs_cap(cap_csv)
+    all_subjects = discover_all_subjects(post_data_root)
     manifest_rows: list[dict[str, str | int]] = []
 
+    if not roi_sets:
+        raise SystemExit(
+            f"No ROI electrode sets were parsed from {roi_electrode_sets_csv} or {targets_csv}"
+        )
     if not cap_positions:
         raise SystemExit(f"No electrode positions were parsed from {cap_csv}")
 
-    roi_aliases = sorted(path.name for path in post_data_root.iterdir() if path.is_dir())
+    roi_aliases = sorted(roi_sets)
     if selected_rois is not None:
         roi_aliases = [roi for roi in roi_aliases if roi in selected_rois]
 
     for roi_alias in roi_aliases:
-        preset = roi_sets.get(roi_alias)
-        if preset is None:
-            continue
+        preset = roi_sets[roi_alias]
 
         electrode_names = list(preset["electrode_names"])
         missing_electrodes = [name for name in electrode_names if name not in cap_positions]
@@ -118,7 +171,7 @@ def build_dataset(
             )
 
         subject_rows: list[dict[str, str | float]] = []
-        subjects = discover_subjects(post_data_root, roi_alias)
+        subjects = discover_subjects(post_data_root, roi_alias) or all_subjects
         for subject in subjects:
             rows: list[dict[str, str | float]] = []
             for electrode in electrode_names:
@@ -172,6 +225,7 @@ def build_dataset(
         "post_data_root": str(post_data_root),
         "cap_csv": str(cap_csv),
         "roi_electrode_sets_csv": str(roi_electrode_sets_csv),
+        "targets_csv": str(targets_csv) if targets_csv else None,
         "out_dir": str(out_dir),
         "roi_count": len(manifest_rows),
         "subject_files": sum(int(row["subjects"]) for row in manifest_rows),
@@ -190,6 +244,7 @@ def main() -> None:
     parser.add_argument("--post-data-root", type=Path, default=DEFAULT_POST_DATA_ROOT)
     parser.add_argument("--cap-csv", type=Path, default=DEFAULT_CAP_CSV)
     parser.add_argument("--roi-electrode-sets-csv", type=Path, default=DEFAULT_ROI_ELECTRODE_SETS)
+    parser.add_argument("--targets-csv", type=Path, default=DEFAULT_TARGETS_CSV)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--roi", action="append", help="ROI alias to build, e.g. right-dlpc.")
     args = parser.parse_args()
@@ -199,6 +254,7 @@ def main() -> None:
         post_data_root=args.post_data_root.expanduser(),
         cap_csv=args.cap_csv.expanduser(),
         roi_electrode_sets_csv=args.roi_electrode_sets_csv.expanduser(),
+        targets_csv=args.targets_csv.expanduser() if args.targets_csv else None,
         out_dir=args.out_dir.expanduser(),
         selected_rois=selected_rois,
     )

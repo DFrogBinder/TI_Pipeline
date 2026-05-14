@@ -1,0 +1,11 @@
+{
+  "cap_csv": "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/eeg_positions/EEG10-10_UI_Jurak_2007.csv",
+  "manifest": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/electrode_dataset/manifest.csv",
+  "out_dir": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/electrode_dataset",
+  "post_data_root": "/home/boyan/sandbox/Jake_Data/Simulation-Target-Data/v8-Post-Data",
+  "roi_count": 10,
+  "roi_electrode_sets_csv": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/post/configs/electrode_examples/roi_electrode_sets.csv",
+  "rows": 7000,
+  "subject_files": 1750,
+  "targets_csv": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv"
+}

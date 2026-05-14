@@ -473,7 +473,12 @@ def _electrode_dataset_roi_keys(roi_name: Optional[str]) -> List[str]:
             candidates.append("right-thalamus")
         if snake.startswith("left") or "_left" in snake or "lh_" in snake:
             candidates.append("left-thalamus")
-    if "precentral" in snake or compact in {"leftm1", "lhm1", "m1left"}:
+    if "pallidum" in snake:
+        if snake.startswith("right") or "_right" in snake or "rh_" in snake:
+            candidates.append("right-pallidum")
+        if snake.startswith("left") or "_left" in snake or "lh_" in snake:
+            candidates.append("left-pallidum")
+    if "precentral" in snake or compact in {"leftm1", "lhm1", "m1left", "rightm1", "rhm1", "m1right"}:
         if snake.startswith(("ctx_lh", "ctx-lh", "left", "lh")) or "left" in snake:
             candidates.append("left-m1")
         if snake.startswith(("ctx_rh", "ctx-rh", "right", "rh")) or "right" in snake:

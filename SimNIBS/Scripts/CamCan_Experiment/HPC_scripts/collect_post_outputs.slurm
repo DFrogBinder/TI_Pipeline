@@ -20,7 +20,16 @@ set -euo pipefail
 # ------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${REPO_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+
+if [[ -z "${REPO_DIR:-}" ]]; then
+    if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/post/utils/collect_post_outputs.py" ]]; then
+        REPO_DIR="${SLURM_SUBMIT_DIR}"
+    elif [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/../post/utils/collect_post_outputs.py" ]]; then
+        REPO_DIR="$(cd "${SLURM_SUBMIT_DIR}/.." && pwd)"
+    else
+        REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    fi
+fi
 
 # Environment. Set only one of PYTHON, POST_VENV, or POST_CONDA_ENV if needed.
 PYTHON="${PYTHON:-}"

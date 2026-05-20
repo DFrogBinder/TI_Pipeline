@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     nib = None
 
 from post.metric_extensions import flatten_subject_metric_payload
-from post.pipeline_layers import subject_metrics_payload_complete
+from post.pipeline_layers import subject_metrics_payload_analysis_complete
 
 
 METRIC_LABELS = {
@@ -342,7 +342,7 @@ def load_subject_metrics(dataset_root: Path, roi_name: str | None) -> tuple[pd.D
     for metric_path in discover_subject_metrics(dataset_root):
         with metric_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
-        if not subject_metrics_payload_complete(payload):
+        if not subject_metrics_payload_analysis_complete(payload):
             continue
 
         run_label = infer_run_label(metric_path, dataset_root)

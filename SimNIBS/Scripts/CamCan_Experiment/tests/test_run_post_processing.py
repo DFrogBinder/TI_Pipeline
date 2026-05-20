@@ -3,6 +3,7 @@ import pytest
 from post.run_post_processing import (
     PostBatchConfig,
     build_arg_parser,
+    discover_subjects,
     resolve_max_workers,
     resolve_subject_fastsurfer_atlas_path,
     run_subject_level_stage,
@@ -18,6 +19,14 @@ def test_resolve_max_workers_uses_slurm_cpus_per_task(monkeypatch):
     cfg = PostBatchConfig(root="/tmp/example", max_workers=None)
 
     assert resolve_max_workers(cfg, task_count=10) == 6
+
+
+def test_discover_subjects_ignores_analysis_and_roi_artifact_dirs(tmp_path):
+    for name in ("sub-01", "sub-02", "population_analysis", "r-dlpc"):
+        (tmp_path / name / "anat").mkdir(parents=True)
+    (tmp_path / "MNI152" / "anat").mkdir(parents=True)
+
+    assert discover_subjects(tmp_path, subjects=None) == ["MNI152", "sub-01", "sub-02"]
 
 
 def test_resolve_max_workers_prefers_explicit_post_override(monkeypatch):

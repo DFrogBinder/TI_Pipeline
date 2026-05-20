@@ -31,7 +31,7 @@ from post.pipeline_layers import (
     stage_ok,
     stage_partial,
     stage_skipped,
-    subject_metrics_payload_complete,
+    subject_metrics_payload_analysis_complete,
 )
 from utils.roi_registry import (
     match_fastsurfer_roi_from_directory,
@@ -46,7 +46,17 @@ if TYPE_CHECKING:
 def discover_subjects(root: Path, subjects: Optional[Iterable[str]]) -> List[str]:
     if subjects:
         return list(subjects)
-    return sorted([p.name for p in root.iterdir() if p.is_dir()])
+    return sorted(
+        [
+            p.name
+            for p in root.iterdir()
+            if p.is_dir()
+            and (
+                p.name.startswith("sub-")
+                or (p.name.upper().startswith("MNI") and (p / "anat").is_dir())
+            )
+        ]
+    )
 
 
 def should_skip_subject(out_dir: Path, pp_cfg: "PostProcessConfig", force: bool) -> bool:
@@ -58,7 +68,7 @@ def should_skip_subject(out_dir: Path, pp_cfg: "PostProcessConfig", force: bool)
     payload = load_subject_metrics_payload(metrics_path)
     if payload is None:
         return False
-    if not subject_metrics_payload_complete(payload):
+    if not subject_metrics_payload_analysis_complete(payload):
         return False
     try:
         from post.post_process import extended_metrics_fingerprint_for_cfg
@@ -274,6 +284,7 @@ def process_subject(pp_cfg: PostProcessConfig) -> dict:
         "extended_status": result["extended_metrics_meta"]["status"],
         "qc_status": result["qc_meta"]["status"],
         "subject_status": result["subject_status"],
+        "nonblocking_qc_checks": result.get("nonblocking_qc_checks", []),
         "metrics_path": result["metrics_path"],
     }
 
@@ -341,6 +352,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
     skipped = []
     failed = []
     incomplete = []
+    nonblocking_qc = []
     pending = []
 
     for subj in subjects:
@@ -364,6 +376,11 @@ def run_batch(cfg: PostBatchConfig) -> dict:
                 subject_result = process_subject(pp_cfg)
                 if subject_result["subject_status"] == "complete":
                     processed.append(pp_cfg.subject)
+                    if subject_result["nonblocking_qc_checks"]:
+                        nonblocking_qc.append((
+                            pp_cfg.subject,
+                            ",".join(subject_result["nonblocking_qc_checks"]),
+                        ))
                 else:
                     incomplete.append((
                         pp_cfg.subject,
@@ -388,6 +405,11 @@ def run_batch(cfg: PostBatchConfig) -> dict:
                     subject_result = future.result()
                     if subject_result["subject_status"] == "complete":
                         processed.append(subj)
+                        if subject_result["nonblocking_qc_checks"]:
+                            nonblocking_qc.append((
+                                subj,
+                                ",".join(subject_result["nonblocking_qc_checks"]),
+                            ))
                     else:
                         incomplete.append((
                             subj,
@@ -402,6 +424,7 @@ def run_batch(cfg: PostBatchConfig) -> dict:
     skipped.sort()
     failed.sort(key=lambda item: item[0])
     incomplete.sort(key=lambda item: item[0])
+    nonblocking_qc.sort(key=lambda item: item[0])
 
     print(f"[INFO] Processed {len(processed)} subject(s).")
     if skipped:
@@ -410,12 +433,22 @@ def run_batch(cfg: PostBatchConfig) -> dict:
         print(f"[WARN] Incomplete extended metrics for {len(incomplete)} subject(s).")
         for subj, err in incomplete:
             print(f"  - {subj}: {err}")
+    if nonblocking_qc:
+        print(f"[WARN] Non-blocking QC issue(s) for {len(nonblocking_qc)} processed subject(s).")
+        for subj, checks in nonblocking_qc:
+            print(f"  - {subj}: {checks}")
     if failed:
         print(f"[WARN] Failed {len(failed)} subject(s).")
         for subj, err in failed:
             print(f"  - {subj}: {err}")
 
-    return {"processed": processed, "skipped": skipped, "failed": failed, "incomplete": incomplete}
+    return {
+        "processed": processed,
+        "skipped": skipped,
+        "failed": failed,
+        "incomplete": incomplete,
+        "nonblocking_qc": nonblocking_qc,
+    }
 
 
 def _resolve_population_output_dir(cfg: PopulationConfig) -> Optional[Path]:
@@ -434,6 +467,7 @@ def run_subject_level_stage(cfg: PostBatchConfig) -> dict:
             "skipped_subjects": batch_result["skipped"],
             "failed_subjects": batch_result["failed"],
             "incomplete_subjects": batch_result["incomplete"],
+            "nonblocking_qc_subjects": batch_result.get("nonblocking_qc", []),
             "usable_subject_count": len(usable_subjects),
         }
         if usable_subjects:
@@ -461,6 +495,7 @@ def run_subject_level_stage(cfg: PostBatchConfig) -> dict:
         skipped_subjects=batch_result["skipped"],
         failed_subjects=batch_result["failed"],
         incomplete_subjects=batch_result["incomplete"],
+        nonblocking_qc_subjects=batch_result.get("nonblocking_qc", []),
     )
 
 

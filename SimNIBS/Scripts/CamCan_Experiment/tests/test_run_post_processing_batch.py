@@ -4,6 +4,7 @@ from post.run_post_processing_batch import (
     RepeatBatchConfig,
     _dataset_status_from_stage_results,
     _resolve_repeatability_output_dir_for_roi,
+    _subject_has_required_outputs,
     discover_repeat_datasets,
     make_default_pipeline_template,
     run_repeat_batch,
@@ -114,6 +115,63 @@ def test_dataset_status_from_stage_results_marks_partial_when_only_subject_stage
 
     assert status == "partial"
     assert detail == "subject_level: 2 subjects failed"
+
+
+def test_subject_required_outputs_accepts_overlay_only_qc_partial_metrics(tmp_path):
+    post_root = tmp_path / "sub-01" / "anat" / "post"
+    post_root.mkdir(parents=True)
+    (post_root / "region_stats_fastsurfer.csv").write_text("region,value\nroi,1\n", encoding="utf-8")
+    (post_root / "subject_metrics.json").write_text(
+        """
+        {
+          "subject_metrics_meta": {
+            "status": "partial",
+            "extended_metrics_status": "complete",
+            "qc_status": "partial"
+          },
+          "extended_metrics_meta": {"status": "complete"},
+          "qc_meta": {
+            "status": "partial",
+            "error_checks": ["overlays"],
+            "checks": {"overlays": {"status": "error"}}
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    assert _subject_has_required_outputs(
+        tmp_path,
+        "sub-01",
+        region_filename="region_stats_fastsurfer.csv",
+        metrics_filename="subject_metrics.json",
+    )
+
+
+def test_subject_required_outputs_rejects_partial_metrics_without_qc_reason(tmp_path):
+    post_root = tmp_path / "sub-01" / "anat" / "post"
+    post_root.mkdir(parents=True)
+    (post_root / "region_stats_fastsurfer.csv").write_text("region,value\nroi,1\n", encoding="utf-8")
+    (post_root / "subject_metrics.json").write_text(
+        """
+        {
+          "subject_metrics_meta": {
+            "status": "partial",
+            "extended_metrics_status": "complete",
+            "qc_status": "partial"
+          },
+          "extended_metrics_meta": {"status": "complete"}
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    assert not _subject_has_required_outputs(
+        tmp_path,
+        "sub-01",
+        region_filename="region_stats_fastsurfer.csv",
+        metrics_filename="subject_metrics.json",
+    )
 
 
 def test_default_repeatability_output_dir_is_inline_for_single_roi_batch(tmp_path):

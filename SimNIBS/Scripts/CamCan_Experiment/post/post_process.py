@@ -187,6 +187,101 @@ def _overlay_qc(
     }
 
 
+def _threshold_support_payload(
+    *,
+    voxels: int,
+    denominator_voxels: int,
+    voxel_volume_mm3: float,
+    threshold: float,
+    comparator: str,
+) -> Dict[str, Any]:
+    percent = (
+        float((voxels / denominator_voxels) * 100.0)
+        if denominator_voxels
+        else float("nan")
+    )
+    return {
+        "threshold": float(threshold),
+        "comparator": comparator,
+        "voxels": int(voxels),
+        "volume_mm3": float(voxels * voxel_volume_mm3),
+        "percent_of_denominator": percent,
+        "has_voxels": bool(voxels > 0),
+        "reason": None if voxels > 0 else "no_voxels_above_threshold",
+    }
+
+
+def _build_threshold_qc(
+    *,
+    cfg: PostProcessConfig,
+    ti_data: np.ndarray,
+    finite_mask: np.ndarray,
+    roi_masks: Dict[str, np.ndarray],
+    whole_brain_voxels: int,
+    voxel_volume_mm3: float,
+) -> Dict[str, Any]:
+    metric_mask = finite_mask & (ti_data > cfg.offtarget_threshold)
+    overlay_mask = finite_mask & (ti_data >= cfg.hard_threshold)
+    whole_brain_metric_voxels = int(np.count_nonzero(metric_mask))
+    whole_brain_overlay_voxels = int(np.count_nonzero(overlay_mask))
+
+    roi_payload: Dict[str, Any] = {}
+    for roi_name, roi_mask in roi_masks.items():
+        if roi_mask is None:
+            continue
+        roi_voxels = int(np.count_nonzero(roi_mask))
+        metric_voxels = int(np.count_nonzero(metric_mask & roi_mask))
+        overlay_voxels = int(np.count_nonzero(overlay_mask & roi_mask))
+        roi_payload[roi_name] = {
+            "roi_voxels": roi_voxels,
+            "metric_threshold": _threshold_support_payload(
+                voxels=metric_voxels,
+                denominator_voxels=whole_brain_voxels,
+                voxel_volume_mm3=voxel_volume_mm3,
+                threshold=cfg.offtarget_threshold,
+                comparator=">",
+            ),
+            "overlay_threshold": _threshold_support_payload(
+                voxels=overlay_voxels,
+                denominator_voxels=whole_brain_voxels,
+                voxel_volume_mm3=voxel_volume_mm3,
+                threshold=cfg.hard_threshold,
+                comparator=">=",
+            ),
+        }
+        if metric_voxels == 0:
+            roi_payload[roi_name]["metric_threshold"]["reason"] = (
+                "no_roi_voxels_above_metric_threshold"
+            )
+        if overlay_voxels == 0:
+            roi_payload[roi_name]["overlay_threshold"]["reason"] = (
+                "no_roi_voxels_at_or_above_overlay_threshold"
+            )
+
+    return {
+        "schema_version": 1,
+        "metric_threshold": float(cfg.offtarget_threshold),
+        "overlay_threshold": float(cfg.hard_threshold),
+        "whole_brain": {
+            "metric_threshold": _threshold_support_payload(
+                voxels=whole_brain_metric_voxels,
+                denominator_voxels=whole_brain_voxels,
+                voxel_volume_mm3=voxel_volume_mm3,
+                threshold=cfg.offtarget_threshold,
+                comparator=">",
+            ),
+            "overlay_threshold": _threshold_support_payload(
+                voxels=whole_brain_overlay_voxels,
+                denominator_voxels=whole_brain_voxels,
+                voxel_volume_mm3=voxel_volume_mm3,
+                threshold=cfg.hard_threshold,
+                comparator=">=",
+            ),
+        },
+        "rois": roi_payload,
+    }
+
+
 def _fastsurfer_roi_label_ids(roi_name: Optional[str]) -> list[int]:
     if not roi_name:
         return []
@@ -734,6 +829,14 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
     # Save global masks
     vox_vol = vol_mm3(ti_img)
     whole_brain_volume_mm3 = float(whole_brain_voxels * vox_vol)
+    threshold_qc = _build_threshold_qc(
+        cfg=cfg,
+        ti_data=ti_data,
+        finite_mask=finite,
+        roi_masks=roi_masks,
+        whole_brain_voxels=whole_brain_voxels,
+        voxel_volume_mm3=vox_vol,
+    )
     topP_mask_path = os.path.join(out_dir, f"efield_top{int(cfg.percentile)}pct_mask.nii.gz")
     nib.save(nib.Nifti1Image(topP_mask.astype(np.uint8), ti_img.affine), topP_mask_path)
 
@@ -825,6 +928,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
                 if whole_brain_voxels
                 else float("nan")
             ),
+            threshold_qc=threshold_qc["rois"].get(roi_name, {}),
             roi_percentile=cfg.region_percentile,
             roi_percentile_value=roi_percentile_value,
         )
@@ -1346,9 +1450,16 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             error=overlay_error,
         ),
     )
+    qc_error_checks = [
+        str(check)
+        for check in qc_meta.get("error_checks", [])
+        if isinstance(check, str)
+    ]
+    blocking_qc_checks = [check for check in qc_error_checks if check != "overlays"]
+    nonblocking_qc_checks = [check for check in qc_error_checks if check == "overlays"]
     subject_status = (
         "complete"
-        if extended_metrics_meta["status"] == "complete" and qc_meta["status"] == "complete"
+        if extended_metrics_meta["status"] == "complete" and not blocking_qc_checks
         else "partial"
     )
 
@@ -1360,6 +1471,8 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
             "status": subject_status,
             "extended_metrics_status": extended_metrics_meta["status"],
             "qc_status": qc_meta["status"],
+            "blocking_qc_checks": blocking_qc_checks,
+            "nonblocking_qc_checks": nonblocking_qc_checks,
         },
         target_roi=sel,
         target_roi_label_ids=_fastsurfer_roi_label_ids(sel),
@@ -1378,6 +1491,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         extended_metrics_meta=extended_metrics_meta,
         neighbor_visualization=neighbor_visualization,
         qc_meta=qc_meta,
+        threshold_qc=threshold_qc,
     )
     subject_metrics = json_ready_metric_value(subject_metrics)
 
@@ -1405,6 +1519,9 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         extended_metrics_meta=extended_metrics_meta,
         qc_meta=qc_meta,
         subject_status=subject_status,
+        blocking_qc_checks=blocking_qc_checks,
+        nonblocking_qc_checks=nonblocking_qc_checks,
+        threshold_qc=threshold_qc,
         neighbor_table_path=neighbor_table_path,
         neighbor_visualization=neighbor_visualization,
         electrode_table_path=electrode_table_path,

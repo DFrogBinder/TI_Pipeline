@@ -92,3 +92,48 @@ def subject_metrics_payload_complete(payload: Dict[str, Any] | None) -> bool:
 
 def subject_metrics_file_complete(path: Path) -> bool:
     return subject_metrics_payload_complete(load_subject_metrics_payload(path))
+
+
+def _subject_metrics_extended_status(payload: Dict[str, Any]) -> str | None:
+    subject_meta = payload.get("subject_metrics_meta")
+    if isinstance(subject_meta, dict):
+        status = subject_meta.get("extended_metrics_status")
+        if isinstance(status, str):
+            return status
+
+    meta = payload.get("extended_metrics_meta")
+    if isinstance(meta, dict):
+        status = meta.get("status")
+        if isinstance(status, str):
+            return status
+    return None
+
+
+def _subject_metrics_blocking_qc_checks(payload: Dict[str, Any]) -> list[str] | None:
+    qc_meta = payload.get("qc_meta")
+    if not isinstance(qc_meta, dict):
+        return None
+
+    checks = qc_meta.get("error_checks")
+    if not isinstance(checks, list):
+        return None
+
+    return [str(check) for check in checks if str(check) != "overlays"]
+
+
+def subject_metrics_payload_analysis_complete(payload: Dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    if subject_metrics_payload_complete(payload):
+        return True
+
+    if _subject_metrics_extended_status(payload) != "complete":
+        return False
+
+    blocking_qc_checks = _subject_metrics_blocking_qc_checks(payload)
+    return blocking_qc_checks is not None and not blocking_qc_checks
+
+
+def subject_metrics_file_analysis_complete(path: Path) -> bool:
+    return subject_metrics_payload_analysis_complete(load_subject_metrics_payload(path))

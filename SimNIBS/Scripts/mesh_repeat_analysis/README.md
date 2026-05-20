@@ -263,20 +263,33 @@ bash hpc_scripts/submit_repeatability_experiment.sh
 ```
 
 Edit the submission settings at the top of `hpc_scripts/submit_repeatability_experiment.sh`
-before running it. The most commonly changed values are:
+before running it. The helper is the central place for simulation submission
+controls, including:
 
-- `EXPERIMENT_CONFIG`
-- `MAX_CONCURRENT_TASKS`
-- `LOG_DIR`
-- `OVERWRITE_OUTPUT`
-- `FORCE_MESH`
+- `EXPERIMENT_CONFIG_CONFIG`
+- `MAX_CONCURRENT_TASKS_CONFIG`
+- `JOB_NAME_CONFIG`
+- `PARTITION_CONFIG`
+- `CPUS_PER_TASK_CONFIG`
+- `MEMORY_CONFIG`
+- `TIME_LIMIT_CONFIG`
+- `SLURM_OUTPUT_CONFIG`
+- `LOG_DIR_CONFIG`
+- `MESH_TIMEOUT_HOURS_CONFIG`
+- `MESH_MAX_RETRIES_CONFIG`
+- `OVERWRITE_OUTPUT_CONFIG`
+- `FORCE_MESH_CONFIG`
+
+Use `MESH_MAX_RETRIES_CONFIG="0"` for unlimited retry/requeue behavior until
+the per-task validation passes.
 
 What the helper does:
 
 - reads the JSON config
 - computes the task count automatically
 - submits `repeatability_experiment_array.slurm`
-- passes `EXPERIMENT_CONFIG` and the correct `--array=0-(N-1)%K` value to Slurm
+- passes `EXPERIMENT_CONFIG`, retry settings, resource settings, and the correct
+  `--array=0-(N-1)%K` value to Slurm
 
 ### Direct Slurm Submission
 

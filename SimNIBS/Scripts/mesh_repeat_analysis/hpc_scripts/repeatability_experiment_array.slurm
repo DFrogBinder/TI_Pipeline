@@ -1,4 +1,7 @@
 #!/bin/bash
+# Fallback defaults only. Normal submissions should edit controls in
+# hpc_scripts/submit_repeatability_experiment.sh, which overrides these values
+# with sbatch command-line options.
 #SBATCH --job-name=ti_repeat_experiment
 #SBATCH --partition=sheffield
 #SBATCH --cpus-per-task=8

@@ -13,7 +13,10 @@ import numpy as np
 import pandas as pd
 
 from post.metric_extensions import flatten_subject_metric_payload
-from post.pipeline_layers import load_subject_metrics_payload, subject_metrics_payload_complete
+from post.pipeline_layers import (
+    load_subject_metrics_payload,
+    subject_metrics_payload_analysis_complete,
+)
 from utils.roi_registry import resolve_fastsurfer_roi_label_ids
 
 
@@ -79,7 +82,7 @@ def load_subject_metrics(subj: str, path: Path) -> Optional[dict]:
     if not path.is_file():
         return None
     data = load_subject_metrics_payload(path)
-    if data is None or not subject_metrics_payload_complete(data):
+    if data is None or not subject_metrics_payload_analysis_complete(data):
         return None
     data["subject"] = subj
     return data
@@ -88,7 +91,9 @@ def load_subject_metrics(subj: str, path: Path) -> Optional[dict]:
 def subject_has_complete_outputs(post_root: Path, region_filename: str, metrics_filename: str) -> bool:
     region_path = post_root / region_filename
     metrics_path = post_root / metrics_filename
-    return region_path.is_file() and subject_metrics_payload_complete(load_subject_metrics_payload(metrics_path))
+    return region_path.is_file() and subject_metrics_payload_analysis_complete(
+        load_subject_metrics_payload(metrics_path)
+    )
 
 
 def flatten_subject_metrics(subject_metrics: List[dict], target_roi: str) -> pd.DataFrame:

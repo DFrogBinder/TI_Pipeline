@@ -52,6 +52,7 @@ sys.modules.setdefault("utils.ti_utils", ti_utils_stub)
 import post.post_process as post_process_module
 from post.post_process import (
     PostProcessConfig,
+    _build_threshold_qc,
     _generate_selected_roi_overlays,
     _load_t1_image,
     _overlay_qc,
@@ -163,6 +164,47 @@ def test_overlay_qc_marks_partial_overlay_set_as_error(tmp_path):
     assert qc["expected_overlay_count"] == 7
     assert qc["written_overlay_count"] == 1
     assert "roi_focus_top95" in qc["missing_overlay_types"]
+
+
+def test_threshold_qc_records_zero_threshold_support_for_all_rois(tmp_path):
+    ti_data = np.array(
+        [[[0.10, 0.30], [0.05, 0.01]], [[0.00, 0.18], [0.19, 0.50]]],
+        dtype=np.float32,
+    )
+    finite = np.isfinite(ti_data)
+    roi_masks = {
+        "Target": np.array(
+            [[[True, False], [True, False]], [[False, True], [True, False]]],
+            dtype=bool,
+        ),
+        "Other": np.array(
+            [[[False, True], [False, False]], [[False, False], [False, True]]],
+            dtype=bool,
+        ),
+    }
+    cfg = PostProcessConfig(
+        root_dir=str(tmp_path),
+        subject="sub-01",
+        offtarget_threshold=0.2,
+        hard_threshold=0.2,
+    )
+
+    threshold_qc = _build_threshold_qc(
+        cfg=cfg,
+        ti_data=ti_data,
+        finite_mask=finite,
+        roi_masks=roi_masks,
+        whole_brain_voxels=int(np.count_nonzero(finite)),
+        voxel_volume_mm3=1.0,
+    )
+
+    target_metric = threshold_qc["rois"]["Target"]["metric_threshold"]
+    other_metric = threshold_qc["rois"]["Other"]["metric_threshold"]
+    assert target_metric["voxels"] == 0
+    assert target_metric["has_voxels"] is False
+    assert target_metric["reason"] == "no_roi_voxels_above_metric_threshold"
+    assert other_metric["voxels"] == 2
+    assert other_metric["has_voxels"] is True
 
 
 def test_write_neighbor_visualization_outputs_writes_union_and_categorical_masks(monkeypatch, tmp_path):
@@ -353,3 +395,8 @@ def test_run_post_process_writes_whole_brain_occupancy_metrics(monkeypatch, tmp_
     assert roi_metrics["focality_in_roi_voxels_gt_threshold"] == 3
     assert roi_metrics["focality_in_roi_percent_of_whole_brain_gt_threshold"] == pytest.approx(3 / 7 * 100.0)
     assert payload["extended_metrics"]["focality_percent_of_whole_brain_gt_threshold"] == pytest.approx(4 / 7 * 100.0)
+    assert payload["subject_metrics_meta"]["status"] == "complete"
+    assert payload["subject_metrics_meta"]["nonblocking_qc_checks"] == ["overlays"]
+    assert payload["qc_meta"]["status"] == "partial"
+    assert payload["threshold_qc"]["whole_brain"]["metric_threshold"]["voxels"] == 4
+    assert roi_metrics["threshold_qc"]["metric_threshold"]["voxels"] == 3

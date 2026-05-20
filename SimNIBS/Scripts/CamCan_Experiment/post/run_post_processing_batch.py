@@ -36,7 +36,7 @@ from post.pipeline_layers import (
     PIPELINE_STAGE_ORDER,
     POPULATION_WITHIN_RUN_STAGE,
     SUBJECT_LEVEL_STAGE,
-    subject_metrics_file_complete,
+    subject_metrics_file_analysis_complete,
 )
 from post.run_post_processing import (
     PipelineConfig,
@@ -202,7 +202,9 @@ def _subject_has_required_outputs(
     metrics_filename: str,
 ) -> bool:
     post_root = dataset_root / subject / "anat" / "post"
-    return (post_root / region_filename).is_file() and subject_metrics_file_complete(post_root / metrics_filename)
+    return (post_root / region_filename).is_file() and subject_metrics_file_analysis_complete(
+        post_root / metrics_filename
+    )
 
 
 def _collect_complete_repeat_subjects(

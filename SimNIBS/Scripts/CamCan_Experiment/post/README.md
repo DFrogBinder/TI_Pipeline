@@ -257,7 +257,7 @@ Visual confirmation outputs:
 - `<roi>_fixed_neighbor_categorical_mask.nii.gz`: same voxels retaining their FastSurfer label IDs
 - `<roi>_fixed_neighbor_visualization.json`: ROI label IDs, neighbor label IDs/names, dilation setting, union voxel count, and overlay color assignments
 - `<roi>_fixed_neighbor_categorical_overlay.png`: one colored overlay per neighboring region over subject anatomy with the target ROI in red, when a T1 background is available
-- `<roi>_fixed_neighbor_efield_overlay.png`: TI/e-field values cropped to the neighboring regions, with faint colored neighbor overlays retained for attribution, when a T1 background is available
+- `<roi>_fixed_neighbor_efield_overlay.png`: TI/e-field values cropped to the neighboring regions, with sparse faint colored neighbor markers and unchanged region contours retained for attribution, when a T1 background is available
 
 Interpretation:
 

@@ -176,6 +176,33 @@ def _add_neighbor_region_layers(
     if not colors:
         return
 
+    _add_neighbor_region_fill(
+        display,
+        index_data=index_data,
+        colors=colors,
+        affine=affine,
+        fill_alpha=fill_alpha,
+    )
+    _add_neighbor_region_contours(
+        display,
+        index_data=index_data,
+        colors=colors,
+        affine=affine,
+        contour_linewidth=contour_linewidth,
+    )
+
+
+def _add_neighbor_region_fill(
+    display,
+    *,
+    index_data: np.ndarray,
+    colors: Sequence[str],
+    affine: np.ndarray,
+    fill_alpha: float,
+) -> None:
+    if not colors or not np.any(index_data > 0):
+        return
+
     n_labels = len(colors)
     vmin, vmax = _neighbor_display_bounds(n_labels)
     index_img = nib.Nifti1Image(index_data.astype(np.float32, copy=False), affine)
@@ -183,11 +210,24 @@ def _add_neighbor_region_layers(
         index_img,
         threshold=0.5,
         cmap=ListedColormap(list(colors)),
-        alpha=fill_alpha,
+        transparency=fill_alpha,
         colorbar=False,
         vmin=vmin,
         vmax=vmax,
     )
+
+
+def _add_neighbor_region_contours(
+    display,
+    *,
+    index_data: np.ndarray,
+    colors: Sequence[str],
+    affine: np.ndarray,
+    contour_linewidth: float,
+) -> None:
+    if not colors:
+        return
+
     for index, color in enumerate(colors, start=1):
         region_img = nib.Nifti1Image((index_data == index).astype(np.uint8), affine)
         display.add_contours(
@@ -196,6 +236,66 @@ def _add_neighbor_region_layers(
             colors=[color],
             linewidths=contour_linewidth,
         )
+
+
+def _sparse_cut_plane_neighbor_markers(
+    index_data: np.ndarray,
+    *,
+    affine: np.ndarray,
+    cut_coords: tuple[float, float, float],
+    marker_spacing_voxels: int = 10,
+    max_markers_per_region_per_plane: int = 5,
+) -> np.ndarray:
+    marker_data = np.zeros(index_data.shape, dtype=index_data.dtype)
+    labels = [int(value) for value in np.unique(index_data) if int(value) > 0]
+    if not labels:
+        return marker_data
+
+    spacing = max(1, int(marker_spacing_voxels))
+    max_markers = max(1, int(max_markers_per_region_per_plane))
+    cut_ijk = np.rint(
+        nib.affines.apply_affine(np.linalg.inv(affine), np.asarray(cut_coords, dtype=float))
+    ).astype(int)
+    shape = np.asarray(index_data.shape, dtype=int)
+    cut_ijk = np.clip(cut_ijk, 0, shape - 1)
+
+    for label_index in labels:
+        region = index_data == label_index
+
+        for axis, plane_index in enumerate(cut_ijk):
+            plane_slice = [slice(None), slice(None), slice(None)]
+            plane_slice[axis] = int(plane_index)
+            plane_slice_tuple = tuple(plane_slice)
+            plane_region = region[plane_slice_tuple]
+            plane_interior = binary_erosion(plane_region, iterations=1, border_value=0)
+            coords_2d = np.argwhere(plane_interior if np.any(plane_interior) else plane_region)
+            if coords_2d.size == 0:
+                continue
+
+            coords = np.zeros((coords_2d.shape[0], 3), dtype=int)
+            other_axes = [dim for dim in range(3) if dim != axis]
+            coords[:, axis] = int(plane_index)
+            coords[:, other_axes[0]] = coords_2d[:, 0]
+            coords[:, other_axes[1]] = coords_2d[:, 1]
+            if coords.size == 0:
+                continue
+
+            plane_min = coords[:, other_axes].min(axis=0)
+            spaced = (
+                ((coords[:, other_axes[0]] - plane_min[0]) % spacing == 0)
+                & ((coords[:, other_axes[1]] - plane_min[1]) % spacing == 0)
+            )
+            selected = coords[spaced]
+            if selected.shape[0] == 0:
+                step = max(1, coords.shape[0] // max_markers)
+                selected = coords[::step]
+            if selected.shape[0] > max_markers:
+                selected = selected[
+                    np.linspace(0, selected.shape[0] - 1, max_markers, dtype=int)
+                ]
+            marker_data[tuple(selected.T)] = label_index
+
+    return marker_data
 
 
 def try_fast_crop_to_target(atlas_img: nib.Nifti1Image, target_img: nib.Nifti1Image, mask_bool: np.ndarray):
@@ -378,15 +478,17 @@ def overlay_neighbor_regions_and_efield_on_t1_with_roi(
     dpi: int = 180,
     neighbor_label_ids: Optional[Sequence[int]] = None,
     efield_cmap: str = "viridis",
-    neighbor_fill_alpha: float = 0.18,
+    neighbor_fill_alpha: float = 0.04,
+    neighbor_marker_spacing_voxels: int = 10,
+    max_neighbor_markers_per_region_per_plane: int = 5,
     efield_upper_percentile: float = 99.5,
 ) -> str:
     """
     Render TI/e-field values cropped to fixed-template neighbor regions.
 
-    The e-field keeps the main color scale. Neighbor regions are added as faint
-    categorical fills plus colored contours so their boundaries remain visible
-    without dominating the e-field overlay.
+    The e-field keeps the main color scale. Neighbor regions are added as sparse,
+    faint categorical markers plus colored contours so their boundaries remain
+    visible without dominating the e-field overlay.
     """
     ti_arr, t1_on_ti, roi_on_ti, neighbor_data = _resample_neighbor_visualization_inputs(
         ti_img=ti_img,
@@ -434,14 +536,27 @@ def overlay_neighbor_regions_and_efield_on_t1_with_roi(
         vmin=vmin,
         vmax=vmax,
         cmap=efield_cmap,
-        alpha=0.86,
+        transparency=0.86,
     )
-    _add_neighbor_region_layers(
+    marker_data = _sparse_cut_plane_neighbor_markers(
+        index_data,
+        affine=ti_img.affine,
+        cut_coords=cut_coords,
+        marker_spacing_voxels=neighbor_marker_spacing_voxels,
+        max_markers_per_region_per_plane=max_neighbor_markers_per_region_per_plane,
+    )
+    _add_neighbor_region_fill(
+        display,
+        index_data=marker_data,
+        colors=colors,
+        affine=ti_img.affine,
+        fill_alpha=neighbor_fill_alpha,
+    )
+    _add_neighbor_region_contours(
         display,
         index_data=index_data,
         colors=colors,
         affine=ti_img.affine,
-        fill_alpha=neighbor_fill_alpha,
         contour_linewidth=0.65,
     )
     display.add_contours(

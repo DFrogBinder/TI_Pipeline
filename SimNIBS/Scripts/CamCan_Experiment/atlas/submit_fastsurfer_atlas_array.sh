@@ -24,11 +24,11 @@
 # User configuration
 # ----------------------------
 
-DATA_ROOT="/path/to/CamCan_Data"
-OUTPUT_ROOT="/path/to/FreeSurfer_atlases"
+DATA_ROOT="/mnt/parscratch/users/cop23bi/ti_dataset/"
+OUTPUT_ROOT="/mnt/parscratch/users/cop23bi/destr-atlases/"
 
-FREESURFER_MODULE="FreeSurfer"
-FS_LICENSE_FILE=""
+FREESURFER_MODULE="FreeSurfer/7.4.1-centos7_x86_64"
+FS_LICENSE_FILE="/users/cop23bi/freesurfer_licence.txt"
 
 # Destreux / a2009s is the finer FreeSurfer cortical parcellation.
 # The flat <OUTPUT_ROOT>/<subject>.nii.gz export is generated from this volume.
@@ -60,8 +60,8 @@ die() {
 
 is_truthy() {
   case "${1:-}" in
-    1|true|TRUE|yes|YES) return 0 ;;
-    *) return 1 ;;
+  1 | true | TRUE | yes | YES) return 0 ;;
+  *) return 1 ;;
   esac
 }
 
@@ -154,7 +154,7 @@ subject_t1_path() {
 
 write_subjects_file() {
   local subjects_file="${OUTPUT_ROOT}/slurm/subjects.txt"
-  printf '%s\n' "${SUBJECT_IDS[@]}" > "${subjects_file}"
+  printf '%s\n' "${SUBJECT_IDS[@]}" >"${subjects_file}"
 }
 
 print_local_summary() {
@@ -172,7 +172,7 @@ print_local_summary() {
   printf '[INFO] Subject count:   %s\n' "${subject_count}"
   printf '[INFO] Required array:  0-%s\n' "${required_end}"
   printf '[INFO] Current array:   %s\n' "${current_array}"
-  if [[ -n "${current_end}" ]] && (( current_end < required_end )); then
+  if [[ -n "${current_end}" ]] && ((current_end < required_end)); then
     printf '[WARN] Current #SBATCH --array=%s only covers through index %s; edit it to at least 0-%s.\n' "${current_array}" "${current_end}" "${required_end}"
   fi
   printf '[INFO] Submit with:     sbatch %s\n' "$(script_path)"
@@ -185,7 +185,7 @@ print_local_summary() {
 }
 
 run_local_validation() {
-  if (( ${#SUBJECT_IDS[@]} == 0 )); then
+  if ((${#SUBJECT_IDS[@]} == 0)); then
     die "No subjects with T1 input found under ${DATA_ROOT}."
   fi
 
@@ -223,7 +223,7 @@ run_subject_task() {
   local task_id="${SLURM_ARRAY_TASK_ID}"
   local subject_count="${#SUBJECT_IDS[@]}"
 
-  if (( task_id >= subject_count )); then
+  if ((task_id >= subject_count)); then
     log "[skip] Array index ${task_id} is outside the discovered subject range 0-$((subject_count - 1))."
     exit 0
   fi

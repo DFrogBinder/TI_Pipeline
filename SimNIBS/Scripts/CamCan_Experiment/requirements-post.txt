@@ -5,4 +5,5 @@ nibabel
 scipy
 nilearn
 matplotlib
+Pillow
 rich

@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
 
 from post.pipeline_layers import (
     ACROSS_REPEATS_STAGE,
+    FIGURE_GENERATION_STAGE,
     PIPELINE_STAGE_ORDER,
     POPULATION_WITHIN_RUN_STAGE,
     SUBJECT_LEVEL_STAGE,
@@ -45,7 +46,6 @@ from post.run_post_processing import (
     make_default_config,
     run_pipeline,
 )
-from utils.ti_utils import normalize_roi_name
 
 REPEAT_DATASET_PATTERN = re.compile(r"^(?P<roi_prefix>.+)_Data_(?P<repeat>\d+)$")
 
@@ -69,6 +69,12 @@ class RepeatBatchConfig:
     repeatability_output_dir: Optional[str] = None
     repeatability_logs_root: Optional[str] = None
     complete_repeat_subjects_only: bool = True
+    run_figure_generation: bool = True
+    figure_output_dir: Optional[str] = None
+
+
+def _normalize_roi_name(name: str) -> str:
+    return "".join(c if c.isalnum() else "_" for c in name.strip().replace(" ", "_"))
 
 
 def _parse_repeat_value(value: str | int) -> int:
@@ -150,6 +156,15 @@ def _resolve_repeatability_output_root(cfg: RepeatBatchConfig, batch_root: Path)
     return output_root
 
 
+def _resolve_figure_output_dir(cfg: RepeatBatchConfig, batch_root: Path) -> Path:
+    if not cfg.figure_output_dir:
+        return batch_root / "post_processing_figures"
+    output_dir = Path(cfg.figure_output_dir).expanduser()
+    if not output_dir.is_absolute():
+        output_dir = batch_root / output_dir
+    return output_dir
+
+
 def _default_repeatability_output_dir(
     *,
     batch_root: Path,
@@ -158,7 +173,7 @@ def _default_repeatability_output_dir(
 ) -> Path:
     if roi_count <= 1:
         return batch_root / "subject_metrics_analysis"
-    return batch_root / "repeatability_analysis" / normalize_roi_name(roi_name)
+    return batch_root / "repeatability_analysis" / _normalize_roi_name(roi_name)
 
 
 def _resolve_repeatability_output_dir_for_roi(
@@ -170,7 +185,7 @@ def _resolve_repeatability_output_dir_for_roi(
 ) -> Path:
     output_root = _resolve_repeatability_output_root(cfg, batch_root)
     if output_root is not None:
-        return output_root / normalize_roi_name(roi_name)
+        return output_root / _normalize_roi_name(roi_name)
     return _default_repeatability_output_dir(
         batch_root=batch_root,
         roi_name=roi_name,
@@ -248,7 +263,7 @@ def _write_complete_subject_manifest(
     roi_name: str,
     subjects: Sequence[str],
 ) -> Path:
-    manifest_path = batch_root / f"complete_repeat_subjects__{normalize_roi_name(roi_name)}.txt"
+    manifest_path = batch_root / f"complete_repeat_subjects__{_normalize_roi_name(roi_name)}.txt"
     manifest_path.write_text("\n".join(subjects) + ("\n" if subjects else ""), encoding="utf-8")
     return manifest_path
 
@@ -385,6 +400,45 @@ def _run_across_repeats_stage(
             )
 
     return repeatability_results
+
+
+def _run_figure_generation_stage(
+    *,
+    batch_root: Path,
+    cfg: RepeatBatchConfig,
+    summary: dict,
+) -> List[dict]:
+    if not cfg.run_figure_generation:
+        return []
+
+    from post.post_figures import run_figure_generation
+
+    expected_repeats = cfg.repeats
+    if expected_repeats is None:
+        expected_repeats = sorted(
+            {str(result.get("repeat_id")) for result in summary.get("dataset_stage_results", [])},
+            key=lambda value: _parse_repeat_value(value),
+        )
+
+    try:
+        figure_result = run_figure_generation(
+            batch_root=batch_root,
+            output_dir=_resolve_figure_output_dir(cfg, batch_root),
+            dataset_glob=cfg.dataset_glob,
+            expected_repeats=expected_repeats,
+            batch_summary=summary,
+            summary_filename=cfg.summary_filename,
+        )
+        return [figure_result]
+    except Exception as exc:
+        return [
+            {
+                "stage": FIGURE_GENERATION_STAGE,
+                "status": "failed",
+                "output_dir": str(_resolve_figure_output_dir(cfg, batch_root)),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        ]
 
 
 def _dataset_status_from_stage_results(stage_results: dict[str, dict]) -> tuple[str, Optional[str]]:
@@ -541,6 +595,13 @@ def run_repeat_batch(cfg: RepeatBatchConfig, pipeline_template: PipelineConfig) 
     summary["across_repeats_results"] = across_repeats_results
     summary["repeatability_results"] = across_repeats_results
 
+    figure_generation_results = _run_figure_generation_stage(
+        batch_root=batch_root,
+        cfg=cfg,
+        summary=summary,
+    )
+    summary["figure_generation_results"] = figure_generation_results
+
     summary_path = _resolve_summary_path(cfg, batch_root)
     if summary_path is not None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -611,6 +672,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--skip-figure-generation",
+        action="store_true",
+        help="Skip the final static PNG/CSV figure-generation stage.",
+    )
+    parser.add_argument(
+        "--figure-output-dir",
+        default=None,
+        help="Optional output directory for static PNG figures and CSV tables. Default: <batch_root>/post_processing_figures.",
+    )
+    parser.add_argument(
         "--atlas-filename",
         "--fastsurfer-atlas-filename",
         dest="fastsurfer_atlas_filename",
@@ -643,6 +714,8 @@ def make_default_batch_config() -> RepeatBatchConfig:
         run_repeatability=True,
         repeatability_output_dir=None,
         repeatability_logs_root=None,
+        run_figure_generation=True,
+        figure_output_dir=None,
     )
 
 
@@ -665,6 +738,10 @@ def apply_batch_cli_overrides(cfg: RepeatBatchConfig, args: argparse.Namespace) 
         cfg.repeatability_logs_root = args.repeatability_logs_root or None
     if args.allow_incomplete_repeat_subjects:
         cfg.complete_repeat_subjects_only = False
+    if args.skip_figure_generation:
+        cfg.run_figure_generation = False
+    if args.figure_output_dir is not None:
+        cfg.figure_output_dir = args.figure_output_dir or None
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:

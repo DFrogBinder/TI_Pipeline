@@ -228,6 +228,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--no-figure-generation",
+        action="store_true",
+        help="Disable static PNG/CSV figure generation in batch mode.",
+    )
+    parser.add_argument(
+        "--figure-output-dir",
+        default=None,
+        help="Optional static figure output directory for batch mode. Default: <root>/post_processing_figures.",
+    )
+    parser.add_argument(
         "--summary-filename",
         default="post_processing_batch_summary.json",
         help="Batch-mode summary filename. Use an empty string to disable summary writing.",
@@ -305,6 +315,8 @@ def build_batch_config(args: argparse.Namespace, root: Path) -> RepeatBatchConfi
         repeatability_output_dir=repeatability_output_dir,
         repeatability_logs_root=args.repeatability_logs_root,
         complete_repeat_subjects_only=not args.allow_incomplete_repeat_subjects,
+        run_figure_generation=not args.no_figure_generation,
+        figure_output_dir=args.figure_output_dir if args.figure_output_dir else None,
     )
 
 
@@ -321,7 +333,7 @@ def run_batch_mode(args: argparse.Namespace, root: Path) -> None:
     pipeline_cfg = build_pipeline_config(args, root)
     batch_cfg = build_batch_config(args, root)
     print(f"[INFO] Running repeat-batch pipeline on: {root}")
-    print("[INFO] Layers: subject_level -> population_within_run -> across_repeats")
+    print("[INFO] Layers: subject_level -> population_within_run -> across_repeats -> figure_generation")
     run_repeat_batch(batch_cfg, pipeline_cfg)
 
 

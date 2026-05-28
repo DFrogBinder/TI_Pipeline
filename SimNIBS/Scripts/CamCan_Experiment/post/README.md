@@ -2,7 +2,7 @@
 
 This directory contains the post-processing and repeatability-analysis code for the TI simulation workflow used in the CamCAN experiment pipeline.
 
-The code answers three different analysis questions:
+The code answers four different analysis questions:
 
 1. **Subject level**
    For one subject in one simulation run, what field metrics should be extracted, what masks and images should be saved, and what should be recorded for downstream analysis?
@@ -10,6 +10,8 @@ The code answers three different analysis questions:
    For one dataset run, how do those subject-level metrics vary across subjects?
 3. **Across-repeat repeatability level**
    When the same ROI is simulated repeatedly with identical parameters, how stable are the subject-level metrics across the 10 reruns?
+4. **Static figure-generation level**
+   What presentation-ready audit figures and summary tables can be generated directly from the completed subject metrics?
 
 This README is intended to bring a new developer or analyst up to speed on:
 
@@ -42,7 +44,7 @@ The current implementation supports the analysis concepts discussed for the ROI 
 
 ## High-Level Pipeline
 
-The pipeline has three analysis layers plus a small orchestration layer.
+The pipeline has four analysis layers plus a small orchestration layer.
 
 ### 1. Subject-level metrics
 
@@ -83,12 +85,24 @@ This stage:
 - writes tables, figures, and narrative reports
 - writes per-subject mean and SD summaries across repeats for the extended metrics
 
+### 4. Static figure-generation level
+
+Implemented in [post_figures.py](./post_figures.py).
+
+This stage:
+
+- reads completed `subject_metrics.json` files across the selected repeats
+- writes standalone PNG audit figures and compact CSV summaries
+- keeps zero-threshold ROI focality rows as valid zero-valued analysis rows
+- records overlay-only QC partial status without dropping otherwise complete scalar metrics
+- does not build PowerPoint or PDF presentation decks
+
 ### Orchestration entrypoints
 
 The three analysis layers above are orchestrated by:
 
 - [run_post_processing.py](./run_post_processing.py): single-dataset orchestration for layer 1 and optional layer 2
-- [run_post_processing_batch.py](./run_post_processing_batch.py): repeat-batch orchestration for layer 1, layer 2, and optional layer 3
+- [run_post_processing_batch.py](./run_post_processing_batch.py): repeat-batch orchestration for layers 1, 2, optional layer 3, and static figures
 - [run_full_post_pipeline.py](./run_full_post_pipeline.py): CLI wrapper that auto-detects whether `--root` is a single dataset or a repeat batch
 - [run_post_processing_batch_env.py](./run_post_processing_batch_env.py): environment-driven HPC wrapper around the batch orchestration
 
@@ -441,6 +455,7 @@ Responsibilities:
 - defer layer-2 reruns onto the complete-case cohort when requested
 - write a batch summary JSON
 - optionally run the `across_repeats` stage per ROI after the batch completes
+- optionally run the `figure_generation` stage after repeatability
 
 This is the main end-to-end entrypoint when testing the full repeated-run pipeline.
 
@@ -470,6 +485,18 @@ Responsibilities:
 - quantify hotspot localization stability from peak displacement and overlap-mask center of mass
 - compute mean and SD across repeats per subject
 - generate figures and reports
+
+### `post_figures.py`
+
+Static figure and table generator.
+
+Responsibilities:
+
+- collect subject metrics from repeat dataset folders
+- write `post_processing_figures/figures/*.png`
+- write `post_processing_figures/tables/*.csv`
+- write `post_processing_figures/figure_generation_summary.json`
+- remain independent of the presentation-builder code
 
 ## `subject_metrics.json` Schema
 
@@ -616,6 +643,24 @@ Typical files in `<batch_root>/subject_metrics_analysis/` for the normal single-
 - optional log-audit CSVs and `failure_report.md` when logs are provided
 - figures
 
+### Static figure-generation outputs
+
+Typical files in `<batch_root>/post_processing_figures/`:
+
+- `figure_generation_summary.json`
+- `figures/01_completion_matrix.png`
+- `figures/02_status_bars.png`
+- `figures/03_field_metric_overview.png`
+- `figures/04_threshold_support.png`
+- `figures/05_repeatability_cv.png`
+- `figures/06_electrode_summary.png`
+- `figures/07_roi_peak_distribution.png`
+- `figures/08_threshold_edge_case_detail.png`
+- `figures/09_roi_summary_table.png`
+- `tables/subject_metrics_long.csv`
+- `tables/roi_summary.csv`
+- `tables/repeat_summary.csv`
+
 ## Repeatability Logic
 
 The repeatability stage always uses all available repeats for the chosen ROI.
@@ -691,6 +736,8 @@ Useful environment variables in `run_post_processing_batch_env.py`:
 - `PIPELINE_REPEATABILITY_OUTPUT_DIR` (optional override; blank keeps the inline default)
 - `PIPELINE_REPEATABILITY_LOGS_ROOT`
 - `PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY`
+- `PIPELINE_FIGURE_GENERATION_ENABLED`
+- `PIPELINE_FIGURE_OUTPUT_DIR` (optional override; blank writes to `<BATCH_ROOT>/post_processing_figures`)
 
 ## Quick Start
 
@@ -748,6 +795,7 @@ Use this mode when you want:
 - per-run `population_analysis/` outputs restricted to subjects that complete all selected repeats
 - one batch summary JSON
 - automatic across-repeat analysis after the batch finishes, written to `<batch_root>/subject_metrics_analysis/` by default
+- automatic static figure generation after repeatability, written to `<batch_root>/post_processing_figures/` by default
 - one complete-case subject manifest per ROI
 
 ### 3. Run repeatability analysis only
@@ -768,6 +816,16 @@ Use this mode when you want:
 - hotspot localization stability metrics from peak and overlap center-of-mass displacement
 - repeatability figures and narrative reports
 - complete-case-only outputs by default
+
+### 4. Run static figure generation only
+
+Use this when all subject-level outputs already exist and you only want the standalone audit figures and CSV summaries.
+
+```bash
+python3 post/post_figures.py \
+  --batch-root /path/to/repeat_batch_root \
+  --repeats 01 02 03 04 05 06 07 08 09 10
+```
 
 ## Typical Execution Modes
 
@@ -793,6 +851,7 @@ Typical goals:
 - every repeat dataset processed
 - one batch summary
 - optional repeatability analysis after the batch
+- optional static figures after repeatability
 
 ### 3. Run on HPC
 

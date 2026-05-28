@@ -175,6 +175,8 @@ def build_configs():
             "PIPELINE_COMPLETE_REPEAT_SUBJECTS_ONLY",
             default=True,
         ),
+        run_figure_generation=read_bool("PIPELINE_FIGURE_GENERATION_ENABLED", default=True),
+        figure_output_dir=read_optional_text("PIPELINE_FIGURE_OUTPUT_DIR"),
     )
     return batch_cfg, pipeline_cfg
 

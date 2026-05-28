@@ -158,9 +158,13 @@ If interactive setup is inconvenient, do the one-time setup itself via Slurm:
 sbatch HPC_scripts/bootstrap_post_conda.slurm
 ```
 That job creates or repairs a `ti-post` conda env by default. After it completes,
-launch the actual post-processing job with:
+launch a single-dataset post-processing job with:
 ```bash
 sbatch --export=ALL,POST_CONDA_ENV=ti-post HPC_scripts/run_post_processing.slurm
+```
+For a repeat-batch post-processing job, use the batch launcher instead:
+```bash
+sbatch --export=ALL,POST_CONDA_ENV=ti-post HPC_scripts/run_post_processing_batch.slurm
 ```
 On Stanage, the Sheffield docs recommend loading an `Anaconda3` module and using
 `source activate` for your conda environment. The bootstrap script follows that
@@ -170,6 +174,8 @@ module load Anaconda3/2022.05
 conda create -n ti-post python=3.11 numpy pandas nibabel scipy nilearn matplotlib
 source activate ti-post
 sbatch --export=ALL,POST_CONDA_ENV=ti-post HPC_scripts/run_post_processing.slurm
+# or, for repeat batches:
+sbatch --export=ALL,POST_CONDA_ENV=ti-post HPC_scripts/run_post_processing_batch.slurm
 ```
 If you keep a personal miniconda install instead of the Stanage module, submit with
 `POST_CONDA_ENV=<name-or-prefix>` and `POST_CONDA_SH=/path/to/conda.sh`.

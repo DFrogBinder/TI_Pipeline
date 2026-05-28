@@ -9,17 +9,20 @@ from typing import Any, Dict
 SUBJECT_LEVEL_STAGE = "subject_level"
 POPULATION_WITHIN_RUN_STAGE = "population_within_run"
 ACROSS_REPEATS_STAGE = "across_repeats"
+FIGURE_GENERATION_STAGE = "figure_generation"
 
 PIPELINE_STAGE_ORDER = (
     SUBJECT_LEVEL_STAGE,
     POPULATION_WITHIN_RUN_STAGE,
     ACROSS_REPEATS_STAGE,
+    FIGURE_GENERATION_STAGE,
 )
 
 PIPELINE_STAGE_LABELS = {
     SUBJECT_LEVEL_STAGE: "Subject-level metrics",
     POPULATION_WITHIN_RUN_STAGE: "Population (within run)-level metrics",
     ACROSS_REPEATS_STAGE: "Across-repeats-level metrics",
+    FIGURE_GENERATION_STAGE: "Post-processing figure generation",
 }
 
 

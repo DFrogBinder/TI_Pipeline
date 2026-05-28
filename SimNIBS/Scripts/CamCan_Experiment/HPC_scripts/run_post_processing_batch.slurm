@@ -84,6 +84,10 @@ PIPELINE_REPEATABILITY_ENABLED="1"
 PIPELINE_REPEATABILITY_OUTPUT_DIR=""  # blank -> default to <BATCH_ROOT>/subject_metrics_analysis for a single-ROI batch; set a custom root to override
 PIPELINE_REPEATABILITY_LOGS_ROOT=""  # optional directory containing slurm-*.out files for the failure audit
 
+# Static post-processing figures
+PIPELINE_FIGURE_GENERATION_ENABLED="1"
+PIPELINE_FIGURE_OUTPUT_DIR=""  # blank -> default to <BATCH_ROOT>/post_processing_figures
+
 if [[ $# -gt 0 ]]; then
     echo "[ERROR] This wrapper now reads configuration from the top of the file." >&2
     echo "[ERROR] Remove script arguments and edit the config block instead." >&2
@@ -171,6 +175,8 @@ export PIPELINE_POPULATION_TEMPLATE_REGION_CSV
 export PIPELINE_REPEATABILITY_ENABLED
 export PIPELINE_REPEATABILITY_OUTPUT_DIR
 export PIPELINE_REPEATABILITY_LOGS_ROOT
+export PIPELINE_FIGURE_GENERATION_ENABLED
+export PIPELINE_FIGURE_OUTPUT_DIR
 
 echo "[INFO] Host: $(hostname)"
 echo "[INFO] JobID: ${SLURM_JOB_ID}"
@@ -273,6 +279,8 @@ echo "[INFO] Population enabled:  ${PIPELINE_POPULATION_ENABLED}"
 echo "[INFO] Repeatability:       ${PIPELINE_REPEATABILITY_ENABLED}"
 echo "[INFO] Repeatability out:   ${PIPELINE_REPEATABILITY_OUTPUT_DIR:-<default>}"
 echo "[INFO] Repeatability logs:  ${PIPELINE_REPEATABILITY_LOGS_ROOT:-<none>}"
+echo "[INFO] Figure generation:   ${PIPELINE_FIGURE_GENERATION_ENABLED}"
+echo "[INFO] Figure output:       ${PIPELINE_FIGURE_OUTPUT_DIR:-<default>}"
 echo "[INFO] Workers:             ${POST_MAX_WORKERS}"
 echo
 
@@ -291,7 +299,7 @@ import importlib.util
 import os
 from pathlib import Path
 
-required = ["numpy", "pandas", "nibabel", "scipy", "nilearn", "matplotlib"]
+required = ["numpy", "pandas", "nibabel", "scipy", "nilearn", "matplotlib", "PIL"]
 missing = [name for name in required if importlib.util.find_spec(name) is None]
 if missing:
     req_file = Path(os.environ.get("POST_REQUIREMENTS_FILE", "")).expanduser()

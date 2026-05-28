@@ -64,10 +64,10 @@ create_conda_env() {
     if [[ "${POST_CONDA_ENV}" = /* ]]; then
         mkdir -p "$(dirname "${POST_CONDA_ENV}")"
         conda create -y -p "${POST_CONDA_ENV}" "python=${POST_PYTHON_VERSION}" \
-            numpy pandas nibabel scipy matplotlib pip
+            numpy pandas nibabel scipy matplotlib pillow pip
     else
         conda create -y -n "${POST_CONDA_ENV}" "python=${POST_PYTHON_VERSION}" \
-            numpy pandas nibabel scipy matplotlib pip
+            numpy pandas nibabel scipy matplotlib pillow pip
     fi
 }
 
@@ -79,7 +79,7 @@ python_stack_ok() {
     python - <<'PY'
 import importlib.util
 
-required = ["numpy", "pandas", "nibabel", "scipy", "nilearn", "matplotlib"]
+required = ["numpy", "pandas", "nibabel", "scipy", "nilearn", "matplotlib", "PIL"]
 missing = [name for name in required if importlib.util.find_spec(name) is None]
 if missing:
     raise SystemExit("Missing Python packages: " + ", ".join(missing))
@@ -112,7 +112,10 @@ fi
 
 echo
 echo "[INFO] Bootstrap complete."
-echo "[INFO] Submit post-processing with:"
+echo "[INFO] Submit single-dataset post-processing with:"
 echo "sbatch --export=ALL,POST_CONDA_ENV=\"${POST_CONDA_ENV}\" ${REPO_DIR}/HPC_scripts/run_post_processing.slurm"
+echo
+echo "[INFO] Submit repeat-batch post-processing with:"
+echo "sbatch --export=ALL,POST_CONDA_ENV=\"${POST_CONDA_ENV}\" ${REPO_DIR}/HPC_scripts/run_post_processing_batch.slurm"
 echo
 echo "[INFO] Finished: $(date)"

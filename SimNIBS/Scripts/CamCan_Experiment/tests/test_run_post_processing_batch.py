@@ -3,6 +3,7 @@ from pathlib import Path
 from post.run_post_processing_batch import (
     RepeatBatchConfig,
     _dataset_status_from_stage_results,
+    _resolve_figure_output_dir,
     _resolve_repeatability_output_dir_for_roi,
     _subject_has_required_outputs,
     discover_repeat_datasets,
@@ -214,3 +215,67 @@ def test_explicit_repeatability_output_root_still_creates_per_roi_subdir(tmp_pat
     )
 
     assert output_dir == tmp_path / "custom_repeatability_outputs" / "Left_Hippocampus"
+
+
+def test_default_figure_output_dir_is_under_batch_root(tmp_path):
+    cfg = RepeatBatchConfig(batch_root=str(tmp_path), figure_output_dir=None)
+
+    assert _resolve_figure_output_dir(cfg, tmp_path) == tmp_path / "post_processing_figures"
+
+
+def test_explicit_relative_figure_output_dir_is_under_batch_root(tmp_path):
+    cfg = RepeatBatchConfig(batch_root=str(tmp_path), figure_output_dir="custom_figures")
+
+    assert _resolve_figure_output_dir(cfg, tmp_path) == tmp_path / "custom_figures"
+
+
+def test_run_repeat_batch_runs_figure_generation_stage(tmp_path, monkeypatch):
+    for name in ("Left_Hippocampus_Data_01", "Left_Hippocampus_Data_02"):
+        (tmp_path / name).mkdir()
+
+    template = make_default_pipeline_template()
+    template.population.enabled = False
+
+    def fake_run_pipeline(cfg, raise_on_error=True):
+        return {
+            "resolved_plot_roi": "Left Hippocampus",
+            "resolved_target_roi": "Left Hippocampus",
+            "stages": {
+                "subject_level": {"stage": "subject_level", "status": "ok"},
+                "population_within_run": {"stage": "population_within_run", "status": "skipped"},
+            },
+        }
+
+    calls = []
+
+    def fake_run_figure_generation(**kwargs):
+        calls.append(kwargs)
+        return {
+            "stage": "figure_generation",
+            "status": "ok",
+            "output_dir": str(kwargs["output_dir"]),
+            "figure_count": 1,
+            "figures": {"completion_matrix": str(kwargs["output_dir"] / "figures" / "x.png")},
+            "tables": {},
+        }
+
+    monkeypatch.setattr("post.run_post_processing_batch.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr("post.post_figures.run_figure_generation", fake_run_figure_generation)
+
+    summary = run_repeat_batch(
+        RepeatBatchConfig(
+            batch_root=str(tmp_path),
+            repeats=["01", "02"],
+            summary_filename=None,
+            run_repeatability=False,
+            figure_output_dir="custom_figures",
+        ),
+        template,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["batch_root"] == tmp_path.resolve()
+    assert calls[0]["output_dir"] == tmp_path.resolve() / "custom_figures"
+    assert calls[0]["expected_repeats"] == ["01", "02"]
+    assert calls[0]["batch_summary"]["total_datasets"] == 2
+    assert summary["figure_generation_results"][0]["status"] == "ok"

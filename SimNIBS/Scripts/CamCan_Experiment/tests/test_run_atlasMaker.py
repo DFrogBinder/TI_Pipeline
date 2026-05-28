@@ -35,12 +35,13 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def test_run_atlasmaker_defers_annotation_evaluation_for_hpc_python():
+def test_run_atlasmaker_avoids_new_union_annotation_syntax_for_hpc_python():
     source = (Path(__file__).resolve().parents[1] / "atlas" / "run_atlasMaker.py").read_text(
         encoding="utf-8"
     )
 
-    assert "from __future__ import annotations" in source
+    assert "| None" not in source
+    assert "None |" not in source
 
 
 def test_make_atlas_native_backend_uses_freesurfer_tools_without_docker(tmp_path: Path):

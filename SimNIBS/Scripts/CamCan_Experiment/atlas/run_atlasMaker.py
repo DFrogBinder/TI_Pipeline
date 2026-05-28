@@ -3,6 +3,7 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import List, Optional
 
 
 DEFAULT_ROOT_DIR = Path("/home/uos/Boyan/")
@@ -29,12 +30,12 @@ def env_int(name: str, default: int) -> int:
     return parsed
 
 
-def parse_subjects(raw: str) -> list[str]:
+def parse_subjects(raw: str) -> List[str]:
     return [item for item in raw.replace(",", " ").split() if item]
 
 
-def load_subjects_file(path: Path) -> list[str]:
-    subjects: list[str] = []
+def load_subjects_file(path: Path) -> List[str]:
+    subjects: List[str] = []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             stripped = line.strip()
@@ -44,7 +45,7 @@ def load_subjects_file(path: Path) -> list[str]:
     return subjects
 
 
-def unique_sorted(subjects: list[str]) -> list[str]:
+def unique_sorted(subjects: List[str]) -> List[str]:
     return sorted(dict.fromkeys(subjects))
 
 
@@ -97,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def t1_input_path(data_dir: Path, subject: str) -> Path | None:
+def t1_input_path(data_dir: Path, subject: str) -> Optional[Path]:
     """Return the first supported anatomical input path for the subject."""
     anat_dir = data_dir / subject / "anat"
     for suffix in T1_INPUT_SUFFIXES:
@@ -118,7 +119,7 @@ def already_processed(output_dir: Path, subject: str) -> bool:
     return nifti.is_file()
 
 
-def discover_subjects(data_dir: Path, output_dir_name: str) -> list[str]:
+def discover_subjects(data_dir: Path, output_dir_name: str) -> List[str]:
     return sorted(
         entry.name
         for entry in data_dir.iterdir()
@@ -126,7 +127,7 @@ def discover_subjects(data_dir: Path, output_dir_name: str) -> list[str]:
     )
 
 
-def configured_subjects(args: argparse.Namespace, data_dir: Path) -> list[str]:
+def configured_subjects(args: argparse.Namespace, data_dir: Path) -> List[str]:
     subjects = parse_subjects(args.subjects)
     if args.subjects_file:
         subjects.extend(load_subjects_file(args.subjects_file.expanduser()))

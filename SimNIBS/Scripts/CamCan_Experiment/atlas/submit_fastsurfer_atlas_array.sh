@@ -29,12 +29,15 @@ OUTPUT_ROOT="/path/to/FreeSurfer_atlases"
 
 FREESURFER_MODULE="FreeSurfer"
 FS_LICENSE_FILE=""
-FREESURFER_ATLAS_MGZ="mri/aparc+aseg.mgz"
+
+# Destreux / a2009s is the finer FreeSurfer cortical parcellation.
+# The flat <OUTPUT_ROOT>/<subject>.nii.gz export is generated from this volume.
+FREESURFER_ATLAS_MGZ="mri/aparc.a2009s+aseg.mgz"
 
 # Set to 1 to print what would run without loading modules or running FreeSurfer.
 DRY_RUN="0"
 
-# Set to 1 to rerun conversion even when <OUTPUT_ROOT>/<subject>.nii.gz exists.
+# Set to 1 to rerun recon-all even when the Destreux MGZ already exists.
 REPROCESS_EXISTING="0"
 
 # ----------------------------
@@ -230,11 +233,6 @@ run_subject_task() {
   log "Atlas flat:  ${atlas_flat}"
 
   [[ -f "${t1_input}" ]] || die "Missing T1 input: ${t1_input}"
-
-  if [[ -s "${atlas_flat}" ]] && ! is_truthy "${REPROCESS_EXISTING}"; then
-    log "[ok] Flat atlas already exists. Skipping subject."
-    exit 0
-  fi
 
   local -a recon_all_cmd=(
     recon-all

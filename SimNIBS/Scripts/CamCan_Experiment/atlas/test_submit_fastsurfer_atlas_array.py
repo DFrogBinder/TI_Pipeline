@@ -108,7 +108,30 @@ def test_array_task_selects_subject_and_skips_external_commands_in_dry_run(tmp_p
     assert f"-sd {output_root}/subjects" in result.stdout
     assert "-all" in result.stdout
     assert "-openmp 20" in result.stdout
-    assert f"mri_convert {output_root}/subjects/sub-B/mri/aparc+aseg.mgz {output_root}/sub-B.nii.gz" in result.stdout
+    assert f"mri_convert {output_root}/subjects/sub-B/mri/aparc.a2009s+aseg.mgz {output_root}/sub-B.nii.gz" in result.stdout
+
+
+def test_existing_flat_atlas_does_not_skip_destreux_export(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    output_root = tmp_path / "freesurfer_out"
+    make_subject(data_root, "sub-A")
+    output_root.mkdir()
+    (output_root / "sub-A.nii.gz").write_text("old coarse atlas")
+    script = configured_script(tmp_path, data_root=data_root, output_root=output_root)
+
+    result = run_script(
+        script,
+        env={
+            "SLURM_ARRAY_TASK_ID": "0",
+            "SLURM_CPUS_PER_TASK": "20",
+            "SLURM_JOB_ID": "123",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Flat atlas already exists. Skipping subject." not in result.stdout
+    assert "mri/aparc.a2009s+aseg.mgz" in result.stdout
+    assert "[DRY-RUN] Would convert atlas:" in result.stdout
 
 
 def test_local_validation_warns_when_configured_array_is_too_short(tmp_path: Path) -> None:
@@ -144,5 +167,6 @@ def test_script_is_freesurfer_only_cpu_workflow() -> None:
     assert "run_fastsurfer.sh" not in text
     assert "--seg_only" not in text
     assert "--sd" not in text
-    assert 'FREESURFER_ATLAS_MGZ="mri/aparc+aseg.mgz"' in text
+    assert 'FREESURFER_ATLAS_MGZ="mri/aparc.a2009s+aseg.mgz"' in text
+    assert "Destreux" in text
     assert "command -v recon-all" in text

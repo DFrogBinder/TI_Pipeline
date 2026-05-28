@@ -176,6 +176,7 @@ def main() -> int:
 
     subject_list = configured_subjects(args, data_dir)
     futures = {}
+    failures = []
 
     print(f"[config] DATA_DIR: {data_dir}")
     print(f"[config] OUTPUT_DIR: {output_dir}")
@@ -217,7 +218,12 @@ def main() -> int:
                 print(f"[done] {subject}")
             except subprocess.CalledProcessError as exc:
                 print(f"[error] {subject} failed with exit code {exc.returncode}")
-                raise
+                print(f"[hint] Check atlas job stdout and {output_dir}/logs/make_atlas_*.log")
+                failures.append(subject)
+
+    if failures:
+        print(f"[error] Failed subjects: {' '.join(sorted(failures))}")
+        return 1
 
     return 0
 

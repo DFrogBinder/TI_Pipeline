@@ -1,9 +1,11 @@
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 from atlas.run_atlasMaker import already_processed, input_available, t1_input_path
+import atlas.run_atlasMaker as runner
 
 
 def test_already_processed_requires_destrieux_nifti(tmp_path: Path):
@@ -42,6 +44,44 @@ def test_run_atlasmaker_avoids_new_union_annotation_syntax_for_hpc_python():
 
     assert "| None" not in source
     assert "None |" not in source
+
+
+def test_main_reports_subject_failure_without_python_traceback(monkeypatch, tmp_path: Path, capsys):
+    subject = "sub-01"
+    data_dir = tmp_path / "CamCan_Data"
+    anat_dir = data_dir / subject / "anat"
+    anat_dir.mkdir(parents=True)
+    (anat_dir / f"{subject}_T1w.nii").write_text("t1", encoding="utf-8")
+    license_path = tmp_path / "license.txt"
+    license_path.write_text("license", encoding="utf-8")
+
+    def fail_process_subject(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(7, ["make_atlas.sh", subject])
+
+    monkeypatch.setattr(runner, "process_subject", fail_process_subject)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_atlasMaker.py",
+            "--data-dir",
+            str(data_dir),
+            "--license-path",
+            str(license_path),
+            "--subjects",
+            subject,
+            "--max-parallel-jobs",
+            "1",
+        ],
+    )
+
+    result = runner.main()
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "[error] sub-01 failed with exit code 7" in captured.out
+    assert "Traceback" not in captured.err
+    assert "FastSurfer_out/logs/make_atlas_*.log" in captured.out
 
 
 def test_make_atlas_native_backend_uses_freesurfer_tools_without_docker(tmp_path: Path):

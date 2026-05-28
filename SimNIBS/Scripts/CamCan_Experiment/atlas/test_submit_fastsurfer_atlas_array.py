@@ -7,11 +7,17 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("submit_fastsurfer_atlas_array.sh")
 
 
-def make_subject(data_root: Path, subject: str, *, with_t1: bool = True) -> None:
+def make_subject(
+    data_root: Path,
+    subject: str,
+    *,
+    with_t1: bool = True,
+    t1_suffix: str = ".nii.gz",
+) -> None:
     anat_dir = data_root / subject / "anat"
     anat_dir.mkdir(parents=True)
     if with_t1:
-        (anat_dir / f"{subject}_T1w.nii.gz").write_text("fake nifti")
+        (anat_dir / f"{subject}_T1w{t1_suffix}").write_text("fake nifti")
 
 
 def configured_script(
@@ -83,6 +89,20 @@ def test_local_dry_run_uses_top_of_file_config_without_args(tmp_path: Path) -> N
     assert subjects_file.read_text().splitlines() == ["sub-A", "sub-B"]
 
 
+def test_local_dry_run_discovers_uncompressed_t1_inputs(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    output_root = tmp_path / "freesurfer_out"
+    make_subject(data_root, "sub-CC110056", t1_suffix=".nii")
+    script = configured_script(tmp_path, data_root=data_root, output_root=output_root)
+
+    result = run_script(script)
+
+    assert result.returncode == 0, result.stderr
+    assert "Subject count:   1" in result.stdout
+    subjects_file = output_root / "slurm" / "subjects.txt"
+    assert subjects_file.read_text().splitlines() == ["sub-CC110056"]
+
+
 def test_array_task_selects_subject_and_skips_external_commands_in_dry_run(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     output_root = tmp_path / "freesurfer_out"
@@ -109,6 +129,25 @@ def test_array_task_selects_subject_and_skips_external_commands_in_dry_run(tmp_p
     assert "-all" in result.stdout
     assert "-openmp 20" in result.stdout
     assert f"mri_convert {output_root}/subjects/sub-B/mri/aparc.a2009s+aseg.mgz {output_root}/sub-B.nii.gz" in result.stdout
+
+
+def test_array_task_uses_uncompressed_t1_input_when_that_is_present(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    output_root = tmp_path / "freesurfer_out"
+    make_subject(data_root, "sub-CC110056", t1_suffix=".nii")
+    script = configured_script(tmp_path, data_root=data_root, output_root=output_root)
+
+    result = run_script(
+        script,
+        env={
+            "SLURM_ARRAY_TASK_ID": "0",
+            "SLURM_CPUS_PER_TASK": "20",
+            "SLURM_JOB_ID": "123",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"-i {data_root}/sub-CC110056/anat/sub-CC110056_T1w.nii" in result.stdout
 
 
 def test_existing_flat_atlas_does_not_skip_destreux_export(tmp_path: Path) -> None:

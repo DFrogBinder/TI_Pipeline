@@ -33,6 +33,7 @@ FS_LICENSE_FILE=""
 # Destreux / a2009s is the finer FreeSurfer cortical parcellation.
 # The flat <OUTPUT_ROOT>/<subject>.nii.gz export is generated from this volume.
 FREESURFER_ATLAS_MGZ="mri/aparc.a2009s+aseg.mgz"
+T1_INPUT_EXTENSIONS=("nii.gz" "nii")
 
 # Set to 1 to print what would run without loading modules or running FreeSurfer.
 DRY_RUN="0"
@@ -126,13 +127,29 @@ discover_subjects() {
     find "${DATA_ROOT}" -mindepth 1 -maxdepth 1 -type d -print |
       while IFS= read -r subject_dir; do
         subject="$(basename "${subject_dir}")"
-        t1_path="${subject_dir}/anat/${subject}_T1w.nii.gz"
-        if [[ -f "${t1_path}" ]]; then
+        if subject_t1_path "${subject_dir}" "${subject}" >/dev/null; then
           printf '%s\n' "${subject}"
         fi
       done |
       LC_ALL=C sort
   )
+}
+
+subject_t1_path() {
+  local subject_dir="$1"
+  local subject="$2"
+  local extension
+  local candidate
+
+  for extension in "${T1_INPUT_EXTENSIONS[@]}"; do
+    candidate="${subject_dir}/anat/${subject}_T1w.${extension}"
+    if [[ -f "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 write_subjects_file() {
@@ -213,12 +230,16 @@ run_subject_task() {
 
   local subject="${SUBJECT_IDS[task_id]}"
   local subjects_dir="${OUTPUT_ROOT}/subjects"
-  local t1_input="${DATA_ROOT}/${subject}/anat/${subject}_T1w.nii.gz"
+  local t1_input
   local subject_log="${OUTPUT_ROOT}/logs/${subject}.log"
   local atlas_mgz="${subjects_dir}/${subject}/${FREESURFER_ATLAS_MGZ}"
   local atlas_flat="${OUTPUT_ROOT}/${subject}.nii.gz"
   local threads
   threads="$(thread_count)"
+
+  if ! t1_input="$(subject_t1_path "${DATA_ROOT}/${subject}" "${subject}")"; then
+    die "Missing T1 input for ${subject}; expected ${DATA_ROOT}/${subject}/anat/${subject}_T1w.nii.gz or ${DATA_ROOT}/${subject}/anat/${subject}_T1w.nii"
+  fi
 
   mkdir -p "${subjects_dir}" "${OUTPUT_ROOT}/logs"
   exec > >(tee -a "${subject_log}") 2>&1
@@ -231,8 +252,6 @@ run_subject_task() {
   log "Output root: ${OUTPUT_ROOT}"
   log "Threads:     ${threads}"
   log "Atlas flat:  ${atlas_flat}"
-
-  [[ -f "${t1_input}" ]] || die "Missing T1 input: ${t1_input}"
 
   local -a recon_all_cmd=(
     recon-all

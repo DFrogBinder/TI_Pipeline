@@ -196,3 +196,73 @@ cp "$1" "$2"
     assert result.returncode == 0, result.stderr + result.stdout
     assert (mri_dir / "aparc.a2009s+aseg.nii.gz").is_file()
     assert "aparc.a2009s+aseg.mgz" in convert_log.read_text(encoding="utf-8")
+
+
+def test_make_atlas_native_backend_resumes_nonempty_subject_without_input_flag(tmp_path: Path):
+    data_dir = tmp_path / "CamCan_Data"
+    subject = "sub-01"
+    anat_dir = data_dir / subject / "anat"
+    anat_dir.mkdir(parents=True)
+    (anat_dir / f"{subject}_T1w.nii").write_text("t1", encoding="utf-8")
+    license_path = tmp_path / "license.txt"
+    license_path.write_text("license", encoding="utf-8")
+
+    existing_mri_dir = data_dir / "FastSurfer_out" / subject / "mri"
+    existing_mri_dir.mkdir(parents=True)
+    (existing_mri_dir / "mri_nu_correct.mni.log").write_text("partial recon", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    recon_log = tmp_path / "recon-all.log"
+    convert_log = tmp_path / "mri_convert.log"
+    write_executable(
+        bin_dir / "recon-all",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "{recon_log}"
+for arg in "$@"; do
+  if [[ "$arg" == "-i" ]]; then
+    echo "unexpected -i for existing subject" >&2
+    exit 88
+  fi
+done
+sid=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    -s) sid="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+subject_dir="${{SUBJECTS_DIR}}/${{sid}}"
+mkdir -p "${{subject_dir}}/mri" "${{subject_dir}}/surf" "${{subject_dir}}/scripts"
+printf 't1' > "${{subject_dir}}/mri/T1.mgz"
+printf 'destrieux' > "${{subject_dir}}/mri/aparc.a2009s+aseg.mgz"
+touch "${{subject_dir}}/surf/lh.white" "${{subject_dir}}/surf/rh.white"
+touch "${{subject_dir}}/scripts/recon-all.done"
+""",
+    )
+    write_executable(
+        bin_dir / "mri_convert",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s -> %s\\n' "$1" "$2" >> "{convert_log}"
+cp "$1" "$2"
+""",
+    )
+
+    script = Path(__file__).resolve().parents[1] / "atlas" / "make_atlas.sh"
+    env = os.environ.copy()
+    env["ATLAS_BACKEND"] = "native"
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(script), str(data_dir), "2", str(license_path), subject],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "-i" not in recon_log.read_text(encoding="utf-8")
+    assert (existing_mri_dir / "aparc.a2009s+aseg.nii.gz").is_file()

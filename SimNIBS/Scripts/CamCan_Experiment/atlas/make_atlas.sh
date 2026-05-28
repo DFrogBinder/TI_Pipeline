@@ -86,6 +86,18 @@ destrieux_mgz_done() {
   [[ -f "${subj_dir}/mri/aparc.a2009s+aseg.mgz" ]]
 }
 
+subject_dir_has_state() {
+  local subj_dir="$1"
+  local first_entry=""
+
+  if [[ ! -d "${subj_dir}" ]]; then
+    return 1
+  fi
+
+  first_entry="$(find "${subj_dir}" -mindepth 1 -print -quit 2>/dev/null)"
+  [[ -n "${first_entry}" ]]
+}
+
 converted_done() {
   local subj_dir="$1"
   [[ -f "${subj_dir}/mri/T1.nii.gz" && -f "${subj_dir}/mri/aparc.a2009s+aseg.nii.gz" ]]
@@ -218,7 +230,7 @@ process_subject_native() {
     log "[ok] ${sid}: Native FreeSurfer Destrieux output already exists."
   else
     log "[run] ${sid}: Native FreeSurfer recon-all..."
-    if [[ -f "${subj_dir_host}/mri/orig.mgz" || -f "${subj_dir_host}/mri/T1.mgz" ]]; then
+    if subject_dir_has_state "${subj_dir_host}"; then
       recon-all -s "${sid}" -all -openmp "${threads}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}" || return 1
     else
       recon-all -s "${sid}" -i "${t1_host}" -all -openmp "${threads}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}" || return 1

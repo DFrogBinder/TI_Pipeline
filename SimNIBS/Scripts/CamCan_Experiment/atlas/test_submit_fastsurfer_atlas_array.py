@@ -27,8 +27,7 @@ def configured_script(
     text = script_copy.read_text()
     replacements = {
         'DATA_ROOT="/path/to/CamCan_Data"': f'DATA_ROOT="{data_root}"',
-        'OUTPUT_ROOT="/path/to/FastSurfer_atlases"': f'OUTPUT_ROOT="{output_root}"',
-        'FASTSURFER_MODULE="FastSurfer"': 'FASTSURFER_MODULE="FastSurfer/2.3.0"',
+        'OUTPUT_ROOT="/path/to/FreeSurfer_atlases"': f'OUTPUT_ROOT="{output_root}"',
         'FREESURFER_MODULE="FreeSurfer"': 'FREESURFER_MODULE="FreeSurfer/7.4.1"',
         'FS_LICENSE_FILE=""': f'FS_LICENSE_FILE="{license_path or ""}"',
         'DRY_RUN="0"': 'DRY_RUN="1"',
@@ -58,7 +57,7 @@ def run_script(script: Path, *, env: dict[str, str] | None = None) -> subprocess
 
 def test_local_dry_run_uses_top_of_file_config_without_args(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
-    output_root = tmp_path / "fastsurfer_out"
+    output_root = tmp_path / "freesurfer_out"
     license_path = tmp_path / "license.txt"
     license_path.write_text("license")
     make_subject(data_root, "sub-B")
@@ -86,7 +85,7 @@ def test_local_dry_run_uses_top_of_file_config_without_args(tmp_path: Path) -> N
 
 def test_array_task_selects_subject_and_skips_external_commands_in_dry_run(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
-    output_root = tmp_path / "fastsurfer_out"
+    output_root = tmp_path / "freesurfer_out"
     make_subject(data_root, "sub-A")
     make_subject(data_root, "sub-B")
     script = configured_script(tmp_path, data_root=data_root, output_root=output_root)
@@ -102,15 +101,19 @@ def test_array_task_selects_subject_and_skips_external_commands_in_dry_run(tmp_p
 
     assert result.returncode == 0, result.stderr
     assert "Subject:     sub-B" in result.stdout
-    assert "[DRY-RUN] Would run FastSurfer command:" in result.stdout
-    assert f"--t1 {data_root}/sub-B/anat/sub-B_T1w.nii.gz" in result.stdout
-    assert f"--sd {output_root}/subjects" in result.stdout
-    assert f"mri_convert {output_root}/subjects/sub-B/mri/aparc.DKTatlas+aseg.deep.mgz {output_root}/sub-B.nii.gz" in result.stdout
+    assert "[DRY-RUN] Would run FreeSurfer recon-all command:" in result.stdout
+    assert "recon-all" in result.stdout
+    assert "-s sub-B" in result.stdout
+    assert f"-i {data_root}/sub-B/anat/sub-B_T1w.nii.gz" in result.stdout
+    assert f"-sd {output_root}/subjects" in result.stdout
+    assert "-all" in result.stdout
+    assert "-openmp 20" in result.stdout
+    assert f"mri_convert {output_root}/subjects/sub-B/mri/aparc+aseg.mgz {output_root}/sub-B.nii.gz" in result.stdout
 
 
 def test_local_validation_warns_when_configured_array_is_too_short(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
-    output_root = tmp_path / "fastsurfer_out"
+    output_root = tmp_path / "freesurfer_out"
     make_subject(data_root, "sub-A")
     make_subject(data_root, "sub-B")
     script = configured_script(
@@ -133,3 +136,13 @@ def test_script_has_no_argument_or_sbatch_export_configuration_path() -> None:
     assert "OUTPUT_ARG" not in text
     assert "Usage:" not in text
     assert "cat >" not in text
+
+
+def test_script_is_freesurfer_only_cpu_workflow() -> None:
+    text = SCRIPT.read_text()
+    assert "FASTSURFER_MODULE" not in text
+    assert "run_fastsurfer.sh" not in text
+    assert "--seg_only" not in text
+    assert "--sd" not in text
+    assert 'FREESURFER_ATLAS_MGZ="mri/aparc+aseg.mgz"' in text
+    assert "command -v recon-all" in text

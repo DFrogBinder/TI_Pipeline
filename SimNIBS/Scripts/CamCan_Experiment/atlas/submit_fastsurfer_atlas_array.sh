@@ -8,7 +8,7 @@
 # local validation reports 420 subjects, keep the start at 0 and set the end to
 # at least 419. The value after % controls overnight concurrency.
 #
-#SBATCH --job-name=fs_atlas
+#SBATCH --job-name=freesurfer_atlas
 #SBATCH --partition=sheffield
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -16,8 +16,8 @@
 #SBATCH --mem=64G
 #SBATCH --time=08:00:00
 #SBATCH --array=0-999%64
-#SBATCH --output=fastsurfer_atlas_%A_%a.out
-#SBATCH --error=fastsurfer_atlas_%A_%a.err
+#SBATCH --output=freesurfer_atlas_%A_%a.out
+#SBATCH --error=freesurfer_atlas_%A_%a.err
 #SBATCH --requeue
 
 # ----------------------------
@@ -25,13 +25,13 @@
 # ----------------------------
 
 DATA_ROOT="/path/to/CamCan_Data"
-OUTPUT_ROOT="/path/to/FastSurfer_atlases"
+OUTPUT_ROOT="/path/to/FreeSurfer_atlases"
 
-FASTSURFER_MODULE="FastSurfer"
 FREESURFER_MODULE="FreeSurfer"
 FS_LICENSE_FILE=""
+FREESURFER_ATLAS_MGZ="mri/aparc+aseg.mgz"
 
-# Set to 1 to print what would run without loading modules or running FastSurfer.
+# Set to 1 to print what would run without loading modules or running FreeSurfer.
 DRY_RUN="0"
 
 # Set to 1 to rerun conversion even when <OUTPUT_ROOT>/<subject>.nii.gz exists.
@@ -92,8 +92,11 @@ resolve_config_paths() {
   if [[ -z "${DATA_ROOT}" || "${DATA_ROOT}" == "/path/to/CamCan_Data" ]]; then
     die "Edit DATA_ROOT at the top of this file before running."
   fi
-  if [[ -z "${OUTPUT_ROOT}" || "${OUTPUT_ROOT}" == "/path/to/FastSurfer_atlases" ]]; then
+  if [[ -z "${OUTPUT_ROOT}" || "${OUTPUT_ROOT}" == "/path/to/FreeSurfer_atlases" ]]; then
     die "Edit OUTPUT_ROOT at the top of this file before running."
+  fi
+  if [[ -z "${FREESURFER_ATLAS_MGZ}" || "${FREESURFER_ATLAS_MGZ}" == /* ]]; then
+    die "FREESURFER_ATLAS_MGZ must be a relative path inside each FreeSurfer subject directory."
   fi
   if [[ ! -d "${DATA_ROOT}" ]]; then
     die "DATA_ROOT does not exist: ${DATA_ROOT}"
@@ -189,7 +192,6 @@ load_modules() {
   fi
 
   module purge || true
-  module load "${FASTSURFER_MODULE}"
   module load "${FREESURFER_MODULE}"
 }
 
@@ -210,7 +212,7 @@ run_subject_task() {
   local subjects_dir="${OUTPUT_ROOT}/subjects"
   local t1_input="${DATA_ROOT}/${subject}/anat/${subject}_T1w.nii.gz"
   local subject_log="${OUTPUT_ROOT}/logs/${subject}.log"
-  local atlas_mgz="${subjects_dir}/${subject}/mri/aparc.DKTatlas+aseg.deep.mgz"
+  local atlas_mgz="${subjects_dir}/${subject}/${FREESURFER_ATLAS_MGZ}"
   local atlas_flat="${OUTPUT_ROOT}/${subject}.nii.gz"
   local threads
   threads="$(thread_count)"
@@ -234,25 +236,24 @@ run_subject_task() {
     exit 0
   fi
 
-  local -a fastsurfer_cmd=(
-    run_fastsurfer.sh
-    --t1 "${t1_input}"
-    --sid "${subject}"
-    --sd "${subjects_dir}"
-    --seg_only
-    --threads "${threads}"
-    --no_cereb
-    --no_hypothal
+  local -a recon_all_cmd=(
+    recon-all
+    -s "${subject}"
+    -i "${t1_input}"
+    -sd "${subjects_dir}"
+    -all
+    -openmp "${threads}"
+    -cw256
   )
   local -a convert_cmd=(mri_convert "${atlas_mgz}" "${atlas_flat}")
 
   if [[ -n "${FS_LICENSE_FILE}" ]]; then
-    fastsurfer_cmd+=(--fs_license "${FS_LICENSE_FILE}")
+    export FS_LICENSE="${FS_LICENSE_FILE}"
   fi
 
   if is_truthy "${DRY_RUN}"; then
-    log "[DRY-RUN] Would run FastSurfer command:"
-    print_command "${fastsurfer_cmd[@]}"
+    log "[DRY-RUN] Would run FreeSurfer recon-all command:"
+    print_command "${recon_all_cmd[@]}"
     log "[DRY-RUN] Would convert atlas:"
     print_command "${convert_cmd[@]}"
     exit 0
@@ -274,15 +275,15 @@ run_subject_task() {
     log "FS_LICENSE:  <not set>"
   fi
 
-  command -v run_fastsurfer.sh >/dev/null 2>&1 || die "run_fastsurfer.sh not found after loading ${FASTSURFER_MODULE}."
+  command -v recon-all >/dev/null 2>&1 || die "recon-all not found after loading ${FREESURFER_MODULE}."
   command -v mri_convert >/dev/null 2>&1 || die "mri_convert not found after loading ${FREESURFER_MODULE}."
 
   if [[ -s "${atlas_mgz}" ]] && ! is_truthy "${REPROCESS_EXISTING}"; then
-    log "[ok] FastSurfer atlas MGZ already exists: ${atlas_mgz}"
+    log "[ok] FreeSurfer atlas MGZ already exists: ${atlas_mgz}"
   else
-    log "[run] FastSurfer segmentation"
-    "${fastsurfer_cmd[@]}"
-    log "[done] FastSurfer segmentation"
+    log "[run] FreeSurfer recon-all"
+    "${recon_all_cmd[@]}"
+    log "[done] FreeSurfer recon-all"
   fi
 
   [[ -s "${atlas_mgz}" ]] || die "Expected atlas MGZ was not created: ${atlas_mgz}"

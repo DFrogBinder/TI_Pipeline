@@ -92,6 +92,26 @@ def test_build_atlas_export_plan_tries_default_nifti_candidates(tmp_path):
     ]
 
 
+def test_build_atlas_export_plan_prefers_destrieux_when_available(tmp_path):
+    fastsurfer_out = tmp_path / "freesurfer"
+    dest = tmp_path / "atlases"
+    mri_dir = fastsurfer_out / "sub-01" / "mri"
+    mri_dir.mkdir(parents=True)
+    (mri_dir / "aparc.DKTatlas+aseg.deep.nii.gz").write_text("dkt", encoding="utf-8")
+    (mri_dir / "aparc.a2009s+aseg.nii.gz").write_text("destrieux", encoding="utf-8")
+
+    items, missing = build_atlas_export_plan(
+        fastsurfer_out=fastsurfer_out,
+        dest=dest,
+        source_relative=DEFAULT_SOURCE_CANDIDATES,
+    )
+
+    assert missing == []
+    assert [(item.subject, item.src.name, item.dst.name) for item in items] == [
+        ("sub-01", "aparc.a2009s+aseg.nii.gz", "sub-01.nii.gz")
+    ]
+
+
 def test_build_atlas_export_plan_reports_incomplete_recon_mri_contents(tmp_path):
     fastsurfer_out = tmp_path / "freesurfer"
     dest = tmp_path / "atlases"

@@ -754,7 +754,7 @@ python3 post/run_full_post_pipeline.py \
   --root /path/to/Left_Hippocampus_Data_01 \
   --mode single \
   --fastsurfer-root /path/to/subject_atlases \
-  --atlas-filename mri/aparc.DKTatlas+aseg.deep.nii.gz \
+  --atlas-filename mri/aparc.a2009s+aseg.nii.gz \
   --roi Left-Hippocampus \
   --mni-baseline-root /path/to/MNI152_Hippocampus \
   --mni-fixed-atlas-path /path/to/mni_fastsurfer_atlas.nii.gz \
@@ -783,7 +783,7 @@ python3 post/run_full_post_pipeline.py \
   --dataset-glob '*_Data_*' \
   --repeats 01 02 03 04 05 06 07 08 09 10 \
   --fastsurfer-root /path/to/subject_atlases \
-  --atlas-filename mri/aparc.DKTatlas+aseg.deep.nii.gz \
+  --atlas-filename mri/aparc.a2009s+aseg.nii.gz \
   --mni-baseline-root /path/to/MNI152_Hippocampus \
   --mni-fixed-atlas-path /path/to/mni_fastsurfer_atlas.nii.gz \
   --electrode-csv /path/to/electrode_centers.csv

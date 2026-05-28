@@ -4,7 +4,7 @@ Flatten atlas-maker FastSurfer outputs into a post-processing atlas directory.
 
 The atlas-maker wrappers write subject outputs as:
 
-  <data_dir>/FastSurfer_out/<subject>/mri/aparc.DKTatlas+aseg.deep.nii.gz
+  <data_dir>/FastSurfer_out/<subject>/mri/aparc.a2009s+aseg.nii.gz
 
 The post-processing pipeline's default FastSurfer lookup expects:
 
@@ -33,18 +33,18 @@ from rich.progress import (
 
 DEFAULT_FASTSURFER_OUT_DIR_NAME = "FastSurfer_out"
 DEFAULT_DEST_DIR_NAME = "atlases"
-DEFAULT_SOURCE_RELATIVE = Path("mri/aparc.DKTatlas+aseg.deep.nii.gz")
+DEFAULT_SOURCE_RELATIVE = Path("mri/aparc.a2009s+aseg.nii.gz")
 DEFAULT_SOURCE_CANDIDATES = (
+    Path("mri/aparc.a2009s+aseg.nii.gz"),
     Path("mri/aparc.DKTatlas+aseg.deep.nii.gz"),
     Path("mri/aparc.DKTatlas+aseg.nii.gz"),
     Path("mri/aparc+aseg.nii.gz"),
-    Path("mri/aparc.a2009s+aseg.nii.gz"),
     Path("mri/aseg.nii.gz"),
 )
 DEFAULT_MGZ_SOURCE_CANDIDATES = (
+    Path("mri/aparc.a2009s+aseg.mgz"),
     Path("mri/aparc.DKTatlas+aseg.mgz"),
     Path("mri/aparc+aseg.mgz"),
-    Path("mri/aparc.a2009s+aseg.mgz"),
     Path("mri/aseg.mgz"),
 )
 SKIP_DIR_NAMES = {"logs", "fsaverage"}

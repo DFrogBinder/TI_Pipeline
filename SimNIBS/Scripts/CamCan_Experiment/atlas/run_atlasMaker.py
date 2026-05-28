@@ -104,7 +104,7 @@ def input_available(data_dir: Path, subject: str) -> bool:
 
 def already_processed(output_dir: Path, subject: str) -> bool:
     """Return True if the subject already has the final NIfTI output."""
-    nifti = output_dir / subject / "mri" / "aparc.DKTatlas+aseg.deep.nii.gz"
+    nifti = output_dir / subject / "mri" / "aparc.a2009s+aseg.nii.gz"
     return nifti.is_file()
 
 

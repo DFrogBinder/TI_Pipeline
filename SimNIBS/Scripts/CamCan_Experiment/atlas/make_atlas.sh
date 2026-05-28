@@ -82,7 +82,7 @@ recon_done() {
 
 converted_done() {
   local subj_dir="$1"
-  [[ -f "${subj_dir}/mri/T1.nii.gz" && -f "${subj_dir}/mri/aparc.DKTatlas+aseg.deep.nii.gz" ]]
+  [[ -f "${subj_dir}/mri/T1.nii.gz" && -f "${subj_dir}/mri/aparc.a2009s+aseg.nii.gz" ]]
 }
 
 process_subject() {
@@ -143,7 +143,9 @@ process_subject() {
         mri_convert /data/FastSurfer_out/${sid}/mri/T1.mgz \
                     /data/FastSurfer_out/${sid}/mri/T1.nii.gz && \
         mri_convert /data/FastSurfer_out/${sid}/mri/aparc.DKTatlas+aseg.deep.mgz \
-                    /data/FastSurfer_out/${sid}/mri/aparc.DKTatlas+aseg.deep.nii.gz
+                    /data/FastSurfer_out/${sid}/mri/aparc.DKTatlas+aseg.deep.nii.gz && \
+        mri_convert /data/FastSurfer_out/${sid}/mri/aparc.a2009s+aseg.mgz \
+                    /data/FastSurfer_out/${sid}/mri/aparc.a2009s+aseg.nii.gz
       " || return 1
     log "[done] ${sid}: Conversion complete."
   fi

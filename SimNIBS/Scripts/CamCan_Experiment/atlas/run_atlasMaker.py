@@ -11,6 +11,7 @@ DEFAULT_OUTPUT_DIR_NAME = "FastSurfer_out"
 DEFAULT_THREADS_PER_JOB = 9
 DEFAULT_MAX_PARALLEL_JOBS = 3
 DEFAULT_LICENSE_PATH = DEFAULT_ROOT_DIR / "freesurfer_licence.txt"
+T1_INPUT_SUFFIXES = (".nii.gz", ".nii")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -55,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--data-dir",
         type=Path,
         default=Path(os.environ.get("ATLAS_DATA_DIR", DEFAULT_DATA_DIR)),
-        help="Dataset root containing <subject>/anat/<subject>_T1w.nii.gz.",
+        help="Dataset root containing <subject>/anat/<subject>_T1w.nii(.gz).",
     )
     parser.add_argument(
         "--license-path",
@@ -96,10 +97,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def t1_input_path(data_dir: Path, subject: str) -> Path | None:
+    """Return the first supported anatomical input path for the subject."""
+    anat_dir = data_dir / subject / "anat"
+    for suffix in T1_INPUT_SUFFIXES:
+        t1_file = anat_dir / f"{subject}_T1w{suffix}"
+        if t1_file.is_file():
+            return t1_file
+    return None
+
+
 def input_available(data_dir: Path, subject: str) -> bool:
-    """Return True if the subject has the expected anatomical input."""
-    t1_file = data_dir / subject / "anat" / f"{subject}_T1w.nii.gz"
-    return t1_file.is_file()
+    """Return True if the subject has a supported anatomical input."""
+    return t1_input_path(data_dir, subject) is not None
 
 
 def already_processed(output_dir: Path, subject: str) -> bool:

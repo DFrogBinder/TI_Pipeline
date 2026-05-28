@@ -3,7 +3,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-from atlas.run_atlasMaker import already_processed
+from atlas.run_atlasMaker import already_processed, input_available, t1_input_path
 
 
 def test_already_processed_requires_destrieux_nifti(tmp_path: Path):
@@ -19,6 +19,17 @@ def test_already_processed_requires_destrieux_nifti(tmp_path: Path):
     assert already_processed(output_dir, "sub-01") is True
 
 
+def test_t1_input_path_accepts_uncompressed_nifti(tmp_path: Path):
+    subject = "sub-01"
+    anat_dir = tmp_path / subject / "anat"
+    anat_dir.mkdir(parents=True)
+    t1_path = anat_dir / f"{subject}_T1w.nii"
+    t1_path.write_text("t1", encoding="utf-8")
+
+    assert t1_input_path(tmp_path, subject) == t1_path
+    assert input_available(tmp_path, subject) is True
+
+
 def write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
@@ -29,7 +40,7 @@ def test_make_atlas_native_backend_uses_freesurfer_tools_without_docker(tmp_path
     subject = "sub-01"
     anat_dir = data_dir / subject / "anat"
     anat_dir.mkdir(parents=True)
-    (anat_dir / f"{subject}_T1w.nii.gz").write_text("t1", encoding="utf-8")
+    (anat_dir / f"{subject}_T1w.nii").write_text("t1", encoding="utf-8")
     license_path = tmp_path / "license.txt"
     license_path.write_text("license", encoding="utf-8")
 
@@ -83,6 +94,7 @@ cp "$1" "$2"
     assert result.returncode == 0, result.stderr + result.stdout
     assert (data_dir / "FastSurfer_out" / subject / "mri" / "aparc.a2009s+aseg.nii.gz").is_file()
     assert "-s sub-01" in recon_log.read_text(encoding="utf-8")
+    assert f"{subject}_T1w.nii" in recon_log.read_text(encoding="utf-8")
     assert "aparc.a2009s+aseg.mgz" in convert_log.read_text(encoding="utf-8")
 
 

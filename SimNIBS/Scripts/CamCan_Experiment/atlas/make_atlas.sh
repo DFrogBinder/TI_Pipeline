@@ -91,6 +91,23 @@ converted_done() {
   [[ -f "${subj_dir}/mri/T1.nii.gz" && -f "${subj_dir}/mri/aparc.a2009s+aseg.nii.gz" ]]
 }
 
+t1_host_for() {
+  local data_root="$1"
+  local sid="$2"
+  local path=""
+
+  for path in \
+    "${data_root}/${sid}/anat/${sid}_T1w.nii.gz" \
+    "${data_root}/${sid}/anat/${sid}_T1w.nii"; do
+    if [[ -f "${path}" ]]; then
+      printf '%s\n' "${path}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 convert_mgz_outputs_native() {
   local subj_dir_host="$1"
   local src=""
@@ -124,7 +141,9 @@ process_subject_docker() {
   local fastsurfer_image="$6"
   local freesurfer_image="$7"
 
-  local t1_container="/data/${sid}/anat/${sid}_T1w.nii.gz"
+  local t1_host=""
+  t1_host="$(t1_host_for "${data_root}" "${sid}")" || return 1
+  local t1_container="/data/${t1_host#"${data_root}/"}"
   local subjects_dir_container="/data/FastSurfer_out"
 
   if fastsurfer_done "${subj_dir_host}"; then
@@ -188,7 +207,8 @@ process_subject_native() {
   local threads="$4"
   local license_path="$5"
 
-  local t1_host="${data_root}/${sid}/anat/${sid}_T1w.nii.gz"
+  local t1_host=""
+  t1_host="$(t1_host_for "${data_root}" "${sid}")" || return 1
   local subjects_dir_host="${data_root}/FastSurfer_out"
 
   export SUBJECTS_DIR="${subjects_dir_host}"
@@ -363,7 +383,6 @@ report_progress "${completed_count}" "${total_subjects}" "${total_subject_durati
 
 for SID in "${SUBJECT_IDS[@]}"; do
   SUBJ_PATH="${SUBJECT_ROOT}/${SID}"
-  T1_HOST="${SUBJ_PATH}/anat/${SID}_T1w.nii.gz"
   SUBJ_DIR_HOST="${FASTSURFER_OUT_DIR}/${SID}"
 
   if [[ "${SID}" == "FastSurfer_out" ]]; then
@@ -377,8 +396,8 @@ for SID in "${SUBJECT_IDS[@]}"; do
     continue
   fi
 
-  if [[ ! -f "${T1_HOST}" ]]; then
-    log "[skip] ${SID}: Missing T1 image at ${T1_HOST}"
+  if ! T1_HOST="$(t1_host_for "${DATA_ROOT}" "${SID}")"; then
+    log "[skip] ${SID}: Missing T1 image at ${SUBJ_PATH}/anat/${SID}_T1w.nii[.gz]"
     failures+=("${SID}")
     ((completed_count+=1))
     report_progress "${completed_count}" "${total_subjects}" "${total_subject_duration}" "${timed_count}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# FastSurfer -> FreeSurfer segmentation pipeline (Docker)
+# FastSurfer -> FreeSurfer segmentation pipeline.
 #
 # Usage:
 #   ./make_atlas.sh <DATA_DIR> <THREADS> <LICENSE_PATH> [SUBJECT_ID]
@@ -8,6 +8,7 @@
 # Example:
 #   ./make_atlas.sh ~/sandbox/Jake_Data 7 ~/sandbox/utils/freesurfer_licence.txt
 #   FASTSURFER_USE_GPU=1 FASTSURFER_DEVICE=cuda ./make_atlas.sh ~/sandbox/Jake_Data 9 ~/sandbox/utils/freesurfer_licence.txt sub-CC110033
+#   ATLAS_BACKEND=native ./make_atlas.sh ~/sandbox/Jake_Data 9 ~/sandbox/utils/freesurfer_licence.txt sub-CC110033
 #
 set -euo pipefail
 
@@ -80,12 +81,41 @@ recon_done() {
   [[ -f "${subj_dir}/surf/lh.white" && -f "${subj_dir}/surf/rh.white" ]]
 }
 
+destrieux_mgz_done() {
+  local subj_dir="$1"
+  [[ -f "${subj_dir}/mri/aparc.a2009s+aseg.mgz" ]]
+}
+
 converted_done() {
   local subj_dir="$1"
   [[ -f "${subj_dir}/mri/T1.nii.gz" && -f "${subj_dir}/mri/aparc.a2009s+aseg.nii.gz" ]]
 }
 
-process_subject() {
+convert_mgz_outputs_native() {
+  local subj_dir_host="$1"
+  local src=""
+  local dst=""
+
+  for required_name in T1 aparc.a2009s+aseg; do
+    src="${subj_dir_host}/mri/${required_name}.mgz"
+    if [[ ! -f "${src}" ]]; then
+      log "[error] Required MGZ missing: ${src}"
+      return 1
+    fi
+  done
+
+  for name in T1 aparc.DKTatlas+aseg.deep aparc.a2009s+aseg; do
+    src="${subj_dir_host}/mri/${name}.mgz"
+    dst="${subj_dir_host}/mri/${name}.nii.gz"
+    if [[ -f "${src}" ]]; then
+      mri_convert "${src}" "${dst}" || return 1
+    else
+      log "[skip] Optional MGZ missing, not converting: ${src}"
+    fi
+  done
+}
+
+process_subject_docker() {
   local sid="$1"
   local subj_dir_host="$2"
   local data_root="$3"
@@ -151,6 +181,55 @@ process_subject() {
   fi
 }
 
+process_subject_native() {
+  local sid="$1"
+  local subj_dir_host="$2"
+  local data_root="$3"
+  local threads="$4"
+  local license_path="$5"
+
+  local t1_host="${data_root}/${sid}/anat/${sid}_T1w.nii.gz"
+  local subjects_dir_host="${data_root}/FastSurfer_out"
+
+  export SUBJECTS_DIR="${subjects_dir_host}"
+  export FS_LICENSE="${license_path}"
+
+  if destrieux_mgz_done "${subj_dir_host}"; then
+    log "[ok] ${sid}: Native FreeSurfer Destrieux output already exists."
+  else
+    log "[run] ${sid}: Native FreeSurfer recon-all..."
+    if [[ -f "${subj_dir_host}/mri/orig.mgz" || -f "${subj_dir_host}/mri/T1.mgz" ]]; then
+      recon-all -s "${sid}" -all -openmp "${threads}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}" || return 1
+    else
+      recon-all -s "${sid}" -i "${t1_host}" -all -openmp "${threads}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}" || return 1
+    fi
+    log "[done] ${sid}: Native FreeSurfer recon-all."
+  fi
+
+  if converted_done "${subj_dir_host}"; then
+    log "[ok] ${sid}: NIfTI conversions already exist."
+  else
+    log "[run] ${sid}: Converting native FreeSurfer MGZ -> NIfTI..."
+    convert_mgz_outputs_native "${subj_dir_host}" || return 1
+    log "[done] ${sid}: Conversion complete."
+  fi
+}
+
+process_subject() {
+  case "${ATLAS_BACKEND}" in
+    docker)
+      process_subject_docker "$@"
+      ;;
+    native)
+      process_subject_native "$@"
+      ;;
+    *)
+      log "[error] Unsupported ATLAS_BACKEND: ${ATLAS_BACKEND}"
+      return 1
+      ;;
+  esac
+}
+
 # ---------- parse args ----------
 DATA="${1:-}"
 THREADS="${2:-}"
@@ -160,6 +239,9 @@ SUBJECT_FILTER="${4:-}"
 # default docker images
 FASTSURFER_IMAGE="${FASTSURFER_IMAGE:-deepmi/fastsurfer:latest}"
 FREESURFER_IMAGE="${FREESURFER_IMAGE:-freesurfer/freesurfer:7.4.1}"
+ATLAS_BACKEND="${ATLAS_BACKEND:-docker}"
+RECON_ALL_EXTRA_ARGS="${RECON_ALL_EXTRA_ARGS:--cw256}"
+read -r -a RECON_ALL_EXTRA_ARGS_ARRAY <<< "${RECON_ALL_EXTRA_ARGS}"
 
 FASTSURFER_DOCKER_FLAGS_RAW="${FASTSURFER_DOCKER_FLAGS:-}"
 declare -a FASTSURFER_DOCKER_RUN_FLAGS=()
@@ -195,10 +277,28 @@ if [[ ! "${THREADS}" =~ ^[0-9]+$ ]] || (( THREADS < 1 )); then
   exit 1
 fi
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker not found in PATH." >&2
-  exit 1
-fi
+case "${ATLAS_BACKEND}" in
+  docker)
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "ERROR: docker not found in PATH." >&2
+      exit 1
+    fi
+    ;;
+  native)
+    if ! command -v recon-all >/dev/null 2>&1; then
+      echo "ERROR: recon-all not found in PATH. Load the FreeSurfer module or set ATLAS_BACKEND=docker." >&2
+      exit 1
+    fi
+    if ! command -v mri_convert >/dev/null 2>&1; then
+      echo "ERROR: mri_convert not found in PATH. Load the FreeSurfer module or set ATLAS_BACKEND=docker." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: ATLAS_BACKEND must be 'docker' or 'native'. Received: ${ATLAS_BACKEND}" >&2
+    exit 1
+    ;;
+esac
 
 # ---------- paths ----------
 DATA_ROOT="$(cd "${DATA}" && pwd -P)"
@@ -222,6 +322,8 @@ log "DATA_DIR      : ${DATA_ROOT}"
 log "Subjects dir  : ${SUBJECT_ROOT}"
 log "THREADS       : ${THREADS}"
 log "LICENSE_PATH  : ${LICENSE_PATH}"
+log "Backend       : ${ATLAS_BACKEND}"
+log "Recon args    : ${RECON_ALL_EXTRA_ARGS:-<none>}"
 log "FastSurfer    : ${FASTSURFER_IMAGE}"
 log "FastSurfer GPU: ${FASTSURFER_DOCKER_RUN_FLAGS[*]:-<none>}"
 log "FastSurfer args: ${FASTSURFER_RUN_EXTRA_ARGS[*]:-<none>}"
@@ -270,7 +372,7 @@ for SID in "${SUBJECT_IDS[@]}"; do
 
   if [[ ! -d "${SUBJ_PATH}" ]]; then
     log "[skip] ${SID}: Not a directory at ${SUBJ_PATH}"
-    ((completed_count++))
+    ((completed_count+=1))
     report_progress "${completed_count}" "${total_subjects}" "${total_subject_duration}" "${timed_count}"
     continue
   fi
@@ -278,7 +380,7 @@ for SID in "${SUBJECT_IDS[@]}"; do
   if [[ ! -f "${T1_HOST}" ]]; then
     log "[skip] ${SID}: Missing T1 image at ${T1_HOST}"
     failures+=("${SID}")
-    ((completed_count++))
+    ((completed_count+=1))
     report_progress "${completed_count}" "${total_subjects}" "${total_subject_duration}" "${timed_count}"
     continue
   fi
@@ -300,14 +402,14 @@ for SID in "${SUBJECT_IDS[@]}"; do
 
   if [[ "${subject_status}" == "success" ]]; then
     log "=== ${SID}: completed in ${duration_formatted} ==="
-    ((success_count++))
+    ((success_count+=1))
   else
     log "[error] ${SID}: failed after ${duration_formatted}. See details above."
     failures+=("${SID}")
   fi
 
-  ((completed_count++))
-  ((timed_count++))
+  ((completed_count+=1))
+  ((timed_count+=1))
   total_subject_duration=$(( total_subject_duration + duration ))
   report_progress "${completed_count}" "${total_subjects}" "${total_subject_duration}" "${timed_count}"
 done

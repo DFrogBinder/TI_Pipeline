@@ -1,340 +1,307 @@
 #!/usr/bin/env bash
 #
-# Submit module-based FastSurfer atlas generation as one Slurm array task per
-# subject. This intentionally avoids Docker: each task loads FastSurfer and
-# FreeSurfer modules on the HPC, runs one subject, and writes a flat atlas NIfTI
-# at <OUTPUT_ROOT>/<subject>.nii.gz for downstream post-processing.
-
-set -euo pipefail
-
-usage() {
-  cat <<'USAGE'
-Usage:
-  submit_fastsurfer_atlas_array.sh <DATA_ROOT> <OUTPUT_ROOT> [options]
-
-Required:
-  DATA_ROOT    Directory containing subject folders:
-               <DATA_ROOT>/<subject>/anat/<subject>_T1w.nii.gz
-  OUTPUT_ROOT  Directory where FastSurfer outputs and flat atlas NIfTIs go.
-
-Options:
-  --partition NAME             Slurm partition (default: sheffield)
-  --cpus N                     CPUs per subject job (default: 16)
-  --mem SIZE                   Memory per subject job (default: 64G)
-  --time HH:MM:SS              Wall time per subject job (default: 08:00:00)
-  --max-concurrent N           Max simultaneous array tasks (default: 64)
-  --fastsurfer-module NAME     Module to load for FastSurfer (default: FastSurfer)
-  --freesurfer-module NAME     Module to load for mri_convert (default: FreeSurfer)
-  --license PATH               FreeSurfer license path; defaults to $FS_LICENSE if set
-  --dry-run                    Write subject list and job script but do not call sbatch
-  -h, --help                   Show this help
-
-Outputs:
-  <OUTPUT_ROOT>/subjects/<subject>/...  Full FastSurfer subject directory
-  <OUTPUT_ROOT>/<subject>.nii.gz        Flat aparc.DKTatlas+aseg.deep atlas
-  <OUTPUT_ROOT>/slurm/...               Generated subject list and Slurm script
-  <OUTPUT_ROOT>/logs/...                Slurm and per-subject logs
-USAGE
-}
-
-die() {
-  printf '[ERROR] %s\n' "$*" >&2
-  exit 1
-}
-
-require_value() {
-  local option="$1"
-  local value="${2:-}"
-  if [[ -z "${value}" ]]; then
-    die "${option} requires a value."
-  fi
-}
-
-is_positive_int() {
-  [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
-}
-
-DATA_ARG="${1:-}"
-OUTPUT_ARG="${2:-}"
-
-if [[ "${DATA_ARG}" == "-h" || "${DATA_ARG}" == "--help" ]]; then
-  usage
-  exit 0
-fi
-
-if [[ -z "${DATA_ARG}" || -z "${OUTPUT_ARG}" ]]; then
-  usage >&2
-  exit 2
-fi
-
-shift 2
-
-PARTITION="sheffield"
-CPUS="16"
-MEM="64G"
-WALLTIME="08:00:00"
-MAX_CONCURRENT="64"
-FASTSURFER_MODULE="FastSurfer"
-FREESURFER_MODULE="FreeSurfer"
-LICENSE_PATH="${FS_LICENSE:-}"
-DRY_RUN="0"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --partition)
-      require_value "$1" "${2:-}"
-      PARTITION="$2"
-      shift 2
-      ;;
-    --cpus)
-      require_value "$1" "${2:-}"
-      CPUS="$2"
-      shift 2
-      ;;
-    --mem)
-      require_value "$1" "${2:-}"
-      MEM="$2"
-      shift 2
-      ;;
-    --time)
-      require_value "$1" "${2:-}"
-      WALLTIME="$2"
-      shift 2
-      ;;
-    --max-concurrent)
-      require_value "$1" "${2:-}"
-      MAX_CONCURRENT="$2"
-      shift 2
-      ;;
-    --fastsurfer-module)
-      require_value "$1" "${2:-}"
-      FASTSURFER_MODULE="$2"
-      shift 2
-      ;;
-    --freesurfer-module)
-      require_value "$1" "${2:-}"
-      FREESURFER_MODULE="$2"
-      shift 2
-      ;;
-    --license)
-      require_value "$1" "${2:-}"
-      LICENSE_PATH="$2"
-      shift 2
-      ;;
-    --dry-run)
-      DRY_RUN="1"
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      die "Unknown option: $1"
-      ;;
-  esac
-done
-
-is_positive_int "${CPUS}" || die "--cpus must be a positive integer. Received: ${CPUS}"
-is_positive_int "${MAX_CONCURRENT}" || die "--max-concurrent must be a positive integer. Received: ${MAX_CONCURRENT}"
-
-if [[ ! "${WALLTIME}" =~ ^[0-9]+:[0-5][0-9]:[0-5][0-9]$ ]]; then
-  die "--time must look like HH:MM:SS. Received: ${WALLTIME}"
-fi
-
-if [[ ! -d "${DATA_ARG}" ]]; then
-  die "DATA_ROOT does not exist: ${DATA_ARG}"
-fi
-
-DATA_ROOT="$(cd "${DATA_ARG}" && pwd -P)"
-mkdir -p "${OUTPUT_ARG}"
-OUTPUT_ROOT="$(cd "${OUTPUT_ARG}" && pwd -P)"
-
-if [[ -n "${LICENSE_PATH}" ]]; then
-  if [[ ! -f "${LICENSE_PATH}" ]]; then
-    die "FreeSurfer license file not found: ${LICENSE_PATH}"
-  fi
-  LICENSE_DIR="$(cd "$(dirname "${LICENSE_PATH}")" && pwd -P)"
-  LICENSE_PATH="${LICENSE_DIR}/$(basename "${LICENSE_PATH}")"
-fi
-
-SLURM_DIR="${OUTPUT_ROOT}/slurm"
-LOG_DIR="${OUTPUT_ROOT}/logs"
-SUBJECTS_FILE="${SLURM_DIR}/subjects.txt"
-BATCH_SCRIPT="${SLURM_DIR}/fastsurfer_atlas_subject.slurm"
-SUBMIT_COMMAND_FILE="${SLURM_DIR}/submit_command.txt"
-
-mkdir -p "${SLURM_DIR}" "${LOG_DIR}" "${OUTPUT_ROOT}/subjects"
-
-SUBJECTS_TMP="$(mktemp)"
-trap 'rm -f "${SUBJECTS_TMP}"' EXIT
-
-while IFS= read -r -d '' subject_dir; do
-  subject="$(basename "${subject_dir}")"
-  t1_path="${subject_dir}/anat/${subject}_T1w.nii.gz"
-  if [[ -f "${t1_path}" ]]; then
-    printf '%s\n' "${subject}" >> "${SUBJECTS_TMP}"
-  fi
-done < <(find "${DATA_ROOT}" -mindepth 1 -maxdepth 1 -type d -print0)
-
-LC_ALL=C sort -u "${SUBJECTS_TMP}" > "${SUBJECTS_FILE}"
-
-SUBJECT_COUNT="$(awk 'END { print NR }' "${SUBJECTS_FILE}")"
-if [[ "${SUBJECT_COUNT}" -eq 0 ]]; then
-  die "No subjects with T1 input found under ${DATA_ROOT}."
-fi
-
-ARRAY_END=$((SUBJECT_COUNT - 1))
-ARRAY_SPEC="0-${ARRAY_END}%${MAX_CONCURRENT}"
-
-cat > "${BATCH_SCRIPT}" <<EOF
-#!/bin/bash
+# Edit the configuration at the top of this file, then submit it directly:
+#
+#   sbatch submit_fastsurfer_atlas_array.sh
+#
+# The array range must cover every discovered subject index. For example, if
+# local validation reports 420 subjects, keep the start at 0 and set the end to
+# at least 419. The value after % controls overnight concurrency.
+#
 #SBATCH --job-name=fs_atlas
-#SBATCH --partition=${PARTITION}
+#SBATCH --partition=sheffield
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=${CPUS}
-#SBATCH --mem=${MEM}
-#SBATCH --time=${WALLTIME}
-#SBATCH --output=${LOG_DIR}/fastsurfer_atlas_%A_%a.out
-#SBATCH --error=${LOG_DIR}/fastsurfer_atlas_%A_%a.err
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=08:00:00
+#SBATCH --array=0-999%64
+#SBATCH --output=fastsurfer_atlas_%A_%a.out
+#SBATCH --error=fastsurfer_atlas_%A_%a.err
 #SBATCH --requeue
+
+# ----------------------------
+# User configuration
+# ----------------------------
+
+DATA_ROOT="/path/to/CamCan_Data"
+OUTPUT_ROOT="/path/to/FastSurfer_atlases"
+
+FASTSURFER_MODULE="FastSurfer"
+FREESURFER_MODULE="FreeSurfer"
+FS_LICENSE_FILE=""
+
+# Set to 1 to print what would run without loading modules or running FastSurfer.
+DRY_RUN="0"
+
+# Set to 1 to rerun conversion even when <OUTPUT_ROOT>/<subject>.nii.gz exists.
+REPROCESS_EXISTING="0"
+
+# ----------------------------
+# End user configuration
+# ----------------------------
 
 set -euo pipefail
 
+declare -a SUBJECT_IDS=()
+
 log() {
-  printf '%s | %s\n' "\$(date '+%Y-%m-%d %H:%M:%S')" "\$*"
+  printf '%s | %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
 die() {
-  printf '%s | [ERROR] %s\n' "\$(date '+%Y-%m-%d %H:%M:%S')" "\$*" >&2
+  printf '%s | [ERROR] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2
   exit 1
 }
 
-if [[ -z "\${SLURM_ARRAY_TASK_ID:-}" ]]; then
-  die "This script must be submitted as a Slurm array task."
-fi
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
-: "\${DATA_ROOT:?DATA_ROOT is required}"
-: "\${OUTPUT_ROOT:?OUTPUT_ROOT is required}"
-: "\${SUBJECTS_FILE:?SUBJECTS_FILE is required}"
+script_path() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  printf '%s/%s\n' "${script_dir}" "$(basename "${BASH_SOURCE[0]}")"
+}
 
-SUBJECT="\$(sed -n "\$((SLURM_ARRAY_TASK_ID + 1))p" "\${SUBJECTS_FILE}")"
-if [[ -z "\${SUBJECT}" ]]; then
-  die "No subject found for array index \${SLURM_ARRAY_TASK_ID} in \${SUBJECTS_FILE}."
-fi
+array_directive() {
+  awk '$1 == "#SBATCH" && $2 ~ /^--array=/ { sub(/^--array=/, "", $2); print $2; exit }' "$(script_path)"
+}
 
-SUBJECTS_DIR="\${OUTPUT_ROOT}/subjects"
-T1_INPUT="\${DATA_ROOT}/\${SUBJECT}/anat/\${SUBJECT}_T1w.nii.gz"
-SUBJECT_LOG="\${OUTPUT_ROOT}/logs/\${SUBJECT}.log"
-ATLAS_MGZ="\${SUBJECTS_DIR}/\${SUBJECT}/mri/aparc.DKTatlas+aseg.deep.mgz"
-ATLAS_FLAT="\${OUTPUT_ROOT}/\${SUBJECT}.nii.gz"
+array_max_index() {
+  local spec="$1"
+  local range="${spec%%%*}"
 
-mkdir -p "\${SUBJECTS_DIR}" "\${OUTPUT_ROOT}/logs"
-exec > >(tee -a "\${SUBJECT_LOG}") 2>&1
-
-log "Host:        \$(hostname)"
-log "Job ID:      \${SLURM_JOB_ID}"
-log "Array index: \${SLURM_ARRAY_TASK_ID}"
-log "Subject:     \${SUBJECT}"
-log "Data root:   \${DATA_ROOT}"
-log "Output root: \${OUTPUT_ROOT}"
-log "CPUs:        \${SLURM_CPUS_PER_TASK:-${CPUS}}"
-log "Atlas flat:  \${ATLAS_FLAT}"
-
-[[ -f "\${T1_INPUT}" ]] || die "Missing T1 input: \${T1_INPUT}"
-
-if [[ -s "\${ATLAS_FLAT}" ]]; then
-  log "[ok] Flat atlas already exists. Skipping subject."
-  exit 0
-fi
-
-if ! command -v module >/dev/null 2>&1; then
-  if [[ -f /etc/profile.d/modules.sh ]]; then
-    # shellcheck disable=SC1091
-    source /etc/profile.d/modules.sh
+  if [[ "${range}" =~ ^[0-9]+-([0-9]+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  elif [[ "${range}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${range}"
   fi
-fi
+}
 
-module purge || true
-module load "\${FASTSURFER_MODULE}"
-module load "\${FREESURFER_MODULE}"
+validate_no_args() {
+  if [[ $# -gt 0 ]]; then
+    die "This script is configured only by editing the top-of-file settings; do not pass command-line arguments."
+  fi
+}
 
-export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-${CPUS}}"
-export MKL_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-${CPUS}}"
-export OPENBLAS_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-${CPUS}}"
-export NUMEXPR_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-${CPUS}}"
+resolve_config_paths() {
+  if [[ -z "${DATA_ROOT}" || "${DATA_ROOT}" == "/path/to/CamCan_Data" ]]; then
+    die "Edit DATA_ROOT at the top of this file before running."
+  fi
+  if [[ -z "${OUTPUT_ROOT}" || "${OUTPUT_ROOT}" == "/path/to/FastSurfer_atlases" ]]; then
+    die "Edit OUTPUT_ROOT at the top of this file before running."
+  fi
+  if [[ ! -d "${DATA_ROOT}" ]]; then
+    die "DATA_ROOT does not exist: ${DATA_ROOT}"
+  fi
 
-if [[ -n "\${FS_LICENSE:-}" ]]; then
-  export FS_LICENSE
-  log "FS_LICENSE:  \${FS_LICENSE}"
-else
-  log "FS_LICENSE:  <not set>"
-fi
+  DATA_ROOT="$(cd "${DATA_ROOT}" && pwd -P)"
+  mkdir -p "${OUTPUT_ROOT}"
+  OUTPUT_ROOT="$(cd "${OUTPUT_ROOT}" && pwd -P)"
 
-command -v run_fastsurfer.sh >/dev/null 2>&1 || die "run_fastsurfer.sh not found after loading FastSurfer module."
-command -v mri_convert >/dev/null 2>&1 || die "mri_convert not found after loading FreeSurfer module."
+  if [[ -n "${FS_LICENSE_FILE}" ]]; then
+    if [[ ! -f "${FS_LICENSE_FILE}" ]]; then
+      die "FS_LICENSE_FILE does not exist: ${FS_LICENSE_FILE}"
+    fi
+    local license_dir
+    license_dir="$(cd "$(dirname "${FS_LICENSE_FILE}")" && pwd -P)"
+    FS_LICENSE_FILE="${license_dir}/$(basename "${FS_LICENSE_FILE}")"
+  fi
 
-if [[ -s "\${ATLAS_MGZ}" ]]; then
-  log "[ok] FastSurfer atlas MGZ already exists: \${ATLAS_MGZ}"
-else
-  FASTSURFER_CMD=(
+  mkdir -p "${OUTPUT_ROOT}/logs" "${OUTPUT_ROOT}/slurm" "${OUTPUT_ROOT}/subjects"
+}
+
+discover_subjects() {
+  mapfile -t SUBJECT_IDS < <(
+    find "${DATA_ROOT}" -mindepth 1 -maxdepth 1 -type d -print |
+      while IFS= read -r subject_dir; do
+        subject="$(basename "${subject_dir}")"
+        t1_path="${subject_dir}/anat/${subject}_T1w.nii.gz"
+        if [[ -f "${t1_path}" ]]; then
+          printf '%s\n' "${subject}"
+        fi
+      done |
+      LC_ALL=C sort
+  )
+}
+
+write_subjects_file() {
+  local subjects_file="${OUTPUT_ROOT}/slurm/subjects.txt"
+  printf '%s\n' "${SUBJECT_IDS[@]}" > "${subjects_file}"
+}
+
+print_local_summary() {
+  local subject_count="${#SUBJECT_IDS[@]}"
+  local required_end=$((subject_count - 1))
+  local subjects_file="${OUTPUT_ROOT}/slurm/subjects.txt"
+  local current_array
+  local current_end
+  current_array="$(array_directive)"
+  current_end="$(array_max_index "${current_array}")"
+
+  printf '[INFO] Data root:       %s\n' "${DATA_ROOT}"
+  printf '[INFO] Output root:     %s\n' "${OUTPUT_ROOT}"
+  printf '[INFO] Subjects file:   %s\n' "${subjects_file}"
+  printf '[INFO] Subject count:   %s\n' "${subject_count}"
+  printf '[INFO] Required array:  0-%s\n' "${required_end}"
+  printf '[INFO] Current array:   %s\n' "${current_array}"
+  if [[ -n "${current_end}" ]] && (( current_end < required_end )); then
+    printf '[WARN] Current #SBATCH --array=%s only covers through index %s; edit it to at least 0-%s.\n' "${current_array}" "${current_end}" "${required_end}"
+  fi
+  printf '[INFO] Submit with:     sbatch %s\n' "$(script_path)"
+
+  if is_truthy "${DRY_RUN}"; then
+    printf '[DRY-RUN] Local validation only; no Slurm job was submitted.\n'
+  else
+    printf '[INFO] Local validation only; submit the script with sbatch when ready.\n'
+  fi
+}
+
+run_local_validation() {
+  if (( ${#SUBJECT_IDS[@]} == 0 )); then
+    die "No subjects with T1 input found under ${DATA_ROOT}."
+  fi
+
+  write_subjects_file
+  print_local_summary
+}
+
+thread_count() {
+  printf '%s\n' "${SLURM_CPUS_PER_TASK:-16}"
+}
+
+print_command() {
+  printf '  '
+  printf '%q ' "$@"
+  printf '\n'
+}
+
+load_modules() {
+  if ! command -v module >/dev/null 2>&1; then
+    if [[ -f /etc/profile.d/modules.sh ]]; then
+      # shellcheck disable=SC1091
+      source /etc/profile.d/modules.sh
+    fi
+  fi
+
+  module purge || true
+  module load "${FASTSURFER_MODULE}"
+  module load "${FREESURFER_MODULE}"
+}
+
+run_subject_task() {
+  if [[ ! "${SLURM_ARRAY_TASK_ID}" =~ ^[0-9]+$ ]]; then
+    die "SLURM_ARRAY_TASK_ID must be a non-negative integer. Received: ${SLURM_ARRAY_TASK_ID}"
+  fi
+
+  local task_id="${SLURM_ARRAY_TASK_ID}"
+  local subject_count="${#SUBJECT_IDS[@]}"
+
+  if (( task_id >= subject_count )); then
+    log "[skip] Array index ${task_id} is outside the discovered subject range 0-$((subject_count - 1))."
+    exit 0
+  fi
+
+  local subject="${SUBJECT_IDS[task_id]}"
+  local subjects_dir="${OUTPUT_ROOT}/subjects"
+  local t1_input="${DATA_ROOT}/${subject}/anat/${subject}_T1w.nii.gz"
+  local subject_log="${OUTPUT_ROOT}/logs/${subject}.log"
+  local atlas_mgz="${subjects_dir}/${subject}/mri/aparc.DKTatlas+aseg.deep.mgz"
+  local atlas_flat="${OUTPUT_ROOT}/${subject}.nii.gz"
+  local threads
+  threads="$(thread_count)"
+
+  mkdir -p "${subjects_dir}" "${OUTPUT_ROOT}/logs"
+  exec > >(tee -a "${subject_log}") 2>&1
+
+  log "Host:        $(hostname)"
+  log "Job ID:      ${SLURM_JOB_ID:-unknown}"
+  log "Array index: ${SLURM_ARRAY_TASK_ID}"
+  log "Subject:     ${subject}"
+  log "Data root:   ${DATA_ROOT}"
+  log "Output root: ${OUTPUT_ROOT}"
+  log "Threads:     ${threads}"
+  log "Atlas flat:  ${atlas_flat}"
+
+  [[ -f "${t1_input}" ]] || die "Missing T1 input: ${t1_input}"
+
+  if [[ -s "${atlas_flat}" ]] && ! is_truthy "${REPROCESS_EXISTING}"; then
+    log "[ok] Flat atlas already exists. Skipping subject."
+    exit 0
+  fi
+
+  local -a fastsurfer_cmd=(
     run_fastsurfer.sh
-    --t1 "\${T1_INPUT}"
-    --sid "\${SUBJECT}"
-    --sd "\${SUBJECTS_DIR}"
+    --t1 "${t1_input}"
+    --sid "${subject}"
+    --sd "${subjects_dir}"
     --seg_only
-    --threads "\${SLURM_CPUS_PER_TASK:-${CPUS}}"
+    --threads "${threads}"
     --no_cereb
     --no_hypothal
   )
+  local -a convert_cmd=(mri_convert "${atlas_mgz}" "${atlas_flat}")
 
-  if [[ -n "\${FS_LICENSE:-}" ]]; then
-    FASTSURFER_CMD+=(--fs_license "\${FS_LICENSE}")
+  if [[ -n "${FS_LICENSE_FILE}" ]]; then
+    fastsurfer_cmd+=(--fs_license "${FS_LICENSE_FILE}")
   fi
 
-  log "[run] FastSurfer segmentation"
-  "\${FASTSURFER_CMD[@]}"
-  log "[done] FastSurfer segmentation"
-fi
+  if is_truthy "${DRY_RUN}"; then
+    log "[DRY-RUN] Would run FastSurfer command:"
+    print_command "${fastsurfer_cmd[@]}"
+    log "[DRY-RUN] Would convert atlas:"
+    print_command "${convert_cmd[@]}"
+    exit 0
+  fi
 
-[[ -s "\${ATLAS_MGZ}" ]] || die "Expected atlas MGZ was not created: \${ATLAS_MGZ}"
+  load_modules
 
-log "[run] Converting atlas MGZ to flat NIfTI"
-mri_convert "\${ATLAS_MGZ}" "\${ATLAS_FLAT}"
-log "[done] Wrote \${ATLAS_FLAT}"
-EOF
+  export OMP_NUM_THREADS="${threads}"
+  export MKL_NUM_THREADS="${threads}"
+  export OPENBLAS_NUM_THREADS="${threads}"
+  export NUMEXPR_NUM_THREADS="${threads}"
 
-chmod +x "${BATCH_SCRIPT}"
+  if [[ -n "${FS_LICENSE_FILE}" ]]; then
+    export FS_LICENSE="${FS_LICENSE_FILE}"
+    log "FS_LICENSE:  ${FS_LICENSE}"
+  elif [[ -n "${FS_LICENSE:-}" ]]; then
+    log "FS_LICENSE:  ${FS_LICENSE}"
+  else
+    log "FS_LICENSE:  <not set>"
+  fi
 
-EXPORT_VARS="ALL,DATA_ROOT=${DATA_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT},SUBJECTS_FILE=${SUBJECTS_FILE},FASTSURFER_MODULE=${FASTSURFER_MODULE},FREESURFER_MODULE=${FREESURFER_MODULE}"
-if [[ -n "${LICENSE_PATH}" ]]; then
-  EXPORT_VARS="${EXPORT_VARS},FS_LICENSE=${LICENSE_PATH}"
-fi
+  command -v run_fastsurfer.sh >/dev/null 2>&1 || die "run_fastsurfer.sh not found after loading ${FASTSURFER_MODULE}."
+  command -v mri_convert >/dev/null 2>&1 || die "mri_convert not found after loading ${FREESURFER_MODULE}."
 
-SBATCH_CMD=(
-  sbatch
-  "--array=${ARRAY_SPEC}"
-  "--export=${EXPORT_VARS}"
-  "${BATCH_SCRIPT}"
-)
+  if [[ -s "${atlas_mgz}" ]] && ! is_truthy "${REPROCESS_EXISTING}"; then
+    log "[ok] FastSurfer atlas MGZ already exists: ${atlas_mgz}"
+  else
+    log "[run] FastSurfer segmentation"
+    "${fastsurfer_cmd[@]}"
+    log "[done] FastSurfer segmentation"
+  fi
 
-printf '%q ' "${SBATCH_CMD[@]}" > "${SUBMIT_COMMAND_FILE}"
-printf '\n' >> "${SUBMIT_COMMAND_FILE}"
+  [[ -s "${atlas_mgz}" ]] || die "Expected atlas MGZ was not created: ${atlas_mgz}"
 
-printf '[INFO] Data root:       %s\n' "${DATA_ROOT}"
-printf '[INFO] Output root:     %s\n' "${OUTPUT_ROOT}"
-printf '[INFO] Subjects file:   %s\n' "${SUBJECTS_FILE}"
-printf '[INFO] Subject count:   %s\n' "${SUBJECT_COUNT}"
-printf '[INFO] Array spec:      %s\n' "${ARRAY_SPEC}"
-printf '[INFO] Batch script:    %s\n' "${BATCH_SCRIPT}"
-printf '[INFO] Submit command:  %s\n' "${SUBMIT_COMMAND_FILE}"
+  log "[run] Converting atlas MGZ to flat NIfTI"
+  "${convert_cmd[@]}"
+  log "[done] Wrote ${atlas_flat}"
+}
 
-if [[ "${DRY_RUN}" == "1" ]]; then
-  printf '[DRY-RUN] Not submitting. Review %s and run the command in %s when ready.\n' "${BATCH_SCRIPT}" "${SUBMIT_COMMAND_FILE}"
-  exit 0
-fi
+main() {
+  validate_no_args "$@"
+  resolve_config_paths
+  discover_subjects
 
-command -v sbatch >/dev/null 2>&1 || die "sbatch not found. Use --dry-run off-cluster, or run this on the HPC login node."
+  if [[ -z "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    run_local_validation
+  else
+    run_subject_task
+  fi
+}
 
-"${SBATCH_CMD[@]}"
+main "$@"

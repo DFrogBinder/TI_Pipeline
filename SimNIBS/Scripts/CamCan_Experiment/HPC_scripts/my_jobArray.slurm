@@ -28,6 +28,7 @@ SIM_INCOMPLETE_EXIT_CODE=125
 SIM_INPUT_EXIT_CODE=126
 SIM_ROOT="${TI_SIM_ROOT:-/mnt/parscratch/users/cop23bi/LM1}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/validate_simulation_outputs.py}"
+MONTAGE_PRESET="${TI_MONTAGE_PRESET:-left-m1}"
 
 if ! [[ "$MESH_MAX_RETRIES" =~ ^-?[0-9]+$ ]]; then
     echo "[ERROR] TI_MESH_MAX_RETRIES must be an integer; got '${MESH_MAX_RETRIES}'." >&2
@@ -151,6 +152,7 @@ echo "[INFO] Mem per task:${SLURM_MEM_PER_NODE:-${SLURM_MEM_PER_TASK}} MB"
 echo "[INFO] Simulation root: ${SIM_ROOT}"
 echo "[INFO] Completion check: ${COMPLETION_CHECK_PY}"
 echo "[INFO] Mesh timeout: ${MESH_TIMEOUT_HOURS} hour(s) total across meshing/remeshing"
+echo "[INFO] Montage preset: ${MONTAGE_PRESET}"
 echo "[INFO] Simulation retry: ${MESH_RETRY_COUNT}/${MESH_RETRY_LIMIT_LABEL}"
 
 # -------------------------
@@ -192,6 +194,7 @@ requeue_or_fail() {
 
 python -u /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py \
     --subject "$SUBJECT" \
+    --montage-preset "$MONTAGE_PRESET" \
     --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
 PY_EXIT=$?
 

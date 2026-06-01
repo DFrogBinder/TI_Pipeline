@@ -17,6 +17,7 @@ export NUMEXPR_NUM_THREADS=4
 
 # Limit concurrent subjects
 export MAX_WORKERS=3
+TI_MONTAGE_PRESET="${TI_MONTAGE_PRESET:-left-m1}"
 
 # Optional: use node-local scratch if available
 SCRATCH=${TMPDIR:-/tmp}/ti_${SLURM_JOB_ID}
@@ -32,4 +33,6 @@ PYTHON=/home/boyan/SimNIBS-4.5/bin/simnibs_python
 
 # If TI_runner_multi-core.py is updated to read MAX_WORKERS, this will cap workers at 3.
 # Otherwise set max_workers directly in the script before submitting.
-$PYTHON simulation/TI_runner_multi-core.py
+echo "[INFO] Montage preset: ${TI_MONTAGE_PRESET}"
+$PYTHON simulation/TI_runner_multi-core.py \
+    --montage-preset "$TI_MONTAGE_PRESET"

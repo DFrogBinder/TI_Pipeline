@@ -8,7 +8,6 @@ from pathlib import Path
 import argparse
 import concurrent.futures
 import json
-from dataclasses import dataclass
 import numpy as np
 import simnibs as sim
 import subprocess
@@ -31,6 +30,10 @@ from utils.sim_utils import (
     atomic_replace,
     img_info,
 )
+from target_montages import (
+    MONTAGE_PRESETS,
+    resolve_montage_preset,
+)
 import time
 
 
@@ -45,81 +48,6 @@ MESH_TIMEOUT_EXIT_CODE = 124
 SIM_INPUT_EXIT_CODE = 126
 DEFAULT_MONTAGE_PRESET = "right-m1"
 SELECTED_MONTAGE = None
-
-
-@dataclass(frozen=True)
-class PairSpec:
-    anode: str
-    cathode: str
-    current_a: float
-
-
-@dataclass(frozen=True)
-class MontageSpec:
-    name: str
-    description: str
-    pair1: PairSpec
-    pair2: PairSpec
-    electrode_radius_mm: float = 10.0
-    electrode_thickness_mm: float = 2.0
-    electrode_shape: str = "ellipse"
-    electrode_conductivity: float = 1.4
-
-
-MONTAGE_PRESETS: dict[str, MontageSpec] = {
-    "left-pallidum": MontageSpec(
-        name="left-pallidum",
-        description="Left pallidum montage from the original commented block.",
-        pair1=PairSpec("Fpz", "AF8", 2e-3),
-        pair2=PairSpec("TP7", "PO9", 1.261915e-3),
-    ),
-    "right-pallidum": MontageSpec(
-        name="right-pallidum",
-        description="Right pallidum montage from the original commented block.",
-        pair1=PairSpec("F8", "F10", 2e-3),
-        pair2=PairSpec("FT7", "C3", 1.261915e-3),
-    ),
-    "left-thalamus": MontageSpec(
-        name="left-thalamus",
-        description="Left thalamus montage from the original commented block.",
-        pair1=PairSpec("F7", "P7", 1.588656e-3),
-        pair2=PairSpec("F8", "P8", 2e-3),
-    ),
-    "right-thalamus": MontageSpec(
-        name="right-thalamus",
-        description="Right thalamus montage from the original commented block.",
-        pair1=PairSpec("AF7", "TP7", 2e-3),
-        pair2=PairSpec("T8", "PO8", 2e-3),
-    ),
-    "left-hippocampus": MontageSpec(
-        name="left-hippocampus",
-        description="Left hippocampus montage from the original commented block.",
-        pair1=PairSpec("F10", "P8", 2e-3),
-        pair2=PairSpec("T7", "P7", 1.588656e-3),
-    ),
-    "right-m1": MontageSpec(
-        name="right-m1",
-        description="Right M1 montage that was previously active in this runner.",
-        pair1=PairSpec("FC6", "FT8", 2e-3),
-        pair2=PairSpec("C2", "C4", 0.796214e-3),
-    ),
-    "left-m1": MontageSpec(
-        name="left-m1",
-        description="Left M1 montage from the original commented block.",
-        pair1=PairSpec("FC1", "FCz", 2e-3),
-        pair2=PairSpec("C3", "P5", 0.632456e-3),
-    ),
-    "right-dlpfc": MontageSpec(
-        name="right-dlpfc",
-        description="Right DLPFC montage from the original commented block.",
-        pair1=PairSpec("AF4", "F4", 0.796214e-3),
-        pair2=PairSpec("C2", "CP1", 2e-3),
-    ),
-}
-
-MONTAGE_ALIASES = {
-    "right-dlpc": "right-dlpfc",
-}
 
 
 def log_event(event: str, **fields) -> None:
@@ -138,24 +66,6 @@ def log_file_info(label: str, path: str) -> None:
     )
 
 
-def normalize_montage_preset(name: str) -> str:
-    key = name.strip().lower().replace("_", "-").replace(" ", "-")
-    return MONTAGE_ALIASES.get(key, key)
-
-
-def resolve_montage_preset(name: str) -> MontageSpec:
-    key = normalize_montage_preset(name)
-    try:
-        return MONTAGE_PRESETS[key]
-    except KeyError as exc:
-        available = ", ".join(sorted(MONTAGE_PRESETS))
-        aliases = ", ".join(f"{alias}->{target}" for alias, target in sorted(MONTAGE_ALIASES.items()))
-        alias_msg = f"; aliases: {aliases}" if aliases else ""
-        raise ValueError(
-            f"Unknown montage preset '{name}'. Available presets: {available}{alias_msg}."
-        ) from exc
-
-
 def list_montage_presets() -> None:
     print("Available montage presets:")
     for name in sorted(MONTAGE_PRESETS):
@@ -163,7 +73,10 @@ def list_montage_presets() -> None:
         print(
             f"- {name}: "
             f"pair1={preset.pair1.anode}->{preset.pair1.cathode} ({preset.pair1.current_a:.6g} A), "
-            f"pair2={preset.pair2.anode}->{preset.pair2.cathode} ({preset.pair2.current_a:.6g} A)"
+            f"pair2={preset.pair2.anode}->{preset.pair2.cathode} ({preset.pair2.current_a:.6g} A), "
+            f"electrode radius={preset.electrode_radius_mm:.1f} mm, "
+            f"thickness={preset.electrode_thickness_mm:.1f} mm, "
+            f"conductivity={preset.electrode_conductivity:.3g} S/m"
         )
         print(f"  {preset.description}")
 
@@ -534,6 +447,10 @@ def process_subject(subject_entry):
         "montage_config",
         subject=subject_source,
         preset=montage.name,
+        roi=montage.roi,
+        e_target=montage.e_target,
+        stimulated_volume=montage.stimulated_volume,
+        configuration=montage.configuration,
         pair1_anode=montage.pair1.anode,
         pair1_cathode=montage.pair1.cathode,
         pair1_current_a=montage.pair1.current_a,

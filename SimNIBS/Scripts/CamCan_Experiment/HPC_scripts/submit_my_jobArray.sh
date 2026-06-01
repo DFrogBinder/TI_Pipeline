@@ -7,6 +7,7 @@ MAX_CONCURRENT="${TI_ARRAY_MAX_CONCURRENT:-8}"
 SIM_ROOT="${TI_SIM_ROOT:-/mnt/parscratch/users/cop23bi/LM1}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/validate_simulation_outputs.py}"
 MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
+MONTAGE_PRESET="${TI_MONTAGE_PRESET:-left-m1}"
 # 0 or a negative value means keep requeueing timed-out subjects until the
 # simulation exits without the mesh-timeout code.
 MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
@@ -54,10 +55,11 @@ echo "[INFO] Batch script:    $BATCH_SCRIPT"
 echo "[INFO] Simulation root: $SIM_ROOT"
 echo "[INFO] Completion check:$COMPLETION_CHECK_PY"
 echo "[INFO] Mesh timeout:    ${MESH_TIMEOUT_HOURS} hour(s)"
+echo "[INFO] Montage preset:  ${MONTAGE_PRESET}"
 echo "[INFO] Simulation retries: ${MESH_RETRY_LIMIT_LABEL}"
 
 sbatch \
     --array="$ARRAY_SPEC" \
-    --export=ALL,TI_SUBJECTS_FILE="$SUBJECTS_FILE",TI_SIM_ROOT="$SIM_ROOT",TI_COMPLETION_CHECK_PY="$COMPLETION_CHECK_PY",TI_MESH_TIMEOUT_HOURS="$MESH_TIMEOUT_HOURS",TI_MESH_MAX_RETRIES="$MESH_MAX_RETRIES" \
+    --export=ALL,TI_SUBJECTS_FILE="$SUBJECTS_FILE",TI_SIM_ROOT="$SIM_ROOT",TI_COMPLETION_CHECK_PY="$COMPLETION_CHECK_PY",TI_MESH_TIMEOUT_HOURS="$MESH_TIMEOUT_HOURS",TI_MESH_MAX_RETRIES="$MESH_MAX_RETRIES",TI_MONTAGE_PRESET="$MONTAGE_PRESET" \
     "$@" \
     "$BATCH_SCRIPT"

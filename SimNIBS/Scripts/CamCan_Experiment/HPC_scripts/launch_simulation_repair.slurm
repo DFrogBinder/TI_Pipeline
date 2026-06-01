@@ -51,9 +51,9 @@ REPAIR_MESH_TIMEOUT_HOURS="4"
 REPAIR_MESH_MAX_RETRIES="0"
 
 # Simulation montage. Use "auto" to infer from REPAIR_BATCH_ROOT/repeat names.
-# Available explicit values are defined in simulation/TI_runner_multi-core.py.
-# Current presets include left-pallidum, right-pallidum, left-thalamus,
-# right-thalamus, left-hippocampus, right-m1, left-m1, and right-dlpfc.
+# Available explicit values come from utils/targets.csv through the simulation
+# runner: left-dlpfc, left-hippocampus, left-m1, left-pallidum, left-thalamus,
+# right-dlpfc, right-hippocampus, right-m1, right-pallidum, right-thalamus.
 REPAIR_MONTAGE_PRESET="auto"
 
 # Repository/HPC script paths.
@@ -104,9 +104,11 @@ detect_montage_preset() {
     normalized="$(printf '%s' "$detection_text" | normalize_key)"
     case "$normalized" in
         *right_dlpfc*|*right_dlpc*|*rigth_dlpfc*|*rigth_dlpc*) printf '%s\n' "right-dlpfc" ;;
+        *left_dlpfc*|*left_dlpc*) printf '%s\n' "left-dlpfc" ;;
         *right_m1*|*rigth_m1*) printf '%s\n' "right-m1" ;;
         *left_m1*) printf '%s\n' "left-m1" ;;
         *left_hippocampus*) printf '%s\n' "left-hippocampus" ;;
+        *right_hippocampus*) printf '%s\n' "right-hippocampus" ;;
         *right_thalamus*) printf '%s\n' "right-thalamus" ;;
         *left_thalamus*) printf '%s\n' "left-thalamus" ;;
         *right_pallidum*) printf '%s\n' "right-pallidum" ;;

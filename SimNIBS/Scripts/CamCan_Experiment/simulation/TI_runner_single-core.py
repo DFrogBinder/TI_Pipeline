@@ -26,32 +26,15 @@ from utils.sim_utils import (
     img_info,
     merge_segmentation_maps,
 )
+from target_montages import MONTAGE_CHOICES, MONTAGE_PRESETS, resolve_montage_preset
 
 
 # Set appropriate flags.
 meshPresent = True
 runMNI152 = True
 rootDIR = "/home/boyan/sandbox/Jake_Data/Left_Thalamus_MNI152"
-
-electrode_size = [10, 1]  # [radius_mm, thickness_mm]
-electrode_shape = "ellipse"
-electrode_conductivity = 0.85
-
-# Left Thalamus
-montage_right = ("F7", 1.588656e-3, "P7", -1.588656e-3)
-montage_left = ("F8", 2e-3, "P8", -2e-3)
-
-# Right Thalamus
-# montage_right = ("AF7", 2e-3, "TP7", -2e-3)
-# montage_left = ("T8", 2e-3, "PO8", -2e-3)
-
-# Hippocampus montage
-# montage_right = ("F10", 2e-3, "P8", -2e-3)
-# montage_left = ("T7", 1.588656e-3, "P7", -1.588656e-3)
-
-# M1 montage
-# montage_right = ("C1", 1.34e-3, "Cz", -1.34e-3)
-# montage_left = ("C3", 2.66e-3, "CP5", -2.66e-3)
+DEFAULT_MONTAGE_PRESET = os.environ.get("TI_MONTAGE_PRESET", "left-m1")
+SELECTED_MONTAGE = None
 
 
 def log_event(event: str, **fields) -> None:
@@ -68,6 +51,21 @@ def log_file_info(label: str, path: str) -> None:
         exists=p.exists(),
         size_bytes=p.stat().st_size if p.exists() else None,
     )
+
+
+def list_montage_presets() -> None:
+    print("Available montage presets:")
+    for name in sorted(MONTAGE_PRESETS):
+        preset = MONTAGE_PRESETS[name]
+        print(
+            f"- {name}: "
+            f"pair1={preset.pair1.anode}->{preset.pair1.cathode} ({preset.pair1.current_a:.6g} A), "
+            f"pair2={preset.pair2.anode}->{preset.pair2.cathode} ({preset.pair2.current_a:.6g} A), "
+            f"electrode radius={preset.electrode_radius_mm:.1f} mm, "
+            f"thickness={preset.electrode_thickness_mm:.1f} mm, "
+            f"conductivity={preset.electrode_conductivity:.3g} S/m"
+        )
+        print(f"  {preset.description}")
 
 
 def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
@@ -222,6 +220,42 @@ def process_subject(subject_entry: str) -> float | None:
             run_cmd(remesh_cmd, cwd=str(subject_dir), label="charm_remesh")
         except Exception as exc:
             log_event("error", stage="charm_remesh", subject=subject, error=str(exc))
+
+    montage = SELECTED_MONTAGE or resolve_montage_preset(DEFAULT_MONTAGE_PRESET)
+    electrode_size = [montage.electrode_radius_mm, montage.electrode_thickness_mm]
+    electrode_shape = montage.electrode_shape
+    electrode_conductivity = montage.electrode_conductivity
+    montage_right = (
+        montage.pair1.anode,
+        montage.pair1.current_a,
+        montage.pair1.cathode,
+        -montage.pair1.current_a,
+    )
+    montage_left = (
+        montage.pair2.anode,
+        montage.pair2.current_a,
+        montage.pair2.cathode,
+        -montage.pair2.current_a,
+    )
+    log_event(
+        "montage_config",
+        subject=subject_source,
+        preset=montage.name,
+        roi=montage.roi,
+        e_target=montage.e_target,
+        stimulated_volume=montage.stimulated_volume,
+        configuration=montage.configuration,
+        pair1_anode=montage.pair1.anode,
+        pair1_cathode=montage.pair1.cathode,
+        pair1_current_a=montage.pair1.current_a,
+        pair2_anode=montage.pair2.anode,
+        pair2_cathode=montage.pair2.cathode,
+        pair2_current_a=montage.pair2.current_a,
+        electrode_radius_mm=montage.electrode_radius_mm,
+        electrode_thickness_mm=montage.electrode_thickness_mm,
+        electrode_shape=montage.electrode_shape,
+        electrode_conductivity=montage.electrode_conductivity,
+    )
 
     S = sim_struct.SESSION()
     S.fnamehead = fnamehead
@@ -426,8 +460,38 @@ def main() -> None:
             "When runMNI152=True the MNI152 template resources are used."
         ),
     )
+    parser.add_argument(
+        "--montage-preset",
+        choices=MONTAGE_CHOICES,
+        default=DEFAULT_MONTAGE_PRESET,
+        help=(
+            "Named montage preset to run. Can also be set with TI_MONTAGE_PRESET. "
+            "Use --list-montage-presets to print available values."
+        ),
+    )
+    parser.add_argument(
+        "--list-montage-presets",
+        action="store_true",
+        help="Print available montage presets and exit.",
+    )
     args = parser.parse_args()
+    if args.list_montage_presets:
+        list_montage_presets()
+        return
+
+    global SELECTED_MONTAGE
+    try:
+        SELECTED_MONTAGE = resolve_montage_preset(args.montage_preset)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     start = time.time()
+    print(f"[INFO] Montage preset: {SELECTED_MONTAGE.name}")
+    log_event(
+        "montage_preset_selected",
+        preset=SELECTED_MONTAGE.name,
+        requested=args.montage_preset,
+    )
 
     if args.subject:
         subject_id = args.subject.strip()

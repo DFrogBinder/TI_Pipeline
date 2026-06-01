@@ -29,6 +29,7 @@ from utils.sim_utils import (
     img_info,
 )
 from utils.skin_filter import smooth_skin_segmentation
+from target_montages import MONTAGE_CHOICES, MONTAGE_PRESETS, resolve_montage_preset
 import time
 
 
@@ -45,6 +46,8 @@ skinFilterOpeningVoxels = 1
 skinFilterKeepLargestComponent = True
 saveSkinFilterPreview = True
 rootDIR = '/mnt/parscratch/users/cop23bi/full-ti-dataset'
+DEFAULT_MONTAGE_PRESET = os.environ.get("TI_MONTAGE_PRESET", "right-hippocampus")
+SELECTED_MONTAGE = None
 
 
 def log_event(event: str, **fields) -> None:
@@ -61,6 +64,21 @@ def log_file_info(label: str, path: str) -> None:
         exists=p.exists(),
         size_bytes=p.stat().st_size if p.exists() else None,
     )
+
+
+def list_montage_presets() -> None:
+    print("Available montage presets:")
+    for name in sorted(MONTAGE_PRESETS):
+        preset = MONTAGE_PRESETS[name]
+        print(
+            f"- {name}: "
+            f"pair1={preset.pair1.anode}->{preset.pair1.cathode} ({preset.pair1.current_a:.6g} A), "
+            f"pair2={preset.pair2.anode}->{preset.pair2.cathode} ({preset.pair2.current_a:.6g} A), "
+            f"electrode radius={preset.electrode_radius_mm:.1f} mm, "
+            f"thickness={preset.electrode_thickness_mm:.1f} mm, "
+            f"conductivity={preset.electrode_conductivity:.3g} S/m"
+        )
+        print(f"  {preset.description}")
 
 
 def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
@@ -250,21 +268,41 @@ def process_subject(subject_entry):
             log_event("error", stage="charm_remesh", subject=subject, error=str(e))
 
 
-    electrode_size        = [10, 2]       # [radius_mm, thickness_mm]
-    electrode_shape       = 'ellipse'
-    electrode_conductivity = 1.4
-
-    # Right Hippocampus montage
-    montage_right = ('F9', 2e-3, 'P7', -2e-3)
-    montage_left  = ('FT8', 1.588656e-3, 'TP8',  -1.588656e-3)
-
-    # Left Hippocampus montage
-    # montage_right = ('F10', 2e-3, 'P8', -2e-3)
-    # montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
-    
-    # M1 montage
-    # montage_right = ('C1', 1.34e-3, 'Cz', -1.34e-3)
-    # montage_left  = ('C3', 2.66e-3, 'CP5',  -2.66e-3)
+    montage = SELECTED_MONTAGE or resolve_montage_preset(DEFAULT_MONTAGE_PRESET)
+    electrode_size = [montage.electrode_radius_mm, montage.electrode_thickness_mm]
+    electrode_shape = montage.electrode_shape
+    electrode_conductivity = montage.electrode_conductivity
+    montage_right = (
+        montage.pair1.anode,
+        montage.pair1.current_a,
+        montage.pair1.cathode,
+        -montage.pair1.current_a,
+    )
+    montage_left = (
+        montage.pair2.anode,
+        montage.pair2.current_a,
+        montage.pair2.cathode,
+        -montage.pair2.current_a,
+    )
+    log_event(
+        "montage_config",
+        subject=subject_source,
+        preset=montage.name,
+        roi=montage.roi,
+        e_target=montage.e_target,
+        stimulated_volume=montage.stimulated_volume,
+        configuration=montage.configuration,
+        pair1_anode=montage.pair1.anode,
+        pair1_cathode=montage.pair1.cathode,
+        pair1_current_a=montage.pair1.current_a,
+        pair2_anode=montage.pair2.anode,
+        pair2_cathode=montage.pair2.cathode,
+        pair2_current_a=montage.pair2.current_a,
+        electrode_radius_mm=montage.electrode_radius_mm,
+        electrode_thickness_mm=montage.electrode_thickness_mm,
+        electrode_shape=montage.electrode_shape,
+        electrode_conductivity=montage.electrode_conductivity,
+    )
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))
@@ -576,9 +614,39 @@ def main():
             "Ignored when --subject is given. Defaults to #CPUs (capped by #subjects)."
         ),
     )
+    parser.add_argument(
+        "--montage-preset",
+        choices=MONTAGE_CHOICES,
+        default=DEFAULT_MONTAGE_PRESET,
+        help=(
+            "Named montage preset to run. Can also be set with TI_MONTAGE_PRESET. "
+            "Use --list-montage-presets to print available values."
+        ),
+    )
+    parser.add_argument(
+        "--list-montage-presets",
+        action="store_true",
+        help="Print available montage presets and exit.",
+    )
 
     args = parser.parse_args()
+    if args.list_montage_presets:
+        list_montage_presets()
+        return
+
+    global SELECTED_MONTAGE
+    try:
+        SELECTED_MONTAGE = resolve_montage_preset(args.montage_preset)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     start = time.time()
+    print(f"[INFO] Montage preset: {SELECTED_MONTAGE.name}")
+    log_event(
+        "montage_preset_selected",
+        preset=SELECTED_MONTAGE.name,
+        requested=args.montage_preset,
+    )
 
     if args.subject:
         # ---------- Single-subject (Slurm array) mode ----------

@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
 
 import nibabel as nib
@@ -23,6 +22,13 @@ if str(ROOT) not in sys.path:
 
 from utils.paths import sim_output_dir, simnibs_root
 from utils.sim_utils import format_output_dir
+from target_montages import (
+    MONTAGE_CHOICES,
+    MONTAGE_PRESETS,
+    PairSpec,
+    MontageSpec,
+    resolve_montage_preset,
+)
 
 
 SUBJECT = "MNI152"
@@ -30,59 +36,6 @@ DEFAULT_ROOT_DIR = "/home/boyan/sandbox/Jake_Data/MNI152-data"
 DEFAULT_MNI_MESH_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/MNI152.msh"
 DEFAULT_REFERENCE_T1_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
 DEFAULT_ELEMENT_SIZE = 0.1
-
-
-@dataclass(frozen=True)
-class PairSpec:
-    anode: str
-    cathode: str
-    current_amp: float
-
-
-@dataclass(frozen=True)
-class MontageSpec:
-    name: str
-    description: str
-    pair1: PairSpec
-    pair2: PairSpec
-    electrode_radius_mm: float = 10.0
-    electrode_thickness_mm: float = 1.0
-    electrode_shape: str = "ellipse"
-    electrode_conductivity: float = 0.85
-
-
-MONTAGE_PRESETS: dict[str, MontageSpec] = {
-    "right-thalamus": MontageSpec(
-        name="right-thalamus",
-        description="Right-thalamus preset from the existing commented MNI152 montage block.",
-        pair1=PairSpec("AF7", "TP7", 2e-3),
-        pair2=PairSpec("T8", "PO8", 2e-3),
-    ),
-    "left-hippocampus": MontageSpec(
-        name="left-hippocampus",
-        description="Left-hippocampus preset from the existing MNI152 runner.",
-        pair1=PairSpec("F10", "P8", 2e-3),
-        pair2=PairSpec("T7", "P7", 1.588656e-3),
-    ),
-    "left-m1": MontageSpec(
-        name="left-m1",
-        description="Primary motor cortex preset from the existing MNI152 runner.",
-        pair1=PairSpec("FC1", "FCz", 1.34e-3),
-        pair2=PairSpec("C3", "P5", 2.66e-3),
-    ),
-    "right-dlpc": MontageSpec(
-        name="right-dlpc",
-        description="Right-dlpc preset from the existing MNI152 runner.",
-        pair1=PairSpec("AF4", "F4", 0.796214e-3),
-        pair2=PairSpec("C2", "CP1", 2e-3),
-    ),
-    "right-m1": MontageSpec(
-        name="right-m1",
-        description="Right M1 montage that was previously active in this runner.",
-        pair1=PairSpec("FC6", "FT8", 2e-3),
-        pair2=PairSpec("C2", "C4", 0.796214e-3),
-    )
-}
 
 
 def log_event(event: str, **fields) -> None:
@@ -140,7 +93,8 @@ def list_presets() -> None:
             f"pair2={preset.pair2.anode}->{preset.pair2.cathode} ({preset.pair2.current_amp:.6g} A), "
             f"electrode radius={preset.electrode_radius_mm:.1f} mm, "
             f"thickness={preset.electrode_thickness_mm:.1f} mm, "
-            f"conductivity={preset.electrode_conductivity:.3g} S/m"
+            f"conductivity={preset.electrode_conductivity:.3g} S/m, "
+            f"roi={preset.roi}, configuration={preset.configuration}"
         )
         print(f"  {preset.description}")
 
@@ -158,11 +112,11 @@ def positive_scalar(value: float, label: str) -> float:
 
 
 def build_montage(args: argparse.Namespace) -> MontageSpec:
-    preset = MONTAGE_PRESETS[args.preset]
+    preset = resolve_montage_preset(args.preset)
     pair1 = PairSpec(
         anode=args.pair1_anode or preset.pair1.anode,
         cathode=args.pair1_cathode or preset.pair1.cathode,
-        current_amp=positive_current(
+        current_a=positive_current(
             args.pair1_current_a if args.pair1_current_a is not None else preset.pair1.current_amp,
             "pair1 current",
         ),
@@ -170,7 +124,7 @@ def build_montage(args: argparse.Namespace) -> MontageSpec:
     pair2 = PairSpec(
         anode=args.pair2_anode or preset.pair2.anode,
         cathode=args.pair2_cathode or preset.pair2.cathode,
-        current_amp=positive_current(
+        current_a=positive_current(
             args.pair2_current_a if args.pair2_current_a is not None else preset.pair2.current_amp,
             "pair2 current",
         ),
@@ -178,6 +132,10 @@ def build_montage(args: argparse.Namespace) -> MontageSpec:
     return MontageSpec(
         name=preset.name,
         description=preset.description,
+        roi=preset.roi,
+        e_target=preset.e_target,
+        stimulated_volume=preset.stimulated_volume,
+        configuration=preset.configuration,
         pair1=pair1,
         pair2=pair2,
         electrode_radius_mm=positive_scalar(
@@ -338,6 +296,10 @@ def run_mni152(args: argparse.Namespace) -> None:
         "montage_config",
         preset=montage.name,
         description=montage.description,
+        roi=montage.roi,
+        e_target=montage.e_target,
+        stimulated_volume=montage.stimulated_volume,
+        configuration=montage.configuration,
         pair1_anode=montage.pair1.anode,
         pair1_cathode=montage.pair1.cathode,
         pair1_current_a=montage.pair1.current_amp,
@@ -454,7 +416,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--preset",
-        choices=sorted(MONTAGE_PRESETS),
+        choices=MONTAGE_CHOICES,
         default="left-thalamus",
         help="Named montage preset to run on the MNI152 template.",
     )

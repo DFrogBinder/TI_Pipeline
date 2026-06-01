@@ -79,10 +79,12 @@ def _write_subject_run(
     top_percentile_voxels = int(np.count_nonzero(top_mask))
     roi_voxels = int(np.count_nonzero(roi_mask))
     overlap_top_voxels = int(np.count_nonzero(overlap_mask))
-    threshold_mask = finite_mask & (field > 0.2)
+    threshold_mask = finite_mask & (field >= 0.2)
+    coverage_mask = finite_mask & (field >= 0.2)
     threshold_in_roi_mask = threshold_mask & roi_mask
     threshold_voxels = int(np.count_nonzero(threshold_mask))
     threshold_in_roi_voxels = int(np.count_nonzero(threshold_in_roi_mask))
+    coverage_voxels = int(np.count_nonzero(coverage_mask))
 
     _save_nifti(post_dir / f"atlas_{roi_name}_mask.nii.gz", roi_mask.astype(np.float32))
     _save_nifti(post_dir / f"efield_{percentile_tag}_mask.nii.gz", top_mask.astype(np.float32))
@@ -125,6 +127,9 @@ def _write_subject_run(
             "roi_mean": float(np.nanmean(roi_values)),
             "focality_percent_of_whole_brain_gt_threshold": float(
                 threshold_voxels / whole_brain_voxels * 100.0
+            ),
+            "whole_brain_coverage_percent_ge_threshold": float(
+                coverage_voxels / whole_brain_voxels * 100.0
             ),
         },
         "extended_metric_status": {
@@ -231,6 +236,7 @@ def test_run_analysis_writes_image_repeatability_outputs(tmp_path, monkeypatch):
         "image_repeatability_issues.csv",
         "image_repeatability_report.md",
         "image_repeatability_methodology.md",
+        "whole_brain_coverage_repeat_distribution.csv",
         "figures/08_image_repeatability_summary.png",
         "figures/09_whole_brain_occupancy_percentages.png",
     ]:
@@ -251,3 +257,8 @@ def test_run_analysis_writes_image_repeatability_outputs(tmp_path, monkeypatch):
 
     issues = pd.read_csv(output_dir / "image_repeatability_issues.csv")
     assert issues.empty
+
+    coverage_distribution = pd.read_csv(output_dir / "whole_brain_coverage_repeat_distribution.csv")
+    assert set(coverage_distribution["metric"]) == {"whole_brain_coverage_percent_ge_threshold"}
+    assert coverage_distribution["subject"].tolist() == ["sub-01", "sub-02"]
+    assert coverage_distribution["n_repeats"].tolist() == [2, 2]

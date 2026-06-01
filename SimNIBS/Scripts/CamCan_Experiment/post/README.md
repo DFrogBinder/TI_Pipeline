@@ -218,7 +218,7 @@ Interpretation:
 
 ### 3. Focality metrics
 
-These quantify how much brain volume exceeds the chosen threshold.
+These quantify how much brain volume meets or exceeds the chosen threshold.
 
 Main fields:
 
@@ -226,12 +226,17 @@ Main fields:
 - `focality_voxels_gt_threshold`
 - `focality_volume_mm3_gt_threshold`
 - `focality_percent_of_whole_brain_gt_threshold`
+- `whole_brain_coverage_threshold_v_per_m`
+- `whole_brain_coverage_voxels_ge_threshold`
+- `whole_brain_coverage_volume_mm3_ge_threshold`
+- `whole_brain_coverage_percent_ge_threshold`
 - `focality_voxels_abs_delta_mni`
 - `focality_volume_mm3_abs_delta_mni`
 
 Interpretation:
 
 - these metrics estimate how widespread the strong field is
+- `whole_brain_coverage_*` fields use a fixed inclusive `>= 0.2 V/m` cutoff
 - they are useful as a quality or spread measure relative to the MNI baseline
 
 ### 4. Neighbor-region metrics
@@ -511,7 +516,7 @@ Simplified shape:
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "subject": "sub-CCxxxxxx",
   "target_roi": "Left-Hippocampus",
   "percentile": 95.0,
@@ -545,6 +550,7 @@ Simplified shape:
     "roi_mean_abs_delta_mni": 0.01,
     "focality_voxels_gt_threshold": 51000,
     "focality_percent_of_whole_brain_gt_threshold": 4.802,
+    "whole_brain_coverage_percent_ge_threshold": 4.802,
     "csf_distance_mm": 4.8,
     "electrode_distance_mean_mm": 63.2,
     "neighbors": [...],
@@ -561,11 +567,12 @@ Simplified shape:
     "neighbor_mean_of_means": "FileNotFoundError: FastSurfer atlas not found: ..."
   },
   "extended_metrics_meta": {
-    "schema_version": 5,
+    "schema_version": 6,
     "status": "complete",
     "config_fingerprint": "0123abcd4567ef89",
     "group_statuses": {
       "roi_intensity": "ok",
+      "whole_brain_coverage": "ok",
       "baseline": "not_configured",
       "neighbors": "error"
     }
@@ -624,6 +631,7 @@ Typical files in `<batch_root>/subject_metrics_analysis/` for the normal single-
 - `within_subject_repeatability.csv`
 - `subject_repeat_metric_means.csv`
 - `subject_repeat_metric_sds.csv`
+- `whole_brain_coverage_repeat_distribution.csv`
 - `subject_level_variation.csv`
 - `subject_level_variation_summary.csv`
 - `subject_level_top_variable_subjects.csv`

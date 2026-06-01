@@ -47,7 +47,14 @@ def _metric_slug(value: str) -> str:
     return slug.strip("_")
 
 
-EXTENDED_METRIC_SCHEMA_VERSION = 5
+EXTENDED_METRIC_SCHEMA_VERSION = 6
+WHOLE_BRAIN_COVERAGE_THRESHOLD_V_PER_M = 0.2
+WHOLE_BRAIN_COVERAGE_METRIC_KEYS = (
+    "whole_brain_coverage_threshold_v_per_m",
+    "whole_brain_coverage_voxels_ge_threshold",
+    "whole_brain_coverage_volume_mm3_ge_threshold",
+    "whole_brain_coverage_percent_ge_threshold",
+)
 EXTENDED_METRIC_LIST_FIELDS = ("neighbors", "electrode_distances")
 EXTENDED_METRIC_SCALAR_FIELDS = (
     "roi_peak",
@@ -64,6 +71,7 @@ EXTENDED_METRIC_SCALAR_FIELDS = (
     "focality_volume_mm3_abs_delta_mni",
     "mni_baseline_focality_voxels_gt_threshold",
     "mni_baseline_focality_volume_mm3_gt_threshold",
+    *WHOLE_BRAIN_COVERAGE_METRIC_KEYS,
     "neighbor_template_count",
     "neighbor_mean_of_means",
     "neighbor_max_of_max",
@@ -216,7 +224,7 @@ def _compute_core_field_metrics(
     roi_peak = float(np.max(roi_vals)) if roi_vals.size else math.nan
     roi_mean = float(np.mean(roi_vals)) if roi_vals.size else math.nan
 
-    focality_mask = finite_mask & (ti_data > focality_threshold)
+    focality_mask = finite_mask & (ti_data >= focality_threshold)
     focality_voxels = int(np.sum(focality_mask))
     whole_brain_voxels = int(np.sum(finite_mask))
     focality_volume_mm3 = float(focality_voxels * voxel_volume_mm3)
@@ -707,7 +715,7 @@ def compute_focality_metrics(
     focality_threshold: float,
 ) -> Dict[str, float]:
     voxel_volume_mm3 = vol_mm3(ti_img)
-    focality_mask = finite_mask & (ti_data > focality_threshold)
+    focality_mask = finite_mask & (ti_data >= focality_threshold)
     focality_voxels = int(np.sum(focality_mask))
     whole_brain_voxels = int(np.sum(finite_mask))
     return {
@@ -716,6 +724,29 @@ def compute_focality_metrics(
         "focality_volume_mm3_gt_threshold": float(focality_voxels * voxel_volume_mm3),
         "focality_percent_of_whole_brain_gt_threshold": (
             float((focality_voxels / whole_brain_voxels) * 100.0)
+            if whole_brain_voxels
+            else math.nan
+        ),
+    }
+
+
+def compute_whole_brain_coverage_metrics(
+    *,
+    ti_img: nib.Nifti1Image,
+    ti_data: np.ndarray,
+    finite_mask: np.ndarray,
+    threshold: float = WHOLE_BRAIN_COVERAGE_THRESHOLD_V_PER_M,
+) -> Dict[str, float]:
+    voxel_volume_mm3 = vol_mm3(ti_img)
+    coverage_mask = finite_mask & (ti_data >= threshold)
+    coverage_voxels = int(np.sum(coverage_mask))
+    whole_brain_voxels = int(np.sum(finite_mask))
+    return {
+        "whole_brain_coverage_threshold_v_per_m": float(threshold),
+        "whole_brain_coverage_voxels_ge_threshold": coverage_voxels,
+        "whole_brain_coverage_volume_mm3_ge_threshold": float(coverage_voxels * voxel_volume_mm3),
+        "whole_brain_coverage_percent_ge_threshold": (
+            float((coverage_voxels / whole_brain_voxels) * 100.0)
             if whole_brain_voxels
             else math.nan
         ),

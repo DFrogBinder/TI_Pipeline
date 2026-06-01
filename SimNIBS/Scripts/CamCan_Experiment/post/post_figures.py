@@ -42,8 +42,8 @@ METRIC_LABELS = {
     "roi_peak": "ROI peak field",
     "roi_mean": "ROI mean field",
     "overlap_fraction": "Top-percentile overlap",
-    "focality_in_roi_voxels_gt_threshold": "ROI voxels above threshold",
-    "focality_voxels_gt_threshold": "Whole-brain voxels above threshold",
+    "focality_in_roi_voxels_gt_threshold": "ROI voxels at/above threshold",
+    "focality_voxels_gt_threshold": "Whole-brain voxels at/above threshold",
     "electrode_distance_mean_mm": "Mean electrode distance",
 }
 
@@ -1111,7 +1111,7 @@ def make_threshold_edge_case_detail(roi_summary: list[dict[str, Any]], figures_d
     rounded_panel(draw, (190, 1080, 2210, 1215), fill=LIGHT_PURPLE, outline="#E8CDE0")
     draw.text(
         (240, 1120),
-        f"Mean ROI focality above threshold: {fmt_float(row.get('focality_in_roi_voxels_gt_threshold_mean'), 1)} voxels.",
+        f"Mean ROI focality at/above threshold: {fmt_float(row.get('focality_in_roi_voxels_gt_threshold_mean'), 1)} voxels.",
         font=FONT_BODY,
         fill=INK,
     )
@@ -1127,7 +1127,7 @@ def make_summary_table_figure(roi_summary: list[dict[str, Any]], figures_dir: Pa
 
     x0, y0 = 80, 255
     col_w = [400, 270, 270, 310, 310, 310, 260]
-    headers = ["ROI", "Rows", "ROI peak", "ROI mean", "Overlap", "ROI voxels > threshold", "Elec dist"]
+    headers = ["ROI", "Rows", "ROI peak", "ROI mean", "Overlap", "ROI voxels >= threshold", "Elec dist"]
     rounded_panel(draw, (x0, y0, 2320, 1085), fill=PANEL)
     x = x0 + 28
     for width, header in zip(col_w, headers):

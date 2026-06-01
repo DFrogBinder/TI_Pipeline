@@ -395,8 +395,13 @@ def test_run_post_process_writes_whole_brain_occupancy_metrics(monkeypatch, tmp_
     assert roi_metrics["focality_in_roi_voxels_gt_threshold"] == 3
     assert roi_metrics["focality_in_roi_percent_of_whole_brain_gt_threshold"] == pytest.approx(3 / 7 * 100.0)
     assert payload["extended_metrics"]["focality_percent_of_whole_brain_gt_threshold"] == pytest.approx(4 / 7 * 100.0)
+    assert payload["extended_metrics"]["whole_brain_coverage_threshold_v_per_m"] == pytest.approx(0.2)
+    assert payload["extended_metrics"]["whole_brain_coverage_voxels_ge_threshold"] == 4
+    assert payload["extended_metrics"]["whole_brain_coverage_percent_ge_threshold"] == pytest.approx(4 / 7 * 100.0)
     assert payload["subject_metrics_meta"]["status"] == "complete"
     assert payload["subject_metrics_meta"]["nonblocking_qc_checks"] == ["overlays"]
     assert payload["qc_meta"]["status"] == "partial"
+    assert payload["threshold_qc"]["whole_brain"]["metric_threshold"]["comparator"] == ">="
     assert payload["threshold_qc"]["whole_brain"]["metric_threshold"]["voxels"] == 4
+    assert roi_metrics["threshold_qc"]["metric_threshold"]["comparator"] == ">="
     assert roi_metrics["threshold_qc"]["metric_threshold"]["voxels"] == 3

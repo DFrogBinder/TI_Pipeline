@@ -78,7 +78,7 @@ These metrics are stored under `rois[ROI]` in `subject_metrics.json`.
 | `overlap_fraction` | `overlap_top_voxels / roi_voxels`; `0.0` when the ROI is empty. |
 | `roi_percent_of_whole_brain` | `100 * roi_voxels / whole_brain_voxels`. |
 | `overlap_top_percent_of_whole_brain` | `100 * overlap_top_voxels / whole_brain_voxels`. |
-| `focality_in_roi_voxels_gt_threshold` | Count of voxels where `ROI mask and finite and ti_data > focality_threshold_v_per_m`. |
+| `focality_in_roi_voxels_gt_threshold` | Count of voxels where `ROI mask and finite and ti_data >= focality_threshold_v_per_m`. |
 | `focality_in_roi_volume_mm3_gt_threshold` | `focality_in_roi_voxels_gt_threshold * voxel_volume_mm3`. |
 | `focality_in_roi_percent_of_whole_brain_gt_threshold` | `100 * focality_in_roi_voxels_gt_threshold / whole_brain_voxels`. |
 | `roi_percentile` | Configured within-ROI percentile, usually `region_percentile`. |
@@ -128,9 +128,22 @@ Focality is computed over the whole finite TI volume, not just the target ROI.
 | Metric | Computation |
 | --- | --- |
 | `focality_threshold_v_per_m` | Configured focality threshold, `offtarget_threshold`. |
-| `focality_voxels_gt_threshold` | Count of voxels where `finite and ti_data > focality_threshold_v_per_m`. |
+| `focality_voxels_gt_threshold` | Count of voxels where `finite and ti_data >= focality_threshold_v_per_m`. |
 | `focality_volume_mm3_gt_threshold` | `focality_voxels_gt_threshold * voxel_volume_mm3`. |
 | `focality_percent_of_whole_brain_gt_threshold` | `100 * focality_voxels_gt_threshold / whole_brain_voxels`. |
+
+### Fixed Whole-Brain Coverage >= 0.2 V/m Metrics
+
+These fields are stored in `extended_metrics` in `subject_metrics.json`. They
+record the requested whole-brain field coverage using an inclusive, fixed
+`0.2 V/m` cutoff.
+
+| Metric | Computation |
+| --- | --- |
+| `whole_brain_coverage_threshold_v_per_m` | Fixed coverage threshold, `0.2`. |
+| `whole_brain_coverage_voxels_ge_threshold` | Count of voxels where `finite and ti_data >= 0.2`. |
+| `whole_brain_coverage_volume_mm3_ge_threshold` | `whole_brain_coverage_voxels_ge_threshold * voxel_volume_mm3`. |
+| `whole_brain_coverage_percent_ge_threshold` | `100 * whole_brain_coverage_voxels_ge_threshold / whole_brain_voxels`. |
 
 ### MNI Baseline Comparison Metrics
 
@@ -309,6 +322,7 @@ merges selected flattened subject metrics.
 | `roi_overlap_fraction` | Flattened target ROI `overlap_fraction`. |
 | `focality_voxels_gt_threshold` | Flattened subject focality voxel count. |
 | `focality_volume_mm3_gt_threshold` | Flattened subject focality volume. |
+| `whole_brain_coverage_percent_ge_threshold` | Flattened fixed-threshold whole-brain coverage percentage. |
 | `roi_peak_abs_delta_mni`, `roi_mean_abs_delta_mni` | Flattened MNI baseline absolute deltas. |
 | `csf_distance_mm`, `skull_distance_mm` | Flattened anatomy-distance covariates. |
 | `electrode_distance_*_mm` | Flattened electrode-distance summaries. |
@@ -409,7 +423,8 @@ different configured percentile remain correctly labeled.
 | `subject_metrics_long.csv` | metric columns | Flattened ROI overlap fields and numeric `extended_metrics` fields. Incomplete subject payloads are skipped. |
 
 `numeric_metrics()` excludes identifiers and static/configuration fields such as
-`focality_threshold_v_per_m`, MNI baseline constants,
+`focality_threshold_v_per_m`, `whole_brain_coverage_threshold_v_per_m`,
+MNI baseline constants,
 `neighbor_template_count`, and `electrode_distance_count`.
 
 ### Coverage Metrics
@@ -546,6 +561,14 @@ fraction fields most useful for quick review.
 | --- | --- |
 | `subject_repeat_metric_means.csv` | For each complete-case subject, mean of each numeric metric across repeats. |
 | `subject_repeat_metric_sds.csv` | For each complete-case subject, sample SD of each numeric metric across repeats. |
+| `whole_brain_coverage_repeat_distribution.csv` | For each complete-case subject and ROI, distribution of `whole_brain_coverage_percent_ge_threshold` across repeats. |
+
+`whole_brain_coverage_repeat_distribution.csv` contains:
+
+- identifiers: `roi`, `subject`, `metric`, `metric_label`
+- `n_repeats`
+- `mean`, `median`, `std`, `cv_percent`, `q1`, `q3`, `iqr`, `min`, `max`, `range`
+- `mean_abs_pairwise_diff`, `max_abs_pairwise_diff`
 
 ### Subject-Level Variation
 
@@ -685,7 +708,7 @@ field formulas, but they are part of the across-repeat layer's output contract.
 | `figures/06_subject_variation_summary.png` | Subject-level repeat variation figure. |
 | `figures/07_failure_summary.png` | Optional failure summary figure when logs are provided. |
 | `figures/08_image_repeatability_summary.png` | Image-level repeatability summary figure when image analysis succeeds. |
-| `figures/09_whole_brain_occupancy_percentages.png` | Repeat-level distributions for the five whole-brain occupancy percentage metrics. |
+| `figures/09_whole_brain_occupancy_percentages.png` | Repeat-level distributions for the whole-brain occupancy percentage metrics. |
 
 ## Legacy Standalone Robustness Analysis
 

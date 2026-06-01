@@ -88,7 +88,7 @@ def backfill_payload(payload: dict[str, Any], *, default_threshold: float) -> bo
             volume_mm3=whole_volume,
             denominator_voxels=whole_brain_voxels,
             threshold=threshold,
-            comparator=">",
+            comparator=">=",
         )
         changed = True
     if "overlay_threshold" not in threshold_qc["whole_brain"]:
@@ -116,7 +116,7 @@ def backfill_payload(payload: dict[str, Any], *, default_threshold: float) -> bo
                 volume_mm3=roi_threshold_volume,
                 denominator_voxels=whole_brain_voxels,
                 threshold=threshold,
-                comparator=">",
+                comparator=">=",
             )
             if roi_threshold_voxels == 0:
                 roi_payload["metric_threshold"]["reason"] = (

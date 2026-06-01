@@ -39,6 +39,7 @@ from post.metric_extensions import (
     FOCALITY_METRIC_KEYS,
     NEIGHBOR_METRIC_KEYS,
     ROI_INTENSITY_METRIC_KEYS,
+    WHOLE_BRAIN_COVERAGE_METRIC_KEYS,
     build_extended_metric_message_scaffold,
     build_extended_metric_status_scaffold,
     build_extended_metrics_scaffold,
@@ -50,6 +51,7 @@ from post.metric_extensions import (
     compute_focality_metrics,
     compute_neighbor_metrics,
     compute_roi_intensity_metrics,
+    compute_whole_brain_coverage_metrics,
     extended_metrics_config_fingerprint,
     json_ready_metric_value,
     load_subject_fastsurfer_atlas_data,
@@ -220,7 +222,7 @@ def _build_threshold_qc(
     whole_brain_voxels: int,
     voxel_volume_mm3: float,
 ) -> Dict[str, Any]:
-    metric_mask = finite_mask & (ti_data > cfg.offtarget_threshold)
+    metric_mask = finite_mask & (ti_data >= cfg.offtarget_threshold)
     overlay_mask = finite_mask & (ti_data >= cfg.hard_threshold)
     whole_brain_metric_voxels = int(np.count_nonzero(metric_mask))
     whole_brain_overlay_voxels = int(np.count_nonzero(overlay_mask))
@@ -239,7 +241,7 @@ def _build_threshold_qc(
                 denominator_voxels=whole_brain_voxels,
                 voxel_volume_mm3=voxel_volume_mm3,
                 threshold=cfg.offtarget_threshold,
-                comparator=">",
+                comparator=">=",
             ),
             "overlay_threshold": _threshold_support_payload(
                 voxels=overlay_voxels,
@@ -268,7 +270,7 @@ def _build_threshold_qc(
                 denominator_voxels=whole_brain_voxels,
                 voxel_volume_mm3=voxel_volume_mm3,
                 threshold=cfg.offtarget_threshold,
-                comparator=">",
+                comparator=">=",
             ),
             "overlay_threshold": _threshold_support_payload(
                 voxels=whole_brain_overlay_voxels,
@@ -812,7 +814,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         if whole_brain_voxels
         else float("nan")
     )
-    focality_mask = finite & (ti_data > cfg.offtarget_threshold)
+    focality_mask = finite & (ti_data >= cfg.offtarget_threshold)
 
     # Background for overlays (resampled to TI grid if available)
     t1_img_full = None
@@ -1101,6 +1103,15 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
                 focality_threshold=cfg.offtarget_threshold,
             ),
         )
+        execute_metric_group(
+            "whole_brain_coverage",
+            WHOLE_BRAIN_COVERAGE_METRIC_KEYS,
+            lambda: compute_whole_brain_coverage_metrics(
+                ti_img=ti_img,
+                ti_data=ti_data,
+                finite_mask=finite,
+            ),
+        )
 
         baseline_prereq_failed = (
             extended_group_status.get("roi_intensity") == "error"
@@ -1374,6 +1385,7 @@ def run_post_process(cfg: PostProcessConfig) -> Dict[str, dict]:
         for group_name, metric_keys in (
             ("roi_intensity", ROI_INTENSITY_METRIC_KEYS),
             ("focality", FOCALITY_METRIC_KEYS),
+            ("whole_brain_coverage", WHOLE_BRAIN_COVERAGE_METRIC_KEYS),
             ("baseline", BASELINE_METRIC_KEYS),
             ("neighbors", NEIGHBOR_METRIC_KEYS),
             ("centroid", CENTROID_METRIC_KEYS),

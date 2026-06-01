@@ -4,7 +4,7 @@ Standalone robustness analysis (per-subject + population).
 
 Computes:
   - ROI peak/mean and deltas vs MNI152 baseline (root-based extraction)
-  - Whole-brain focality voxels > threshold and delta vs MNI152
+  - Whole-brain focality voxels >= threshold and delta vs MNI152
   - Neighboring-region mean/peak (atlas-adjacent to ROI)
   - Distances from ROI centroid to CSF/skull (if labels provided)
   - Distances from ROI centroid to electrode centers (CSV input)

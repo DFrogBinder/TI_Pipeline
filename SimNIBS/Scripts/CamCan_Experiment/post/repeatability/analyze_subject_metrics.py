@@ -50,11 +50,15 @@ METRIC_LABELS = {
     "roi_mean": "ROI Mean Field",
     "roi_peak_abs_delta_mni": "ROI Peak Absolute Delta vs MNI",
     "roi_mean_abs_delta_mni": "ROI Mean Absolute Delta vs MNI",
-    "focality_voxels_gt_threshold": "Focality Voxels > Threshold",
-    "focality_volume_mm3_gt_threshold": "Focality Volume > Threshold",
+    "focality_voxels_gt_threshold": "Focality Voxels >= Threshold",
+    "focality_volume_mm3_gt_threshold": "Focality Volume >= Threshold",
     "focality_percent_of_whole_brain_gt_threshold": "Threshold % of Whole Brain",
-    "focality_in_roi_voxels_gt_threshold": "ROI Focality Voxels > Threshold",
-    "focality_in_roi_volume_mm3_gt_threshold": "ROI Focality Volume > Threshold",
+    "whole_brain_coverage_threshold_v_per_m": "Whole-Brain Coverage Threshold",
+    "whole_brain_coverage_voxels_ge_threshold": "Whole-Brain Coverage Voxels >= 0.2 V/m",
+    "whole_brain_coverage_volume_mm3_ge_threshold": "Whole-Brain Coverage Volume >= 0.2 V/m",
+    "whole_brain_coverage_percent_ge_threshold": "Whole-Brain Coverage >= 0.2 V/m",
+    "focality_in_roi_voxels_gt_threshold": "ROI Focality Voxels >= Threshold",
+    "focality_in_roi_volume_mm3_gt_threshold": "ROI Focality Volume >= Threshold",
     "focality_in_roi_percent_of_whole_brain_gt_threshold": "Threshold in ROI % of Whole Brain",
     "focality_voxels_abs_delta_mni": "Focality Voxels Absolute Delta vs MNI",
     "focality_volume_mm3_abs_delta_mni": "Focality Volume Absolute Delta vs MNI",
@@ -90,6 +94,10 @@ METRIC_FORMATTERS = {
     "focality_voxels_gt_threshold": lambda x: f"{x:,.0f}",
     "focality_volume_mm3_gt_threshold": lambda x: f"{x:,.3f}",
     "focality_percent_of_whole_brain_gt_threshold": lambda x: f"{x:.3f}%",
+    "whole_brain_coverage_threshold_v_per_m": lambda x: f"{x:.3f}",
+    "whole_brain_coverage_voxels_ge_threshold": lambda x: f"{x:,.0f}",
+    "whole_brain_coverage_volume_mm3_ge_threshold": lambda x: f"{x:,.3f}",
+    "whole_brain_coverage_percent_ge_threshold": lambda x: f"{x:.3f}%",
     "focality_in_roi_voxels_gt_threshold": lambda x: f"{x:,.0f}",
     "focality_in_roi_volume_mm3_gt_threshold": lambda x: f"{x:,.3f}",
     "focality_in_roi_percent_of_whole_brain_gt_threshold": lambda x: f"{x:.3f}%",
@@ -117,7 +125,12 @@ WHOLE_BRAIN_OCCUPANCY_METRICS = [
     "top_percentile_percent_of_whole_brain",
     "overlap_top_percent_of_whole_brain",
     "focality_percent_of_whole_brain_gt_threshold",
+    "whole_brain_coverage_percent_ge_threshold",
     "focality_in_roi_percent_of_whole_brain_gt_threshold",
+]
+
+WHOLE_BRAIN_COVERAGE_REPEAT_METRICS = [
+    "whole_brain_coverage_percent_ge_threshold",
 ]
 
 IMAGE_MASK_METRIC_LABELS = {
@@ -393,6 +406,7 @@ def numeric_metrics(frame: pd.DataFrame) -> list[str]:
     static_metrics = {
         "schema_version",
         "focality_threshold_v_per_m",
+        "whole_brain_coverage_threshold_v_per_m",
         "mni_baseline_roi_peak",
         "mni_baseline_roi_mean",
         "mni_baseline_focality_voxels_gt_threshold",
@@ -1381,6 +1395,69 @@ def compute_subject_level_variation(
             )
 
     return pd.DataFrame(rows).sort_values(["metric", "subject"]).reset_index(drop=True)
+
+
+def compute_whole_brain_coverage_repeat_distribution(frame: pd.DataFrame) -> pd.DataFrame:
+    output_columns = [
+        "roi",
+        "subject",
+        "metric",
+        "metric_label",
+        "n_repeats",
+        "mean",
+        "median",
+        "std",
+        "cv_percent",
+        "q1",
+        "q3",
+        "iqr",
+        "min",
+        "max",
+        "range",
+        "mean_abs_pairwise_diff",
+        "max_abs_pairwise_diff",
+    ]
+    rows: list[dict[str, object]] = []
+    for metric in WHOLE_BRAIN_COVERAGE_REPEAT_METRICS:
+        if metric not in frame.columns:
+            continue
+        for (roi, subject), subset in frame.groupby(["roi", "subject"], sort=True):
+            values = pd.to_numeric(subset[metric], errors="coerce").dropna().to_numpy(dtype=float)
+            if values.size == 0:
+                continue
+            stats_row = summarise_series(pd.Series(values))
+            diffs = (
+                pairwise_absolute_differences(values)
+                if values.size > 1
+                else np.asarray([], dtype=float)
+            )
+            diff_summary = summarise_series(pd.Series(diffs))
+            rows.append(
+                {
+                    "roi": roi,
+                    "subject": subject,
+                    "metric": metric,
+                    "metric_label": infer_metric_label(metric),
+                    "n_repeats": stats_row["n"],
+                    "mean": stats_row["mean"],
+                    "median": stats_row["median"],
+                    "std": stats_row["std"],
+                    "cv_percent": stats_row["cv_percent"],
+                    "q1": stats_row["q1"],
+                    "q3": stats_row["q3"],
+                    "iqr": stats_row["iqr"],
+                    "min": stats_row["min"],
+                    "max": stats_row["max"],
+                    "range": stats_row["max"] - stats_row["min"],
+                    "mean_abs_pairwise_diff": diff_summary["mean"],
+                    "max_abs_pairwise_diff": diff_summary["max"],
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=output_columns)
+    return pd.DataFrame(rows, columns=output_columns).sort_values(
+        ["roi", "subject", "metric"]
+    ).reset_index(drop=True)
 
 
 def compute_top_variable_subjects(subject_level_variation: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
@@ -4231,6 +4308,9 @@ def run_analysis(
     subject_repeat_sds = (
         complete_case_frame.groupby("subject", sort=True)[metrics].std(numeric_only=True).reset_index()
     )
+    whole_brain_coverage_distribution = compute_whole_brain_coverage_repeat_distribution(
+        complete_case_frame
+    )
 
     repeat_level_available = compute_repeat_level_stats(analysis_frame, metrics)
     repeat_level_complete = compute_repeat_level_stats(complete_case_frame, metrics)
@@ -4340,6 +4420,10 @@ def run_analysis(
     subject_variation_summary.to_csv(output_dir / "subject_level_variation_summary.csv", index=False)
     subject_repeat_means.to_csv(output_dir / "subject_repeat_metric_means.csv", index=False)
     subject_repeat_sds.to_csv(output_dir / "subject_repeat_metric_sds.csv", index=False)
+    whole_brain_coverage_distribution.to_csv(
+        output_dir / "whole_brain_coverage_repeat_distribution.csv",
+        index=False,
+    )
     top_variable_subjects.to_csv(output_dir / "subject_level_top_variable_subjects.csv", index=False)
     cross_metric_instability.to_csv(output_dir / "subject_cross_metric_instability.csv", index=False)
     if logs_root_path is not None:

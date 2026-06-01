@@ -7,6 +7,7 @@ from post.metric_extensions import (
     build_fixed_neighbor_masks,
     compute_electrode_distance_metrics,
     compute_focality_metrics,
+    compute_whole_brain_coverage_metrics,
     flatten_subject_metric_payload,
 )
 
@@ -82,6 +83,33 @@ def test_focality_percent_uses_finite_ti_voxels_as_whole_brain_denominator():
 
     assert metrics["focality_voxels_gt_threshold"] == 4
     assert metrics["focality_percent_of_whole_brain_gt_threshold"] == pytest.approx(4 / 7 * 100.0)
+
+
+def test_focality_and_fixed_coverage_include_voxels_equal_to_point_two():
+    ti_data = np.array(
+        [[[0.10, 0.20], [0.40, np.nan]], [[0.00, 0.25], [0.19, 0.50]]],
+        dtype=np.float32,
+    )
+    ti_img = nib.Nifti1Image(ti_data, np.eye(4))
+    finite = np.isfinite(ti_data)
+
+    focality = compute_focality_metrics(
+        ti_img=ti_img,
+        ti_data=ti_data,
+        finite_mask=finite,
+        focality_threshold=0.2,
+    )
+    coverage = compute_whole_brain_coverage_metrics(
+        ti_img=ti_img,
+        ti_data=ti_data,
+        finite_mask=finite,
+    )
+
+    assert focality["focality_voxels_gt_threshold"] == 4
+    assert focality["focality_percent_of_whole_brain_gt_threshold"] == pytest.approx(4 / 7 * 100.0)
+    assert coverage["whole_brain_coverage_threshold_v_per_m"] == pytest.approx(0.2)
+    assert coverage["whole_brain_coverage_voxels_ge_threshold"] == 4
+    assert coverage["whole_brain_coverage_percent_ge_threshold"] == pytest.approx(4 / 7 * 100.0)
 
 
 def test_electrode_distances_load_from_roi_subject_dataset_dir(tmp_path):
@@ -161,6 +189,7 @@ def test_flatten_subject_metric_payload_includes_whole_brain_occupancy_fields():
         },
         "extended_metrics": {
             "focality_percent_of_whole_brain_gt_threshold": 12.0,
+            "whole_brain_coverage_percent_ge_threshold": 14.0,
         },
     }
 
@@ -172,3 +201,4 @@ def test_flatten_subject_metric_payload_includes_whole_brain_occupancy_fields():
     assert flattened["overlap_top_percent_of_whole_brain"] == 2.0
     assert flattened["focality_percent_of_whole_brain_gt_threshold"] == 12.0
     assert flattened["focality_in_roi_percent_of_whole_brain_gt_threshold"] == 3.0
+    assert flattened["whole_brain_coverage_percent_ge_threshold"] == 14.0

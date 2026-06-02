@@ -387,6 +387,7 @@ SimNIBS/Outputs/
 *.ply
 *.mat
 *.csv 
+!SimNIBS/Scripts/utils/targets.csv
 *.nii.gz
 *.nii
 *.svg

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Collect compact source-side inputs for mechanistic repeatability figures."""
 
-from __future__ import annotations
-
 import argparse
 import csv
 import math
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional
 
 
 MANIFEST_NAME = "mechanistic_figure_collection_manifest.csv"
@@ -17,8 +15,7 @@ COMPUTED_COVERAGE_NAME = "coverage_values.csv"
 DEFAULT_FIXED_REFERENCE_REPEAT = "repeat_001"
 
 
-@dataclass(frozen=True)
-class CoverageRow:
+class CoverageRow(NamedTuple):
     subject: str
     condition: str
     repeat_tag: str
@@ -27,8 +24,7 @@ class CoverageRow:
     suprathreshold_voxels: int
 
 
-@dataclass(frozen=True)
-class SelectedRepeat:
+class SelectedRepeat(NamedTuple):
     subject: str
     condition: str
     repeat_tag: str
@@ -36,8 +32,7 @@ class SelectedRepeat:
     rank_label: str
 
 
-@dataclass(frozen=True)
-class CoverageSelection:
+class CoverageSelection(NamedTuple):
     subject: str
     low: SelectedRepeat
     median: SelectedRepeat
@@ -45,8 +40,7 @@ class CoverageSelection:
     coverage_range: float
 
 
-@dataclass(frozen=True)
-class ManifestRow:
+class ManifestRow(NamedTuple):
     role: str
     subject: str
     condition: str
@@ -58,9 +52,8 @@ class ManifestRow:
     message: str
 
 
-@dataclass(frozen=True)
-class CollectionResult:
-    manifest_rows: list[ManifestRow]
+class CollectionResult(NamedTuple):
+    manifest_rows: List[ManifestRow]
     bytes_planned: int
     bytes_copied: int
 
@@ -73,8 +66,8 @@ def _finite_float(value: object) -> float:
     return parsed if math.isfinite(parsed) else float("nan")
 
 
-def read_coverage_rows(path: Path) -> list[CoverageRow]:
-    rows: list[CoverageRow] = []
+def read_coverage_rows(path: Path) -> List[CoverageRow]:
+    rows: List[CoverageRow] = []
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         for raw in reader:
@@ -108,10 +101,11 @@ def _import_nifti_dependencies():
 
 
 def _subject_from_repeatability_dir(path: Path) -> str:
-    return path.name.removesuffix("_repeatability")
+    suffix = "_repeatability"
+    return path.name[: -len(suffix)] if path.name.endswith(suffix) else path.name
 
 
-def discover_subjects(base_output_dir: Path, preferred_subject: str | None = None) -> list[str]:
+def discover_subjects(base_output_dir: Path, preferred_subject: Optional[str] = None) -> List[str]:
     if preferred_subject is not None:
         return [preferred_subject]
     subjects = [
@@ -126,7 +120,7 @@ def roi_mask_path(base_output_dir: Path, subject: str) -> Path:
     return base_output_dir / "_analysis" / subject / "remesh" / "roi_mask_on_reference_ti.nii.gz"
 
 
-def repeat_dirs(base_output_dir: Path, subject: str, condition: str) -> list[Path]:
+def repeat_dirs(base_output_dir: Path, subject: str, condition: str) -> List[Path]:
     root = base_output_dir / f"{subject}_repeatability" / condition / "repeats"
     return sorted((path for path in root.glob("repeat_*") if path.is_dir()), key=lambda path: _repeat_index(path.name))
 
@@ -135,10 +129,10 @@ def compute_coverage_rows(
     base_output_dir: Path,
     *,
     threshold: float = 0.2,
-    preferred_subject: str | None = None,
-) -> list[CoverageRow]:
+    preferred_subject: Optional[str] = None,
+) -> List[CoverageRow]:
     nib, np = _import_nifti_dependencies()
-    rows: list[CoverageRow] = []
+    rows: List[CoverageRow] = []
     for subject in discover_subjects(base_output_dir, preferred_subject=preferred_subject):
         mask_file = roi_mask_path(base_output_dir, subject)
         if not mask_file.is_file():
@@ -188,8 +182,8 @@ def _selected(row: CoverageRow, rank_label: str) -> SelectedRepeat:
     )
 
 
-def select_subject_and_repeats(rows: list[CoverageRow], preferred_subject: str | None = None) -> CoverageSelection:
-    by_subject: dict[str, list[CoverageRow]] = {}
+def select_subject_and_repeats(rows: List[CoverageRow], preferred_subject: Optional[str] = None) -> CoverageSelection:
+    by_subject: Dict[str, List[CoverageRow]] = {}
     for row in rows:
         if row.condition != "remesh":
             continue
@@ -289,7 +283,7 @@ def _manifest_row_for_file(
     )
 
 
-def _selected_repeat_files(base_output_dir: Path, out_dir: Path, repeat: SelectedRepeat) -> list[ManifestRow]:
+def _selected_repeat_files(base_output_dir: Path, out_dir: Path, repeat: SelectedRepeat) -> List[ManifestRow]:
     mesh_source = repeat_mesh_path(base_output_dir, repeat.subject, repeat.condition, repeat.repeat_tag)
     ti_source = repeat_ti_volume_path(base_output_dir, repeat.subject, repeat.condition, repeat.repeat_tag)
     base_dest = out_dir / "selected_repeats" / repeat.rank_label / repeat.condition / repeat.repeat_tag
@@ -318,8 +312,8 @@ def plan_manifest(
     out_dir: Path,
     selection: CoverageSelection,
     fixed_reference_repeat: str = DEFAULT_FIXED_REFERENCE_REPEAT,
-) -> list[ManifestRow]:
-    rows: list[ManifestRow] = []
+) -> List[ManifestRow]:
+    rows: List[ManifestRow] = []
     for repeat in (selection.low, selection.median, selection.high):
         rows.extend(_selected_repeat_files(base_output_dir, out_dir, repeat))
 
@@ -405,7 +399,7 @@ def plan_manifest(
     return rows
 
 
-def write_manifest(path: Path, rows: list[ManifestRow]) -> None:
+def write_manifest(path: Path, rows: List[ManifestRow]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "role",
@@ -444,7 +438,7 @@ def write_coverage_selection(path: Path, selection: CoverageSelection) -> None:
             )
 
 
-def write_coverage_rows(path: Path, rows: list[CoverageRow]) -> None:
+def write_coverage_rows(path: Path, rows: List[CoverageRow]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "subject",
@@ -465,13 +459,13 @@ def collect_mechanistic_inputs(
     *,
     base_output_dir: Path,
     out_dir: Path,
-    coverage_csv: Path | None,
+    coverage_csv: Optional[Path],
     dry_run: bool,
     copy_files: bool,
     max_total_bytes: int,
     allow_large: bool,
     threshold: float = 0.2,
-    preferred_subject: str | None = None,
+    preferred_subject: Optional[str] = None,
     fixed_reference_repeat: str = DEFAULT_FIXED_REFERENCE_REPEAT,
 ) -> CollectionResult:
     if coverage_csv is None:

@@ -44,8 +44,23 @@ COVERAGE_CSV="${COVERAGE_CSV:-${COVERAGE_CSV_CONFIG}}"
 PREFERRED_SUBJECT="${PREFERRED_SUBJECT:-${PREFERRED_SUBJECT_CONFIG}}"
 FIXED_REFERENCE_REPEAT="${FIXED_REFERENCE_REPEAT:-${FIXED_REFERENCE_REPEAT_CONFIG}}"
 PYTHON_BIN="${PYTHON_BIN:-${PYTHON_BIN_CONFIG}}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PIPELINE_DIR_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+resolve_pipeline_dir_default() {
+  if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+    if [[ "$(basename "${SLURM_SUBMIT_DIR}")" == "hpc_scripts" ]]; then
+      cd "${SLURM_SUBMIT_DIR}/.." && pwd
+      return
+    fi
+    cd "${SLURM_SUBMIT_DIR}" && pwd
+    return
+  fi
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "${script_dir}/.." && pwd
+}
+
+PIPELINE_DIR_DEFAULT="$(resolve_pipeline_dir_default)"
 PIPELINE_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_CONFIG:-${PIPELINE_DIR_DEFAULT}}}"
 COLLECTOR="${COLLECTOR:-${COLLECTOR_CONFIG:-${PIPELINE_DIR}/post/collect_mechanistic_figure_inputs.py}}"
 

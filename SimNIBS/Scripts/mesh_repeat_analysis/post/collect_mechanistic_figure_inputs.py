@@ -92,30 +92,11 @@ def read_coverage_rows(path: Path) -> List[CoverageRow]:
 
 
 def _import_nifti_dependencies():
-    missing = []
-    first_exception: Optional[BaseException] = None
     try:
         import nibabel as nib  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when environment lacks dependency
-        missing.append(exc.name or "nibabel")
-        first_exception = exc
-
-    try:
         import numpy as np  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when environment lacks dependency
-        missing.append(exc.name or "numpy")
-        if first_exception is None:
-            first_exception = exc
-
-    if missing:
-        package_list = ", ".join(dict.fromkeys(missing))
-        raise RuntimeError(
-            "Computing coverage from NIfTI files requires nibabel and numpy. "
-            f"Missing Python package(s): {package_list}. "
-            "On Stanage, load the same environment used by the Slurm launchers: "
-            'module purge; module use "$HOME/modules"; module load SimNIBS/4.0.1-foss-2023a. '
-            "Alternatively, pass --coverage-csv to use precomputed coverage and skip NIfTI imports."
-        ) from first_exception
+    except Exception as exc:  # pragma: no cover - exercised only when environment lacks dependency
+        raise RuntimeError("Computing coverage from NIfTI files requires nibabel and numpy.") from exc
     return nib, np
 
 
@@ -139,6 +120,21 @@ def roi_mask_path(base_output_dir: Path, subject: str) -> Path:
     return base_output_dir / "_analysis" / subject / "remesh" / "roi_mask_on_reference_ti.nii.gz"
 
 
+def read_ti_scale_factors(base_output_dir: Path, subject: str, condition: str) -> Dict[str, float]:
+    summary_path = base_output_dir / "_analysis" / subject / condition / "summary.csv"
+    if not summary_path.is_file():
+        return {}
+    scale_factors: Dict[str, float] = {}
+    with summary_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for raw in reader:
+            repeat_tag = str(raw.get("repeat_tag", "")).strip()
+            scale_factor = _finite_float(raw.get("ti_scale_factor"))
+            if repeat_tag and scale_factor > 0:
+                scale_factors[repeat_tag] = scale_factor
+    return scale_factors
+
+
 def repeat_dirs(base_output_dir: Path, subject: str, condition: str) -> List[Path]:
     root = base_output_dir / f"{subject}_repeatability" / condition / "repeats"
     return sorted((path for path in root.glob("repeat_*") if path.is_dir()), key=lambda path: _repeat_index(path.name))
@@ -157,6 +153,7 @@ def compute_coverage_rows(
         if not mask_file.is_file():
             continue
         mask_data = np.asanyarray(nib.load(mask_file).dataobj) > 0
+        scale_factors = read_ti_scale_factors(base_output_dir, subject, "remesh")
         for repeat_dir in repeat_dirs(base_output_dir, subject, "remesh"):
             ti_file = repeat_ti_volume_path(base_output_dir, subject, "remesh", repeat_dir.name)
             if not ti_file.is_file():
@@ -167,7 +164,8 @@ def compute_coverage_rows(
                     f"Shape mismatch for {subject} {repeat_dir.name}: "
                     f"TI shape {ti_data.shape}, ROI mask shape {mask_data.shape}"
                 )
-            roi_values = ti_data[mask_data]
+            scale_factor = scale_factors.get(repeat_dir.name, 1.0)
+            roi_values = ti_data[mask_data] * scale_factor
             finite = np.isfinite(roi_values)
             finite_count = int(np.count_nonzero(finite))
             if finite_count == 0:
@@ -534,13 +532,8 @@ def collect_mechanistic_inputs(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-output-dir", type=Path)
-    parser.add_argument("--out-dir", type=Path)
-    parser.add_argument(
-        "--check-nifti-dependencies",
-        action="store_true",
-        help="Import nibabel and numpy, print a status line, and exit.",
-    )
+    parser.add_argument("--base-output-dir", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument(
         "--coverage-csv",
         type=Path,
@@ -554,22 +547,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-large", action="store_true")
     parser.add_argument("--copy", action="store_true", help="Copy planned files. Without this flag, only manifests are written.")
     parser.add_argument("--dry-run", action="store_true", help="Write manifests without copying files.")
-    args = parser.parse_args()
-    if not args.check_nifti_dependencies:
-        if args.base_output_dir is None:
-            parser.error("--base-output-dir is required unless --check-nifti-dependencies is used.")
-        if args.out_dir is None:
-            parser.error("--out-dir is required unless --check-nifti-dependencies is used.")
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.check_nifti_dependencies:
-        _import_nifti_dependencies()
-        print("nifti_dependencies=ok")
-        return
-
     dry_run = args.dry_run or not args.copy
     result = collect_mechanistic_inputs(
         base_output_dir=args.base_output_dir,

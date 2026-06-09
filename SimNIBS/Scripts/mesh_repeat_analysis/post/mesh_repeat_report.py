@@ -788,6 +788,19 @@ def _finite_values(values: np.ndarray) -> np.ndarray:
     return arr[np.isfinite(arr)]
 
 
+def _roi_metric_data(
+    *,
+    masked_data: np.ndarray,
+    raw_data: np.ndarray,
+    roi_mask: np.ndarray,
+) -> tuple[np.ndarray, str]:
+    if _finite_values(masked_data[roi_mask]).size:
+        return masked_data, "masked_ti"
+    if _finite_values(raw_data[roi_mask]).size:
+        return raw_data, "raw_ti"
+    return masked_data, "masked_ti_empty"
+
+
 def _metric_stats(values: list[float] | np.ndarray) -> dict[str, float]:
     arr = _finite_values(np.asarray(values, dtype=np.float64))
     if arr.size == 0:
@@ -1240,20 +1253,29 @@ def _run_subject_analysis(
     ref_roi_mask_img = nib.Nifti1Image(roi_mask.astype(np.uint8), ref_t1.affine, ref_t1.header)
     ref_roi_mask_img.header.set_data_dtype(np.uint8)
 
-    ref_label_path, _, ref_ti_path = _load_or_create_volumes(ref_anat, subject, ref_t1_path)
+    ref_label_path, ref_raw_ti_path, ref_ti_path = _load_or_create_volumes(ref_anat, subject, ref_t1_path)
     ref_label_img = nib.load(ref_label_path)
     ref_label_img = _ensure_label_grid(ref_label_img, ref_t1, label="ref_labels_to_t1")
     ref_labels = np.asarray(ref_label_img.dataobj).astype(np.int32, copy=False)
     ref_ti_img = _ensure_scalar_grid(nib.load(ref_ti_path), ref_t1, label="ref_ti_to_t1")
     ref_ti_data = np.asarray(ref_ti_img.dataobj, dtype=np.float32)
+    ref_raw_ti_img = _ensure_scalar_grid(nib.load(ref_raw_ti_path), ref_t1, label="ref_raw_ti_to_t1")
+    ref_raw_ti_data = np.asarray(ref_raw_ti_img.dataobj, dtype=np.float32)
     ref_head_mask = ref_labels > 0
-    ref_ti_data, _ = _normalize_ti_units(
+    ref_ti_data, ref_ti_scale_factor = _normalize_ti_units(
         ref_ti_data,
         ref_head_mask,
         label="ref_ti_to_t1",
     )
+    ref_raw_ti_data = ref_raw_ti_data * float(ref_ti_scale_factor)
     ref_peak_head = _peak_info(ref_ti_data, ref_head_mask, ref_t1.affine)
-    ref_peak_roi = _peak_info(ref_ti_data, roi_mask, ref_t1.affine)
+    ref_roi_data, ref_roi_ti_source = _roi_metric_data(
+        masked_data=ref_ti_data,
+        raw_data=ref_raw_ti_data,
+        roi_mask=roi_mask,
+    )
+    log_event("roi_ti_source", subject=subject, repeat_tag="reference", source=ref_roi_ti_source)
+    ref_peak_roi = _peak_info(ref_roi_data, roi_mask, ref_t1.affine)
     ref_high_field_mask = _top_percentile_mask(ref_ti_data, ref_head_mask, args.spatial_percentile)
     ref_high_field_centroid = _centroid_xyz(ref_high_field_mask, ref_t1.affine)
 
@@ -1272,7 +1294,7 @@ def _run_subject_analysis(
         repeat_tag = anat_dir.parent.parent.name
         try:
             t1_path = _resolve_t1_path(subject, anat_dir, t1_root)
-            label_path, _, ti_path = _load_or_create_volumes(anat_dir, subject, t1_path)
+            label_path, raw_ti_path, ti_path = _load_or_create_volumes(anat_dir, subject, t1_path)
         except FileNotFoundError as exc:
             skipped_repeats.append({"repeat_tag": repeat_tag, "reason": str(exc)})
             log_event("repeat_skip", subject=subject, repeat_tag=repeat_tag, reason=str(exc))
@@ -1284,12 +1306,15 @@ def _run_subject_analysis(
         native_ti_img = nib.load(ti_path)
         ti_img = _ensure_scalar_grid(native_ti_img, ref_t1, label=f"{repeat_tag}_ti_to_t1")
         base_data = np.asarray(ti_img.dataobj, dtype=np.float32)
+        raw_ti_img = _ensure_scalar_grid(nib.load(raw_ti_path), ref_t1, label=f"{repeat_tag}_raw_ti_to_t1")
+        raw_data = np.asarray(raw_ti_img.dataobj, dtype=np.float32)
         head_mask = labels > 0
         base_data, ti_scale_factor = _normalize_ti_units(
             base_data,
             head_mask,
             label=f"{repeat_tag}_ti_to_t1",
         )
+        raw_data = raw_data * float(ti_scale_factor)
         native_ti_data = np.asarray(native_ti_img.dataobj, dtype=np.float32) * float(ti_scale_factor)
         native_ti_plot_img = nib.Nifti1Image(native_ti_data, native_ti_img.affine, native_ti_img.header)
 
@@ -1310,10 +1335,22 @@ def _run_subject_analysis(
         diff_fraction = float(diff.mean())
         diff_fraction_roi = float(diff[roi_mask].mean())
 
-        roi_vals = _finite_values(base_data[roi_mask])
+        roi_data, roi_ti_source = _roi_metric_data(
+            masked_data=base_data,
+            raw_data=raw_data,
+            roi_mask=roi_mask,
+        )
+        if roi_ti_source != "masked_ti":
+            log_event(
+                "roi_ti_source",
+                subject=subject,
+                repeat_tag=repeat_tag,
+                source=roi_ti_source,
+            )
+        roi_vals = _finite_values(roi_data[roi_mask])
         mean_roi = float(np.nanmean(roi_vals)) if roi_vals.size else float("nan")
         median_roi = float(np.nanmedian(roi_vals)) if roi_vals.size else float("nan")
-        peak_roi_info = _peak_info(base_data, roi_mask, ref_t1.affine)
+        peak_roi_info = _peak_info(roi_data, roi_mask, ref_t1.affine)
         peak_roi = float(peak_roi_info["value"])
 
         head_vals = _finite_values(base_data[head_mask])
@@ -1372,6 +1409,7 @@ def _run_subject_analysis(
                 "peak_roi_ijk": peak_roi_info["ijk"],
                 "peak_roi_xyz_mm": peak_roi_info["xyz_mm"],
                 "ti_scale_factor": ti_scale_factor,
+                "roi_ti_source": roi_ti_source,
                 "mesh_nodes": mesh_nodes,
                 "label_count": len(label_ids),
                 "dice_by_label": dice_by_label,
@@ -1410,6 +1448,7 @@ def _run_subject_analysis(
         "peak_roi_ijk",
         "peak_roi_xyz_mm",
         "ti_scale_factor",
+        "roi_ti_source",
         "mesh_nodes",
         "label_count",
         "dice_by_label",

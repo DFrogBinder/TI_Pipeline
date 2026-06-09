@@ -85,6 +85,16 @@ MESH_LOCK_POLL_SEC = 5.0
 SIM_INPUT_EXIT_CODE = 126
 
 
+def _ti_montage_parameters() -> dict[str, object]:
+    return {
+        "electrode_size": [10, 1],
+        "electrode_shape": "ellipse",
+        "electrode_conductivity": 0.85,
+        "montage_right": ("F10", 2e-3, "P8", -2e-3),
+        "montage_left": ("T7", 1.588656e-3, "P7", -1.588656e-3),
+    }
+
+
 class SimulationInputError(RuntimeError):
     pass
 
@@ -472,12 +482,12 @@ def _run_ti_pipeline(
     )
     _reset_dir_contents(output_root)
 
-    electrode_size = [10, 1]
-    electrode_shape = "ellipse"
-    electrode_conductivity = 0.85
-
-    montage_right = ("Fp2", 2, "P8", -2)
-    montage_left = ("T7", 2, "P7", -2)
+    montage_params = _ti_montage_parameters()
+    electrode_size = montage_params["electrode_size"]
+    electrode_shape = montage_params["electrode_shape"]
+    electrode_conductivity = montage_params["electrode_conductivity"]
+    montage_right = montage_params["montage_right"]
+    montage_left = montage_params["montage_left"]
 
     S = SIM_STRUCT.SESSION()
     S.fnamehead = str(fnamehead)

@@ -245,8 +245,8 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
     electrode_conductivity = 0.85
 
     # Hippocampus montage
-    montage_right = ('Fp2', 2, 'P8', -2)
-    montage_left  = ('T7', 2, 'P7',  -2)
+    montage_right = ('F10', 2e-3, 'P8', -2e-3)
+    montage_left  = ('T7', 1.588656e-3, 'P7',  -1.588656e-3)
 
     # Brain tissue tags (adjust if your labeling differs)
     brain_tags = np.hstack((np.arange(1, 100), np.arange(1001, 1100)))

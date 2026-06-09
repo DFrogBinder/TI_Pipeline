@@ -294,8 +294,8 @@ def _run_ti_pipeline(
     electrode_shape = "ellipse"
     electrode_conductivity = 0.85
 
-    montage_right = ("Fp2", 2, "P8", -2)
-    montage_left = ("T7", 2, "P7", -2)
+    montage_right = ("F10", 2e-3, "P8", -2e-3)
+    montage_left = ("T7", 1.588656e-3, "P7", -1.588656e-3)
 
     S = sim_struct.SESSION()
     S.fnamehead = str(fnamehead)

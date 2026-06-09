@@ -269,19 +269,60 @@ def _ensure_link(dest: Path, src: Path) -> None:
 
 def _reset_dir_contents(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    for child in path.iterdir():
-        if child.is_symlink():
-            child.unlink()
-        elif child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
+    for child in list(path.iterdir()):
+        try:
+            if child.is_symlink():
+                child.unlink()
+            elif child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        except FileNotFoundError:
+            continue
 
 
 def _link_common_inputs(source_paths: SourceSubjectPaths, target_anat_dir: Path) -> None:
     _ensure_link(target_anat_dir / source_paths.t1_path.name, source_paths.t1_path)
     _ensure_link(target_anat_dir / source_paths.t2_path.name, source_paths.t2_path)
     _ensure_link(target_anat_dir / source_paths.seg_path.name, source_paths.seg_path)
+
+
+def _mesh_cache_force_token() -> str:
+    return (
+        os.environ.get("TI_FORCE_MESH_TOKEN")
+        or os.environ.get("SLURM_ARRAY_JOB_ID")
+        or os.environ.get("SLURM_JOB_ID")
+        or "manual"
+    )
+
+
+def _mesh_cache_force_marker(mesh_cache_anat_dir: Path) -> Path:
+    return mesh_cache_anat_dir / ".mesh_force_reset.json"
+
+
+def _read_mesh_cache_force_marker(path: Path) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    token = payload.get("token")
+    return str(token) if token is not None else None
+
+
+def _write_mesh_cache_force_marker(path: Path, token: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "token": token,
+                "pid": os.getpid(),
+                "host": socket.gethostname(),
+                "created_at": time.time(),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _workspace_from_anat_dir(anat_dir: Path, subject: str) -> WorkspacePaths:
@@ -350,13 +391,22 @@ def _prepare_mesh_cache_workspace(
     mesh_cache_anat_dir: Path,
     overwrite: bool,
 ) -> WorkspacePaths:
-    if overwrite and mesh_cache_anat_dir.exists():
-        _reset_dir_contents(mesh_cache_anat_dir)
-    mesh_cache_anat_dir.mkdir(parents=True, exist_ok=True)
-    _link_common_inputs(source_paths, mesh_cache_anat_dir)
-    workspace = _workspace_from_anat_dir(mesh_cache_anat_dir, source_paths.subject)
-    workspace.output_root.mkdir(parents=True, exist_ok=True)
-    return workspace
+    lock_path = mesh_cache_anat_dir.parent / ".mesh_cache_prepare.lock"
+    with _exclusive_lock(lock_path):
+        if overwrite:
+            token = _mesh_cache_force_token()
+            marker_path = _mesh_cache_force_marker(mesh_cache_anat_dir)
+            if _read_mesh_cache_force_marker(marker_path) != token:
+                if mesh_cache_anat_dir.exists():
+                    _reset_dir_contents(mesh_cache_anat_dir)
+                mesh_cache_anat_dir.mkdir(parents=True, exist_ok=True)
+                _write_mesh_cache_force_marker(marker_path, token)
+
+        mesh_cache_anat_dir.mkdir(parents=True, exist_ok=True)
+        _link_common_inputs(source_paths, mesh_cache_anat_dir)
+        workspace = _workspace_from_anat_dir(mesh_cache_anat_dir, source_paths.subject)
+        workspace.output_root.mkdir(parents=True, exist_ok=True)
+        return workspace
 
 
 def _mesh_workspace(
@@ -764,7 +814,7 @@ def execute_task(
             shared_mesh_path = _mesh_workspace(
                 mesh_cache_workspace,
                 subject=task.subject,
-                force_mesh=force_mesh,
+                force_mesh=False,
             )
         else:
             shared_mesh_path = mesh_cache_workspace.mesh_path

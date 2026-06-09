@@ -26,3 +26,43 @@ def test_legacy_ti_runners_do_not_keep_old_hardcoded_montage():
         assert '2, "P8", -2' not in source
         assert "F10" in source
         assert "1.588656e-3" in source
+
+
+def test_fixed_mesh_cache_force_reset_is_once_per_slurm_array_token(tmp_path, monkeypatch):
+    subject = "sub-CC000000"
+    source_anat = tmp_path / "source" / subject / "anat"
+    source_anat.mkdir(parents=True)
+    source_paths = repeatability_experiment.SourceSubjectPaths(
+        subject=subject,
+        subject_root=source_anat.parent,
+        anat_dir=source_anat,
+        t1_path=source_anat / f"{subject}_T1w.nii",
+        t2_path=source_anat / f"{subject}_T2w.nii",
+        seg_path=source_anat / f"{subject}_T1w_ras_1mm_T1andT2_masks.nii",
+    )
+    for path in (source_paths.t1_path, source_paths.t2_path, source_paths.seg_path):
+        path.write_text("placeholder", encoding="utf-8")
+
+    cache_anat = tmp_path / "fixed_mesh" / "mesh_cache" / subject / "anat"
+    cache_anat.mkdir(parents=True)
+    stale_file = cache_anat / "stale.txt"
+    stale_file.write_text("old cache", encoding="utf-8")
+
+    monkeypatch.setenv("SLURM_ARRAY_JOB_ID", "10339990")
+
+    repeatability_experiment._prepare_mesh_cache_workspace(
+        source_paths,
+        mesh_cache_anat_dir=cache_anat,
+        overwrite=True,
+    )
+    assert not stale_file.exists()
+
+    built_sentinel = cache_anat / "built_by_first_repeat.txt"
+    built_sentinel.write_text("keep me", encoding="utf-8")
+
+    repeatability_experiment._prepare_mesh_cache_workspace(
+        source_paths,
+        mesh_cache_anat_dir=cache_anat,
+        overwrite=True,
+    )
+    assert built_sentinel.exists()

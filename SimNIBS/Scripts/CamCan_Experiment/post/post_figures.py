@@ -14,6 +14,7 @@ import re
 import statistics
 import sys
 import textwrap
+import zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -231,6 +232,349 @@ def metric_stats(values: Iterable[float]) -> dict[str, float | None]:
         "q3": quantile(seq, 0.75),
         "max": max(seq) if seq else None,
     }
+
+
+def _subject_metric_rows(
+    records: list[dict[str, Any]],
+    *,
+    metric_key: str,
+    output_prefix: str,
+    scale: float = 1.0,
+) -> list[dict[str, Any]]:
+    by_roi_subject: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for record in records:
+        if not record.get("analysis_complete"):
+            continue
+        roi_label = str(record.get("roi_label") or "")
+        subject = str(record.get("subject") or "")
+        value = record.get(metric_key)
+        if not roi_label or not subject or not isinstance(value, (int, float)):
+            continue
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            continue
+        by_roi_subject[(roi_label, subject)].append(numeric * scale)
+
+    rows: list[dict[str, Any]] = []
+    for (roi_label, subject), values in sorted(by_roi_subject.items()):
+        stats = metric_stats(values)
+        rows.append(
+            {
+                "roi_label": roi_label,
+                "subject": subject,
+                "n_repeats": int(stats["n"] or 0),
+                f"{output_prefix}_mean": stats["mean"],
+                f"{output_prefix}_median": stats["median"],
+                f"{output_prefix}_q1": stats["q1"],
+                f"{output_prefix}_q3": stats["q3"],
+                f"{output_prefix}_min": stats["min"],
+                f"{output_prefix}_max": stats["max"],
+            }
+        )
+    return rows
+
+
+def _summary_from_subject_metric_rows(
+    subject_rows: list[dict[str, Any]],
+    *,
+    output_prefix: str,
+    summary_prefix: str,
+) -> list[dict[str, Any]]:
+    by_roi: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in subject_rows:
+        by_roi[str(row["roi_label"])].append(row)
+
+    summary_rows: list[dict[str, Any]] = []
+    median_key = f"{output_prefix}_median"
+    for roi_label, rows in sorted(by_roi.items()):
+        medians = [
+            float(row[median_key])
+            for row in rows
+            if isinstance(row.get(median_key), (int, float)) and math.isfinite(float(row[median_key]))
+        ]
+        repeat_counts = [float(row.get("n_repeats") or 0) for row in rows]
+        stats = metric_stats(medians)
+        summary_rows.append(
+            {
+                "roi_label": roi_label,
+                "n_subjects": len(rows),
+                "n_subject_repeat_rows": int(sum(repeat_counts)),
+                "repeats_min": int(min(repeat_counts)) if repeat_counts else 0,
+                "repeats_median": median(repeat_counts),
+                "repeats_max": int(max(repeat_counts)) if repeat_counts else 0,
+                f"population_median_{summary_prefix}": stats["median"],
+                f"population_q1_{summary_prefix}": stats["q1"],
+                f"population_q3_{summary_prefix}": stats["q3"],
+                f"population_min_{summary_prefix}": stats["min"],
+                f"population_max_{summary_prefix}": stats["max"],
+            }
+        )
+    return summary_rows
+
+
+def _mni_subject_dir_for_roi(roi_label: str, roi_prefix: str | None = None) -> str | None:
+    text = f"{roi_label} {roi_prefix or ''}".casefold()
+    normalized = re.sub(r"[^a-z0-9]+", "_", text)
+    if "hippocampus" in normalized:
+        return "MNI152-right-hippocampus" if "right" in normalized else "MNI152-left-hippocampus"
+    if "thalamus" in normalized:
+        return "MNI152-left-thalamus" if "left" in normalized else "MNI152-right-thalamus"
+    if "front_middle" in normalized or "dlpc" in normalized:
+        return "MNI152-left-dlpc" if "left" in normalized or "ctx_lh" in normalized else "MNI152-right-dlpc"
+    if "precentral" in normalized or re.search(r"(^|_)m1($|_)", normalized):
+        return "MNI152-right-m1" if "right" in normalized or "ctx_rh" in normalized else "MNI152-left-m1"
+    return None
+
+
+def _candidate_mni_roots(
+    batch_root: Path | None,
+    mni_baseline_post_root: str | Path | None,
+) -> list[Path]:
+    candidates: list[Path] = []
+    if mni_baseline_post_root is not None:
+        candidates.append(Path(mni_baseline_post_root).expanduser())
+    if batch_root is not None:
+        search_bases = [batch_root, *list(batch_root.parents)[:4]]
+        for base in search_bases:
+            candidates.append(base / "MNI152-data")
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        zip_path = resolved.with_name(f"{resolved.name}-post.zip")
+        if resolved in seen:
+            continue
+        if resolved.is_dir() or zip_path.is_file():
+            unique.append(resolved)
+            seen.add(resolved)
+    return unique
+
+
+def _load_mni_post_metrics(mni_root: Path, mni_subject_dir: str) -> tuple[dict[str, Any], str] | None:
+    relative = Path(mni_root.name) / mni_subject_dir / "anat" / "post" / "subject_metrics.json"
+    unpacked = mni_root / mni_subject_dir / "anat" / "post" / "subject_metrics.json"
+    if unpacked.is_file():
+        return load_json(unpacked), str(unpacked)
+
+    zip_path = mni_root.with_name(f"{mni_root.name}-post.zip")
+    if not zip_path.is_file():
+        return None
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            with archive.open(str(relative)) as handle:
+                payload = json.loads(handle.read().decode("utf-8"))
+    except (KeyError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload, f"{zip_path}:{relative}"
+
+
+def _mni_post_baseline_by_roi(
+    records: list[dict[str, Any]],
+    *,
+    batch_root: Path | None,
+    mni_baseline_post_root: str | Path | None,
+) -> dict[str, tuple[float, str]]:
+    identity_by_roi: dict[str, str | None] = {}
+    for record in records:
+        roi_label = str(record.get("roi_label") or "")
+        if roi_label and roi_label not in identity_by_roi:
+            identity_by_roi[roi_label] = str(record.get("roi_prefix") or "")
+
+    output: dict[str, tuple[float, str]] = {}
+    roots = _candidate_mni_roots(batch_root, mni_baseline_post_root)
+    if not roots:
+        return output
+
+    for roi_label, roi_prefix in identity_by_roi.items():
+        mni_subject_dir = _mni_subject_dir_for_roi(roi_label, roi_prefix)
+        if not mni_subject_dir:
+            continue
+        for root in roots:
+            loaded = _load_mni_post_metrics(root, mni_subject_dir)
+            if loaded is None:
+                continue
+            payload, source = loaded
+            extended = payload.get("extended_metrics")
+            if not isinstance(extended, dict):
+                continue
+            value = safe_float(extended.get("roi_mean"))
+            if value is not None:
+                output[roi_label] = (value, source)
+                break
+    return output
+
+
+def _stored_mni_baseline_by_roi(records: list[dict[str, Any]]) -> dict[str, tuple[float, str]]:
+    values_by_roi: dict[str, list[float]] = defaultdict(list)
+    for record in records:
+        if not record.get("analysis_complete"):
+            continue
+        roi_label = str(record.get("roi_label") or "")
+        value = record.get("mni_baseline_roi_mean")
+        if not roi_label or not isinstance(value, (int, float)):
+            continue
+        numeric = float(value)
+        if math.isfinite(numeric):
+            values_by_roi[roi_label].append(numeric)
+    return {
+        roi_label: (
+            float(median(values) or 0.0),
+            "subject_metrics.extended_metrics.mni_baseline_roi_mean",
+        )
+        for roi_label, values in values_by_roi.items()
+        if values and median(values) is not None
+    }
+
+
+def _build_mni_transfer_summary(
+    subject_rows: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    *,
+    batch_root: Path | None = None,
+    mni_baseline_post_root: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    summary_rows = _summary_from_subject_metric_rows(
+        subject_rows,
+        output_prefix="roi_mean_v_per_m",
+        summary_prefix="roi_mean_v_per_m",
+    )
+    baselines = _stored_mni_baseline_by_roi(records)
+    baselines.update(
+        _mni_post_baseline_by_roi(
+            records,
+            batch_root=batch_root,
+            mni_baseline_post_root=mni_baseline_post_root,
+        )
+    )
+    output: list[dict[str, Any]] = []
+    for row in summary_rows:
+        roi_label = str(row["roi_label"])
+        baseline_entry = baselines.get(roi_label)
+        population_median = row.get("population_median_roi_mean_v_per_m")
+        if baseline_entry is None or not isinstance(population_median, (int, float)):
+            continue
+        baseline, source = baseline_entry
+        row = dict(row)
+        row["mni_baseline_roi_mean_v_per_m"] = baseline
+        row["mni_minus_population_median_v_per_m"] = baseline - float(population_median)
+        row["mni_baseline_source"] = source
+        output.append(row)
+    return output
+
+
+def _rows_by_roi(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row.get("roi_label") or "ROI")].append(row)
+    return dict(sorted(grouped.items()))
+
+
+def _finite_row_values(rows: list[dict[str, Any]], key: str) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        value = row.get(key)
+        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+            values.append(float(value))
+    return values
+
+
+def _draw_dashed_hline(
+    draw: ImageDraw.ImageDraw,
+    x0: int,
+    x1: int,
+    y: int,
+    *,
+    fill: str,
+    width: int = 4,
+    dash: int = 24,
+    gap: int = 14,
+) -> None:
+    x = x0
+    while x < x1:
+        draw.line((x, y, min(x + dash, x1), y), fill=fill, width=width)
+        x += dash + gap
+
+
+def _draw_violin_distribution(
+    draw: ImageDraw.ImageDraw,
+    values: list[float],
+    *,
+    center_x: int,
+    max_width: int,
+    y0: int,
+    y1: int,
+    min_value: float,
+    max_value: float,
+    color: str,
+    light: str,
+) -> None:
+    if not values:
+        return
+
+    bins = min(26, max(8, len(values) // 3))
+    span = max(max_value - min_value, 1e-9)
+    counts = [0.0 for _ in range(bins)]
+    for value in values:
+        index = min(bins - 1, max(0, int(((value - min_value) / span) * bins)))
+        counts[index] += 1.0
+    for _ in range(2):
+        counts = [
+            (counts[max(0, idx - 1)] + counts[idx] * 2.0 + counts[min(bins - 1, idx + 1)]) / 4.0
+            for idx in range(bins)
+        ]
+    max_count = max(counts) if counts else 1.0
+    if max_count <= 0:
+        max_count = 1.0
+
+    right: list[tuple[int, int]] = []
+    left: list[tuple[int, int]] = []
+    for idx, count in enumerate(counts):
+        center_value = min_value + ((idx + 0.5) / bins) * span
+        y = y_scale(center_value, min_value, max_value, y0, y1)
+        half_width = max(4, int(max_width * (count / max_count)))
+        right.append((center_x + half_width, y))
+        left.append((center_x - half_width, y))
+    polygon = right + list(reversed(left))
+    if len(polygon) >= 3:
+        draw.polygon(polygon, fill=light)
+        draw.line(polygon + [polygon[0]], fill="#8A98A8", width=3)
+
+    values_sorted = sorted(values)
+    p5 = quantile(values_sorted, 0.05)
+    q1 = quantile(values_sorted, 0.25)
+    med = median(values_sorted)
+    q3 = quantile(values_sorted, 0.75)
+    p95 = quantile(values_sorted, 0.95)
+    if p5 is not None and p95 is not None:
+        draw.line(
+            (
+                center_x,
+                y_scale(p5, min_value, max_value, y0, y1),
+                center_x,
+                y_scale(p95, min_value, max_value, y0, y1),
+            ),
+            fill=INK,
+            width=4,
+        )
+    for value, width in [(q1, 210), (med, 260), (q3, 210)]:
+        if value is None:
+            continue
+        y = y_scale(value, min_value, max_value, y0, y1)
+        draw.line((center_x - width // 2, y, center_x + width // 2, y), fill=INK, width=5)
+
+    for idx, value in enumerate(values):
+        jitter = (((idx * 37) % 25) - 12) * 2
+        y = y_scale(value, min_value, max_value, y0, y1)
+        draw.ellipse((center_x + jitter - 5, y - 5, center_x + jitter + 5, y + 5), fill=color)
+
+
+def _axis_ticks(min_value: float, max_value: float, count: int = 4) -> list[float]:
+    if max_value <= min_value:
+        return [min_value]
+    return [min_value + (max_value - min_value) * idx / count for idx in range(count + 1)]
 
 
 def _normalize_name_for_file(value: str | None) -> str:
@@ -478,6 +822,8 @@ def collect_records(
                     "threshold_overlay_reason": _get_qc_threshold_reason(threshold_qc, "overlay_threshold"),
                     "roi_peak": safe_float(extended.get("roi_peak")),
                     "roi_mean": safe_float(extended.get("roi_mean")),
+                    "mni_baseline_roi_peak": safe_float(extended.get("mni_baseline_roi_peak")),
+                    "mni_baseline_roi_mean": safe_float(extended.get("mni_baseline_roi_mean")),
                     "focality_voxels_gt_threshold": safe_float(extended.get("focality_voxels_gt_threshold")),
                     "focality_volume_mm3_gt_threshold": safe_float(
                         extended.get("focality_volume_mm3_gt_threshold")
@@ -1066,6 +1412,166 @@ def make_boxplot(records: list[dict[str, Any]], roi_summary: list[dict[str, Any]
     return _save(image, path)
 
 
+def make_aggregate_subject_variability(
+    subject_rows: list[dict[str, Any]],
+    figures_dir: Path,
+) -> Path:
+    path = figures_dir / "10_aggregate_subject_variability.png"
+    image = Image.new("RGB", (CANVAS_W, CANVAS_H), BG)
+    draw = ImageDraw.Draw(image)
+    draw_header(
+        draw,
+        "Aggregate target coverage by ROI",
+        "Each point is one subject: median top-percentile target coverage across repeats. Shaded bands show each subject's repeat IQR.",
+    )
+
+    grouped = _rows_by_roi(subject_rows)
+    labels = list(grouped)
+    styles = _style_lookup(labels)
+    rounded_panel(draw, (80, 235, 2320, 1160), fill=PANEL)
+    draw.text((140, 275), "Sorted subject medians", font=FONT_H3, fill=INK)
+    draw.text((1600, 275), "Population distribution", font=FONT_H3, fill=INK)
+
+    row_h = min(200, max(125, 760 // max(len(labels), 1)))
+    y_start = 360
+    curve_x0, curve_x1 = 430, 1450
+    violin_x = 1875
+    axis_max = 100.0
+
+    for idx, label in enumerate(labels):
+        rows = sorted(grouped[label], key=lambda row: float(row.get("overlap_percent_median") or 0))
+        style = styles[label]
+        y0 = y_start + idx * row_h + 12
+        y1 = y_start + (idx + 1) * row_h - 18
+        draw.text((125, y0 + 24), label, font=FONT_H3, fill=INK)
+        draw.text((125, y0 + 64), f"{len(rows)} subjects", font=FONT_SMALL, fill=MUTED)
+
+        if not rows:
+            continue
+
+        for tick in [0, 50, 100]:
+            yy = y_scale(tick, 0.0, axis_max, y0, y1)
+            draw.line((curve_x0 - 20, yy, 2155, yy), fill="#EEF3F9", width=2)
+            draw.text((curve_x0 - 84, yy - 12), f"{tick:d}%", font=FONT_TINY, fill=MUTED)
+
+        def row_x(position: int) -> int:
+            if len(rows) == 1:
+                return (curve_x0 + curve_x1) // 2
+            return int(curve_x0 + position * (curve_x1 - curve_x0) / (len(rows) - 1))
+
+        upper: list[tuple[int, int]] = []
+        lower: list[tuple[int, int]] = []
+        median_points: list[tuple[int, int]] = []
+        for pos, row in enumerate(rows):
+            x = row_x(pos)
+            q1 = float(row.get("overlap_percent_q1") or 0)
+            q3 = float(row.get("overlap_percent_q3") or 0)
+            med = float(row.get("overlap_percent_median") or 0)
+            upper.append((x, y_scale(q3, 0.0, axis_max, y0, y1)))
+            lower.append((x, y_scale(q1, 0.0, axis_max, y0, y1)))
+            median_points.append((x, y_scale(med, 0.0, axis_max, y0, y1)))
+        if len(upper) >= 2:
+            draw.polygon(upper + list(reversed(lower)), fill=style["light"])
+        if len(median_points) >= 2:
+            draw.line(median_points, fill=style["color"], width=5)
+        else:
+            x, y = median_points[0]
+            draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=style["color"])
+
+        medians = _finite_row_values(rows, "overlap_percent_median")
+        _draw_violin_distribution(
+            draw,
+            medians,
+            center_x=violin_x,
+            max_width=230,
+            y0=y0,
+            y1=y1,
+            min_value=0.0,
+            max_value=axis_max,
+            color=style["color"],
+            light=style["light"],
+        )
+
+    draw.text((curve_x0, 1115), "Subjects sorted by median coverage", font=FONT_SMALL, fill=MUTED)
+    draw.text((1600, 1115), "Coverage inside target ROI (%)", font=FONT_SMALL, fill=MUTED)
+    draw_footer(draw, "post-processing figures | aggregate subject medians across repeats")
+    return _save(image, path)
+
+
+def make_mni_transfer_distribution(
+    subject_rows: list[dict[str, Any]],
+    mni_summary: list[dict[str, Any]],
+    figures_dir: Path,
+) -> Path:
+    path = figures_dir / "11_mni_transfer_distribution.png"
+    image = Image.new("RGB", (CANVAS_W, CANVAS_H), BG)
+    draw = ImageDraw.Draw(image)
+    draw_header(
+        draw,
+        "MNI transfer gap",
+        "Each point is one subject: median ROI mean field across repeats. The dashed red line is the MNI152 baseline when available.",
+    )
+
+    grouped = _rows_by_roi(subject_rows)
+    summary_lookup = {str(row["roi_label"]): row for row in mni_summary}
+    labels = [label for label in grouped if label in summary_lookup]
+    styles = _style_lookup(labels)
+    panel_boxes = [
+        (120, 265, 1125, 695),
+        (1275, 265, 2280, 695),
+        (120, 780, 1125, 1210),
+        (1275, 780, 2280, 1210),
+    ]
+
+    for idx, label in enumerate(labels[:4]):
+        rows = grouped[label]
+        values = _finite_row_values(rows, "roi_mean_v_per_m_median")
+        if not values:
+            continue
+        summary = summary_lookup[label]
+        baseline = float(summary["mni_baseline_roi_mean_v_per_m"])
+        style = styles[label]
+        x0, y0, x1, y1 = panel_boxes[idx]
+        rounded_panel(draw, (x0, y0, x1, y1), fill=PANEL)
+        draw.text((x0 + 36, y0 + 28), label, font=FONT_H3, fill=INK)
+        plot_x0, plot_y0 = x0 + 90, y0 + 92
+        plot_x1, plot_y1 = x1 - 70, y1 - 82
+        min_value = min(min(values), baseline)
+        max_value = max(max(values), baseline)
+        pad = max((max_value - min_value) * 0.14, 0.015)
+        min_value = max(0.0, min_value - pad)
+        max_value += pad
+
+        for tick in _axis_ticks(min_value, max_value, count=4):
+            yy = y_scale(tick, min_value, max_value, plot_y0, plot_y1)
+            draw.line((plot_x0, yy, plot_x1, yy), fill="#EEF3F9", width=2)
+            draw.text((plot_x0 - 74, yy - 11), f"{tick:.2f}", font=FONT_TINY, fill=MUTED)
+        draw.line((plot_x0, plot_y1, plot_x1, plot_y1), fill=GRID, width=3)
+        draw.line((plot_x0, plot_y0, plot_x0, plot_y1), fill=GRID, width=3)
+
+        baseline_y = y_scale(baseline, min_value, max_value, plot_y0, plot_y1)
+        _draw_dashed_hline(draw, plot_x0, plot_x1, baseline_y, fill=RED)
+        draw.text((plot_x1 - 205, baseline_y - 34), "MNI baseline", font=FONT_TINY, fill=RED)
+        _draw_violin_distribution(
+            draw,
+            values,
+            center_x=(plot_x0 + plot_x1) // 2,
+            max_width=230,
+            y0=plot_y0,
+            y1=plot_y1,
+            min_value=min_value,
+            max_value=max_value,
+            color=style["color"],
+            light=style["light"],
+        )
+        draw.text((plot_x0, y1 - 52), "Mean field inside target ROI (V/m)", font=FONT_SMALL, fill=MUTED)
+
+    if len(labels) > 4:
+        draw.text((120, 1235), f"{len(labels) - 4} additional ROI(s) are included in CSV tables.", font=FONT_SMALL, fill=MUTED)
+    draw_footer(draw, "post-processing figures | MNI baseline transfer distribution")
+    return _save(image, path)
+
+
 def make_threshold_edge_case_detail(roi_summary: list[dict[str, Any]], figures_dir: Path) -> Path:
     path = figures_dir / "08_threshold_edge_case_detail.png"
     row = max(roi_summary, key=lambda item: int(item.get("zero_roi_threshold_rows") or 0))
@@ -1162,11 +1668,14 @@ def generate_figures(
     records: list[dict[str, Any]],
     repeat_rows: list[dict[str, Any]],
     roi_summary: list[dict[str, Any]],
+    aggregate_subject_rows: list[dict[str, Any]],
+    aggregate_mni_subject_rows: list[dict[str, Any]],
+    aggregate_mni_summary: list[dict[str, Any]],
     *,
     expected_repeats: Sequence[str],
     figures_dir: Path,
 ) -> dict[str, Path]:
-    return {
+    figures = {
         "completion_matrix": make_completion_matrix(roi_summary, repeat_rows, expected_repeats, figures_dir),
         "status_bars": make_status_bars(roi_summary, figures_dir),
         "metric_overview": make_metric_overview(roi_summary, figures_dir),
@@ -1177,6 +1686,18 @@ def generate_figures(
         "threshold_edge_case_detail": make_threshold_edge_case_detail(roi_summary, figures_dir),
         "summary_table": make_summary_table_figure(roi_summary, figures_dir),
     }
+    if aggregate_subject_rows:
+        figures["aggregate_subject_variability"] = make_aggregate_subject_variability(
+            aggregate_subject_rows,
+            figures_dir,
+        )
+    if aggregate_mni_subject_rows and aggregate_mni_summary:
+        figures["aggregate_mni_transfer_distribution"] = make_mni_transfer_distribution(
+            aggregate_mni_subject_rows,
+            aggregate_mni_summary,
+            figures_dir,
+        )
+    return figures
 
 
 def run_figure_generation(
@@ -1187,6 +1708,7 @@ def run_figure_generation(
     expected_repeats: Sequence[str] | None = None,
     batch_summary: dict[str, Any] | None = None,
     summary_filename: str | None = "post_processing_batch_summary.json",
+    mni_baseline_post_root: str | Path | None = None,
 ) -> dict[str, Any]:
     root = Path(batch_root).expanduser().resolve()
     if not root.is_dir():
@@ -1224,14 +1746,48 @@ def run_figure_generation(
     long_csv = tables_dir / "subject_metrics_long.csv"
     roi_summary_csv = tables_dir / "roi_summary.csv"
     repeat_summary_csv = tables_dir / "repeat_summary.csv"
+    aggregate_subject_csv = tables_dir / "aggregate_subject_variability_subjects.csv"
+    aggregate_subject_summary_csv = tables_dir / "aggregate_subject_variability_summary.csv"
+    aggregate_mni_subject_csv = tables_dir / "aggregate_mni_transfer_subjects.csv"
+    aggregate_mni_summary_csv = tables_dir / "aggregate_mni_transfer_summary.csv"
+    aggregate_subject_rows = _subject_metric_rows(
+        records,
+        metric_key="overlap_fraction",
+        output_prefix="overlap_percent",
+        scale=100.0,
+    )
+    aggregate_subject_summary = _summary_from_subject_metric_rows(
+        aggregate_subject_rows,
+        output_prefix="overlap_percent",
+        summary_prefix="overlap_percent",
+    )
+    aggregate_mni_subject_rows = _subject_metric_rows(
+        records,
+        metric_key="roi_mean",
+        output_prefix="roi_mean_v_per_m",
+    )
+    aggregate_mni_summary = _build_mni_transfer_summary(
+        aggregate_mni_subject_rows,
+        records,
+        batch_root=root,
+        mni_baseline_post_root=mni_baseline_post_root,
+    )
     write_csv(long_csv, records)
     write_csv(roi_summary_csv, roi_summary)
     write_csv(repeat_summary_csv, repeat_rows)
+    write_csv(aggregate_subject_csv, aggregate_subject_rows)
+    write_csv(aggregate_subject_summary_csv, aggregate_subject_summary)
+    if aggregate_mni_summary:
+        write_csv(aggregate_mni_subject_csv, aggregate_mni_subject_rows)
+        write_csv(aggregate_mni_summary_csv, aggregate_mni_summary)
 
     figures = generate_figures(
         records,
         repeat_rows,
         roi_summary,
+        aggregate_subject_rows,
+        aggregate_mni_subject_rows,
+        aggregate_mni_summary,
         expected_repeats=canonical_repeats,
         figures_dir=figures_dir,
     )
@@ -1250,8 +1806,17 @@ def run_figure_generation(
             "subject_metrics_long": str(long_csv),
             "roi_summary": str(roi_summary_csv),
             "repeat_summary": str(repeat_summary_csv),
+            "aggregate_subject_variability_subjects": str(aggregate_subject_csv),
+            "aggregate_subject_variability_summary": str(aggregate_subject_summary_csv),
         },
     }
+    if aggregate_mni_summary:
+        result["tables"].update(
+            {
+                "aggregate_mni_transfer_subjects": str(aggregate_mni_subject_csv),
+                "aggregate_mni_transfer_summary": str(aggregate_mni_summary_csv),
+            }
+        )
     summary_path = out_dir / "figure_generation_summary.json"
     result["summary_path"] = str(summary_path)
     summary_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -1269,6 +1834,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="post_processing_batch_summary.json",
         help="Optional batch summary filename used to annotate failures. Empty string disables reading.",
     )
+    parser.add_argument(
+        "--mni-baseline-post-root",
+        default=None,
+        help=(
+            "Optional MNI152-data root containing MNI152-*/anat/post/subject_metrics.json. "
+            "When omitted, the figure stage auto-searches batch-root ancestors for MNI152-data "
+            "or MNI152-data-post.zip, then falls back to per-subject stored MNI baseline metrics."
+        ),
+    )
     return parser
 
 
@@ -1280,6 +1854,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         dataset_glob=args.dataset_glob,
         expected_repeats=args.repeats,
         summary_filename=args.summary_filename or None,
+        mni_baseline_post_root=args.mni_baseline_post_root,
     )
     print(json.dumps(result, indent=2))
 

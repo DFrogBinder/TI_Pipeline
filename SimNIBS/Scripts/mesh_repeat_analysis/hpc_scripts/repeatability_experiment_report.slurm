@@ -41,7 +41,7 @@ OUTPUT_DIR_CONFIG=""
 ROI_PRESET_CONFIG="left-hippocampus"
 ROI_NAME_CONFIG=""
 ROI_LABELS_CONFIG=""
-ATLAS_DIR_CONFIG="/mnt/parscratch/cop23bi/ZIPs/atlases"
+ATLAS_DIR_CONFIG=""
 
 # Repeatability/report parameters.
 REFERENCE_REPEAT_CONFIG=""

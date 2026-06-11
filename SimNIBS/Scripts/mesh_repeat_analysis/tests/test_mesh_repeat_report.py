@@ -3,6 +3,20 @@ import numpy as np
 from post import mesh_repeat_report
 
 
+def test_resolve_atlas_path_accepts_extensionless_subject_id_file(tmp_path):
+    atlas_path = tmp_path / "sub-CC122620"
+    atlas_path.write_bytes(b"atlas")
+
+    resolved = mesh_repeat_report._resolve_atlas_path(
+        "sub-CC122620",
+        atlas=None,
+        atlas_dir=str(tmp_path),
+        rootdir=None,
+    )
+
+    assert resolved == atlas_path
+
+
 def test_roi_metric_data_falls_back_to_raw_ti_when_masked_roi_is_empty():
     roi_mask = np.array([True, True, False])
     masked_data = np.array([np.nan, np.nan, 3.0], dtype=np.float32)

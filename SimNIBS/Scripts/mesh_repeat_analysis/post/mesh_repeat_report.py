@@ -619,6 +619,7 @@ def _atlas_candidates_for_dir(subject: str, directory: Path) -> list[Path]:
 
     candidates: list[Path] = []
     for alias in aliases:
+        candidates.append(directory / alias)
         for extension in extensions:
             candidates.append(directory / f"{alias}{extension}")
             candidates.append(directory / f"{alias}_atlas{extension}")
@@ -631,6 +632,7 @@ def _atlas_candidates_for_dir(subject: str, directory: Path) -> list[Path]:
             directory / f"{alias}_freesurfer",
         ]
         for subject_dir in subject_dirs:
+            candidates.append(subject_dir / alias)
             for extension in extensions:
                 candidates.append(subject_dir / f"{alias}{extension}")
                 candidates.append(subject_dir / f"{alias}_atlas{extension}")

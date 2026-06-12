@@ -323,6 +323,7 @@ def _run_ti_pipeline(
     el2.thickness = electrode_size[1]
 
     tdcs2 = S.add_tdcslist(deepcopy(tdcs1))
+    tdcs2.currents = [montage_left[1], montage_left[3]]
     tdcs2.electrode[0].centre = montage_left[0]
     tdcs2.electrode[1].centre = montage_left[2]
     tdcs2.electrode[0].mesh_element_size = 0.1

@@ -281,6 +281,7 @@ def process_subject(subject_entry, *, repeat_tag: str | None = None):
 
     # ---- DEFINE SECOND TDCS MONTAGE ----
     tdcs2 = S.add_tdcslist(deepcopy(tdcs1))
+    tdcs2.currents = [montage_left[1], montage_left[3]]
     tdcs2.electrode[0].centre        = montage_left[0]
     tdcs2.electrode[1].centre        = montage_left[2]
     tdcs2.electrode[0].mesh_element_size = 0.1

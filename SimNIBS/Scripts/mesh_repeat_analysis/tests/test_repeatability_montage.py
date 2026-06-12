@@ -11,6 +11,21 @@ def test_ti_montage_parameters_match_hippocampus_montage():
     assert params["montage_left"] == ("T7", 1.588656e-3, "P7", -1.588656e-3)
 
 
+def test_all_repeatability_runners_assign_left_montage_currents():
+    runner_root = repeatability_experiment.PIPELINE_ROOT / "simulation_runners"
+    runner_paths = [
+        runner_root / "repeatability_experiment.py",
+        runner_root / "TI_runner_multi-core_repeat.py",
+        runner_root / "TI_runner_batch_reuse_mesh.py",
+        runner_root / "TI_runner_multi-core_resolution-repeat.py",
+    ]
+
+    for runner_path in runner_paths:
+        source = runner_path.read_text(encoding="utf-8")
+        assert "tdcs2.currents" in source
+        assert "tdcs2.currents = [montage_left[1], montage_left[3]]" in source
+
+
 def test_legacy_ti_runners_do_not_keep_old_hardcoded_montage():
     runner_root = repeatability_experiment.PIPELINE_ROOT / "simulation_runners"
     runner_paths = [

@@ -66,3 +66,18 @@ def test_all_ti_runners_use_shared_csv_montage_source():
         source = (root / runner).read_text()
         for token in required_tokens:
             assert token in source, f"{runner} does not use shared montage token: {token}"
+
+
+def test_all_ti_runners_assign_pair2_currents_after_copying_pair1():
+    root = Path(__file__).resolve().parent
+    expected_assignments = {
+        "TI_runner_MNI152.py": "tdcs2.currents = [montage.pair2.current_amp, -montage.pair2.current_amp]",
+        "TI_runner_multi-core.py": "tdcs2.currents = [montage_left[1], montage_left[3]]",
+        "TI_runner_multi-core_skin-filter.py": "tdcs2.currents = [montage_left[1], montage_left[3]]",
+        "TI_runner_single-core.py": "tdcs2.currents = [montage_left[1], montage_left[3]]",
+    }
+
+    for runner, expected_assignment in expected_assignments.items():
+        source = (root / runner).read_text()
+        assert "add_tdcslist(deepcopy(tdcs1))" in source
+        assert expected_assignment in source

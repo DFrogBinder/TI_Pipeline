@@ -4,9 +4,19 @@ from simulation_runners import repeatability_experiment
 def test_ti_montage_parameters_match_hippocampus_montage():
     params = repeatability_experiment._ti_montage_parameters()
 
-    assert params["electrode_size"] == [10, 1]
+    assert params["electrode_size"] == [10, 2]
     assert params["electrode_shape"] == "ellipse"
-    assert params["electrode_conductivity"] == 0.85
+    assert params["electrode_conductivity"] == 1.4
+    assert params["custom_conductivities"] == {
+        "WM": 0.126,
+        "GM": 0.276,
+        "CSF": 1.65,
+        "Skull": 0.01,
+        "Scalp": 0.465,
+        "Eye": 0.5,
+        "Muscle": 0.16,
+        "Saline": 1.4,
+    }
     assert params["montage_right"] == ("F10", 2e-3, "P8", -2e-3)
     assert params["montage_left"] == ("T7", 1.588656e-3, "P7", -1.588656e-3)
 
@@ -24,6 +34,23 @@ def test_all_repeatability_runners_assign_left_montage_currents():
         source = runner_path.read_text(encoding="utf-8")
         assert "tdcs2.currents" in source
         assert "tdcs2.currents = [montage_left[1], montage_left[3]]" in source
+
+
+def test_all_repeatability_runners_use_camcan_electrode_properties():
+    runner_root = repeatability_experiment.PIPELINE_ROOT / "simulation_runners"
+    runner_paths = [
+        runner_root / "repeatability_experiment.py",
+        runner_root / "TI_runner_multi-core_repeat.py",
+        runner_root / "TI_runner_batch_reuse_mesh.py",
+        runner_root / "TI_runner_multi-core_resolution-repeat.py",
+    ]
+
+    for runner_path in runner_paths:
+        source = runner_path.read_text(encoding="utf-8")
+        assert "[10, 2]" in source
+        assert "electrode_conductivity = 1.4" in source
+        assert '"Saline": electrode_conductivity' in source
+        assert "tdcs1.cond[2].value = electrode_conductivity" not in source
 
 
 def test_legacy_ti_runners_do_not_keep_old_hardcoded_montage():

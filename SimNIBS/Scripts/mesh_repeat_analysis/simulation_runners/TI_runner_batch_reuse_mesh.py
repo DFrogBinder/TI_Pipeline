@@ -290,9 +290,19 @@ def _run_ti_pipeline(
     log_event("subject_start", subject=subject, repeat_tag=repeat_tag)
     _reset_dir_contents(output_root)
 
-    electrode_size = [10, 1]
+    electrode_size = [10, 2]
     electrode_shape = "ellipse"
-    electrode_conductivity = 0.85
+    electrode_conductivity = 1.4
+    custom_conductivities = {
+        "WM": 0.126,
+        "GM": 0.276,
+        "CSF": 1.65,
+        "Skull": 0.01,
+        "Scalp": 0.465,
+        "Eye": 0.5,
+        "Muscle": 0.16,
+        "Saline": electrode_conductivity,
+    }
 
     montage_right = ("F10", 2e-3, "P8", -2e-3)
     montage_left = ("T7", 1.588656e-3, "P7", -1.588656e-3)
@@ -305,7 +315,9 @@ def _run_ti_pipeline(
     S.map_to_vol = True
 
     tdcs1 = S.add_tdcslist()
-    tdcs1.cond[2].value = electrode_conductivity
+    for conductivity in tdcs1.cond:
+        if conductivity.name in custom_conductivities:
+            conductivity.value = float(custom_conductivities[conductivity.name])
     tdcs1.currents = [montage_right[1], montage_right[3]]
 
     el1 = tdcs1.add_electrode()

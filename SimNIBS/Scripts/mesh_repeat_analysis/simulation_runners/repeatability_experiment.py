@@ -84,12 +84,27 @@ MESH_LOCK_TIMEOUT_SEC = 12 * 60 * 60
 MESH_LOCK_POLL_SEC = 5.0
 SIM_INPUT_EXIT_CODE = 126
 
+CAMCAN_TISSUE_CONDUCTIVITIES = {
+    "WM": 0.126,
+    "GM": 0.276,
+    "CSF": 1.65,
+    "Skull": 0.01,
+    "Scalp": 0.465,
+    "Eye": 0.5,
+    "Muscle": 0.16,
+}
+
 
 def _ti_montage_parameters() -> dict[str, object]:
+    electrode_conductivity = 1.4
     return {
-        "electrode_size": [10, 1],
+        "electrode_size": [10, 2],
         "electrode_shape": "ellipse",
-        "electrode_conductivity": 0.85,
+        "electrode_conductivity": electrode_conductivity,
+        "custom_conductivities": {
+            **CAMCAN_TISSUE_CONDUCTIVITIES,
+            "Saline": electrode_conductivity,
+        },
         "montage_right": ("F10", 2e-3, "P8", -2e-3),
         "montage_left": ("T7", 1.588656e-3, "P7", -1.588656e-3),
     }
@@ -535,7 +550,7 @@ def _run_ti_pipeline(
     montage_params = _ti_montage_parameters()
     electrode_size = montage_params["electrode_size"]
     electrode_shape = montage_params["electrode_shape"]
-    electrode_conductivity = montage_params["electrode_conductivity"]
+    custom_conductivities = montage_params["custom_conductivities"]
     montage_right = montage_params["montage_right"]
     montage_left = montage_params["montage_left"]
 
@@ -547,7 +562,9 @@ def _run_ti_pipeline(
     S.map_to_vol = True
 
     tdcs1 = S.add_tdcslist()
-    tdcs1.cond[2].value = electrode_conductivity
+    for conductivity in tdcs1.cond:
+        if conductivity.name in custom_conductivities:
+            conductivity.value = float(custom_conductivities[conductivity.name])
     tdcs1.currents = [montage_right[1], montage_right[3]]
 
     el1 = tdcs1.add_electrode()

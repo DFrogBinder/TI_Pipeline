@@ -12,7 +12,7 @@ import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 
 import numpy as np
 
@@ -20,6 +20,61 @@ import numpy as np
 TI_CROP_TAGS = np.hstack((np.arange(0, 499), np.arange(1000, 1499)))
 DEFAULT_MANIFEST_NAME = "current_repair_manifest.json"
 PAIR2_RERUN_STAGING_DIR = "current_repair_pair2_rerun"
+T = TypeVar("T")
+
+
+def _default_rich_progress_factory():
+    try:
+        from rich.console import Console
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+            TimeRemainingColumn,
+        )
+    except ImportError:
+        return None
+
+    def create_progress() -> Progress:
+        return Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            console=Console(stderr=True),
+        )
+
+    return create_progress
+
+
+def iter_with_rich_progress(
+    iterable: Iterable[T],
+    *,
+    total: int,
+    description: str,
+    enabled: bool = True,
+    progress_factory: Callable[[], object] | None = None,
+) -> Iterator[T]:
+    if not enabled:
+        yield from iterable
+        return
+
+    if progress_factory is None:
+        progress_factory = _default_rich_progress_factory()
+    if progress_factory is None:
+        yield from iterable
+        return
+
+    with progress_factory() as progress:
+        task_id = progress.add_task(description, total=total)
+        for item in iterable:
+            yield item
+            progress.advance(task_id)
 
 
 @dataclass(frozen=True)

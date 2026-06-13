@@ -25,6 +25,7 @@ from ti_current_repair.core import (  # noqa: E402
     RepairTask,
     SimulationSpec,
     compare_repaired_run_outputs,
+    iter_with_rich_progress,
     repair_pair2_rerun_run,
     repair_scaled_run,
     write_comparison_summary,
@@ -189,6 +190,14 @@ def _select_task_index(tasks: list[RepairTask], task_index: int | None) -> list[
     return [tasks[task_index]]
 
 
+def _progress_enabled(setting: str) -> bool:
+    if setting == "always":
+        return True
+    if setting == "never":
+        return False
+    return sys.stderr.isatty()
+
+
 def _print_plan(tasks: Sequence[RepairTask]) -> None:
     for index, task in enumerate(tasks):
         print(
@@ -313,16 +322,23 @@ def _run_compare_mode(args: argparse.Namespace) -> int:
             )
         return 0
 
-    rows = [
-        compare_repaired_run_outputs(
-            left_task=scaled,
-            right_task=rerun,
-            output_root=_resolve_root(args.output_root),
-            experiment="camcan",
+    output_root = _resolve_root(args.output_root)
+    rows = []
+    for scaled, rerun in iter_with_rich_progress(
+        pairs,
+        total=len(pairs),
+        description="Comparing CamCan repairs",
+        enabled=_progress_enabled(args.progress),
+    ):
+        rows.append(
+            compare_repaired_run_outputs(
+                left_task=scaled,
+                right_task=rerun,
+                output_root=output_root,
+                experiment="camcan",
+            )
         )
-        for scaled, rerun in pairs
-    ]
-    summary = write_comparison_summary(rows, _resolve_root(args.output_root))
+    summary = write_comparison_summary(rows, output_root)
     print(f"[INFO] wrote comparison summary: {summary['summary_json']}")
     print(f"[INFO] wrote comparison table: {summary['summary_csv']}")
     return 0
@@ -346,6 +362,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--count-only", action="store_true", help="Print task count and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned tasks without writing outputs.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite an existing repaired subject tree.")
+    parser.add_argument(
+        "--progress",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="Show Rich progress during compare mode: auto for interactive stderr, always, or never.",
+    )
     args = parser.parse_args(argv)
     if args.mode in {"scaled", "pair2-rerun"} and not args.original_root:
         parser.error("--mode scaled and --mode pair2-rerun require --original-root.")

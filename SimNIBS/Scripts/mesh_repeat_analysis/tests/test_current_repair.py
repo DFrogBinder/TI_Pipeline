@@ -16,6 +16,7 @@ from ti_current_repair.core import (  # noqa: E402
     SimulationSpec,
     array_agreement_metrics,
     build_ti_mesh,
+    iter_with_rich_progress,
     repair_pair2_rerun_run,
     rerun_pair2_scalar_mesh,
     scale_mesh_e_field,
@@ -141,6 +142,62 @@ def test_comparison_summary_writes_csv_for_shape_mismatch(tmp_path):
 
     assert summary["summary_csv"].exists()
     assert "shape_mismatch" in summary["summary_csv"].read_text(encoding="utf-8")
+
+
+def test_rich_progress_wrapper_advances_after_each_item():
+    events = []
+
+    class FakeProgress:
+        def __enter__(self):
+            events.append(("enter",))
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append(("exit",))
+
+        def add_task(self, description, *, total):
+            events.append(("add_task", description, total))
+            return 7
+
+        def advance(self, task_id):
+            events.append(("advance", task_id))
+
+    items = list(
+        iter_with_rich_progress(
+            ["a", "b", "c"],
+            total=3,
+            description="Comparing runs",
+            enabled=True,
+            progress_factory=FakeProgress,
+        )
+    )
+
+    assert items == ["a", "b", "c"]
+    assert events == [
+        ("enter",),
+        ("add_task", "Comparing runs", 3),
+        ("advance", 7),
+        ("advance", 7),
+        ("advance", 7),
+        ("exit",),
+    ]
+
+
+def test_rich_progress_wrapper_skips_factory_when_disabled():
+    def fail_factory():
+        raise AssertionError("progress factory should not be used")
+
+    items = list(
+        iter_with_rich_progress(
+            [1, 2],
+            total=2,
+            description="Comparing runs",
+            enabled=False,
+            progress_factory=fail_factory,
+        )
+    )
+
+    assert items == [1, 2]
 
 
 def test_repeatability_scale_factor_matches_current_bug():

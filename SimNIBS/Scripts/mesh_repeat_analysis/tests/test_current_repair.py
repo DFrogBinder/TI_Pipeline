@@ -20,6 +20,7 @@ from ti_current_repair.core import (  # noqa: E402
     rerun_pair2_scalar_mesh,
     scale_mesh_e_field,
     validate_same_repair_key,
+    write_comparison_summary,
 )
 from mesh_repeat_analysis.simulation_runners.repair_current_bug import (  # noqa: E402
     CAMCAN_CONDUCTIVITIES,
@@ -99,6 +100,47 @@ def test_comparison_metric_records_shape_mismatch_without_raising():
     assert "Shape mismatch" in metrics["error"]
     assert np.isnan(metrics["max_abs"])
     assert metrics["n_values"] == 0
+
+
+def test_comparison_summary_writes_csv_for_shape_mismatch(tmp_path):
+    row = {
+        "experiment": "repeatability",
+        "subject": "sub-01",
+        "dataset": None,
+        "condition": "remesh",
+        "repeat_tag": "repeat_001",
+        "pair2_e": {
+            "status": "shape_mismatch",
+            "error": "Shape mismatch: (2, 3) vs (3, 3)",
+            "left_shape": [2, 3],
+            "right_shape": [3, 3],
+            "max_abs": float("nan"),
+            "rmse": float("nan"),
+        },
+        "timax": {
+            "status": "ok",
+            "error": None,
+            "left_shape": [2],
+            "right_shape": [2],
+            "max_abs": 0.0,
+            "rmse": 0.0,
+        },
+        "ti_brain_only": {
+            "status": "ok",
+            "error": None,
+            "left_shape": [2],
+            "right_shape": [2],
+            "max_abs": 0.0,
+            "rmse": 0.0,
+        },
+        "left_root": "/scaled",
+        "right_root": "/pair2-rerun",
+    }
+
+    summary = write_comparison_summary([row], tmp_path)
+
+    assert summary["summary_csv"].exists()
+    assert "shape_mismatch" in summary["summary_csv"].read_text(encoding="utf-8")
 
 
 def test_repeatability_scale_factor_matches_current_bug():

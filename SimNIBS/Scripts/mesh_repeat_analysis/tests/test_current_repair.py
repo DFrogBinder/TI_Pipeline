@@ -17,6 +17,7 @@ from ti_current_repair.core import (  # noqa: E402
     array_agreement_metrics,
     build_ti_mesh,
     repair_pair2_rerun_run,
+    rerun_pair2_scalar_mesh,
     scale_mesh_e_field,
     validate_same_repair_key,
 )
@@ -82,6 +83,22 @@ def test_array_agreement_metrics_zero_for_identical_and_nonzero_for_perturbation
     assert identical.rmse == 0.0
     assert perturbed.max_abs == 2.0
     assert perturbed.rmse > 0.0
+
+
+def test_comparison_metric_records_shape_mismatch_without_raising():
+    import ti_current_repair.core as core
+
+    metrics = core._agreement_metrics_dict_or_error(
+        np.zeros((2, 3)),
+        np.zeros((3, 3)),
+    )
+
+    assert metrics["status"] == "shape_mismatch"
+    assert metrics["left_shape"] == [2, 3]
+    assert metrics["right_shape"] == [3, 3]
+    assert "Shape mismatch" in metrics["error"]
+    assert np.isnan(metrics["max_abs"])
+    assert metrics["n_values"] == 0
 
 
 def test_repeatability_scale_factor_matches_current_bug():
@@ -236,3 +253,58 @@ def test_pair2_rerun_stages_new_simulation_inside_repair_root(tmp_path, monkeypa
     assert not seen["staging_pathfem"].is_relative_to(task.original_sim_root)
     assert (task.output_dir / f"{subject}_TDCS_2_scalar.msh").read_text(encoding="utf-8") == "corrected pair2"
     assert (task.original_dir / f"{subject}_TDCS_2_scalar.msh").read_text(encoding="utf-8") == "wrong pair2"
+
+
+def test_pair2_rerun_disables_gmsh_visualization(tmp_path):
+    class FakeElectrode:
+        pass
+
+    class FakeTdcs:
+        def __init__(self):
+            self.cond = []
+            self.currents = []
+
+        def add_electrode(self):
+            electrode = FakeElectrode()
+            return electrode
+
+    class FakeSession:
+        def __init__(self):
+            self.open_in_gmsh = True
+
+        def add_tdcslist(self):
+            self.tdcs = FakeTdcs()
+            return self.tdcs
+
+    class FakeSimStructModule:
+        SESSION = FakeSession
+
+    seen = {}
+
+    class FakeSimModule:
+        @staticmethod
+        def run_simnibs(session):
+            seen["open_in_gmsh"] = session.open_in_gmsh
+            Path(session.pathfem).mkdir(parents=True, exist_ok=True)
+            (Path(session.pathfem) / "sub-01_TDCS_1_scalar.msh").write_text(
+                "pair2", encoding="utf-8"
+            )
+
+    spec = SimulationSpec(
+        subject="sub-01",
+        head_mesh=tmp_path / "sub-01.msh",
+        pair2=ElectrodePair("T7", "P7", REPEATABILITY_CURRENT_SPEC.pair2_intended_current_a),
+        electrode_radius_mm=10.0,
+        electrode_thickness_mm=2.0,
+        electrode_shape="ellipse",
+        electrode_conductivity=1.4,
+    )
+
+    rerun_pair2_scalar_mesh(
+        spec,
+        staging_pathfem=tmp_path / "staging",
+        sim_module=FakeSimModule,
+        sim_struct_module=FakeSimStructModule,
+    )
+
+    assert seen["open_in_gmsh"] is False

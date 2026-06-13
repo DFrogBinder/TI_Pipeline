@@ -13,6 +13,12 @@ if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
     echo "[ERROR] Submit this script as a Slurm array."
     exit 1
 fi
+TASK_OFFSET="${TASK_OFFSET:-0}"
+if ! [[ "${TASK_OFFSET}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] TASK_OFFSET must be a non-negative integer, got: ${TASK_OFFSET}"
+    exit 1
+fi
+TASK_INDEX=$((TASK_OFFSET + SLURM_ARRAY_TASK_ID))
 
 : "${REPAIR_CLI:?Missing REPAIR_CLI.}"
 : "${OUTPUT_ROOT:?Missing OUTPUT_ROOT.}"
@@ -35,7 +41,7 @@ export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
 mkdir -p "${LOG_DIR}"
-LOG_FILE="${LOG_DIR}/camcan_current_repair_${MODE}_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}.log"
+LOG_FILE="${LOG_DIR}/camcan_current_repair_${MODE}_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${TASK_INDEX}.log"
 
 PYTHON_ARGS=(
     "${REPAIR_CLI}"
@@ -43,7 +49,7 @@ PYTHON_ARGS=(
     --output-root "${OUTPUT_ROOT}"
     --montage-preset "${MONTAGE_PRESET}"
     --dataset-glob "${DATASET_GLOB:-*_Data_*}"
-    --task-index "${SLURM_ARRAY_TASK_ID}"
+    --task-index "${TASK_INDEX}"
 )
 
 if [ "${OVERWRITE_OUTPUT:-0}" = "1" ]; then
@@ -61,7 +67,9 @@ fi
 
 echo "[INFO] Mode:        ${MODE}"
 echo "[INFO] Montage:     ${MONTAGE_PRESET}"
-echo "[INFO] Task index:  ${SLURM_ARRAY_TASK_ID}"
+echo "[INFO] Local index:  ${SLURM_ARRAY_TASK_ID}"
+echo "[INFO] Task offset:  ${TASK_OFFSET}"
+echo "[INFO] Task index:   ${TASK_INDEX}"
 echo "[INFO] Log file:    ${LOG_FILE}"
 
 python -u "${PYTHON_ARGS[@]}" 2>&1 | tee "${LOG_FILE}"

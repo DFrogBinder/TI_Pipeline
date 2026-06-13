@@ -11,7 +11,7 @@
 - `make_atlas.sh`, `run_atlasMaker.py`: FastSurfer/FreeSurfer atlas generation.
 - `create3dmesh.py`: convert TI volumes + masks to VTK/PLY/STL.
 - Slurm wrappers: `my_jobArray.slurm`, `ti_multi.slurm`, `run_post_processing.slurm`.
-- Docs/diagrams: `README.md`, `Updated_TI_Pipeline.drawio`.
+- Docs/diagrams: `README.md`, source diagrams in `drawio/`, and publication exports in `docs/figures/post_pipeline/`.
 
 ## Build, Test, and Development Commands
 - Subject post-process (example): `python post/post_process.py` (edit cfg at bottom or import `run_post_process`).

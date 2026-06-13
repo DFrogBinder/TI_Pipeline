@@ -270,6 +270,36 @@ def array_agreement_metrics(left: Sequence[float] | np.ndarray, right: Sequence[
     )
 
 
+def _agreement_metrics_dict_or_error(
+    left: Sequence[float] | np.ndarray,
+    right: Sequence[float] | np.ndarray,
+) -> dict[str, object]:
+    left_arr = np.asarray(left)
+    right_arr = np.asarray(right)
+    try:
+        metrics = asdict(array_agreement_metrics(left_arr, right_arr))
+        return {
+            **metrics,
+            "status": "ok",
+            "error": "",
+            "left_shape": list(left_arr.shape),
+            "right_shape": list(right_arr.shape),
+        }
+    except ValueError as exc:
+        return {
+            "max_abs": math.nan,
+            "mean_abs": math.nan,
+            "rmse": math.nan,
+            "max_rel": math.nan,
+            "mean_rel": math.nan,
+            "n_values": 0,
+            "status": "shape_mismatch",
+            "error": str(exc),
+            "left_shape": list(left_arr.shape),
+            "right_shape": list(right_arr.shape),
+        }
+
+
 def validate_same_repair_key(left: RepairKey, right: RepairKey, *, experiment: str) -> None:
     if left.experiment != experiment or right.experiment != experiment:
         raise ValueError(
@@ -515,6 +545,7 @@ def rerun_pair2_scalar_mesh(
     session.pathfem = str(staging_pathfem)
     session.element_size = spec.element_size
     session.map_to_vol = True
+    session.open_in_gmsh = False
 
     tdcs = session.add_tdcslist()
     _apply_conductivities(tdcs, spec)
@@ -628,9 +659,9 @@ def compare_repaired_run_outputs(
         "dataset": left_task.key.dataset,
         "condition": left_task.key.condition,
         "repeat_tag": left_task.key.repeat_tag,
-        "pair2_e": asdict(array_agreement_metrics(left_pair2, right_pair2)),
-        "timax": asdict(array_agreement_metrics(left_ti, right_ti)),
-        "ti_brain_only": asdict(array_agreement_metrics(left_vol, right_vol)),
+        "pair2_e": _agreement_metrics_dict_or_error(left_pair2, right_pair2),
+        "timax": _agreement_metrics_dict_or_error(left_ti, right_ti),
+        "ti_brain_only": _agreement_metrics_dict_or_error(left_vol, right_vol),
         "left_root": left_task.output_subject_root,
         "right_root": right_task.output_subject_root,
     }
@@ -660,10 +691,22 @@ def write_comparison_summary(rows: Sequence[Mapping[str, object]], output_root: 
         "dataset",
         "condition",
         "repeat_tag",
+        "pair2_e_status",
+        "pair2_e_error",
+        "pair2_e_left_shape",
+        "pair2_e_right_shape",
         "pair2_e_max_abs",
         "pair2_e_rmse",
+        "timax_status",
+        "timax_error",
+        "timax_left_shape",
+        "timax_right_shape",
         "timax_max_abs",
         "timax_rmse",
+        "ti_brain_only_status",
+        "ti_brain_only_error",
+        "ti_brain_only_left_shape",
+        "ti_brain_only_right_shape",
         "ti_brain_only_max_abs",
         "ti_brain_only_rmse",
         "left_root",
@@ -683,10 +726,22 @@ def write_comparison_summary(rows: Sequence[Mapping[str, object]], output_root: 
                     "dataset": row.get("dataset"),
                     "condition": row.get("condition"),
                     "repeat_tag": row.get("repeat_tag"),
+                    "pair2_e_status": pair2.get("status"),
+                    "pair2_e_error": pair2.get("error"),
+                    "pair2_e_left_shape": pair2.get("left_shape"),
+                    "pair2_e_right_shape": pair2.get("right_shape"),
                     "pair2_e_max_abs": pair2["max_abs"],
                     "pair2_e_rmse": pair2["rmse"],
+                    "timax_status": timax.get("status"),
+                    "timax_error": timax.get("error"),
+                    "timax_left_shape": timax.get("left_shape"),
+                    "timax_right_shape": timax.get("right_shape"),
                     "timax_max_abs": timax["max_abs"],
                     "timax_rmse": timax["rmse"],
+                    "ti_brain_only_status": volume.get("status"),
+                    "ti_brain_only_error": volume.get("error"),
+                    "ti_brain_only_left_shape": volume.get("left_shape"),
+                    "ti_brain_only_right_shape": volume.get("right_shape"),
                     "ti_brain_only_max_abs": volume["max_abs"],
                     "ti_brain_only_rmse": volume["rmse"],
                     "left_root": row.get("left_root"),

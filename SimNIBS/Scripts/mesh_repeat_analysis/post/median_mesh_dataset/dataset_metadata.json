@@ -1,0 +1,17 @@
+{
+  "dataset": "repeatability_scaled_geometry_preserving_median_mesh_selection",
+  "created_date": "2026-06-14",
+  "selection_for_paper_figures": "scaled_geometry_preserving_median_repeats.csv",
+  "source_analysis_root": "repeatability_scaled/_analysis",
+  "condition": "remesh",
+  "metric": "median_roi",
+  "rationale": "Use the scaled correction for representative mesh selection because it preserves the original repeat geometry and changes only the pair-2 current amplitude deterministically. Pair2-rerun selection is retained as a sensitivity check and is not the figure-selection source.",
+  "subjects": 10,
+  "all_pair2_rerun_selected_repeats_differ": true,
+  "files": {
+    "authoritative_selection_csv": "scaled_geometry_preserving_median_repeats.csv",
+    "authoritative_selection_md": "scaled_geometry_preserving_median_repeats.md",
+    "rerun_sensitivity_csv": "pair2_rerun_median_repeats_sensitivity_check.csv",
+    "comparison_csv": "scaled_vs_pair2_rerun_median_repeat_comparison.csv"
+  }
+}

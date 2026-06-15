@@ -42,12 +42,13 @@ Important current decision:
 - `dataset_metadata.json`
   - Machine-readable decision record.
 - `hpc_seed_fixed_median_mesh_dataset.py`
-  - Historical utility for copying the selected `m2m_*` directories into a
-    fixed-mesh cache layout.
-  - Retained for traceability and exploratory geometry-control work.
-  - Do not use it to create a final quantitative paper-analysis root unless the
-    resulting outputs are explicitly labelled as freshly simulated
-    direct-corrected data and are not mixed with scaled-rescale outputs.
+  - Utility for copying the selected `m2m_*` directories into a fixed-mesh
+    cache layout.
+  - For final fixed-median presentation work, run it with
+    `--seed-repeat-workspaces` so each fixed repeat workspace is pre-populated
+    with links to the selected scaled remesh repeat's anatomy/reference inputs.
+  - Do not use `m2m_*`-only seeding by itself for the final fixed-median
+    paper-analysis root.
 
 ## Authoritative Selected Repeats
 
@@ -113,23 +114,61 @@ python -c 'import csv, os; root=os.environ["SCALED_ROOT"]; rows=list(csv.DictRea
 
 Expected: `missing 0`.
 
+## Fixed-Median Presentation Dataset
+
+The standard `repeatability_scaled` root is internally consistent, but its
+`fixed_mesh` condition uses the original fixed mesh, not the selected median
+remesh geometry. Therefore, the fixed-mesh points are expected to lie within the
+remesh distribution, but they do not have to be centered on the selected remesh
+median.
+
+The remaining presentation-only data generation step is therefore not another
+current correction. The pair-2 field has already been corrected in
+`repeatability_scaled`. The missing control is geometry/reference selection:
+the fixed-mesh condition needs to use each subject's selected median remesh
+repeat as its fixed geometry/reference.
+
+The required workflow is:
+
+1. Read the selected median remesh repeats from
+   `scaled_geometry_preserving_median_repeats.csv`.
+2. Seed the fixed-mesh dataset from the selected repeat's scaled-root geometry
+   and anatomy/reference inputs, not from `m2m_*` alone:
+
+   ```bash
+   python SimNIBS/Scripts/mesh_repeat_analysis/post/median_mesh_dataset/hpc_seed_fixed_median_mesh_dataset.py \
+     --selection-csv "$SELECTION_CSV" \
+     --new-root "$MEDIAN_FIXED_ROOT" \
+     --seed-repeat-workspaces
+   ```
+
+3. Rerun only the fixed_mesh condition with the intended corrected currents.
+4. Keep the remesh side from the existing `repeatability_scaled` root.
+5. Re-run only the downstream analysis/figure generation needed for the
+   presentation figure.
+
+This produces a median-fixed presentation dataset while staying inside the
+scaled corrected-current methodology. It should not introduce legacy-current
+simulation or mix scaled remesh outputs with a different correction method.
+
 ## Retired Fixed-Median Dataset Workflow
 
 The following root was audited and removed from the final workflow:
 
 `/mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset`
 
-Audit classification: `direct_corrected`.
+Audit classification: `m2m_only_seeded_fixed_median`.
 
 The root was invalid for final figures because it combined two different
-numerical pathways:
+workflow assumptions:
 
 - `remesh`: symlinks into the scaled current-corrected root.
-- `fixed_mesh`: fresh direct corrected-current simulations at pair 1 =
-  `0.002 A`, pair 2 = `0.001588656 A`.
+- `fixed_mesh`: newly generated simulations from a cache seeded only with the
+  selected `m2m_*` directory while common anatomical inputs were still linked
+  from the base source root.
 
-That mixed-method comparison made fixed_mesh values fall outside the remesh
-distribution for some subjects. It should remain a forensic/audit result, not a
+That m2m-only seeding was not a clean reconstruction of the selected median
+repeat as the fixed reference. It should remain a forensic/audit result, not a
 paper-analysis result.
 
 ## Interpretation Boundary

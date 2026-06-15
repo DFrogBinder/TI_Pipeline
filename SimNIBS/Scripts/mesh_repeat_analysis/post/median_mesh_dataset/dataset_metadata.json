@@ -6,6 +6,14 @@
   "condition": "remesh",
   "metric": "median_roi",
   "rationale": "Use the scaled correction for representative mesh selection because it preserves the original repeat geometry and changes only the pair-2 current amplitude deterministically. Pair2-rerun selection is retained as a sensitivity check and is not the figure-selection source.",
+  "final_quantitative_root": "repeatability_scaled",
+  "usage_boundary": "This package records median-representative remesh selection from the scaled current-corrected analysis. It should not be used as an instruction to generate a mixed-method final paper-analysis root.",
+  "retired_workflow": {
+    "root": "repeatability_scaled_fixed_median_mesh_dataset",
+    "audit_date": "2026-06-15",
+    "classification": "direct_corrected",
+    "reason": "The audited root mixed scaled-rescale remesh outputs with freshly simulated direct-corrected fixed_mesh outputs, so it is not suitable for final Repeatability paper figures."
+  },
   "subjects": 10,
   "all_pair2_rerun_selected_repeats_differ": true,
   "files": {

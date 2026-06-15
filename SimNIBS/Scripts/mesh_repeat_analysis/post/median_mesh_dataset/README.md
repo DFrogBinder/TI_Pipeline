@@ -1,4 +1,4 @@
-# Repeatability Fixed-Median Mesh Dataset
+# Repeatability Median-Representative Mesh Selection
 
 This package defines the median-representative remesh repeats to use for the
 Repeatability paper figures.
@@ -9,6 +9,20 @@ the original repeat geometry and applies only the deterministic pair-2 current
 amplitude correction. Pair2-rerun is retained here as a sensitivity check,
 because it regenerates the second-pair electrode-augmented simulation mesh and
 therefore changes the median representative repeat for every subject.
+
+Important current decision:
+
+- The final Repeatability quantitative figures should use the scaled
+  current-corrected root consistently.
+- Do not mix scaled-rescale remesh outputs with newly simulated direct-corrected
+  fixed-mesh outputs.
+- The previous `repeatability_scaled_fixed_median_mesh_dataset` workflow is
+  retired for final paper figures. It produced a mixed-method analysis root:
+  remesh values came from the scaled root, while fixed_mesh values came from
+  fresh direct corrected-current simulations.
+- The selected-repeat CSV remains valid as a representative-geometry selection
+  record; it should not be treated as an instruction to regenerate a new final
+  quantitative fixed-median dataset.
 
 ## Files
 
@@ -28,8 +42,12 @@ therefore changes the median representative repeat for every subject.
 - `dataset_metadata.json`
   - Machine-readable decision record.
 - `hpc_seed_fixed_median_mesh_dataset.py`
-  - Self-contained Stanage/HPC script for copying the selected `m2m_*`
-    directories into a new fixed-mesh cache layout.
+  - Historical utility for copying the selected `m2m_*` directories into a
+    fixed-mesh cache layout.
+  - Retained for traceability and exploratory geometry-control work.
+  - Do not use it to create a final quantitative paper-analysis root unless the
+    resulting outputs are explicitly labelled as freshly simulated
+    direct-corrected data and are not mixed with scaled-rescale outputs.
 
 ## Authoritative Selected Repeats
 
@@ -46,73 +64,77 @@ therefore changes the median representative repeat for every subject.
 | `sub-CC711128` | `repeat_022` |
 | `sub-CC721418` | `repeat_005` |
 
-## HPC Dataset Creation
+## HPC Usage For Final Figures
 
 On Stanage, the authoritative selection CSV should also exist at:
 
 `/mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled/_analysis/median_mesh_selection/median_representative_remesh_repeats.csv`
 
-Use that path directly on the HPC filesystem. Copy or rsync
-`hpc_seed_fixed_median_mesh_dataset.py` to the HPC if it is not already there.
+Use that path directly on the HPC filesystem. The final quantitative analysis
+should read values from:
 
-Recommended root for the seeded dataset:
+`/mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled`
+
+Recommended setup:
+
+```bash
+cd /users/cop23bi/Repos/TI_Pipeline
+export BASE=/mnt/parscratch/users/cop23bi/current-repair
+export SCALED_ROOT=$BASE/repeatability_scaled
+export SELECTION_CSV=$SCALED_ROOT/_analysis/median_mesh_selection/median_representative_remesh_repeats.csv
+```
+
+Sanity-check the selection file:
+
+```bash
+python -c 'import csv, os; rows=list(csv.DictReader(open(os.environ["SELECTION_CSV"]))); print("rows", len(rows)); [print(r["subject"], r["selected_repeat_tag"]) for r in rows]'
+```
+
+Expected selected repeats:
+
+```text
+sub-CC120120 repeat_021
+sub-CC122620 repeat_016
+sub-CC222496 repeat_013
+sub-CC321506 repeat_009
+sub-CC410182 repeat_004
+sub-CC420075 repeat_003
+sub-CC510534 repeat_009
+sub-CC520209 repeat_011
+sub-CC711128 repeat_022
+sub-CC721418 repeat_005
+```
+
+Check that each selected remesh output exists in the scaled root:
+
+```bash
+python -c 'import csv, os; root=os.environ["SCALED_ROOT"]; rows=list(csv.DictReader(open(os.environ["SELECTION_CSV"]))); missing=[]; [missing.append(f"{sub} {rep}") for r in rows for sub,rep in [(r["subject"], r["selected_repeat_tag"])] if not os.path.exists(os.path.join(root, f"{sub}_repeatability", "remesh", "repeats", rep, sub, "anat", "SimNIBS", "Output", sub, "TI.msh"))]; print("missing", len(missing)); [print(x) for x in missing]'
+```
+
+Expected: `missing 0`.
+
+## Retired Fixed-Median Dataset Workflow
+
+The following root was audited and removed from the final workflow:
 
 `/mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset`
 
-Dry run first:
+Audit classification: `direct_corrected`.
 
-```bash
-python hpc_seed_fixed_median_mesh_dataset.py --selection-csv /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled/_analysis/median_mesh_selection/median_representative_remesh_repeats.csv --new-root /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset --dry-run
-```
+The root was invalid for final figures because it combined two different
+numerical pathways:
 
-Seed the dataset:
+- `remesh`: symlinks into the scaled current-corrected root.
+- `fixed_mesh`: fresh direct corrected-current simulations at pair 1 =
+  `0.002 A`, pair 2 = `0.001588656 A`.
 
-```bash
-python hpc_seed_fixed_median_mesh_dataset.py --selection-csv /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled/_analysis/median_mesh_selection/median_representative_remesh_repeats.csv --new-root /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset
-```
-
-If rerunning after a partial copy:
-
-```bash
-python hpc_seed_fixed_median_mesh_dataset.py --selection-csv /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled/_analysis/median_mesh_selection/median_representative_remesh_repeats.csv --new-root /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset --overwrite
-```
-
-Validate the seeded mesh cache count:
-
-```bash
-find /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset -path "*/fixed_mesh/mesh_cache/*/anat/.mesh_ready.json" | wc -l
-```
-
-Expected count: `10`.
-
-Validate the mesh count:
-
-```bash
-find /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset -path "*/fixed_mesh/mesh_cache/*/anat/m2m_*/*.msh" | wc -l
-```
-
-Expected count: `10`.
-
-## Config Creation
-
-After seeding, create a repeatability config that points at the new root. From
-the TI_Pipeline repository on Stanage:
-
-```bash
-python -c 'import json; from pathlib import Path; src=Path("SimNIBS/Scripts/mesh_repeat_analysis/paired_repeatability_experiment.json"); dst=Path("/mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset_config.json"); data=json.loads(src.read_text()); data["experiment_root"]="/mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset"; dst.write_text(json.dumps(data, indent=2)+"\n"); print(dst)'
-```
-
-Validate the config/root after simulations or after any copied outputs are
-present:
-
-```bash
-python SimNIBS/Scripts/mesh_repeat_analysis/validate_experiment_outputs.py --config /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset_config.json --strict --output-json /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset_validation.json --output-csv /mnt/parscratch/users/cop23bi/current-repair/repeatability_scaled_fixed_median_mesh_dataset_validation.csv
-```
+That mixed-method comparison made fixed_mesh values fall outside the remesh
+distribution for some subjects. It should remain a forensic/audit result, not a
+paper-analysis result.
 
 ## Interpretation Boundary
 
-This dataset is a figure-selection and fixed-median-cache dataset. It should be
-described as geometry-preserving, not as ground truth. If a final quantitative
-analysis uses pair2-rerun values, the reported field and ROI values should still
-come from the pair2-rerun root; this selection only fixes which original
-repeat/mesh is treated as the representative median geometry for figures.
+This package is a figure-selection record. It should be described as
+geometry-preserving, not as ground truth. The reported field and ROI values for
+the final Repeatability paper should come from one corrected root consistently.
+Under the current decision, that root is the scaled current-corrected root.

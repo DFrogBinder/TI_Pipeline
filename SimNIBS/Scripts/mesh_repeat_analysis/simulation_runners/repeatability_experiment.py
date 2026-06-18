@@ -59,11 +59,13 @@ def _find_camcan_root() -> Path:
     )
 
 
-CAMCAN_ROOT = _find_camcan_root()
-if str(CAMCAN_ROOT) not in sys.path:
-    sys.path.insert(0, str(CAMCAN_ROOT))
+def _atomic_replace(*args, **kwargs):
+    camcan_root = _find_camcan_root()
+    if str(camcan_root) not in sys.path:
+        sys.path.insert(0, str(camcan_root))
+    from utils.sim_utils import atomic_replace  # noqa: PLC0415
 
-from utils.sim_utils import atomic_replace  # noqa: E402
+    return atomic_replace(*args, **kwargs)
 
 
 # Deterministic meshing settings
@@ -500,7 +502,7 @@ def _mesh_workspace(
         merged_seg_img_path = workspace.anat_dir / f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii"
         out_img = nib.Nifti1Image(data.astype(np.uint16), custom_seg_map.affine, custom_seg_map.header)
         nib.save(out_img, str(merged_seg_img_path))
-        atomic_replace(
+        _atomic_replace(
             str(merged_seg_img_path),
             str(charm_seg_map_path),
             force_int=True,

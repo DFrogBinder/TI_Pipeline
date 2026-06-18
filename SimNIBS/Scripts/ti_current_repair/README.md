@@ -5,10 +5,16 @@ pipeline here is self-contained: it uses the local `experiment_config.py`,
 `simulation_runners/`, `hpc_scripts/`, `post/`, and `pipeline/` modules under
 `SimNIBS/Scripts/ti_current_repair`.
 
-Run commands from this directory on the HPC:
+For the full HPC launch procedure covering both this staged current-repair
+pipeline and the restored original mesh-repeat rerun, see
+`docs/current_repair_and_mesh_repeat_hpc_runbook.md`.
+
+Run commands from the repository root on the HPC:
 
 ```bash
-cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/ti_current_repair
+cd /users/cop23bi/Repos/TI_Pipeline
+export REPO_ROOT=/users/cop23bi/Repos/TI_Pipeline
+export CURRENT_REPAIR_DIR="${REPO_ROOT}/SimNIBS/Scripts/ti_current_repair"
 ```
 
 ## End-to-End Run
@@ -16,7 +22,7 @@ cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/ti_current_repair
 1. Initialize the experiment.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py init \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --source-root /mnt/parscratch/users/cop23bi/ti_dataset_balanced_10_corrected \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --subjects sub-CC122620,sub-CC222496,sub-CC120120,sub-CC321506,sub-CC410182,sub-CC420075,sub-CC510534,sub-CC520209,sub-CC711128,sub-CC721418 \
@@ -27,7 +33,7 @@ python pipeline/staged_median_fixed_experiment.py init \
 2. Submit remesh simulations.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py submit-remesh \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-remesh \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --max-concurrent 50
 ```
@@ -35,7 +41,7 @@ python pipeline/staged_median_fixed_experiment.py submit-remesh \
 3. After the remesh Slurm array finishes, analyze remesh outputs.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py analyze-remesh \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" analyze-remesh \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --max-concurrent 10
 ```
@@ -43,7 +49,7 @@ python pipeline/staged_median_fixed_experiment.py analyze-remesh \
 4. Select the representative median remesh repeat per subject.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py select-medians \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" select-medians \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --metric median_roi
 ```
@@ -52,14 +58,14 @@ python pipeline/staged_median_fixed_experiment.py select-medians \
    anatomy and mesh.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py seed-fixed \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" seed-fixed \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
 ```
 
 6. Submit fixed-mesh simulations.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py submit-fixed \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-fixed \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --max-concurrent 50
 ```
@@ -67,7 +73,7 @@ python pipeline/staged_median_fixed_experiment.py submit-fixed \
 7. After the fixed Slurm array finishes, run paired analysis.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py analyze-paired \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" analyze-paired \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --max-concurrent 10
 ```
@@ -75,14 +81,14 @@ python pipeline/staged_median_fixed_experiment.py analyze-paired \
 8. Build presentation figures and summary tables.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py make-figures \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" make-figures \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
 ```
 
 9. Check final status at any point.
 
 ```bash
-python pipeline/staged_median_fixed_experiment.py status \
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" status \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
 ```
 
@@ -103,8 +109,8 @@ Fixed-mesh seeding uses physical copies only. The seeder excludes previous
 ## Pre-HPC Smoke Checks
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 pytest tests/test_staged_current_repair_pipeline.py -q -p no:cacheprovider
-python pipeline/staged_median_fixed_experiment.py init --dry-run \
+PYTHONDONTWRITEBYTECODE=1 pytest "$CURRENT_REPAIR_DIR/tests/test_staged_current_repair_pipeline.py" -q -p no:cacheprovider
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init --dry-run \
   --source-root /tmp/source \
   --experiment-root /tmp/current-repair-smoke \
   --subjects sub-01 \

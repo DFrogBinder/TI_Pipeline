@@ -213,7 +213,8 @@ def _simulation_sbatch_command(
         f"--array={array_spec}",
         (
             "EXPERIMENT_CONFIG="
-            f"{config_path},LOG_DIR={log_dir},OVERWRITE_OUTPUT=0,FORCE_MESH=0"
+            f"{config_path},PIPELINE_DIR={PIPELINE_DIR},LOG_DIR={log_dir},"
+            "OVERWRITE_OUTPUT=0,FORCE_MESH=0"
         ),
         str(PIPELINE_DIR / "hpc_scripts" / "repeatability_experiment_array.slurm"),
     ]
@@ -239,6 +240,7 @@ def _report_sbatch_command(
         (
             "EXPERIMENT_CONFIG="
             f"{config_path},LOG_DIR={log_dir},CONDITIONS={conditions},"
+            f"PIPELINE_DIR={PIPELINE_DIR},"
             f"REPORT_TASK_PY={PIPELINE_DIR / 'hpc_scripts' / 'repeatability_report_array_task.py'}"
         ),
         str(PIPELINE_DIR / "hpc_scripts" / "repeatability_experiment_report_array.slurm"),

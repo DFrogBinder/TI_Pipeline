@@ -16,11 +16,9 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
 set -euo pipefail
 
-PIPELINE_DIR_DEFAULT="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis"
+PIPELINE_DIR_DEFAULT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="${PIPELINE_DIR:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
-if [ -d "${PIPELINE_DIR_DEFAULT}" ]; then
-    SCRIPT_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_DEFAULT}}"
-fi
+SCRIPT_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_DEFAULT}}"
 cd "$SCRIPT_DIR"
 
 EXPERIMENT_CONFIG="${EXPERIMENT_CONFIG:-}"

@@ -92,25 +92,11 @@ def read_coverage_rows(path: Path) -> List[CoverageRow]:
 
 
 def _import_nifti_dependencies():
-    missing: list[str] = []
     try:
         import nibabel as nib  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when environment lacks dependency
-        missing.append(exc.name or "nibabel")
-        nib = None
-    try:
         import numpy as np  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when environment lacks dependency
-        missing.append(exc.name or "numpy")
-        np = None
-    if missing:
-        missing_names = ", ".join(sorted(set(missing)))
-        raise RuntimeError(
-            "Missing Python package(s): "
-            f"{missing_names}. Computing coverage from NIfTI files requires nibabel and numpy. "
-            "On Stanage, run `module load SimNIBS/4.0.1-foss-2023a`, or provide "
-            "`--coverage-csv` to skip NIfTI coverage computation."
-        )
+    except Exception as exc:  # pragma: no cover - exercised only when environment lacks dependency
+        raise RuntimeError("Computing coverage from NIfTI files requires nibabel and numpy.") from exc
     return nib, np
 
 
@@ -546,8 +532,8 @@ def collect_mechanistic_inputs(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-output-dir", type=Path, default=None)
-    parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument("--base-output-dir", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument(
         "--coverage-csv",
         type=Path,
@@ -561,29 +547,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-large", action="store_true")
     parser.add_argument("--copy", action="store_true", help="Copy planned files. Without this flag, only manifests are written.")
     parser.add_argument("--dry-run", action="store_true", help="Write manifests without copying files.")
-    parser.add_argument(
-        "--check-nifti-dependencies",
-        action="store_true",
-        help="Import nibabel/numpy and exit without requiring collection paths.",
-    )
-    args = parser.parse_args()
-    if not args.check_nifti_dependencies:
-        missing = []
-        if args.base_output_dir is None:
-            missing.append("--base-output-dir")
-        if args.out_dir is None:
-            missing.append("--out-dir")
-        if missing:
-            parser.error(f"the following arguments are required: {', '.join(missing)}")
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.check_nifti_dependencies:
-        _import_nifti_dependencies()
-        print("nifti_dependencies=ok")
-        return
     dry_run = args.dry_run or not args.copy
     result = collect_mechanistic_inputs(
         base_output_dir=args.base_output_dir,

@@ -5,18 +5,12 @@ This folder now supports two repeatability experiment styles:
 1. `remesh`: every repeat generates a fresh mesh before running TI.
 2. `fixed_mesh`: one mesh is generated once per subject and then reused across repeats, so the remaining variation is primarily FEM / solver variation.
 
-The paired experiment path is designed for your `40 + 40` study:
+The new paired experiment path is designed for your `40 + 40` study:
 
 - `40` remesh repeats per subject
 - `40` fixed-mesh repeats per subject
 - the same subject list for both conditions
 - one paired analysis step that compares the two conditions directly
-
-The staged median-fixed workflow adds a second, more explicit path for the
-current-repair repeatability experiment. It first runs remesh repeats, selects
-the representative median remesh per subject from that run's own `_analysis`
-tree, physically copies the selected anatomical workspace into fixed-mesh
-cache/repeat folders, and only then submits fixed-mesh simulations.
 
 ## What Changed
 
@@ -34,38 +28,7 @@ They solved related problems, but they were not a single coherent experiment fra
 - `post/repeatability_experiment_report.py`
 - `paired_repeatability_experiment.example.json`
 
-The legacy runners are still present, but new paired experiments should use the
-files above. For median-fixed runs that must preserve exact selected remesh
-geometry, use the staged CLI in `pipeline/staged_median_fixed_experiment.py`.
-
-## Staged Median-Fixed Workflow
-
-Run these commands from `SimNIBS/Scripts/mesh_repeat_analysis` on the HPC. Each
-stage writes configs, manifests, submission records, and JSONL events under
-`<experiment_root>/_pipeline/`.
-
-```bash
-python pipeline/staged_median_fixed_experiment.py init \
-  --source-root /mnt/parscratch/users/cop23bi/ti_dataset_balanced_10_corrected \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
-  --subjects sub-CC122620,sub-CC222496,sub-CC120120,sub-CC321506,sub-CC410182,sub-CC420075,sub-CC510534,sub-CC520209,sub-CC711128,sub-CC721418 \
-  --repeat-count 40 \
-  --roi-preset left-hippocampus
-
-python pipeline/staged_median_fixed_experiment.py submit-remesh --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> --max-concurrent 50
-python pipeline/staged_median_fixed_experiment.py analyze-remesh --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> --max-concurrent 10
-python pipeline/staged_median_fixed_experiment.py select-medians --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> --metric median_roi
-python pipeline/staged_median_fixed_experiment.py seed-fixed --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
-python pipeline/staged_median_fixed_experiment.py submit-fixed --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> --max-concurrent 50
-python pipeline/staged_median_fixed_experiment.py analyze-paired --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> --max-concurrent 10
-python pipeline/staged_median_fixed_experiment.py make-figures --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
-python pipeline/staged_median_fixed_experiment.py status --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
-```
-
-The staged fixed seeding step uses physical copies only. It excludes previous
-`SimNIBS/` outputs, lock files, temporary files, and prior ready markers, then
-validates that no destination symlinks remain and records mesh checksums in
-`_pipeline/fixed_seed_manifest.csv`.
+The legacy runners are still present, but the new paired experiment should use the files above.
 
 ## Core Idea
 
@@ -613,8 +576,3 @@ These remain in the repository for older workflows:
 - `hpc_scripts/batch_reuse_mesh.slurm`
 
 For the new `40 remesh + 40 fixed_mesh` experiment, use the new unified runner instead.
-
-The historical CSV/Markdown records under `post/median_mesh_dataset/` remain as
-provenance for previous fixed-median experiments. They are not authoritative
-inputs for new staged runs; `select-medians` always computes a fresh selection
-from the current experiment root's remesh `_analysis` outputs.

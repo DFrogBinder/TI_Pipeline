@@ -79,9 +79,13 @@ def main(argv: list[str] | None = None) -> int:
     _add_optional(cmd, "--log-file", args.log_file)
     if args.skip_cohort:
         cmd.append("--skip-cohort")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        f"{PIPELINE_DIR}:{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(PIPELINE_DIR)
+    )
     print("[INFO] Report subject:", subject)
     print("[INFO] Command:", " ".join(cmd))
-    return subprocess.run(cmd, env=os.environ.copy(), check=False).returncode
+    return subprocess.run(cmd, env=env, check=False).returncode
 
 
 if __name__ == "__main__":

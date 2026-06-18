@@ -545,6 +545,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cohort-metric", default=None, choices=["mean", "median", "max", "p95", "std", "cv"])
     parser.add_argument("--skip-cohort", action="store_true", help="Disable cohort comparison even if configured in the JSON config.")
     parser.add_argument("--log-file", default=None, help="Optional JSONL log file.")
+    parser.add_argument(
+        "--skip-batch-summary",
+        action="store_true",
+        help="Do not write shared paired_condition_summary outputs. Use for Slurm array subject tasks.",
+    )
     return parser
 
 
@@ -632,13 +637,14 @@ def main() -> None:
                 output_dir=str(subject_output_root),
             )
 
-    _write_batch_outputs(
-        batch_output_root=batch_output_root,
-        config_path=config.config_path,
-        condition_names=condition_names,
-        subject_rows=batch_rows,
-        failures=failures,
-    )
+    if not args.skip_batch_summary:
+        _write_batch_outputs(
+            batch_output_root=batch_output_root,
+            config_path=config.config_path,
+            condition_names=condition_names,
+            subject_rows=batch_rows,
+            failures=failures,
+        )
 
     base_report.log_event(
         "batch_done",

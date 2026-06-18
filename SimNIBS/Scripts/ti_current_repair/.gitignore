@@ -1,0 +1,27 @@
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local/HPC logs and generated staged-pipeline outputs
+logs/
+slurm-*.out
+slurm-*.err
+*.log
+*.jsonl
+_pipeline/
+_analysis/
+_figures/
+
+# Local experiment data staged beside the scripts
+sub-*_repeatability/
+paired_repeatability_experiment.json
+current_repair_pair2_rerun/
+
+# Temporary NIfTI/mesh/report artifacts
+*.nii
+*.nii.gz
+*.msh
+*.png
+*.csv.tmp
+*.json.tmp

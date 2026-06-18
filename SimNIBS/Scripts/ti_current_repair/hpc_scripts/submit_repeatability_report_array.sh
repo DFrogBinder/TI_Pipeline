@@ -79,6 +79,7 @@ fi
 require_file "Experiment config" "${EXPERIMENT_CONFIG}"
 require_file "Report array task wrapper" "${REPORT_TASK_PY}"
 require_file "Report Slurm script" "${SLURM_SCRIPT}"
+require_file "Current repair experiment config helper" "${PIPELINE_DIR}/experiment_config.py"
 
 SUBJECT_COUNT="$("${PYTHON_BIN}" -c 'import json, sys; data=json.load(open(sys.argv[1])); print(len(data.get("subjects", [])))' "${EXPERIMENT_CONFIG}")"
 if ! [[ "${SUBJECT_COUNT}" =~ ^[0-9]+$ ]] || [ "${SUBJECT_COUNT}" -lt 1 ]; then

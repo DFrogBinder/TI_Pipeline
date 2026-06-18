@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+CURRENT_REPAIR_ROOT = Path(__file__).resolve().parents[1]
+if str(CURRENT_REPAIR_ROOT) not in sys.path:
+    sys.path.insert(0, str(CURRENT_REPAIR_ROOT))
+
 from pipeline import provenance
 from pipeline import staged_median_fixed_experiment as staged
 from post import aggregate_paired_analysis

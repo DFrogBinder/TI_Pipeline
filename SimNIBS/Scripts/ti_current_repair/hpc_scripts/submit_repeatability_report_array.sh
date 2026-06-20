@@ -48,6 +48,11 @@ COHORT_REGION_LABEL="${COHORT_REGION_LABEL:-}"
 COHORT_METRIC="${COHORT_METRIC:-}"
 SKIP_COHORT="${SKIP_COHORT:-0}"
 
+if [[ "${CONDITIONS}" == *,* ]]; then
+    echo "[ERROR] CONDITIONS must not contain commas because Slurm --export treats commas as variable separators. Leave CONDITIONS empty to analyze every condition in the config." >&2
+    exit 1
+fi
+
 resolve_path() {
     "${PYTHON_BIN}" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$1"
 }

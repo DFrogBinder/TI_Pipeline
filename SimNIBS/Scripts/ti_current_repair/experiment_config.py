@@ -290,7 +290,7 @@ def template_config_dict() -> dict[str, object]:
         ],
         "analysis": {
             "roi_preset": "left-hippocampus",
-            "atlas_dir": "/mnt/parscratch/cop23bi/ZIPs/atlases",
+            "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",
             "compare_cohort_root": "/media/boyan/main/PhD/Left_Hippocampus_Data",
             "cohort_region_name": "Left-Hippocampus",
             "cohort_region_label": 17,

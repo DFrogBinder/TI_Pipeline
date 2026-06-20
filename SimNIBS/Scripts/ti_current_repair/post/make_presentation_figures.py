@@ -8,7 +8,9 @@ import binascii
 import csv
 import json
 import math
+import random
 import shutil
+import statistics
 import struct
 import sys
 import zlib
@@ -63,6 +65,14 @@ def _safe_float(value: object) -> float:
         return float(value)
     except Exception:
         return float("nan")
+
+
+def _repeat_number(value: object) -> int:
+    text = str(value)
+    try:
+        return int(text.rsplit("_", 1)[-1])
+    except ValueError:
+        return 0
 
 
 def _png_chunk(kind: bytes, data: bytes) -> bytes:
@@ -173,28 +183,189 @@ def _write_line_plot(path: Path, rows: list[dict[str, object]], metric: str, yla
     except Exception:
         return _write_fallback_line_plot(path, rows, metric)
 
-    groups: dict[tuple[str, str], list[dict[str, object]]] = {}
+    axis_label = ylabel.removesuffix(" by Repeat")
+    groups: dict[str, dict[str, list[dict[str, object]]]] = {}
     for row in rows:
-        groups.setdefault((str(row["subject"]), str(row["condition"])), []).append(row)
+        subject = str(row["subject"])
+        condition = str(row["condition"])
+        groups.setdefault(subject, {}).setdefault(condition, []).append(row)
 
-    plt.figure(figsize=(max(8, len(rows) * 0.18), 4.8))
-    for (subject, condition), group_rows in sorted(groups.items()):
-        group_rows = sorted(group_rows, key=lambda row: str(row["repeat_tag"]))
-        plt.plot(
-            [str(row["repeat_tag"]) for row in group_rows],
-            [_safe_float(row[metric]) for row in group_rows],
-            marker="o",
-            linewidth=1.5,
-            label=f"{subject} {condition}",
+    subjects = sorted(groups)
+    columns = 2 if len(subjects) > 1 else 1
+    rows_count = math.ceil(len(subjects) / columns)
+    figure, axes = plt.subplots(
+        rows_count,
+        columns,
+        figsize=(12, max(4.0, rows_count * 3.0)),
+        squeeze=False,
+    )
+    colors = {"remesh": "#2563eb", "fixed_mesh": "#dc2626"}
+    labels_seen: set[str] = set()
+    legend_handles = []
+    legend_labels = []
+    condition_order = ("remesh", "fixed_mesh")
+
+    for subject_index, subject in enumerate(subjects):
+        axis = axes.flat[subject_index]
+        subject_groups = groups[subject]
+        ordered_conditions = [name for name in condition_order if name in subject_groups]
+        ordered_conditions.extend(sorted(set(subject_groups) - set(ordered_conditions)))
+        max_repeat = 1
+        for condition in ordered_conditions:
+            group_rows = sorted(subject_groups[condition], key=lambda row: _repeat_number(row["repeat_tag"]))
+            repeat_numbers = [_repeat_number(row["repeat_tag"]) for row in group_rows]
+            max_repeat = max(max_repeat, *(repeat_numbers or [1]))
+            line = axis.plot(
+                repeat_numbers,
+                [_safe_float(row[metric]) for row in group_rows],
+                color=colors.get(condition),
+                marker="o",
+                markersize=2.5,
+                linewidth=1.25,
+                label=condition,
+            )[0]
+            if condition not in labels_seen:
+                labels_seen.add(condition)
+                legend_handles.append(line)
+                legend_labels.append(condition)
+        tick_step = 10 if max_repeat >= 20 else max(1, max_repeat // 4)
+        ticks = list(range(1, max_repeat + 1, tick_step))
+        if max_repeat not in ticks:
+            ticks.append(max_repeat)
+        axis.set_xticks(ticks)
+        axis.set_title(subject, fontsize=10)
+        axis.grid(axis="y", color="#d1d5db", linewidth=0.6, alpha=0.8)
+        axis.tick_params(labelsize=8)
+        if subject_index % columns == 0:
+            axis.set_ylabel(axis_label, fontsize=9)
+        if subject_index // columns == rows_count - 1:
+            axis.set_xlabel("Repeat", fontsize=9)
+
+    for unused_index in range(len(subjects), rows_count * columns):
+        axes.flat[unused_index].set_visible(False)
+
+    figure.suptitle(ylabel, fontsize=14)
+    if legend_handles:
+        figure.legend(
+            legend_handles,
+            legend_labels,
+            loc="upper center",
+            ncol=len(legend_handles),
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.975),
         )
-    plt.xticks(rotation=90, fontsize=7)
-    plt.ylabel(ylabel)
-    plt.title(ylabel)
-    plt.legend(frameon=False, fontsize=7)
-    plt.tight_layout()
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
     path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(path, dpi=150)
-    plt.close()
+    figure.savefig(path, dpi=180)
+    plt.close(figure)
+    return True
+
+
+def _write_primary_repeat_distribution(path: Path, rows: list[dict[str, object]]) -> bool:
+    groups: dict[str, dict[str, list[float]]] = {}
+    for row in rows:
+        value = _safe_float(row.get("median_roi"))
+        if not math.isfinite(value):
+            continue
+        subject = str(row["subject"])
+        condition = str(row["condition"])
+        groups.setdefault(subject, {}).setdefault(condition, []).append(value)
+    subjects = [
+        subject
+        for subject in sorted(groups)
+        if groups[subject].get("remesh") and groups[subject].get("fixed_mesh")
+    ]
+    if not subjects:
+        return False
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return _write_fallback_line_plot(path, rows, "median_roi")
+
+    blue = "#1f77b4"
+    orange = "#ff7f0e"
+    light_gray = "#d9d9d9"
+    rng = random.Random(42)
+    x_positions = list(range(len(subjects)))
+    with plt.rc_context(
+        {
+            "font.size": 15,
+            "axes.titlesize": 22,
+            "axes.labelsize": 17,
+            "xtick.labelsize": 13,
+            "ytick.labelsize": 13,
+            "legend.fontsize": 15,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+        }
+    ):
+        figure, axis = plt.subplots(figsize=(16, 9))
+        for index, subject in enumerate(subjects):
+            remesh = groups[subject]["remesh"]
+            fixed = groups[subject]["fixed_mesh"]
+            remesh_x = [x_positions[index] - 0.08 + rng.gauss(0.0, 0.045) for _ in remesh]
+            fixed_x = [x_positions[index] + 0.14 + rng.gauss(0.0, 0.045) for _ in fixed]
+            axis.scatter(
+                remesh_x,
+                remesh,
+                color=blue,
+                alpha=0.45,
+                s=34,
+                linewidths=0,
+                label="Remesh repeats" if index == 0 else None,
+            )
+            axis.scatter(
+                fixed_x,
+                fixed,
+                color=orange,
+                alpha=0.52,
+                s=28,
+                linewidths=0,
+                label="Fixed-mesh repeats" if index == 0 else None,
+            )
+            axis.errorbar(
+                x_positions[index] - 0.08,
+                statistics.fmean(remesh),
+                yerr=statistics.stdev(remesh) if len(remesh) > 1 else 0.0,
+                color=blue,
+                marker="o",
+                markersize=7,
+                capsize=4,
+                linewidth=2,
+                label="Remesh mean +/- SD" if index == 0 else None,
+            )
+            axis.errorbar(
+                x_positions[index] + 0.14,
+                statistics.fmean(fixed),
+                yerr=statistics.stdev(fixed) if len(fixed) > 1 else 0.0,
+                color=orange,
+                marker="D",
+                markersize=7,
+                capsize=4,
+                linewidth=2,
+                label="Fixed-mesh mean +/- SD" if index == 0 else None,
+            )
+
+        axis.set_title("Hippocampal TI varies across remeshed runs but not fixed-mesh runs", pad=18)
+        axis.set_ylabel("Median left-hippocampus TI (V/m)")
+        axis.set_xlabel("Subject")
+        axis.set_xticks(x_positions)
+        axis.set_xticklabels(
+            [subject.removeprefix("sub-CC") for subject in subjects],
+            rotation=35,
+            ha="right",
+        )
+        axis.grid(axis="y", color=light_gray, linewidth=0.8)
+        axis.legend(frameon=False, loc="upper right")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(path, dpi=220, bbox_inches="tight")
+        plt.close(figure)
     return True
 
 
@@ -212,6 +383,9 @@ def make_figures(*, experiment_root: Path, output_dir: Path | None = None) -> di
     )
 
     figures = []
+    primary_figure = output_dir / "01_primary_median_roi_repeat_distributions.png"
+    if _write_primary_repeat_distribution(primary_figure, condition_rows):
+        figures.append(str(primary_figure))
     if _write_line_plot(
         output_dir / "condition_median_roi_by_repeat.png",
         condition_rows,

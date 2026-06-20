@@ -659,12 +659,19 @@ def _resolve_atlas_path(subject: str, atlas: str | None, atlas_dir: str | None, 
         log_event("atlas_resolve", source="explicit", path=str(atlas_path))
         return atlas_path
 
-    candidates: list[Path] = []
     if atlas_dir:
-        candidates.extend(_atlas_candidates_for_dir(subject, Path(atlas_dir).expanduser()))
-    else:
-        for directory in _candidate_atlas_dirs(rootdir):
-            candidates.extend(_atlas_candidates_for_dir(subject, directory))
+        atlas_path = Path(atlas_dir).expanduser() / f"{subject}.nii.gz"
+        if not atlas_path.is_file():
+            raise SystemExit(
+                f"Atlas not found: {atlas_path}. Configured atlas directories require "
+                "the exact filename <subject>.nii.gz."
+            )
+        log_event("atlas_resolve", source="configured_exact", path=str(atlas_path))
+        return atlas_path
+
+    candidates: list[Path] = []
+    for directory in _candidate_atlas_dirs(rootdir):
+        candidates.extend(_atlas_candidates_for_dir(subject, directory))
 
     for candidate in candidates:
         if candidate.exists():

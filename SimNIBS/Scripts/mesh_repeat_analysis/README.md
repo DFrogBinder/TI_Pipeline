@@ -166,7 +166,7 @@ For your hippocampus study, the most natural defaults are:
 ```json
 "analysis": {
   "roi_preset": "left-hippocampus",
-  "atlas_dir": "/mnt/parscratch/cop23bi/ZIPs/atlases",
+  "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",
   "compare_cohort_root": "/media/boyan/main/PhD/Left_Hippocampus_Data",
   "cohort_region_name": "Left-Hippocampus",
   "cohort_region_label": 17,
@@ -208,7 +208,7 @@ For your hippocampus study, the most natural defaults are:
   ],
   "analysis": {
     "roi_preset": "left-hippocampus",
-    "atlas_dir": "/mnt/parscratch/cop23bi/ZIPs/atlases",
+    "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",
     "compare_cohort_root": "/media/boyan/main/PhD/Left_Hippocampus_Data",
     "cohort_region_name": "Left-Hippocampus",
     "cohort_region_label": 17,
@@ -440,7 +440,7 @@ For example, to override the ROI explicitly for one submission:
 
 ```bash
 sbatch \
-  --export=ALL,EXPERIMENT_CONFIG=/path/to/my_experiment.json,PIPELINE_DIR=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis,ROI_PRESET=left-hippocampus,ATLAS_DIR=/mnt/parscratch/cop23bi/ZIPs/atlases \
+  --export=ALL,EXPERIMENT_CONFIG=/path/to/my_experiment.json,PIPELINE_DIR=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis,ROI_PRESET=left-hippocampus,ATLAS_DIR=/mnt/parscratch/users/cop23bi/ZIPs/atlases \
   hpc_scripts/repeatability_experiment_report.slurm
 ```
 

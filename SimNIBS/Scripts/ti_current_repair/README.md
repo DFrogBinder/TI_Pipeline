@@ -27,6 +27,7 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
   --subjects sub-CC122620,sub-CC222496,sub-CC120120,sub-CC321506,sub-CC410182,sub-CC420075,sub-CC510534,sub-CC520209,sub-CC711128,sub-CC721418 \
   --repeat-count 40 \
+  --atlas-dir /mnt/parscratch/users/cop23bi/ZIPs/atlases \
   --roi-preset left-hippocampus
 ```
 
@@ -106,14 +107,21 @@ Fixed-mesh seeding uses physical copies only. The seeder excludes previous
 `SimNIBS/` outputs, mesh locks, temp files, and done markers; it writes
 `.mesh_ready.json` and fails if symlinks remain in seeded anatomy workspaces.
 
+Initialization requires one atlas per subject at
+`<atlas-dir>/<subject>.nii.gz`. It validates every exact filename before
+writing configs or allowing Slurm submissions.
+
 ## Pre-HPC Smoke Checks
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 pytest "$CURRENT_REPAIR_DIR/tests/test_staged_current_repair_pipeline.py" -q -p no:cacheprovider
+mkdir -p /tmp/atlases
+touch /tmp/atlases/sub-01.nii.gz
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init --dry-run \
   --source-root /tmp/source \
   --experiment-root /tmp/current-repair-smoke \
   --subjects sub-01 \
   --repeat-count 2 \
+  --atlas-dir /tmp/atlases \
   --roi-preset left-hippocampus
 ```

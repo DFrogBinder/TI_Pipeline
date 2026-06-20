@@ -30,6 +30,7 @@ SELECTION_CSV = "median_mesh_selection/median_representative_remesh_repeats.csv"
 SEED_MANIFEST = "fixed_seed_manifest.csv"
 FIGURE_OUTPUTS = [
     "presentation_condition_summary.csv",
+    "01_primary_median_roi_repeat_distributions.png",
     "condition_median_roi_by_repeat.png",
     "presentation_manifest.json",
 ]
@@ -74,6 +75,24 @@ def _subjects_from_arg(value: str) -> list[str]:
     return subjects
 
 
+def _validate_atlas_dir(atlas_dir: Path, subjects: list[str]) -> Path:
+    atlas_dir = atlas_dir.expanduser().resolve()
+    if not atlas_dir.is_dir():
+        raise SystemExit(f"Atlas directory does not exist: {atlas_dir}")
+    missing = [
+        atlas_dir / f"{subject}.nii.gz"
+        for subject in subjects
+        if not (atlas_dir / f"{subject}.nii.gz").is_file()
+    ]
+    if missing:
+        formatted = ", ".join(str(path) for path in missing)
+        raise SystemExit(
+            "Missing required subject atlas file(s). Atlas filenames must exactly match "
+            f"<subject>.nii.gz: {formatted}"
+        )
+    return atlas_dir
+
+
 def _base_config(
     *,
     source_root: Path,
@@ -81,15 +100,14 @@ def _base_config(
     subjects: list[str],
     repeat_count: int,
     roi_preset: str,
-    atlas_dir: str | None,
+    atlas_dir: Path,
     compare_metric: str,
 ) -> dict[str, Any]:
     analysis: dict[str, Any] = {
         "roi_preset": roi_preset,
         "compare_metric": compare_metric,
     }
-    if atlas_dir:
-        analysis["atlas_dir"] = atlas_dir
+    analysis["atlas_dir"] = str(atlas_dir)
     return {
         "source_root": str(source_root),
         "experiment_root": str(experiment_root),
@@ -251,13 +269,14 @@ def command_init(args: argparse.Namespace) -> int:
     source_root = args.source_root.expanduser().resolve()
     experiment_root = args.experiment_root.expanduser().resolve()
     subjects = _subjects_from_arg(args.subjects)
+    atlas_dir = _validate_atlas_dir(args.atlas_dir, subjects)
     base = _base_config(
         source_root=source_root,
         experiment_root=experiment_root,
         subjects=subjects,
         repeat_count=args.repeat_count,
         roi_preset=args.roi_preset,
-        atlas_dir=args.atlas_dir,
+        atlas_dir=atlas_dir,
         compare_metric=args.compare_metric,
     )
     configs = {
@@ -282,6 +301,7 @@ def command_init(args: argparse.Namespace) -> int:
             "repeat_count": args.repeat_count,
             "roi_preset": args.roi_preset,
             "compare_metric": args.compare_metric,
+            "atlas_dir": str(atlas_dir),
             "configs": {name: str(_config_path(experiment_root, name)) for name in configs},
         },
     )
@@ -292,6 +312,7 @@ def command_init(args: argparse.Namespace) -> int:
         experiment_root=str(experiment_root),
         subjects=subjects,
         repeat_count=args.repeat_count,
+        atlas_dir=str(atlas_dir),
     )
     provenance.write_stage_status(experiment_root, collect_status(experiment_root))
     print(f"initialized staged pipeline: {_pipeline_root(experiment_root)}")
@@ -397,7 +418,7 @@ def command_analyze_paired(args: argparse.Namespace) -> int:
         args,
         stage="analyze-paired",
         config_name=PAIRED_CONFIG,
-        conditions="remesh,fixed_mesh",
+        conditions="",
     )
 
 
@@ -609,7 +630,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--subjects", required=True)
     init.add_argument("--repeat-count", type=int, required=True)
     init.add_argument("--roi-preset", default="left-hippocampus")
-    init.add_argument("--atlas-dir", default=None)
+    init.add_argument("--atlas-dir", type=Path, required=True)
     init.add_argument("--compare-metric", default="median_roi", choices=("median_roi", "mean_roi", "peak_roi"))
     init.add_argument("--dry-run", action="store_true")
     init.set_defaults(func=command_init)

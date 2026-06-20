@@ -110,6 +110,7 @@ cd "$REPO_ROOT"
 export RUN_NAME=current_repair_median_fixed_v1
 export SOURCE_ROOT=/mnt/parscratch/users/cop23bi/ti_dataset_balanced_10_corrected
 export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/current-repair/${RUN_NAME}
+export ATLAS_DIR=/mnt/parscratch/users/cop23bi/ZIPs/atlases
 export SUBJECTS=sub-CC122620,sub-CC222496,sub-CC120120,sub-CC321506,sub-CC410182,sub-CC420075,sub-CC510534,sub-CC520209,sub-CC711128,sub-CC721418
 ```
 
@@ -133,6 +134,7 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init --d
   --experiment-root "$EXPERIMENT_ROOT" \
   --subjects "$SUBJECTS" \
   --repeat-count 40 \
+  --atlas-dir "$ATLAS_DIR" \
   --roi-preset left-hippocampus
 ```
 
@@ -144,6 +146,7 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --experiment-root "$EXPERIMENT_ROOT" \
   --subjects "$SUBJECTS" \
   --repeat-count 40 \
+  --atlas-dir "$ATLAS_DIR" \
   --roi-preset left-hippocampus
 ```
 
@@ -416,7 +419,7 @@ cat > "$ORIGINAL_CONFIG" <<'EOF'
   ],
   "analysis": {
     "roi_preset": "left-hippocampus",
-    "atlas_dir": "/mnt/parscratch/cop23bi/ZIPs/atlases",
+    "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",
     "compare_metric": "median_roi"
   }
 }
@@ -508,7 +511,7 @@ Submit with explicit exports:
 
 ```bash
 sbatch \
-  --export="ALL,EXPERIMENT_CONFIG=${ORIGINAL_CONFIG},PIPELINE_DIR=${MESH_REPEAT_DIR},ROI_PRESET=left-hippocampus,ATLAS_DIR=/mnt/parscratch/cop23bi/ZIPs/atlases" \
+  --export="ALL,EXPERIMENT_CONFIG=${ORIGINAL_CONFIG},PIPELINE_DIR=${MESH_REPEAT_DIR},ROI_PRESET=left-hippocampus,ATLAS_DIR=/mnt/parscratch/users/cop23bi/ZIPs/atlases" \
   "$MESH_REPEAT_DIR/hpc_scripts/repeatability_experiment_report.slurm"
 ```
 

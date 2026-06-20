@@ -29,7 +29,7 @@
   ],
   "analysis": {
     "roi_preset": "left-hippocampus",
-    "atlas_dir": "/mnt/parscratch/cop23bi/ZIPs/atlases",
+    "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",
     "compare_metric": "median_roi"
   }
 }

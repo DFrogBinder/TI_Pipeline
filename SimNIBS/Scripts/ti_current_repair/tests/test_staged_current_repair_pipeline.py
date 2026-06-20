@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from pipeline import provenance
 from pipeline import staged_median_fixed_experiment as staged
 from post import aggregate_paired_analysis
 from post import make_presentation_figures
+from post import mesh_repeat_report
 from post import seed_fixed_from_median
 from post import select_median_remesh_repeats
 
@@ -155,8 +157,11 @@ def test_full_copy_seeder_excludes_outputs_and_rejects_symlinked_destinations(tm
 def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     root = tmp_path / "experiment"
     source = root / "_source"
+    atlas_dir = root / "atlases"
     subject = "sub-01"
     (source / subject / "anat").mkdir(parents=True)
+    atlas_dir.mkdir()
+    (atlas_dir / f"{subject}.nii.gz").write_text("atlas\n", encoding="utf-8")
 
     staged.main(
         [
@@ -171,6 +176,8 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
             "2",
             "--roi-preset",
             "left-hippocampus",
+            "--atlas-dir",
+            str(atlas_dir),
         ]
     )
 
@@ -181,6 +188,7 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     assert [condition["name"] for condition in remesh_config["conditions"]] == ["remesh"]
     assert [condition["name"] for condition in fixed_config["conditions"]] == ["fixed_mesh"]
     assert [condition["name"] for condition in paired_config["conditions"]] == ["remesh", "fixed_mesh"]
+    assert paired_config["analysis"]["atlas_dir"] == str(atlas_dir.resolve())
 
     fake_sbatch = tmp_path / "fake_sbatch.sh"
     fake_sbatch.write_text("#!/bin/sh\nprintf 'Submitted batch job 4242\\n'\n", encoding="utf-8")
@@ -190,6 +198,7 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
 
     staged.main(["submit-remesh", "--experiment-root", str(root), "--max-concurrent", "7"])
     staged.main(["analyze-remesh", "--experiment-root", str(root), "--max-concurrent", "3"])
+    staged.main(["analyze-paired", "--experiment-root", str(root), "--max-concurrent", "3"])
 
     events = [json.loads(line) for line in (pipeline_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     submit_events = [row for row in events if row["event"] == "submit"]
@@ -199,12 +208,57 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     assert submit_events[1]["stage"] == "analyze-remesh"
     assert submit_events[1]["job_id"] == "4242"
     assert "--array=0-0%3" in " ".join(submit_events[1]["command"])
+    assert submit_events[2]["stage"] == "analyze-paired"
+    assert submit_events[2]["env"]["CONDITIONS"] == ""
+    assert "CONDITIONS=" in " ".join(submit_events[2]["command"])
+    assert "CONDITIONS=remesh,fixed_mesh" not in " ".join(submit_events[2]["command"])
 
     status = staged.collect_status(root)
     assert status["remesh_ti_msh"]["expected"] == 2
     assert status["remesh_ti_msh"]["observed"] == 0
     assert status["fixed_seed"]["expected"] == 1
     assert status["figure_outputs"]["expected"] >= 1
+
+
+def test_init_rejects_missing_exact_subject_atlas(tmp_path):
+    root = tmp_path / "experiment"
+    source = root / "_source"
+    atlas_dir = root / "atlases"
+    subject = "sub-01"
+    (source / subject / "anat").mkdir(parents=True)
+    atlas_dir.mkdir()
+    (atlas_dir / f"{subject}_aparc+aseg.nii.gz").write_text("wrong name\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=r"sub-01\.nii\.gz"):
+        staged.main(
+            [
+                "init",
+                "--source-root",
+                str(source),
+                "--experiment-root",
+                str(root),
+                "--subjects",
+                subject,
+                "--repeat-count",
+                "2",
+                "--atlas-dir",
+                str(atlas_dir),
+            ]
+        )
+
+
+def test_configured_atlas_dir_uses_exact_subject_filename(tmp_path):
+    atlas_dir = tmp_path / "atlases"
+    atlas_dir.mkdir()
+    wrong_name = atlas_dir / "sub-01_aparc+aseg.nii.gz"
+    wrong_name.write_text("wrong name\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=r"sub-01\.nii\.gz"):
+        mesh_repeat_report._resolve_atlas_path("sub-01", None, str(atlas_dir), None)
+
+    exact = atlas_dir / "sub-01.nii.gz"
+    exact.write_text("atlas\n", encoding="utf-8")
+    assert mesh_repeat_report._resolve_atlas_path("sub-01", None, str(atlas_dir), None) == exact
 
 
 def test_report_array_submitter_builds_expected_array(tmp_path):
@@ -239,6 +293,31 @@ def test_report_array_submitter_builds_expected_array(tmp_path):
     assert "CONDITIONS=remesh" in result.stdout
 
 
+def test_report_array_submitter_rejects_comma_condition_exports(tmp_path):
+    root = tmp_path / "experiment"
+    config = root / "_pipeline" / "configs" / "paired_analysis.json"
+    _write_config(config, experiment_root=root, subjects=["sub-01"], repeat_count=2)
+    script = CURRENT_REPAIR_ROOT / "hpc_scripts" / "submit_repeatability_report_array.sh"
+
+    result = subprocess.run(
+        ["bash", str(script)],
+        env={
+            **os.environ,
+            "PIPELINE_DIR": str(CURRENT_REPAIR_ROOT),
+            "EXPERIMENT_CONFIG": str(config),
+            "LOG_DIR": str(root / "_pipeline" / "logs" / "reports"),
+            "SBATCH_BIN": "echo",
+            "PYTHON_BIN": sys.executable,
+            "CONDITIONS": "remesh,fixed_mesh",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "must not contain commas" in result.stderr
+
+
 def test_presentation_figures_from_synthetic_analysis(tmp_path):
     root = tmp_path / "experiment"
     subject = "sub-01"
@@ -260,9 +339,42 @@ def test_presentation_figures_from_synthetic_analysis(tmp_path):
 
     outputs = make_presentation_figures.make_figures(experiment_root=root)
 
+    assert (root / "_figures" / "presentation" / "01_primary_median_roi_repeat_distributions.png").is_file()
     assert (root / "_figures" / "presentation" / "condition_median_roi_by_repeat.png").is_file()
     assert (root / "_figures" / "presentation" / "presentation_condition_summary.csv").is_file()
     assert outputs["figures_written"] >= 1
+    assert any(path.endswith("01_primary_median_roi_repeat_distributions.png") for path in outputs["figures"])
+
+
+def test_presentation_figures_use_legible_subject_panels(tmp_path):
+    root = tmp_path / "experiment"
+    for subject_index in range(10):
+        subject = f"sub-{subject_index:02d}"
+        for condition, offset in (("remesh", 0.0), ("fixed_mesh", 0.005)):
+            _write_summary(
+                root / "_analysis" / subject / condition / "summary.csv",
+                [
+                    {
+                        "repeat_tag": f"repeat_{repeat_index:03d}",
+                        "median_roi": 0.2 + offset + repeat_index / 10000,
+                        "mean_roi": 0.2,
+                        "peak_roi": 0.4,
+                        "mesh_nodes": 300000 + repeat_index,
+                    }
+                    for repeat_index in range(1, 41)
+                ],
+            )
+
+    make_presentation_figures.make_figures(experiment_root=root)
+
+    figure = root / "_figures" / "presentation" / "condition_median_roi_by_repeat.png"
+    with figure.open("rb") as handle:
+        handle.seek(16)
+        width, height = struct.unpack(">II", handle.read(8))
+    if (width, height) == (900, 480):
+        pytest.skip("Matplotlib unavailable; fallback renderer used")
+    assert 1200 <= width <= 3000
+    assert 1500 <= height <= 4000
 
 
 def test_aggregate_paired_summary_from_per_subject_outputs(tmp_path):

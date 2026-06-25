@@ -196,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experiment-root", type=Path, required=True)
     parser.add_argument("--subjects", required=True, help="Comma-separated subject IDs.")
-    parser.add_argument("--metric", default="median_roi", choices=("median_roi", "mean_roi", "peak_roi"))
+    parser.add_argument("--metric", default="median_roi", choices=("median_roi", "mean_roi", "p95_roi", "peak_roi"))
     parser.add_argument("--output-csv", type=Path, default=None)
     return parser
 

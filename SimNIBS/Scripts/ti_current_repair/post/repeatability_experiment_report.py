@@ -29,11 +29,14 @@ from post import mesh_repeat_report as base_report  # noqa: E402
 KEY_COMPARISON_METRICS = [
     "median_roi",
     "mean_roi",
+    "p95_roi",
     "peak_roi",
     "median_head",
     "mean_head",
+    "p95_head",
     "peak_head",
     "high_field_dice_head",
+    "high_field_centroid_distance_mm",
     "hotspot_distance_head_mm",
     "diff_fraction",
     "diff_fraction_roi",
@@ -71,9 +74,11 @@ def _load_summary_rows(path: str | Path) -> list[dict[str, object]]:
         "diff_fraction_roi",
         "mean_roi",
         "median_roi",
+        "p95_roi",
         "peak_roi",
         "mean_head",
         "median_head",
+        "p95_head",
         "peak_head",
         "high_field_dice_head",
         "high_field_centroid_distance_mm",
@@ -538,7 +543,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--reference-repeat", default=None)
     parser.add_argument("--spatial-percentile", type=float, default=99.0)
-    parser.add_argument("--compare-metric", default=None, choices=["median_roi", "mean_roi", "peak_roi"])
+    parser.add_argument(
+        "--compare-metric",
+        default=None,
+        choices=["median_roi", "mean_roi", "p95_roi", "peak_roi", "median_head", "mean_head", "p95_head", "peak_head"],
+    )
     parser.add_argument("--compare-cohort-root", default=None)
     parser.add_argument("--cohort-region-name", default=None)
     parser.add_argument("--cohort-region-label", type=int, default=None)

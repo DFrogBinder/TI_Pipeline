@@ -631,7 +631,11 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--repeat-count", type=int, required=True)
     init.add_argument("--roi-preset", default="left-hippocampus")
     init.add_argument("--atlas-dir", type=Path, required=True)
-    init.add_argument("--compare-metric", default="median_roi", choices=("median_roi", "mean_roi", "peak_roi"))
+    init.add_argument(
+        "--compare-metric",
+        default="median_roi",
+        choices=("median_roi", "mean_roi", "p95_roi", "peak_roi", "median_head", "mean_head", "p95_head", "peak_head"),
+    )
     init.add_argument("--dry-run", action="store_true")
     init.set_defaults(func=command_init)
 
@@ -648,7 +652,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     select = subparsers.add_parser("select-medians")
     select.add_argument("--experiment-root", type=Path, required=True)
-    select.add_argument("--metric", default="median_roi", choices=("median_roi", "mean_roi", "peak_roi"))
+    select.add_argument("--metric", default="median_roi", choices=("median_roi", "mean_roi", "p95_roi", "peak_roi"))
     select.set_defaults(func=command_select_medians)
 
     seed = subparsers.add_parser("seed-fixed")

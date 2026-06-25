@@ -797,6 +797,13 @@ def _finite_values(values: np.ndarray) -> np.ndarray:
     return arr[np.isfinite(arr)]
 
 
+def _percentile_summary(values: list[float] | np.ndarray, percentile: float) -> float:
+    arr = _finite_values(np.asarray(values, dtype=np.float64))
+    if arr.size == 0:
+        return float("nan")
+    return float(np.nanpercentile(arr, percentile))
+
+
 def _roi_metric_data(
     *,
     masked_data: np.ndarray,
@@ -1359,12 +1366,14 @@ def _run_subject_analysis(
         roi_vals = _finite_values(roi_data[roi_mask])
         mean_roi = float(np.nanmean(roi_vals)) if roi_vals.size else float("nan")
         median_roi = float(np.nanmedian(roi_vals)) if roi_vals.size else float("nan")
+        p95_roi = _percentile_summary(roi_vals, 95.0)
         peak_roi_info = _peak_info(roi_data, roi_mask, ref_t1.affine)
         peak_roi = float(peak_roi_info["value"])
 
         head_vals = _finite_values(base_data[head_mask])
         mean_head = float(np.nanmean(head_vals)) if head_vals.size else float("nan")
         median_head = float(np.nanmedian(head_vals)) if head_vals.size else float("nan")
+        p95_head = _percentile_summary(head_vals, 95.0)
         peak_head_info = _peak_info(base_data, head_mask, ref_t1.affine)
         peak_head = float(peak_head_info["value"])
         high_field_mask = _top_percentile_mask(base_data, head_mask, args.spatial_percentile)
@@ -1405,9 +1414,11 @@ def _run_subject_analysis(
                 "diff_fraction_roi": diff_fraction_roi,
                 "mean_roi": mean_roi,
                 "median_roi": median_roi,
+                "p95_roi": p95_roi,
                 "peak_roi": peak_roi,
                 "mean_head": mean_head,
                 "median_head": median_head,
+                "p95_head": p95_head,
                 "peak_head": peak_head,
                 "hotspot_distance_head_mm": hotspot_distance_head_mm,
                 "hotspot_distance_roi_mm": hotspot_distance_roi_mm,
@@ -1442,11 +1453,13 @@ def _run_subject_analysis(
         "diff_fraction_m1",
         "mean_roi",
         "median_roi",
+        "p95_roi",
         "peak_roi",
         "mean_m1",
         "median_m1",
         "mean_head",
         "median_head",
+        "p95_head",
         "peak_head",
         "high_field_dice_head",
         "high_field_centroid_distance_mm",
@@ -1491,9 +1504,11 @@ def _run_subject_analysis(
     repeatability_metric_order = [
         "median_roi",
         "mean_roi",
+        "p95_roi",
         "peak_roi",
         "median_head",
         "mean_head",
+        "p95_head",
         "peak_head",
         "high_field_dice_head",
         "high_field_centroid_distance_mm",
@@ -1529,7 +1544,10 @@ def _run_subject_analysis(
     compare_metric_to_cohort = {
         "median_roi": "median",
         "mean_roi": "mean",
+        "p95_roi": "p95",
+        "p95_head": "p95",
         "peak_roi": "max",
+        "peak_head": "max",
     }
     cohort_comparison = None
     if args.compare_cohort_root:
@@ -1628,9 +1646,11 @@ def _run_subject_analysis(
 
         _plot_metric_line("mean_roi", "Mean ROI TI (V/m)", "mean_roi_by_repeat.png")
         _plot_metric_line("median_roi", "Median ROI TI (V/m)", "median_roi_by_repeat.png")
+        _plot_metric_line("p95_roi", "95th-percentile ROI TI (V/m)", "p95_roi_by_repeat.png")
         _plot_metric_line("peak_roi", "Peak ROI TI (V/m)", "peak_roi_by_repeat.png")
         _plot_metric_line("mean_head", "Mean head TI (V/m)", "mean_head_by_repeat.png")
         _plot_metric_line("median_head", "Median head TI (V/m)", "median_head_by_repeat.png")
+        _plot_metric_line("p95_head", "95th-percentile head TI (V/m)", "p95_head_by_repeat.png")
         _plot_metric_line("peak_head", "Peak head TI (V/m)", "peak_head_by_repeat.png")
         _plot_metric_line("high_field_dice_head", "High-field Dice", "high_field_dice_head_by_repeat.png")
         _plot_metric_line(
@@ -1765,6 +1785,7 @@ def _run_subject_analysis(
         "median_roi_mean": metric_stats_map["median_roi"]["mean"],
         "median_roi_std": metric_stats_map["median_roi"]["std"],
         "median_roi_cv_percent": metric_stats_map["median_roi"]["cv_percent"],
+        "p95_roi_cv_percent": metric_stats_map["p95_roi"]["cv_percent"],
         "peak_roi_cv_percent": metric_stats_map["peak_roi"]["cv_percent"],
         "mean_roi_mean": metric_stats_map["mean_roi"]["mean"],
         "summary_csv": str(summary_csv),
@@ -1890,7 +1911,7 @@ def main() -> None:
     parser.add_argument(
         "--compare-metric",
         default="median_roi",
-        choices=["median_roi", "mean_roi", "peak_roi"],
+        choices=["median_roi", "mean_roi", "p95_roi", "peak_roi", "median_head", "mean_head", "p95_head", "peak_head"],
         help="Repeat metric used for within-vs-between subject comparison.",
     )
     parser.add_argument(
@@ -1982,6 +2003,7 @@ def main() -> None:
                     "median_roi_mean",
                     "median_roi_std",
                     "median_roi_cv_percent",
+                    "p95_roi_cv_percent",
                     "peak_roi_cv_percent",
                     "mean_roi_mean",
                     "cohort_sd_ratio",

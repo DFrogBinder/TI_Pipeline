@@ -1,5 +1,6 @@
 import csv
 import json
+import math
 import os
 import struct
 import subprocess
@@ -17,6 +18,7 @@ from pipeline import staged_median_fixed_experiment as staged
 from post import aggregate_paired_analysis
 from post import make_presentation_figures
 from post import mesh_repeat_report
+from post import repeatability_experiment_report
 from post import seed_fixed_from_median
 from post import select_median_remesh_repeats
 
@@ -38,8 +40,13 @@ def _write_config(path: Path, *, experiment_root: Path, subjects: list[str], rep
 
 def _write_summary(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["repeat_tag", "median_roi", "mean_roi", "peak_roi", "mesh_nodes"]
+    for row in rows:
+        for field in row:
+            if field not in fieldnames:
+                fieldnames.append(field)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["repeat_tag", "median_roi", "mean_roi", "peak_roi", "mesh_nodes"])
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -261,6 +268,18 @@ def test_configured_atlas_dir_uses_exact_subject_filename(tmp_path):
     assert mesh_repeat_report._resolve_atlas_path("sub-01", None, str(atlas_dir), None) == exact
 
 
+def test_percentile_summary_uses_finite_values():
+    values = [1.0, 2.0, float("nan"), 3.0, 4.0]
+
+    assert mesh_repeat_report._percentile_summary(values, 95.0) == pytest.approx(3.85)
+    assert math.isnan(mesh_repeat_report._percentile_summary([float("nan")], 95.0))
+
+
+def test_p95_metrics_are_in_paired_comparison_order():
+    assert "p95_roi" in repeatability_experiment_report.KEY_COMPARISON_METRICS
+    assert "p95_head" in repeatability_experiment_report.KEY_COMPARISON_METRICS
+
+
 def test_report_array_submitter_builds_expected_array(tmp_path):
     root = tmp_path / "experiment"
     config = root / "_pipeline" / "configs" / "remesh_only.json"
@@ -342,6 +361,9 @@ def test_presentation_figures_from_synthetic_analysis(tmp_path):
     assert (root / "_figures" / "presentation" / "01_primary_median_roi_repeat_distributions.png").is_file()
     assert (root / "_figures" / "presentation" / "condition_median_roi_by_repeat.png").is_file()
     assert (root / "_figures" / "presentation" / "presentation_condition_summary.csv").is_file()
+    summary_rows = list(csv.DictReader((root / "_figures" / "presentation" / "presentation_condition_summary.csv").open("r", encoding="utf-8", newline="")))
+    assert "p95_roi" in summary_rows[0]
+    assert "p95_head" in summary_rows[0]
     assert outputs["figures_written"] >= 1
     assert any(path.endswith("01_primary_median_roi_repeat_distributions.png") for path in outputs["figures"])
 

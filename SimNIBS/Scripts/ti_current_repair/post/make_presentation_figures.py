@@ -53,7 +53,9 @@ def _collect_condition_rows(experiment_root: Path) -> list[dict[str, object]]:
                     "repeat_tag": row.get("repeat_tag", ""),
                     "median_roi": row.get("median_roi", ""),
                     "mean_roi": row.get("mean_roi", ""),
+                    "p95_roi": row.get("p95_roi", ""),
                     "peak_roi": row.get("peak_roi", ""),
+                    "p95_head": row.get("p95_head", ""),
                     "mesh_nodes": row.get("mesh_nodes", ""),
                 }
             )
@@ -379,7 +381,7 @@ def make_figures(*, experiment_root: Path, output_dir: Path | None = None) -> di
     _write_csv(
         condition_summary,
         condition_rows,
-        ["subject", "condition", "repeat_tag", "median_roi", "mean_roi", "peak_roi", "mesh_nodes"],
+        ["subject", "condition", "repeat_tag", "median_roi", "mean_roi", "p95_roi", "peak_roi", "p95_head", "mesh_nodes"],
     )
 
     figures = []

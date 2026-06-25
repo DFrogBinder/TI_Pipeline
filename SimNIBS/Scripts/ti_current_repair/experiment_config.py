@@ -10,7 +10,16 @@ from pathlib import Path
 
 
 VALID_MESH_MODES = {"remesh", "fixed_mesh"}
-VALID_COMPARE_METRICS = {"median_roi", "mean_roi", "peak_roi"}
+VALID_COMPARE_METRICS = {
+    "median_roi",
+    "mean_roi",
+    "p95_roi",
+    "peak_roi",
+    "median_head",
+    "mean_head",
+    "p95_head",
+    "peak_head",
+}
 
 
 @dataclass(frozen=True)

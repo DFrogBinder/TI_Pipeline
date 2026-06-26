@@ -30,6 +30,10 @@ from utils.sim_utils import (
     atomic_replace,
     img_info,
 )
+from simulation.mesh_reuse import (
+    candidate_mesh_paths,
+    resolve_existing_mesh,
+)
 from target_montages import (
     MONTAGE_PRESETS,
     resolve_montage_preset,
@@ -48,6 +52,7 @@ MESH_TIMEOUT_EXIT_CODE = 124
 SIM_INPUT_EXIT_CODE = 126
 DEFAULT_MONTAGE_PRESET = "right-m1"
 SELECTED_MONTAGE = None
+REUSE_EXISTING_MESH = False
 
 
 def log_event(event: str, **fields) -> None:
@@ -292,10 +297,35 @@ def process_subject(subject_entry):
     log_file_info("t1", os.path.join(subject_dir, f"{subject}_T1w.nii"))
     log_file_info("t2", os.path.join(subject_dir, f"{subject}_T2w.nii"))
     validate_subject_inputs(subject_dir, subject)
+
+    if REUSE_EXISTING_MESH and not runMNI152:
+        resolved_mesh = resolve_existing_mesh(subject_dir, subject)
+        if resolved_mesh is None:
+            candidates = [str(path) for path in candidate_mesh_paths(subject_dir, subject)]
+            log_event(
+                "simulation_input_missing",
+                subject=subject,
+                missing=candidates,
+                reason="reuse_existing_mesh requested but no existing mesh was found",
+            )
+            raise SimulationInputError(
+                "Missing existing mesh for "
+                f"{subject}. Checked: {', '.join(candidates)}"
+            )
+        fnamehead = str(resolved_mesh)
+        print(f"[INFO] ({subject_source}) Reusing existing mesh: {fnamehead}")
+        log_event(
+            "mesh_reuse_enabled",
+            subject=subject_source,
+            mesh_path=fnamehead,
+        )
+
     cleanup_subject_generated_outputs(output_root, subject)
 
     # region Meshing
-    if meshPresent:
+    if REUSE_EXISTING_MESH:
+        print(f"[INFO] ({subject_source}) Existing mesh reuse enabled; skipping meshing step.")
+    elif meshPresent:
         print(f"[INFO] ({subject_source}) Mesh present, skipping meshing step.")
     else:
         mesh_deadline = (
@@ -796,6 +826,11 @@ def main():
         action="store_true",
         help="Print available montage presets and exit.",
     )
+    parser.add_argument(
+        "--reuse-existing-mesh",
+        action="store_true",
+        help="Skip CHARM/remeshing and run simulations with an existing m2m mesh.",
+    )
 
     args = parser.parse_args()
     if args.list_montage_presets:
@@ -807,6 +842,8 @@ def main():
         SELECTED_MONTAGE = resolve_montage_preset(args.montage_preset)
     except ValueError as exc:
         parser.error(str(exc))
+    global REUSE_EXISTING_MESH
+    REUSE_EXISTING_MESH = bool(args.reuse_existing_mesh)
 
     start = time.time()
     global MESH_TOTAL_TIMEOUT_SECONDS
@@ -825,6 +862,10 @@ def main():
         mesh_timeout_scope="total_meshing_phase",
         mesh_timeout_seconds=MESH_TOTAL_TIMEOUT_SECONDS,
         mesh_timeout_exit_code=MESH_TIMEOUT_EXIT_CODE,
+    )
+    log_event(
+        "mesh_reuse_enabled",
+        enabled=REUSE_EXISTING_MESH,
     )
 
     if args.subject:

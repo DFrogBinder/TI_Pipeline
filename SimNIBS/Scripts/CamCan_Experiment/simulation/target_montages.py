@@ -64,10 +64,7 @@ def _normalized_key(value: str) -> str:
 
 
 def preset_key_for_roi(roi: str) -> str:
-    try:
-        return ROI_PRESET_KEYS[roi]
-    except KeyError as exc:
-        raise ValueError(f"No montage preset key is defined for ROI '{roi}'.") from exc
+    return ROI_PRESET_KEYS.get(roi, _normalized_key(roi))
 
 
 def _parse_pair(value: str) -> tuple[str, str]:

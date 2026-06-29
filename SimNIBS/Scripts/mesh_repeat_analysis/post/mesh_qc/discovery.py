@@ -14,6 +14,7 @@ class MeshRecord:
     roi: str
     subject: str
     repeat: str
+    mesh_id: str
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,9 @@ def infer_record(
                 repeat = dir_parts[idx + 1]
                 break
 
-    return MeshRecord(path=path, roi=roi, subject=subject, repeat=repeat)
+    mesh_id = next((part for part in reversed(dir_parts) if part.lower().startswith("m2m")), path.stem)
+
+    return MeshRecord(path=path, roi=roi, subject=subject, repeat=repeat, mesh_id=mesh_id)
 
 
 def _path_has_m2m_dir(path: Path) -> bool:

@@ -20,6 +20,7 @@ def test_infer_record_extracts_roi_subject_and_repeat_from_path(tmp_path):
     assert record.roi == "Left_Hippocampus"
     assert record.subject == "sub-CC110056"
     assert record.repeat == "repeat_07"
+    assert record.mesh_id == "head"
 
 
 def test_discover_meshes_returns_sorted_records(tmp_path):
@@ -50,3 +51,4 @@ def test_discover_meshes_defaults_to_m2m_directories_only(tmp_path):
 
     assert [r.path for r in default_records] == [wanted]
     assert [r.path for r in explicit_records] == [extra, wanted]
+    assert default_records[0].mesh_id == "m2m_sub-CC1"

@@ -1,6 +1,6 @@
 # Mesh QC
 
-Standalone HPC-first quality control for ROI repeat meshes.
+Standalone HPC-first quality control for generated m2m head meshes.
 
 Run from the repository root on the HPC:
 
@@ -20,22 +20,37 @@ To intentionally scan every `.msh` under the root, pass:
 
 Outputs:
 
-- `found_meshes.csv`: discovered mesh paths and inferred ROI/subject/repeat labels.
+- `found_meshes.csv`: discovered mesh paths and inferred mesh/subject/repeat labels.
 - `qc_summary.csv`: objective mesh metrics for every mesh.
 - `qc_flags.csv`: only non-OK meshes.
-- `renders/<roi>/*.png`: per-mesh render tiles.
-- `mosaics/<roi>_wall.png`: one wall per ROI.
-- `mosaics/all_roi_wall.png`: combined wall across all ROIs.
+- `renders/meshes/*.png`: per-mesh render tiles for meshes that passed QC loading.
+- `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
+
+ROI labels are retained as optional CSV metadata when the path contains ROI run folders, but they are not used by default for progress labels or wall generation. To also write separate ROI wall mosaics, pass:
+
+```bash
+--roi-walls
+```
 
 Use `--skip-renders` for a fast CSV-only dry run or on systems without PyVista display support.
 
-Progress is printed during discovery, QC, rendering, and mosaic creation. On very large HPC trees, discovery may be the slowest first step. Tune the discovery heartbeat with:
+Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.
+
+Force a mode with:
+
+```bash
+--progress tqdm
+--progress text
+--progress none
+```
+
+On very large HPC trees, discovery may be the slowest first step. In text progress mode, tune the discovery heartbeat with:
 
 ```bash
 --discovery-progress-seconds 2
 ```
 
-Tune per-mesh QC/render progress with:
+In text progress mode, tune per-mesh QC/render progress with:
 
 ```bash
 --progress-every 1

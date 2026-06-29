@@ -21,12 +21,18 @@ else:
     from .loaders import load_surface_arrays
     from .rendering import make_mosaic, render_mesh_png
 
+try:
+    from tqdm import tqdm
+except Exception:
+    tqdm = None
 
-FOUND_FIELDS = ("roi", "subject", "repeat", "path")
+
+FOUND_FIELDS = ("mesh_id", "subject", "repeat", "roi", "path")
 SUMMARY_FIELDS = (
-    "roi",
+    "mesh_id",
     "subject",
     "repeat",
+    "roi",
     "path",
     "status",
     "flags",
@@ -69,6 +75,70 @@ class ProgressReporter:
         print(f"[{self.phase}] Complete in {_format_seconds(elapsed)}", flush=True)
 
 
+class TqdmProgressReporter:
+    def __init__(self, phase: str, total: int) -> None:
+        if tqdm is None:
+            raise RuntimeError("tqdm is not available")
+        self.bar = tqdm(total=total, desc=phase, unit="mesh", dynamic_ncols=True)
+        self.current = 0
+
+    def update(self, current: int, detail: str = "") -> None:
+        delta = current - self.current
+        if delta > 0:
+            self.bar.update(delta)
+            self.current = current
+        if detail:
+            self.bar.set_postfix_str(detail)
+
+    def complete(self) -> None:
+        self.bar.close()
+
+
+class NoopProgressReporter:
+    def update(self, current: int, detail: str = "") -> None:
+        return
+
+    def complete(self) -> None:
+        return
+
+
+class TqdmDiscoveryReporter:
+    def __init__(self) -> None:
+        if tqdm is None:
+            raise RuntimeError("tqdm is not available")
+        self.bar = tqdm(total=None, desc="Discovery", unit="dir", dynamic_ncols=True)
+        self.dirs_seen = 0
+
+    def update(self, stats: DiscoveryStats) -> None:
+        delta = stats.dirs_scanned - self.dirs_seen
+        if delta > 0:
+            self.bar.update(delta)
+            self.dirs_seen = stats.dirs_scanned
+        self.bar.set_postfix_str(f"files={stats.files_seen} matches={stats.matches}")
+
+    def complete(self) -> None:
+        self.bar.close()
+
+
+def _use_tqdm_progress(args: argparse.Namespace) -> bool:
+    if args.progress == "tqdm":
+        if tqdm is None:
+            print("[PROGRESS] tqdm requested but not installed; using text progress", flush=True)
+            return False
+        return True
+    if args.progress == "auto":
+        return tqdm is not None
+    return False
+
+
+def _make_progress_reporter(args: argparse.Namespace, phase: str, total: int):
+    if args.progress == "none":
+        return NoopProgressReporter()
+    if _use_tqdm_progress(args):
+        return TqdmProgressReporter(phase, total)
+    return ProgressReporter(phase.upper(), total, every=args.progress_every)
+
+
 def _format_seconds(seconds: float) -> str:
     seconds = int(round(seconds))
     hours, rem = divmod(seconds, 3600)
@@ -89,6 +159,15 @@ def _print_discovery_progress(stats: DiscoveryStats) -> None:
     )
 
 
+def _make_discovery_callback(args: argparse.Namespace):
+    if args.progress == "none":
+        return None, None
+    if _use_tqdm_progress(args):
+        reporter = TqdmDiscoveryReporter()
+        return reporter.update, reporter
+    return _print_discovery_progress, None
+
+
 def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
@@ -99,9 +178,10 @@ def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str,
 
 def _record_row(record: MeshRecord) -> dict[str, object]:
     return {
-        "roi": record.roi,
+        "mesh_id": record.mesh_id,
         "subject": record.subject,
         "repeat": record.repeat,
+        "roi": record.roi,
         "path": str(record.path),
     }
 
@@ -150,26 +230,21 @@ def _append_flag(row: dict[str, object], flag: str) -> None:
 
 def _apply_bounds_outlier_flags(rows: list[dict[str, object]], *, multiplier: float = 4.0) -> None:
     ok_rows = [row for row in rows if row.get("status") == "OK"]
-    rows_by_roi: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for row in ok_rows:
-        rows_by_roi[str(row["roi"])].append(row)
-
-    for roi_rows in rows_by_roi.values():
-        if len(roi_rows) < 4:
+    if len(ok_rows) < 4:
+        return
+    for key in ("x_size", "y_size", "z_size"):
+        values = sorted(_as_float(row, key) for row in ok_rows)
+        q1 = median(values[: len(values) // 2])
+        q3 = median(values[(len(values) + 1) // 2 :])
+        iqr = q3 - q1
+        if iqr == 0:
             continue
-        for key in ("x_size", "y_size", "z_size"):
-            values = sorted(_as_float(row, key) for row in roi_rows)
-            q1 = median(values[: len(values) // 2])
-            q3 = median(values[(len(values) + 1) // 2 :])
-            iqr = q3 - q1
-            if iqr == 0:
-                continue
-            lower = q1 - multiplier * iqr
-            upper = q3 + multiplier * iqr
-            for row in roi_rows:
-                value = _as_float(row, key)
-                if value < lower or value > upper:
-                    _append_flag(row, "BOUNDS_OUTLIER")
+        lower = q1 - multiplier * iqr
+        upper = q3 + multiplier * iqr
+        for row in ok_rows:
+            value = _as_float(row, key)
+            if value < lower or value > upper:
+                _append_flag(row, "BOUNDS_OUTLIER")
 
 
 def _safe_name(value: str) -> str:
@@ -179,46 +254,69 @@ def _safe_name(value: str) -> str:
     return "".join(keep).strip("_") or "unknown"
 
 
-def _render_outputs(records: list[MeshRecord], out_dir: Path, args: argparse.Namespace) -> None:
+def _mesh_detail(record: MeshRecord, status: str | None = None) -> str:
+    prefix = f"{status} " if status else ""
+    return f"{prefix}{record.subject} {record.repeat} {record.mesh_id} {record.path.name}"
+
+
+def _render_outputs(
+    records: list[MeshRecord],
+    summary_rows: list[dict[str, object]],
+    out_dir: Path,
+    args: argparse.Namespace,
+) -> None:
+    rows_by_path = {str(row["path"]): row for row in summary_rows}
+    render_records = [
+        record
+        for record in records
+        if rows_by_path.get(str(record.path), {}).get("status") == "OK"
+    ]
+    skipped = len(records) - len(render_records)
+    if skipped:
+        print(f"[RENDER] Skipping {skipped} mesh(es) that failed QC loading", flush=True)
+    if not render_records:
+        print("[RENDER] No QC-loadable meshes to render", flush=True)
+        return
+
     rendered_by_roi: dict[str, list[Path]] = defaultdict(list)
     all_rendered: list[Path] = []
     failures: list[str] = []
-    progress = ProgressReporter("RENDER", len(records), every=args.progress_every)
+    progress = _make_progress_reporter(args, "Render", len(render_records))
 
-    for idx, record in enumerate(records, start=1):
-        roi_name = _safe_name(record.roi)
+    for idx, record in enumerate(render_records, start=1):
         stem = "__".join(
             _safe_name(part)
-            for part in (record.roi, record.subject, record.repeat, record.path.stem)
+            for part in (record.subject, record.repeat, record.mesh_id, record.path.stem)
         )
-        out_png = out_dir / "renders" / roi_name / f"{idx:05d}__{stem}.png"
-        label = f"{record.roi}\n{record.subject}\n{record.repeat}"
+        out_png = out_dir / "renders" / "meshes" / f"{idx:05d}__{stem}.png"
+        label = f"{record.subject}\n{record.repeat}\n{record.mesh_id}"
         try:
             render_mesh_png(record.path, out_png, label=label, image_size=args.image_size)
         except Exception as exc:
             failures.append(f"{record.path}\t{exc}")
-            progress.update(idx, f"FAILED {record.subject} {record.repeat} {record.roi}")
+            progress.update(idx, _mesh_detail(record, "FAILED"))
             continue
         rendered_by_roi[record.roi].append(out_png)
         all_rendered.append(out_png)
-        progress.update(idx, f"{record.subject} {record.repeat} {record.roi}")
+        progress.update(idx, _mesh_detail(record))
 
     progress.complete()
 
-    for roi, images in sorted(rendered_by_roi.items()):
-        print(f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)", flush=True)
-        make_mosaic(
-            images,
-            out_dir / "mosaics" / f"{_safe_name(roi)}_wall.png",
-            cols=args.cols,
-            tile_size=args.tile_size,
-        )
+    if args.roi_walls:
+        for roi, images in sorted(rendered_by_roi.items()):
+            print(f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)", flush=True)
+            make_mosaic(
+                images,
+                out_dir / "mosaics" / f"{_safe_name(roi)}_wall.png",
+                cols=args.cols,
+                tile_size=args.tile_size,
+            )
 
     if all_rendered:
-        print(f"[MOSAIC] Building combined all-ROI wall ({len(all_rendered)} tiles)", flush=True)
+        print(f"[MOSAIC] Building combined mesh wall ({len(all_rendered)} tiles)", flush=True)
         make_mosaic(
             all_rendered,
-            out_dir / "mosaics" / "all_roi_wall.png",
+            out_dir / "mosaics" / "all_mesh_wall.png",
             cols=args.cols,
             tile_size=args.tile_size,
         )
@@ -230,7 +328,7 @@ def _render_outputs(records: list[MeshRecord], out_dir: Path, args: argparse.Nam
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Scan repeat-experiment .msh files for geometry QC flags and render ROI mosaic walls."
+        description="Scan generated m2m .msh files for geometry QC flags and render mesh mosaic walls."
     )
     parser.add_argument("--root", required=True, help="Root containing ROI/subject/repeat mesh outputs.")
     parser.add_argument("--out", required=True, help="Output directory for CSV reports, renders, and mosaics.")
@@ -250,10 +348,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cols", type=int, default=None, help="Mosaic columns; default uses square-ish grid.")
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
     parser.add_argument(
+        "--roi-walls",
+        action="store_true",
+        help="Also write separate ROI wall mosaics. Default writes only all_mesh_wall.png.",
+    )
+    parser.add_argument(
+        "--progress",
+        choices=("auto", "tqdm", "text", "none"),
+        default="auto",
+        help="Progress display mode. auto uses tqdm if installed, otherwise text.",
+    )
+    parser.add_argument(
         "--progress-every",
         type=int,
         default=25,
-        help="Print progress every N meshes during QC/rendering. Use 1 for every mesh.",
+        help="In text progress mode, print every N meshes during QC/rendering. Use 1 for every mesh.",
     )
     parser.add_argument(
         "--discovery-progress-seconds",
@@ -269,25 +378,38 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).expanduser().resolve()
     out_dir = Path(args.out).expanduser().resolve()
 
+    use_tqdm = _use_tqdm_progress(args)
+    if args.progress != "none" and not use_tqdm:
+        progress_mode = "text"
+    elif use_tqdm:
+        progress_mode = "tqdm"
+    else:
+        progress_mode = "none"
+
     if args.mesh_glob is None:
         print(
-            f"[DISCOVERY] Scanning {root} for .msh files inside m2m* directories",
+            f"[DISCOVERY] Scanning {root} for .msh files inside m2m* directories "
+            f"(progress={progress_mode})",
             flush=True,
         )
     else:
         print(
-            f"[DISCOVERY] Scanning {root} for mesh glob {args.mesh_glob!r}",
+            f"[DISCOVERY] Scanning {root} for mesh glob {args.mesh_glob!r} "
+            f"(progress={progress_mode})",
             flush=True,
         )
+    discovery_callback, discovery_reporter = _make_discovery_callback(args)
     records = discover_meshes(
         root,
         mesh_glob=args.mesh_glob,
         roi_regex=args.roi_regex,
         subject_regex=args.subject_regex,
         repeat_regex=args.repeat_regex,
-        progress_callback=_print_discovery_progress,
+        progress_callback=discovery_callback,
         progress_interval_sec=args.discovery_progress_seconds,
     )
+    if discovery_reporter is not None:
+        discovery_reporter.complete()
     if not records:
         print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
         return 2
@@ -296,16 +418,16 @@ def main(argv: list[str] | None = None) -> int:
     _write_csv(out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS)
 
     summary_rows: list[dict[str, object]] = []
-    progress = ProgressReporter("QC", len(records), every=args.progress_every)
+    progress = _make_progress_reporter(args, "QC", len(records))
     for idx, record in enumerate(records, start=1):
         try:
             surface = load_surface_arrays(record.path)
             metrics = compute_qc_metrics(surface)
             summary_rows.append(_summary_row(record, metrics))
-            detail = f"{metrics.status} {record.subject} {record.repeat} {record.roi}"
+            detail = _mesh_detail(record, metrics.status)
         except Exception as exc:
             summary_rows.append(_read_fail_row(record, exc))
-            detail = f"READ_FAIL {record.subject} {record.repeat} {record.roi}"
+            detail = _mesh_detail(record, "READ_FAIL")
         progress.update(idx, detail)
     progress.complete()
 
@@ -315,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     _write_csv(out_dir / "qc_flags.csv", flag_rows, SUMMARY_FIELDS)
 
     if not args.skip_renders:
-        _render_outputs(records, out_dir, args)
+        _render_outputs(records, summary_rows, out_dir, args)
 
     print(f"Wrote QC outputs to {out_dir}")
     return 0

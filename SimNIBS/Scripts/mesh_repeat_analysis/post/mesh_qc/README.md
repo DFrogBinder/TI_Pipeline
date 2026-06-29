@@ -29,6 +29,18 @@ Outputs:
 
 Use `--skip-renders` for a fast CSV-only dry run or on systems without PyVista display support.
 
+Progress is printed during discovery, QC, rendering, and mosaic creation. On very large HPC trees, discovery may be the slowest first step. Tune the discovery heartbeat with:
+
+```bash
+--discovery-progress-seconds 2
+```
+
+Tune per-mesh QC/render progress with:
+
+```bash
+--progress-every 1
+```
+
 If label inference is wrong for the HPC directory layout, pass regex overrides:
 
 ```bash

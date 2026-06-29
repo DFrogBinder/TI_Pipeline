@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 @dataclass(frozen=True)
@@ -12,6 +14,14 @@ class MeshRecord:
     roi: str
     subject: str
     repeat: str
+
+
+@dataclass(frozen=True)
+class DiscoveryStats:
+    dirs_scanned: int
+    files_seen: int
+    matches: int
+    current_dir: Path
 
 
 ROI_HINTS = ("roi", "hippocampus", "pallidum", "m1", "motor", "target")
@@ -87,12 +97,50 @@ def discover_meshes(
     roi_regex: str | None = None,
     subject_regex: str | None = None,
     repeat_regex: str | None = None,
+    progress_callback: Callable[[DiscoveryStats], None] | None = None,
+    progress_interval_sec: float = 5.0,
 ) -> list[MeshRecord]:
     root = Path(root).expanduser().resolve()
-    if mesh_glob is None:
-        paths = sorted(p for p in root.rglob("*.msh") if p.is_file() and _path_has_m2m_dir(p))
-    else:
-        paths = sorted(p for p in root.rglob(mesh_glob) if p.is_file())
+    paths: list[Path] = []
+    dirs_scanned = 0
+    files_seen = 0
+    last_progress = time.monotonic()
+
+    for dirpath, _, filenames in os.walk(root):
+        dirs_scanned += 1
+        current_dir = Path(dirpath)
+        files_seen += len(filenames)
+        for filename in filenames:
+            path = current_dir / filename
+            if mesh_glob is None:
+                if filename.endswith(".msh") and _path_has_m2m_dir(path):
+                    paths.append(path)
+            elif path.match(mesh_glob):
+                paths.append(path)
+
+        now = time.monotonic()
+        if progress_callback and now - last_progress >= progress_interval_sec:
+            progress_callback(
+                DiscoveryStats(
+                    dirs_scanned=dirs_scanned,
+                    files_seen=files_seen,
+                    matches=len(paths),
+                    current_dir=current_dir,
+                )
+            )
+            last_progress = now
+
+    if progress_callback:
+        progress_callback(
+            DiscoveryStats(
+                dirs_scanned=dirs_scanned,
+                files_seen=files_seen,
+                matches=len(paths),
+                current_dir=root,
+            )
+        )
+
+    paths = sorted(paths)
     return [
         infer_record(
             path,

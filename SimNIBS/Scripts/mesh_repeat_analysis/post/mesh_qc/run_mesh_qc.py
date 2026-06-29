@@ -11,12 +11,12 @@ from statistics import median
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from mesh_repeat_analysis.post.mesh_qc.discovery import MeshRecord, discover_meshes
+    from mesh_repeat_analysis.post.mesh_qc.discovery import DiscoveryStats, MeshRecord, discover_meshes
     from mesh_repeat_analysis.post.mesh_qc.geometry_qc import QCMetrics, compute_qc_metrics
     from mesh_repeat_analysis.post.mesh_qc.loaders import load_surface_arrays
     from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png
 else:
-    from .discovery import MeshRecord, discover_meshes
+    from .discovery import DiscoveryStats, MeshRecord, discover_meshes
     from .geometry_qc import QCMetrics, compute_qc_metrics
     from .loaders import load_surface_arrays
     from .rendering import make_mosaic, render_mesh_png
@@ -78,6 +78,15 @@ def _format_seconds(seconds: float) -> str:
     if minutes:
         return f"{minutes:d}m{secs:02d}s"
     return f"{secs:d}s"
+
+
+def _print_discovery_progress(stats: DiscoveryStats) -> None:
+    print(
+        f"[DISCOVERY] dirs={stats.dirs_scanned} "
+        f"files={stats.files_seen} matches={stats.matches} "
+        f"current={stats.current_dir}",
+        flush=True,
+    )
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]) -> None:
@@ -246,6 +255,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=25,
         help="Print progress every N meshes during QC/rendering. Use 1 for every mesh.",
     )
+    parser.add_argument(
+        "--discovery-progress-seconds",
+        type=float,
+        default=5.0,
+        help="Print discovery progress at least this often while walking the filesystem.",
+    )
     return parser
 
 
@@ -254,12 +269,24 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).expanduser().resolve()
     out_dir = Path(args.out).expanduser().resolve()
 
+    if args.mesh_glob is None:
+        print(
+            f"[DISCOVERY] Scanning {root} for .msh files inside m2m* directories",
+            flush=True,
+        )
+    else:
+        print(
+            f"[DISCOVERY] Scanning {root} for mesh glob {args.mesh_glob!r}",
+            flush=True,
+        )
     records = discover_meshes(
         root,
         mesh_glob=args.mesh_glob,
         roi_regex=args.roi_regex,
         subject_regex=args.subject_regex,
         repeat_regex=args.repeat_regex,
+        progress_callback=_print_discovery_progress,
+        progress_interval_sec=args.discovery_progress_seconds,
     )
     if not records:
         print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)

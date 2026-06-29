@@ -7,8 +7,15 @@ Run from the repository root on the HPC:
 ```bash
 python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
   --root /path/to/four_roi_experiment \
-  --out /path/to/mesh_qc_outputs \
-  --mesh-glob "*.msh"
+  --out /path/to/mesh_qc_outputs
+```
+
+By default, the tool only scans `.msh` files inside `m2m*` directories. This avoids processing every simulation output mesh in each subject/repeat folder.
+
+To intentionally scan every `.msh` under the root, pass:
+
+```bash
+--mesh-glob "*.msh"
 ```
 
 Outputs:
@@ -32,4 +39,3 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
   --subject-regex "(sub-CC[0-9]+)" \
   --repeat-regex "(repeat_[0-9]+)"
 ```
-

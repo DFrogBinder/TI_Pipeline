@@ -36,3 +36,17 @@ def test_discover_meshes_returns_sorted_records(tmp_path):
     assert [r.subject for r in records] == ["sub-CC1", "sub-CC2"]
     assert [r.repeat for r in records] == ["repeat_01", "repeat_02"]
 
+
+def test_discover_meshes_defaults_to_m2m_directories_only(tmp_path):
+    wanted = tmp_path / "M1" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    extra = tmp_path / "M1" / "sub-CC1" / "repeat_01" / "SimNIBS" / "field.msh"
+    wanted.parent.mkdir(parents=True)
+    extra.parent.mkdir(parents=True)
+    wanted.write_text("$MeshFormat\n", encoding="utf-8")
+    extra.write_text("$MeshFormat\n", encoding="utf-8")
+
+    default_records = discover_meshes(tmp_path)
+    explicit_records = discover_meshes(tmp_path, mesh_glob="*.msh")
+
+    assert [r.path for r in default_records] == [wanted]
+    assert [r.path for r in explicit_records] == [extra, wanted]

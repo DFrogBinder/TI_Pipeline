@@ -54,3 +54,51 @@ def test_cli_writes_csv_reports_in_skip_render_mode(tmp_path, monkeypatch):
     assert rows[0]["subject"] == "sub-CC110056"
     assert rows[0]["status"] == "OK"
 
+
+def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
+    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "load_surface_arrays",
+        lambda path: SurfaceArrays(
+            points=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            faces=np.array(
+                [
+                    [0, 2, 1],
+                    [0, 1, 3],
+                    [1, 2, 3],
+                    [2, 0, 3],
+                ]
+            ),
+        ),
+    )
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--skip-renders",
+            "--progress-every",
+            "1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "[DISCOVERY] Found 1 mesh" in captured.out
+    assert "[QC] 1/1" in captured.out
+    assert "[QC] Complete" in captured.out

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
@@ -39,6 +40,44 @@ SUMMARY_FIELDS = (
     "y_size",
     "z_size",
 )
+
+
+class ProgressReporter:
+    def __init__(self, phase: str, total: int, *, every: int = 1) -> None:
+        self.phase = phase
+        self.total = max(total, 0)
+        self.every = max(every, 1)
+        self.start = time.monotonic()
+
+    def update(self, current: int, detail: str = "") -> None:
+        if current != self.total and current % self.every != 0:
+            return
+        elapsed = max(time.monotonic() - self.start, 1e-9)
+        rate = current / elapsed if current else 0.0
+        remaining = self.total - current
+        eta = remaining / rate if rate > 0 else 0.0
+        suffix = f" | {detail}" if detail else ""
+        print(
+            f"[{self.phase}] {current}/{self.total} "
+            f"elapsed={_format_seconds(elapsed)} "
+            f"rate={rate:.2f}/s eta={_format_seconds(eta)}{suffix}",
+            flush=True,
+        )
+
+    def complete(self) -> None:
+        elapsed = max(time.monotonic() - self.start, 1e-9)
+        print(f"[{self.phase}] Complete in {_format_seconds(elapsed)}", flush=True)
+
+
+def _format_seconds(seconds: float) -> str:
+    seconds = int(round(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours:d}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes:d}m{secs:02d}s"
+    return f"{secs:d}s"
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]) -> None:
@@ -135,6 +174,7 @@ def _render_outputs(records: list[MeshRecord], out_dir: Path, args: argparse.Nam
     rendered_by_roi: dict[str, list[Path]] = defaultdict(list)
     all_rendered: list[Path] = []
     failures: list[str] = []
+    progress = ProgressReporter("RENDER", len(records), every=args.progress_every)
 
     for idx, record in enumerate(records, start=1):
         roi_name = _safe_name(record.roi)
@@ -148,11 +188,16 @@ def _render_outputs(records: list[MeshRecord], out_dir: Path, args: argparse.Nam
             render_mesh_png(record.path, out_png, label=label, image_size=args.image_size)
         except Exception as exc:
             failures.append(f"{record.path}\t{exc}")
+            progress.update(idx, f"FAILED {record.subject} {record.repeat} {record.roi}")
             continue
         rendered_by_roi[record.roi].append(out_png)
         all_rendered.append(out_png)
+        progress.update(idx, f"{record.subject} {record.repeat} {record.roi}")
+
+    progress.complete()
 
     for roi, images in sorted(rendered_by_roi.items()):
+        print(f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)", flush=True)
         make_mosaic(
             images,
             out_dir / "mosaics" / f"{_safe_name(roi)}_wall.png",
@@ -161,6 +206,7 @@ def _render_outputs(records: list[MeshRecord], out_dir: Path, args: argparse.Nam
         )
 
     if all_rendered:
+        print(f"[MOSAIC] Building combined all-ROI wall ({len(all_rendered)} tiles)", flush=True)
         make_mosaic(
             all_rendered,
             out_dir / "mosaics" / "all_roi_wall.png",
@@ -179,7 +225,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--root", required=True, help="Root containing ROI/subject/repeat mesh outputs.")
     parser.add_argument("--out", required=True, help="Output directory for CSV reports, renders, and mosaics.")
-    parser.add_argument("--mesh-glob", default="*.msh", help="Recursive mesh glob, default: *.msh")
+    parser.add_argument(
+        "--mesh-glob",
+        default=None,
+        help=(
+            "Recursive mesh glob. If omitted, only .msh files inside m2m* "
+            "directories are scanned. Pass '*.msh' to scan all meshes."
+        ),
+    )
     parser.add_argument("--roi-regex", default=None, help="Optional regex for ROI inference; first group is used.")
     parser.add_argument("--subject-regex", default=None, help="Optional regex for subject inference; first group is used.")
     parser.add_argument("--repeat-regex", default=None, help="Optional regex for repeat inference; first group is used.")
@@ -187,6 +240,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tile-size", type=int, default=220, help="Mosaic tile size in pixels.")
     parser.add_argument("--cols", type=int, default=None, help="Mosaic columns; default uses square-ish grid.")
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=25,
+        help="Print progress every N meshes during QC/rendering. Use 1 for every mesh.",
+    )
     return parser
 
 
@@ -206,17 +265,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
         return 2
 
+    print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
     _write_csv(out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS)
 
     summary_rows: list[dict[str, object]] = []
+    progress = ProgressReporter("QC", len(records), every=args.progress_every)
     for idx, record in enumerate(records, start=1):
-        print(f"[{idx:05d}/{len(records):05d}] QC {record.path}")
         try:
             surface = load_surface_arrays(record.path)
             metrics = compute_qc_metrics(surface)
             summary_rows.append(_summary_row(record, metrics))
+            detail = f"{metrics.status} {record.subject} {record.repeat} {record.roi}"
         except Exception as exc:
             summary_rows.append(_read_fail_row(record, exc))
+            detail = f"READ_FAIL {record.subject} {record.repeat} {record.roi}"
+        progress.update(idx, detail)
+    progress.complete()
 
     _apply_bounds_outlier_flags(summary_rows)
     _write_csv(out_dir / "qc_summary.csv", summary_rows, SUMMARY_FIELDS)

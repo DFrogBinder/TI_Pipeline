@@ -76,16 +76,23 @@ def infer_record(
     return MeshRecord(path=path, roi=roi, subject=subject, repeat=repeat)
 
 
+def _path_has_m2m_dir(path: Path) -> bool:
+    return any(part.lower().startswith("m2m") for part in path.parts[:-1])
+
+
 def discover_meshes(
     root: Path,
     *,
-    mesh_glob: str = "*.msh",
+    mesh_glob: str | None = None,
     roi_regex: str | None = None,
     subject_regex: str | None = None,
     repeat_regex: str | None = None,
 ) -> list[MeshRecord]:
     root = Path(root).expanduser().resolve()
-    paths = sorted(p for p in root.rglob(mesh_glob) if p.is_file())
+    if mesh_glob is None:
+        paths = sorted(p for p in root.rglob("*.msh") if p.is_file() and _path_has_m2m_dir(p))
+    else:
+        paths = sorted(p for p in root.rglob(mesh_glob) if p.is_file())
     return [
         infer_record(
             path,
@@ -96,4 +103,3 @@ def discover_meshes(
         )
         for path in paths
     ]
-

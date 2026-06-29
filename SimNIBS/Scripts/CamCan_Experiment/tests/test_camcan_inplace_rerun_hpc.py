@@ -48,3 +48,14 @@ def test_inplace_rerun_scripts_use_manifest_and_reuse_mesh_flag():
     assert "TASK_OFFSET" in array_source
     assert "MONTAGE_PRESET" in submit_source
     assert "MAX_ARRAY_TASKS" in submit_source
+
+
+def test_submit_wrapper_supports_chunk_resume_controls():
+    submit_source = (
+        ROOT / "HPC_scripts" / "submit_camcan_inplace_rerun.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "START_TASK_OFFSET" in submit_source
+    assert "MAX_SUBMITTED_CHUNKS" in submit_source
+    assert "Next resume command" in submit_source
+    assert "SBATCH_OUTPUT=" in submit_source

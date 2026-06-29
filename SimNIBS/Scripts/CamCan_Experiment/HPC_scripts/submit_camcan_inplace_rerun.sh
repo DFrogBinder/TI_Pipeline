@@ -15,6 +15,8 @@ SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-${SCRIPT_DIR}/simulation/TI_runner_multi-core
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-${SCRIPT_DIR}/simulation/validate_simulation_outputs.py}"
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-8}"
 MAX_ARRAY_TASKS="${MAX_ARRAY_TASKS:-1000}"
+START_TASK_OFFSET="${START_TASK_OFFSET:-0}"
+MAX_SUBMITTED_CHUNKS="${MAX_SUBMITTED_CHUNKS:-0}"
 JOB_NAME="${JOB_NAME:-ti_camcan_inplace_rerun}"
 PARTITION="${PARTITION:-sheffield}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
@@ -87,6 +89,18 @@ if ! [[ "${MAX_CONCURRENT_TASKS}" =~ ^[0-9]+$ ]] || [ "${MAX_CONCURRENT_TASKS}" 
     echo "[ERROR] MAX_CONCURRENT_TASKS must be a positive integer; got '${MAX_CONCURRENT_TASKS}'." >&2
     exit 1
 fi
+if ! [[ "${START_TASK_OFFSET}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] START_TASK_OFFSET must be a non-negative integer; got '${START_TASK_OFFSET}'." >&2
+    exit 1
+fi
+if [ "${START_TASK_OFFSET}" -ge "${TOTAL_TASKS}" ]; then
+    echo "[INFO] START_TASK_OFFSET=${START_TASK_OFFSET} is at or beyond total rows (${TOTAL_TASKS}); nothing to submit."
+    exit 0
+fi
+if ! [[ "${MAX_SUBMITTED_CHUNKS}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] MAX_SUBMITTED_CHUNKS must be a non-negative integer; got '${MAX_SUBMITTED_CHUNKS}'." >&2
+    exit 1
+fi
 if ! [[ "${TASK_MAX_RETRIES}" =~ ^-?[0-9]+$ ]]; then
     echo "[ERROR] TI_TASK_MAX_RETRIES/TI_MESH_MAX_RETRIES must be an integer; got '${TASK_MAX_RETRIES}'." >&2
     exit 1
@@ -101,16 +115,28 @@ echo "[INFO] Montage preset:    ${MONTAGE_PRESET}"
 echo "[INFO] Total rows:        ${TOTAL_TASKS}"
 echo "[INFO] Ready tasks:       ${READY_TASKS}"
 echo "[INFO] Blocked tasks:     ${BLOCKED_TASKS}"
+echo "[INFO] Start task offset: ${START_TASK_OFFSET}"
 echo "[INFO] Max array tasks:   ${MAX_ARRAY_TASKS}"
 echo "[INFO] Max concurrent:    ${MAX_CONCURRENT_TASKS}"
+if [ "${MAX_SUBMITTED_CHUNKS}" -gt 0 ]; then
+    echo "[INFO] Max chunks/call:   ${MAX_SUBMITTED_CHUNKS}"
+else
+    echo "[INFO] Max chunks/call:   unlimited"
+fi
 echo "[INFO] Slurm script:      ${SLURM_SCRIPT}"
 echo "[INFO] Runner:            ${SIM_RUNNER_PY}"
 echo "[INFO] Completion check:  ${COMPLETION_CHECK_PY}"
 echo "[INFO] Log dir:           ${LOG_DIR}"
 
-TASK_OFFSET=0
+TASK_OFFSET="${START_TASK_OFFSET}"
 SUBMITTED_ARRAYS=0
 while [ "${TASK_OFFSET}" -lt "${TOTAL_TASKS}" ]; do
+    if [ "${MAX_SUBMITTED_CHUNKS}" -gt 0 ] && [ "${SUBMITTED_ARRAYS}" -ge "${MAX_SUBMITTED_CHUNKS}" ]; then
+        echo "[INFO] Reached MAX_SUBMITTED_CHUNKS=${MAX_SUBMITTED_CHUNKS}; stopping at TASK_OFFSET=${TASK_OFFSET}."
+        echo "[INFO] Next resume command: START_TASK_OFFSET=${TASK_OFFSET} MAX_SUBMITTED_CHUNKS=${MAX_SUBMITTED_CHUNKS} ROI_ROOT=\"${ROI_ROOT}\" MANIFEST=\"${MANIFEST}\" MONTAGE_PRESET=\"${MONTAGE_PRESET}\" LOG_DIR=\"${LOG_DIR}\" bash ${BASH_SOURCE[0]}"
+        break
+    fi
+
     CHUNK_COUNT="${MAX_ARRAY_TASKS}"
     REMAINING=$((TOTAL_TASKS - TASK_OFFSET))
     if [ "${REMAINING}" -lt "${CHUNK_COUNT}" ]; then
@@ -133,7 +159,17 @@ while [ "${TASK_OFFSET}" -lt "${TOTAL_TASKS}" ]; do
         --export="${EXPORT_VARS}"
         "${SLURM_SCRIPT}"
     )
-    "${SBATCH_CMD[@]}"
+    set +e
+    SBATCH_OUTPUT="$("${SBATCH_CMD[@]}" 2>&1)"
+    SBATCH_EXIT=$?
+    set -e
+    echo "${SBATCH_OUTPUT}"
+    if [ "${SBATCH_EXIT}" -ne 0 ]; then
+        echo "[ERROR] sbatch failed for global task range ${TASK_OFFSET}-${GLOBAL_END}." >&2
+        echo "[ERROR] Resume after job limits clear with:" >&2
+        echo "[ERROR] START_TASK_OFFSET=${TASK_OFFSET} MAX_SUBMITTED_CHUNKS=${MAX_SUBMITTED_CHUNKS:-0} ROI_ROOT=\"${ROI_ROOT}\" MANIFEST=\"${MANIFEST}\" MONTAGE_PRESET=\"${MONTAGE_PRESET}\" LOG_DIR=\"${LOG_DIR}\" bash ${BASH_SOURCE[0]}" >&2
+        exit "${SBATCH_EXIT}"
+    fi
     TASK_OFFSET=$((TASK_OFFSET + CHUNK_COUNT))
     SUBMITTED_ARRAYS=$((SUBMITTED_ARRAYS + 1))
 done

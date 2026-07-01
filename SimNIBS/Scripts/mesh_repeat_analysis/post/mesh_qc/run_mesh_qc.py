@@ -179,6 +179,11 @@ def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str,
         writer.writerows(rows)
 
 
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
 def _record_row(record: MeshRecord) -> dict[str, object]:
     return {
         "mesh_id": record.mesh_id,
@@ -344,6 +349,22 @@ def _run_qc(records: list[MeshRecord], args: argparse.Namespace) -> list[dict[st
     return [row for row in summary_rows if row is not None]
 
 
+def _load_found_records(found_path: Path) -> list[MeshRecord]:
+    rows = _read_csv(found_path)
+    records = []
+    for row in rows:
+        records.append(
+            MeshRecord(
+                path=Path(row["path"]).expanduser(),
+                roi=row["roi"],
+                subject=row["subject"],
+                repeat=row["repeat"],
+                mesh_id=row["mesh_id"],
+            )
+        )
+    return records
+
+
 def _render_outputs(
     records: list[MeshRecord],
     summary_rows: list[dict[str, object]],
@@ -417,6 +438,88 @@ def _render_outputs(
         fail_path.write_text("\n".join(failures) + "\n", encoding="utf-8")
 
 
+def _validate_stage_args(args: argparse.Namespace) -> None:
+    if args.render_only and (args.qc_only or args.skip_renders):
+        raise ValueError("--render-only cannot be combined with --qc-only or --skip-renders")
+
+
+def _run_discovery(root: Path, args: argparse.Namespace, progress_mode: str) -> list[MeshRecord]:
+    if args.mesh_glob is None:
+        print(
+            f"[DISCOVERY] Scanning {root} for .msh files inside m2m* directories "
+            f"(progress={progress_mode})",
+            flush=True,
+        )
+    else:
+        print(
+            f"[DISCOVERY] Scanning {root} for mesh glob {args.mesh_glob!r} "
+            f"(progress={progress_mode})",
+            flush=True,
+        )
+    discovery_callback, discovery_reporter = _make_discovery_callback(args)
+    records = discover_meshes(
+        root,
+        mesh_glob=args.mesh_glob,
+        roi_regex=args.roi_regex,
+        subject_regex=args.subject_regex,
+        repeat_regex=args.repeat_regex,
+        progress_callback=discovery_callback,
+        progress_interval_sec=args.discovery_progress_seconds,
+    )
+    if discovery_reporter is not None:
+        discovery_reporter.complete()
+    return records
+
+
+def _run_full_or_qc_only(root: Path, out_dir: Path, args: argparse.Namespace, progress_mode: str) -> int:
+    records = _run_discovery(root, args, progress_mode)
+    if not records:
+        print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
+        return 2
+
+    print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
+    _write_csv(out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS)
+
+    summary_rows = _run_qc(records, args)
+
+    _apply_bounds_outlier_flags(summary_rows)
+    _write_csv(out_dir / "qc_summary.csv", summary_rows, SUMMARY_FIELDS)
+    flag_rows = [row for row in summary_rows if row["status"] != "OK"]
+    _write_csv(out_dir / "qc_flags.csv", flag_rows, SUMMARY_FIELDS)
+
+    if not (args.skip_renders or args.qc_only):
+        _render_outputs(records, summary_rows, out_dir, args)
+
+    print(f"Wrote QC outputs to {out_dir}")
+    return 0
+
+
+def _run_render_only(out_dir: Path, args: argparse.Namespace) -> int:
+    found_path = out_dir / "found_meshes.csv"
+    summary_path = out_dir / "qc_summary.csv"
+    if not found_path.exists():
+        print(f"Missing render input: {found_path}", file=sys.stderr)
+        return 2
+    if not summary_path.exists():
+        print(f"Missing render input: {summary_path}", file=sys.stderr)
+        return 2
+
+    print(f"[RENDER] Loading prior QC outputs from {out_dir}", flush=True)
+    records = _load_found_records(found_path)
+    summary_rows = _read_csv(summary_path)
+    if not records:
+        print(f"No meshes found in {found_path}", file=sys.stderr)
+        return 2
+
+    print(
+        f"[RENDER] Loaded {len(records)} discovered mesh(es) and {len(summary_rows)} QC row(s)",
+        flush=True,
+    )
+    _render_outputs(records, summary_rows, out_dir, args)
+    print(f"Wrote render outputs to {out_dir}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Scan generated m2m .msh files for geometry QC flags and render mesh mosaic walls."
@@ -434,7 +537,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--roi-regex", default=None, help="Optional regex for ROI inference; first group is used.")
     parser.add_argument("--subject-regex", default=None, help="Optional regex for subject inference; first group is used.")
     parser.add_argument("--repeat-regex", default=None, help="Optional regex for repeat inference; first group is used.")
-    parser.add_argument("--image-size", type=int, default=600, help="Individual render size in pixels.")
+    parser.add_argument("--image-size", type=int, default=1200, help="Individual render size in pixels.")
     parser.add_argument("--tile-size", type=int, default=220, help="Mosaic tile size in pixels.")
     parser.add_argument("--cols", type=int, default=None, help="Mosaic columns; default uses square-ish grid.")
     parser.add_argument(
@@ -458,6 +561,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of parallel worker processes for QC. Default 0 uses all available CPUs.",
     )
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
+    parser.add_argument(
+        "--qc-only",
+        action="store_true",
+        help="Run discovery and QC only, then stop before rendering.",
+    )
+    parser.add_argument(
+        "--render-only",
+        action="store_true",
+        help="Skip discovery and QC, and render from existing found_meshes.csv and qc_summary.csv in --out.",
+    )
     parser.add_argument(
         "--roi-walls",
         action="store_true",
@@ -488,6 +601,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = Path(args.root).expanduser().resolve()
     out_dir = Path(args.out).expanduser().resolve()
+    try:
+        _validate_stage_args(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     use_tqdm = _use_tqdm_progress(args)
     if args.progress != "none" and not use_tqdm:
@@ -496,50 +614,9 @@ def main(argv: list[str] | None = None) -> int:
         progress_mode = "tqdm"
     else:
         progress_mode = "none"
-
-    if args.mesh_glob is None:
-        print(
-            f"[DISCOVERY] Scanning {root} for .msh files inside m2m* directories "
-            f"(progress={progress_mode})",
-            flush=True,
-        )
-    else:
-        print(
-            f"[DISCOVERY] Scanning {root} for mesh glob {args.mesh_glob!r} "
-            f"(progress={progress_mode})",
-            flush=True,
-        )
-    discovery_callback, discovery_reporter = _make_discovery_callback(args)
-    records = discover_meshes(
-        root,
-        mesh_glob=args.mesh_glob,
-        roi_regex=args.roi_regex,
-        subject_regex=args.subject_regex,
-        repeat_regex=args.repeat_regex,
-        progress_callback=discovery_callback,
-        progress_interval_sec=args.discovery_progress_seconds,
-    )
-    if discovery_reporter is not None:
-        discovery_reporter.complete()
-    if not records:
-        print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
-        return 2
-
-    print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
-    _write_csv(out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS)
-
-    summary_rows = _run_qc(records, args)
-
-    _apply_bounds_outlier_flags(summary_rows)
-    _write_csv(out_dir / "qc_summary.csv", summary_rows, SUMMARY_FIELDS)
-    flag_rows = [row for row in summary_rows if row["status"] != "OK"]
-    _write_csv(out_dir / "qc_flags.csv", flag_rows, SUMMARY_FIELDS)
-
-    if not args.skip_renders:
-        _render_outputs(records, summary_rows, out_dir, args)
-
-    print(f"Wrote QC outputs to {out_dir}")
-    return 0
+    if args.render_only:
+        return _run_render_only(out_dir, args)
+    return _run_full_or_qc_only(root, out_dir, args, progress_mode)
 
 
 if __name__ == "__main__":

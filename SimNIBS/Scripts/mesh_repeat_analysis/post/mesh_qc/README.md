@@ -2,6 +2,8 @@
 
 Standalone HPC-first quality control for generated m2m head meshes.
 
+Method details are documented in [ANALYSIS.md](./ANALYSIS.md).
+
 Run from the repository root on the HPC:
 
 ```bash
@@ -10,9 +12,23 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
   --out /path/to/mesh_qc_outputs
 ```
 
+That default command runs the full pipeline:
+
+1. discovery,
+2. QC CSV generation,
+3. mesh renders,
+4. mosaic generation.
+
+For long runs, a Slurm batch wrapper is available at:
+
+```bash
+sbatch mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm
+```
+
 Default execution is tuned for large interactive HPC sessions:
 
 - rendering uses the pure Pillow software renderer,
+- renders default to `1200 x 1200`,
 - QC uses all visible CPUs.
 
 By default, the tool only scans `.msh` files inside `m2m*` directories. This avoids processing every simulation output mesh in each subject/repeat folder.
@@ -30,6 +46,35 @@ Outputs:
 - `qc_flags.csv`: only non-OK meshes.
 - `renders/meshes/*.png`: per-mesh render tiles for meshes that passed QC loading.
 - `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
+
+## Running Stages Separately
+
+If you want to stop after QC and skip all rendering work, use:
+
+```bash
+python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
+  --root /path/to/four_roi_experiment \
+  --out /path/to/mesh_qc_outputs \
+  --qc-only
+```
+
+`--skip-renders` still works, but `--qc-only` is the explicit stage name.
+
+If you already have `found_meshes.csv` and `qc_summary.csv` in `--out` and only want to regenerate renders and mosaics, use:
+
+```bash
+python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
+  --root /path/to/four_roi_experiment \
+  --out /path/to/mesh_qc_outputs \
+  --render-only
+```
+
+`--render-only`:
+
+- skips discovery,
+- skips geometry QC,
+- reuses the previously written `found_meshes.csv` and `qc_summary.csv`,
+- still skips meshes whose QC flags start with `READ_FAIL`.
 
 For volumetric SimNIBS `.msh` files with tetrahedral cells, QC is run on the exterior boundary extracted from the tetrahedra. Stored triangle elements are used only when no tetrahedra are present, because stored triangles may include internal tissue interfaces and can look non-manifold even when the volume mesh is valid.
 
@@ -65,6 +110,8 @@ Rendering does not require PyVista by default. The default renderer is the pure 
 --renderer auto
 --renderer pillow
 ```
+
+The Pillow path now renders a frontal orthographic QC preview. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based surface preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.
 

@@ -1,4 +1,5 @@
 import csv
+import os
 
 import numpy as np
 
@@ -65,6 +66,8 @@ def test_cli_writes_csv_reports_in_skip_render_mode(tmp_path, monkeypatch):
             str(out_dir),
             "--mesh-glob",
             "*.msh",
+            "--workers",
+            "1",
             "--skip-renders",
         ]
     )
@@ -83,6 +86,21 @@ def test_parser_defaults_to_pillow_and_all_cpus():
 
     assert args.renderer == "pillow"
     assert args.workers == 0
+
+
+def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "20")
+    monkeypatch.setattr(run_mesh_qc.os, "cpu_count", lambda: 64)
+
+    assert run_mesh_qc._resolve_worker_count(0) == 20
+
+
+def test_resolve_auto_workers_uses_affinity_when_available(monkeypatch):
+    monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+    monkeypatch.setattr(run_mesh_qc.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(run_mesh_qc.os, "sched_getaffinity", lambda pid: set(range(12)))
+
+    assert run_mesh_qc._resolve_worker_count(0) == 12
 
 
 def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
@@ -120,6 +138,8 @@ def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
             str(tmp_path),
             "--out",
             str(out_dir),
+            "--workers",
+            "1",
             "--skip-renders",
             "--progress",
             "text",
@@ -164,6 +184,8 @@ def test_cli_progress_shows_geometry_flag_names(tmp_path, monkeypatch, capsys):
             str(tmp_path),
             "--out",
             str(out_dir),
+            "--workers",
+            "1",
             "--skip-renders",
             "--progress",
             "text",
@@ -215,6 +237,8 @@ def test_cli_uses_tqdm_when_requested(tmp_path, monkeypatch):
             str(tmp_path),
             "--out",
             str(out_dir),
+            "--workers",
+            "1",
             "--skip-renders",
             "--progress",
             "tqdm",
@@ -299,6 +323,8 @@ def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch
             str(tmp_path),
             "--out",
             str(out_dir),
+            "--workers",
+            "1",
             "--progress",
             "text",
             "--progress-every",
@@ -350,7 +376,7 @@ def test_cli_renders_meshes_with_geometry_qc_flags(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
 
-    rc = run_mesh_qc.main(["--root", str(tmp_path), "--out", str(out_dir)])
+    rc = run_mesh_qc.main(["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1"])
 
     assert rc == 0
     assert rendered == [flagged_mesh]

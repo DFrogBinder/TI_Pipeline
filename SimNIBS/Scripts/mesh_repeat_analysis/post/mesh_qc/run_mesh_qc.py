@@ -6,6 +6,7 @@ import csv
 import os
 import sys
 import time
+import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import defaultdict
 from pathlib import Path
@@ -261,6 +262,30 @@ def _mesh_detail(record: MeshRecord, status: str | None = None) -> str:
     return f"{prefix}{record.subject} {record.repeat} {record.mesh_id} {record.path.name}"
 
 
+def _resolve_worker_count(requested_workers: int) -> int:
+    if requested_workers > 0:
+        return requested_workers
+
+    slurm_cpus_per_task = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm_cpus_per_task:
+        try:
+            value = int(slurm_cpus_per_task)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            affinity = os.sched_getaffinity(0)
+            if affinity:
+                return len(affinity)
+        except Exception:
+            pass
+
+    return os.cpu_count() or 1
+
+
 def _status_label(row: dict[str, object]) -> str:
     status = str(row.get("status", "UNKNOWN"))
     flags = str(row.get("flags", ""))
@@ -282,10 +307,7 @@ def _qc_record_worker(record: MeshRecord, check_components: bool) -> dict[str, o
 
 
 def _run_qc(records: list[MeshRecord], args: argparse.Namespace) -> list[dict[str, object]]:
-    workers = args.workers
-    if workers == 0:
-        workers = os.cpu_count() or 1
-    workers = max(1, workers)
+    workers = max(1, _resolve_worker_count(args.workers))
 
     summary_rows: list[dict[str, object] | None] = [None] * len(records)
     progress = _make_progress_reporter(args, "QC", len(records))
@@ -300,17 +322,24 @@ def _run_qc(records: list[MeshRecord], args: argparse.Namespace) -> list[dict[st
 
     print(f"[QC] Using {workers} worker processes", flush=True)
     completed = 0
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_qc_record_worker, record, args.check_components): (idx, record)
-            for idx, record in enumerate(records)
-        }
-        for future in as_completed(futures):
-            idx, record = futures[future]
-            row = future.result()
-            summary_rows[idx] = row
-            completed += 1
-            progress.update(completed, _mesh_detail(record, _status_label(row)))
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as executor:
+            futures = {
+                executor.submit(_qc_record_worker, record, args.check_components): (idx, record)
+                for idx, record in enumerate(records)
+            }
+            for future in as_completed(futures):
+                idx, record = futures[future]
+                row = future.result()
+                summary_rows[idx] = row
+                completed += 1
+                progress.update(completed, _mesh_detail(record, _status_label(row)))
+    except Exception as exc:
+        progress.complete()
+        raise RuntimeError(
+            f"Parallel QC failed with {workers} workers ({exc}). "
+            "Retry with a smaller worker count such as --workers 8."
+        ) from exc
     progress.complete()
     return [row for row in summary_rows if row is not None]
 

@@ -44,8 +44,13 @@ Outputs:
 - `found_meshes.csv`: discovered mesh paths and inferred mesh/subject/repeat labels.
 - `qc_summary.csv`: objective mesh metrics for every mesh.
 - `qc_flags.csv`: only non-OK meshes.
+- `qc_exception_details.csv`: per-mesh QC/read exceptions with traceback text.
+- `render_exception_details.csv`: per-mesh render exceptions with traceback text.
 - `renders/meshes/*.png`: per-mesh render tiles for meshes that passed QC loading.
 - `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
+- `logs/mesh_qc.log`: stage-level run log.
+- `logs/run_context.json`: resolved paths, arguments, Slurm environment, and CPU context for the run.
+- `logs/fatal_error.txt`: written only if the pipeline aborts with an unhandled exception.
 
 ## Running Stages Separately
 
@@ -127,6 +132,8 @@ The Gmsh path opens the original `.msh` directly, so the output is much closer t
 The Pillow path remains available as a last-resort software fallback. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based frontal preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.
+
+For debugging failed HPC runs, the code now always writes a persistent run log and structured exception CSVs into `--out`, so you do not need to rely only on transient terminal output.
 
 Force a mode with:
 

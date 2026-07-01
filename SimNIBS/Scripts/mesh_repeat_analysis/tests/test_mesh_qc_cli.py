@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 
 import numpy as np
@@ -620,3 +621,138 @@ def test_render_outputs_uses_parallel_workers_when_requested(tmp_path, monkeypat
 
     assert used_parallel["value"] is True
     assert rendered == [record.path for record in records]
+
+
+def test_cli_writes_qc_exception_details_and_run_context(tmp_path, monkeypatch):
+    ok_mesh = tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    bad_mesh = tmp_path / "Runs" / "sub-CC2" / "repeat_01" / "m2m_sub-CC2" / "head.msh"
+    ok_mesh.parent.mkdir(parents=True)
+    bad_mesh.parent.mkdir(parents=True)
+    ok_mesh.write_text("$MeshFormat\n", encoding="utf-8")
+    bad_mesh.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+
+    def fake_loader(path):
+        if path == bad_mesh:
+            raise RuntimeError("not a readable mesh")
+        return SurfaceArrays(
+            points=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            faces=np.array(
+                [
+                    [0, 2, 1],
+                    [0, 1, 3],
+                    [1, 2, 3],
+                    [2, 0, 3],
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(run_mesh_qc, "load_surface_arrays", fake_loader)
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "1",
+            "--qc-only",
+            "--progress",
+            "none",
+        ]
+    )
+
+    assert rc == 0
+    with (out_dir / "qc_exception_details.csv").open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "qc"
+    assert rows[0]["subject"] == "sub-CC2"
+    assert rows[0]["error_type"] == "RuntimeError"
+    assert "not a readable mesh" in rows[0]["error_message"]
+    assert "RuntimeError: not a readable mesh" in rows[0]["traceback"]
+
+    context = json.loads((out_dir / "logs" / "run_context.json").read_text(encoding="utf-8"))
+    assert context["root"] == str(tmp_path.resolve())
+    assert context["out"] == str(out_dir.resolve())
+
+
+def test_cli_writes_render_exception_details(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "load_surface_arrays",
+        lambda path: SurfaceArrays(
+            points=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            faces=np.array(
+                [
+                    [0, 2, 1],
+                    [0, 1, 3],
+                    [1, 2, 3],
+                    [2, 0, 3],
+                ]
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "render_mesh_png",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("render exploded")),
+    )
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "1",
+            "--progress",
+            "none",
+        ]
+    )
+
+    assert rc == 0
+    with (out_dir / "render_exception_details.csv").open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["stage"] == "render"
+    assert rows[0]["subject"] == "sub-CC1"
+    assert rows[0]["error_type"] == "RuntimeError"
+    assert rows[0]["error_message"] == "render exploded"
+    assert "RuntimeError: render exploded" in rows[0]["traceback"]
+    assert (out_dir / "render_failures.txt").exists()
+
+
+def test_main_writes_fatal_error_log_and_returns_nonzero(tmp_path, monkeypatch):
+    out_dir = tmp_path / "qc"
+    monkeypatch.setattr(run_mesh_qc, "_run_full_or_qc_only", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad root config")))
+
+    rc = run_mesh_qc.main(["--root", str(tmp_path), "--out", str(out_dir), "--progress", "none"])
+
+    assert rc == 1
+    fatal_text = (out_dir / "logs" / "fatal_error.txt").read_text(encoding="utf-8")
+    assert "ValueError: bad root config" in fatal_text
+    assert "Traceback" in fatal_text
+    run_log = (out_dir / "logs" / "mesh_qc.log").read_text(encoding="utf-8")
+    assert "Fatal pipeline error" in run_log

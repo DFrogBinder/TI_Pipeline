@@ -210,9 +210,14 @@ The main outputs are:
 - `found_meshes.csv`: discovered meshes and inferred metadata,
 - `qc_summary.csv`: one row per mesh with all metrics,
 - `qc_flags.csv`: subset of rows where `status != OK`,
+- `qc_exception_details.csv`: per-mesh QC/read exceptions with error type, message, and traceback,
+- `render_exception_details.csv`: per-mesh render exceptions with error type, message, and traceback,
 - `renders/meshes/*.png`: per-mesh renders for non-`READ_FAIL` meshes,
 - `mosaics/all_mesh_wall.png`: combined visual wall,
 - `render_failures.txt`: meshes that passed QC loading but failed rendering.
+- `logs/mesh_qc.log`: stage-level persistent log,
+- `logs/run_context.json`: resolved runtime context including paths, arguments, CPU allocation, and key Slurm variables,
+- `logs/fatal_error.txt`: written only when the run aborts with an unhandled exception.
 
 ## Stage Modes
 
@@ -251,6 +256,20 @@ Behavior:
 - rebuild mosaics from those rendered images.
 
 This mode is intended for rerendering after QC has already completed, for example when changing the renderer, image size, or wall layout.
+
+## Logging And Crash Diagnostics
+
+The pipeline now writes persistent diagnostics into `--out` for every run.
+
+Current behavior:
+
+- Stage starts and completions are written to `logs/mesh_qc.log`.
+- The resolved root/output paths, selected stage, renderer, worker request, visible CPU context, and key Slurm variables are written to `logs/run_context.json`.
+- Per-mesh exceptions during QC loading or QC computation are written to `qc_exception_details.csv`.
+- Per-mesh exceptions during rendering are written to `render_exception_details.csv`.
+- If the pipeline aborts outside the per-mesh exception paths, a full traceback is written to `logs/fatal_error.txt`.
+
+This logging is specifically intended to preserve evidence for pathing mistakes, dependency issues, virtual-display failures, and worker-pool crashes that would otherwise be visible only in transient stdout/stderr.
 
 ## Interpretation Notes
 

@@ -291,7 +291,13 @@ def _render_outputs(
         out_png = out_dir / "renders" / "meshes" / f"{idx:05d}__{stem}.png"
         label = f"{record.subject}\n{record.repeat}\n{record.mesh_id}"
         try:
-            render_mesh_png(record.path, out_png, label=label, image_size=args.image_size)
+            render_mesh_png(
+                record.path,
+                out_png,
+                label=label,
+                image_size=args.image_size,
+                renderer=args.renderer,
+            )
         except Exception as exc:
             failures.append(f"{record.path}\t{exc}")
             progress.update(idx, _mesh_detail(record, "FAILED"))
@@ -346,6 +352,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-size", type=int, default=600, help="Individual render size in pixels.")
     parser.add_argument("--tile-size", type=int, default=220, help="Mosaic tile size in pixels.")
     parser.add_argument("--cols", type=int, default=None, help="Mosaic columns; default uses square-ish grid.")
+    parser.add_argument(
+        "--renderer",
+        choices=("auto", "pyvista", "pillow"),
+        default="auto",
+        help="PNG renderer. auto tries PyVista first, then pure Pillow fallback.",
+    )
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
     parser.add_argument(
         "--roi-walls",

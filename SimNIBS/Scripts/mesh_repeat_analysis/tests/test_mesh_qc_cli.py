@@ -210,7 +210,7 @@ def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch
             ),
         )
 
-    def fake_render(path, out_png, *, label, image_size):
+    def fake_render(path, out_png, *, label, image_size, renderer):
         rendered.append((path, out_png, label))
         out_png.parent.mkdir(parents=True)
         out_png.write_bytes(b"fake png")

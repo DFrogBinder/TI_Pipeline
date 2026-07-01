@@ -34,6 +34,12 @@ ROI labels are retained as optional CSV metadata when the path contains ROI run 
 
 Use `--skip-renders` for a fast CSV-only dry run or on systems without PyVista display support.
 
+Rendering does not require PyVista by default. `--renderer auto` tries PyVista first and falls back to a pure Pillow/NumPy software renderer. To avoid PyVista entirely, pass:
+
+```bash
+--renderer pillow
+```
+
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.
 
 Force a mode with:

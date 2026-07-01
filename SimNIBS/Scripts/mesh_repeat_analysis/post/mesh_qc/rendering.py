@@ -3,12 +3,35 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import numpy as np
 
-def render_mesh_png(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
-    import numpy as np
+from .loaders import load_surface_arrays
+
+
+def render_mesh_png(
+    path: Path,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+    renderer: str = "auto",
+    max_faces: int = 12000,
+) -> None:
+    renderer = renderer.lower()
+    if renderer not in {"auto", "pyvista", "pillow"}:
+        raise ValueError(f"Unsupported renderer: {renderer}")
+    if renderer in {"auto", "pyvista"}:
+        try:
+            _render_with_pyvista(path, out_png, label=label, image_size=image_size)
+            return
+        except Exception:
+            if renderer == "pyvista":
+                raise
+    _render_with_pillow(path, out_png, label=label, image_size=image_size, max_faces=max_faces)
+
+
+def _render_with_pyvista(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
     import pyvista as pv
-
-    from .loaders import load_surface_arrays
 
     surface = load_surface_arrays(path)
     faces = np.asarray(surface.faces, dtype=np.int64)
@@ -50,6 +73,86 @@ def render_mesh_png(path: Path, out_png: Path, *, label: str, image_size: int = 
     out_png.parent.mkdir(parents=True, exist_ok=True)
     plotter.screenshot(str(out_png))
     plotter.close()
+
+
+def _render_with_pillow(
+    path: Path,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+    max_faces: int = 12000,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    surface = load_surface_arrays(path)
+    points = np.asarray(surface.points, dtype=float)
+    faces = np.asarray(surface.faces, dtype=np.int64)
+    if points.size == 0 or faces.size == 0:
+        raise RuntimeError("Surface extraction produced an empty mesh.")
+
+    valid = np.all((faces >= 0) & (faces < len(points)), axis=1)
+    faces = faces[valid]
+    if len(faces) == 0:
+        raise RuntimeError("Surface extraction produced no valid triangular faces.")
+    if len(faces) > max_faces:
+        take = np.linspace(0, len(faces) - 1, num=max_faces, dtype=np.int64)
+        faces = faces[take]
+
+    centered = points - ((points.min(axis=0) + points.max(axis=0)) * 0.5)
+    theta = math.radians(45.0)
+    phi = math.radians(35.264)
+    rz = np.array(
+        [
+            [math.cos(theta), -math.sin(theta), 0.0],
+            [math.sin(theta), math.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    rx = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, math.cos(phi), -math.sin(phi)],
+            [0.0, math.sin(phi), math.cos(phi)],
+        ]
+    )
+    rotated = centered @ rz.T @ rx.T
+    xy = rotated[:, :2]
+    mins = xy.min(axis=0)
+    maxs = xy.max(axis=0)
+    span = max(float((maxs - mins).max()), 1e-9)
+    pad = max(18, int(image_size * 0.08))
+    scale = (image_size - 2 * pad) / span
+    pix = (xy - (mins + maxs) * 0.5) * scale
+    pix[:, 0] += image_size * 0.5
+    pix[:, 1] = image_size * 0.5 - pix[:, 1]
+
+    tri_rot = rotated[faces]
+    normals = np.cross(tri_rot[:, 1] - tri_rot[:, 0], tri_rot[:, 2] - tri_rot[:, 0])
+    norm_len = np.linalg.norm(normals, axis=1)
+    shade = np.divide(np.abs(normals[:, 2]), norm_len, out=np.zeros_like(norm_len), where=norm_len > 0)
+    depth = tri_rot[:, :, 2].mean(axis=1)
+    order = np.argsort(depth)
+
+    image = Image.new("RGB", (image_size, image_size), "white")
+    draw = ImageDraw.Draw(image)
+    outline = (80, 80, 80) if len(faces) <= 5000 else None
+    for face_idx in order:
+        polygon = [tuple(map(float, pix[vertex])) for vertex in faces[face_idx]]
+        gray = int(150 + 80 * shade[face_idx])
+        draw.polygon(polygon, fill=(gray, gray, gray), outline=outline)
+
+    if label:
+        font = _font(max(10, image_size // 42))
+        lines = label.splitlines()
+        line_height = max(12, image_size // 32)
+        box_h = 8 + line_height * len(lines)
+        draw.rectangle((0, 0, image_size, box_h), fill=(255, 255, 255))
+        for idx, line in enumerate(lines):
+            draw.text((6, 4 + idx * line_height), line, fill=(0, 0, 0), font=font)
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    image.save(out_png)
 
 
 def _font(font_size: int):

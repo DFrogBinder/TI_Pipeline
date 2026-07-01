@@ -91,3 +91,24 @@ def test_nonmanifold_edge_is_flagged():
     assert "NONMANIFOLD_EDGES" in metrics.flags
     assert metrics.nonmanifold_edges == 1
 
+
+def test_component_check_can_be_disabled_for_fast_batch_qc():
+    surface = SurfaceArrays(
+        points=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [10.0, 10.0, 10.0],
+                [11.0, 10.0, 10.0],
+                [10.0, 11.0, 10.0],
+            ]
+        ),
+        faces=np.array([[0, 1, 2], [3, 4, 5]]),
+    )
+
+    metrics = compute_qc_metrics(surface, check_components=False)
+
+    assert "DISCONNECTED_COMPONENTS" not in metrics.flags
+    assert metrics.connected_components == -1
+    assert "BOUNDARY_EDGES" in metrics.flags

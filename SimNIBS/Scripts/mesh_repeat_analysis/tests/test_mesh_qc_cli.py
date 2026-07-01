@@ -129,6 +129,48 @@ def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
     assert "[QC] Complete" in captured.out
 
 
+def test_cli_progress_shows_geometry_flag_names(tmp_path, monkeypatch, capsys):
+    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "load_surface_arrays",
+        lambda path: SurfaceArrays(
+            points=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                ]
+            ),
+            faces=np.array([[0, 1, 2], [0, 2, 3]]),
+        ),
+    )
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--skip-renders",
+            "--progress",
+            "text",
+            "--progress-every",
+            "1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "FAIL:BOUNDARY_EDGES" in captured.out
+
+
 def test_cli_uses_tqdm_when_requested(tmp_path, monkeypatch):
     FakeTqdm.instances = []
     mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
@@ -176,6 +218,27 @@ def test_cli_uses_tqdm_when_requested(tmp_path, monkeypatch):
     assert [bar.desc for bar in FakeTqdm.instances] == ["Discovery", "QC"]
     assert all(bar.closed for bar in FakeTqdm.instances)
     assert FakeTqdm.instances[-1].n == 1
+
+
+def test_run_qc_preserves_order_with_parallel_workers(tmp_path):
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / f"mesh_{idx}.msh",
+            roi="unknown_roi",
+            subject=f"sub-CC{idx}",
+            repeat="repeat_01",
+            mesh_id=f"m2m_sub-CC{idx}",
+        )
+        for idx in (2, 1)
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", str(tmp_path), "--out", str(tmp_path / "out"), "--workers", "2", "--progress", "none"]
+    )
+
+    rows = run_mesh_qc._run_qc(records, args)
+
+    assert [row["subject"] for row in rows] == ["sub-CC2", "sub-CC1"]
+    assert all(str(row["flags"]).startswith("READ_FAIL") for row in rows)
 
 
 def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch, capsys):
@@ -243,3 +306,44 @@ def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch
     assert "[RENDER] Skipping 1 mesh(es) that failed QC loading" in captured.out
     assert "all_mesh_wall.png" in str(out_dir / "mosaics" / "all_mesh_wall.png")
     assert (out_dir / "mosaics" / "all_mesh_wall.png").exists()
+
+
+def test_cli_renders_meshes_with_geometry_qc_flags(tmp_path, monkeypatch):
+    flagged_mesh = tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    flagged_mesh.parent.mkdir(parents=True)
+    flagged_mesh.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+    rendered = []
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "load_surface_arrays",
+        lambda path: SurfaceArrays(
+            points=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                ]
+            ),
+            faces=np.array([[0, 1, 2], [0, 2, 3]]),
+        ),
+    )
+
+    def fake_render(path, out_png, *, label, image_size, renderer):
+        rendered.append(path)
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake png")
+
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake mosaic")
+
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+
+    rc = run_mesh_qc.main(["--root", str(tmp_path), "--out", str(out_dir)])
+
+    assert rc == 0
+    assert rendered == [flagged_mesh]

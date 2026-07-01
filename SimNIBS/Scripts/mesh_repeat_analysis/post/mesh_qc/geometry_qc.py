@@ -40,12 +40,17 @@ def triangle_areas(points: np.ndarray, faces: np.ndarray) -> np.ndarray:
 
 
 def edge_counts(faces: np.ndarray) -> Counter[tuple[int, int]]:
-    counts: Counter[tuple[int, int]] = Counter()
-    for a, b, c in faces[:, :3]:
-        for u, v in ((a, b), (b, c), (c, a)):
-            edge = (int(u), int(v)) if u < v else (int(v), int(u))
-            counts[edge] += 1
-    return counts
+    unique_edges, counts = edge_count_arrays(faces)
+    return Counter({tuple(map(int, edge)): int(count) for edge, count in zip(unique_edges, counts)})
+
+
+def edge_count_arrays(faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if len(faces) == 0:
+        return np.empty((0, 2), dtype=np.int64), np.empty((0,), dtype=np.int64)
+    tri = np.asarray(faces[:, :3], dtype=np.int64)
+    edges = np.vstack((tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]))
+    edges.sort(axis=1)
+    return np.unique(edges, axis=0, return_counts=True)
 
 
 def connected_components(faces: np.ndarray) -> int:
@@ -82,7 +87,12 @@ def connected_components(faces: np.ndarray) -> int:
     return components
 
 
-def compute_qc_metrics(surface: SurfaceArrays, *, degenerate_area_eps: float = 1e-12) -> QCMetrics:
+def compute_qc_metrics(
+    surface: SurfaceArrays,
+    *,
+    degenerate_area_eps: float = 1e-12,
+    check_components: bool = True,
+) -> QCMetrics:
     points = np.asarray(surface.points, dtype=float)
     faces = np.asarray(surface.faces, dtype=np.int64)
     flags: list[str] = []
@@ -95,14 +105,15 @@ def compute_qc_metrics(surface: SurfaceArrays, *, degenerate_area_eps: float = 1
     degenerate = 0
     boundary_edges = 0
     nonmanifold_edges = 0
-    components = 0
+    components = -1 if not check_components else 0
     if n_points and n_faces:
         areas = triangle_areas(points, faces)
         degenerate = int(np.count_nonzero(areas <= degenerate_area_eps))
-        counts = edge_counts(faces)
-        boundary_edges = sum(1 for count in counts.values() if count == 1)
-        nonmanifold_edges = sum(1 for count in counts.values() if count > 2)
-        components = connected_components(faces)
+        _, counts = edge_count_arrays(faces)
+        boundary_edges = int(np.count_nonzero(counts == 1))
+        nonmanifold_edges = int(np.count_nonzero(counts > 2))
+        if check_components:
+            components = connected_components(faces)
 
     if degenerate:
         flags.append("DEGENERATE_FACES")
@@ -133,4 +144,3 @@ def compute_qc_metrics(surface: SurfaceArrays, *, degenerate_area_eps: float = 1
         y_size=float(sizes[1]),
         z_size=float(sizes[2]),
     )
-

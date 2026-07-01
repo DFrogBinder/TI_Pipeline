@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
@@ -259,6 +261,60 @@ def _mesh_detail(record: MeshRecord, status: str | None = None) -> str:
     return f"{prefix}{record.subject} {record.repeat} {record.mesh_id} {record.path.name}"
 
 
+def _status_label(row: dict[str, object]) -> str:
+    status = str(row.get("status", "UNKNOWN"))
+    flags = str(row.get("flags", ""))
+    if flags:
+        first_flag = flags.split(";", 1)[0]
+        if first_flag.startswith("READ_FAIL"):
+            first_flag = "READ_FAIL"
+        return f"{status}:{first_flag}"
+    return status
+
+
+def _qc_record_worker(record: MeshRecord, check_components: bool) -> dict[str, object]:
+    try:
+        surface = load_surface_arrays(record.path)
+        metrics = compute_qc_metrics(surface, check_components=check_components)
+        return _summary_row(record, metrics)
+    except Exception as exc:
+        return _read_fail_row(record, exc)
+
+
+def _run_qc(records: list[MeshRecord], args: argparse.Namespace) -> list[dict[str, object]]:
+    workers = args.workers
+    if workers == 0:
+        workers = os.cpu_count() or 1
+    workers = max(1, workers)
+
+    summary_rows: list[dict[str, object] | None] = [None] * len(records)
+    progress = _make_progress_reporter(args, "QC", len(records))
+
+    if workers == 1:
+        for idx, record in enumerate(records, start=1):
+            row = _qc_record_worker(record, args.check_components)
+            summary_rows[idx - 1] = row
+            progress.update(idx, _mesh_detail(record, _status_label(row)))
+        progress.complete()
+        return [row for row in summary_rows if row is not None]
+
+    print(f"[QC] Using {workers} worker processes", flush=True)
+    completed = 0
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_qc_record_worker, record, args.check_components): (idx, record)
+            for idx, record in enumerate(records)
+        }
+        for future in as_completed(futures):
+            idx, record = futures[future]
+            row = future.result()
+            summary_rows[idx] = row
+            completed += 1
+            progress.update(completed, _mesh_detail(record, _status_label(row)))
+    progress.complete()
+    return [row for row in summary_rows if row is not None]
+
+
 def _render_outputs(
     records: list[MeshRecord],
     summary_rows: list[dict[str, object]],
@@ -269,7 +325,7 @@ def _render_outputs(
     render_records = [
         record
         for record in records
-        if rows_by_path.get(str(record.path), {}).get("status") == "OK"
+        if not str(rows_by_path.get(str(record.path), {}).get("flags", "")).startswith("READ_FAIL")
     ]
     skipped = len(records) - len(render_records)
     if skipped:
@@ -358,6 +414,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="PNG renderer. auto tries PyVista first, then pure Pillow fallback.",
     )
+    parser.add_argument(
+        "--check-components",
+        action="store_true",
+        help=(
+            "Run disconnected-component analysis. This is slower and is disabled "
+            "by default for large HPC batches."
+        ),
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel worker processes for QC. Use 0 for all available CPUs.",
+    )
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
     parser.add_argument(
         "--roi-walls",
@@ -429,19 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
     _write_csv(out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS)
 
-    summary_rows: list[dict[str, object]] = []
-    progress = _make_progress_reporter(args, "QC", len(records))
-    for idx, record in enumerate(records, start=1):
-        try:
-            surface = load_surface_arrays(record.path)
-            metrics = compute_qc_metrics(surface)
-            summary_rows.append(_summary_row(record, metrics))
-            detail = _mesh_detail(record, metrics.status)
-        except Exception as exc:
-            summary_rows.append(_read_fail_row(record, exc))
-            detail = _mesh_detail(record, "READ_FAIL")
-        progress.update(idx, detail)
-    progress.complete()
+    summary_rows = _run_qc(records, args)
 
     _apply_bounds_outlier_flags(summary_rows)
     _write_csv(out_dir / "qc_summary.csv", summary_rows, SUMMARY_FIELDS)

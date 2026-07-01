@@ -34,6 +34,24 @@ ROI labels are retained as optional CSV metadata when the path contains ROI run 
 
 Use `--skip-renders` for a fast CSV-only dry run or on systems without PyVista display support.
 
+For full HPC batches, disconnected-component analysis is disabled by default because it is much slower than the degenerate-face, boundary-edge, non-manifold-edge, and bounds checks. To enable it for a smaller diagnostic run, pass:
+
+```bash
+--check-components
+```
+
+QC can be parallelized because each mesh is checked independently. Use a modest worker count for shared HPC login nodes and a larger count inside an allocated interactive/SLURM job:
+
+```bash
+--workers 8
+```
+
+Use all visible CPUs with:
+
+```bash
+--workers 0
+```
+
 Rendering does not require PyVista by default. `--renderer auto` tries PyVista first and falls back to a pure Pillow/NumPy software renderer. To avoid PyVista entirely, pass:
 
 ```bash

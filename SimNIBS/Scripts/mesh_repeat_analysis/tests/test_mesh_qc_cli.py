@@ -535,3 +535,84 @@ def test_cli_render_only_uses_existing_qc_outputs(tmp_path, monkeypatch):
     assert rc == 0
     assert rendered == [(ok_mesh, "sub-CC1\nrepeat_01\nm2m_sub-CC1")]
     assert (out_dir / "mosaics" / "all_mesh_wall.png").exists()
+
+
+def test_render_outputs_uses_parallel_workers_when_requested(tmp_path, monkeypatch):
+    out_dir = tmp_path / "qc"
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "sub-CC1.msh",
+            roi="unknown_roi",
+            subject="sub-CC1",
+            repeat="repeat_01",
+            mesh_id="m2m_sub-CC1",
+        ),
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "sub-CC2.msh",
+            roi="unknown_roi",
+            subject="sub-CC2",
+            repeat="repeat_01",
+            mesh_id="m2m_sub-CC2",
+        ),
+    ]
+    summary_rows = [
+        {
+            "mesh_id": record.mesh_id,
+            "subject": record.subject,
+            "repeat": record.repeat,
+            "roi": record.roi,
+            "path": str(record.path),
+            "status": "OK",
+            "flags": "",
+        }
+        for record in records
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "2", "--progress", "none"]
+    )
+
+    used_parallel = {"value": False}
+
+    class FakeFuture:
+        def __init__(self, value):
+            self._value = value
+
+        def result(self):
+            return self._value
+
+    class FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            used_parallel["value"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            return FakeFuture(fn(*args, **kwargs))
+
+    rendered = []
+
+    def fake_render(path, out_png, *, label, image_size, renderer):
+        rendered.append(path)
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake png")
+
+    def fake_as_completed(futures):
+        return list(futures)
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake mosaic")
+
+    monkeypatch.setattr(run_mesh_qc, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(run_mesh_qc, "as_completed", fake_as_completed)
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+
+    run_mesh_qc._render_outputs(records, summary_rows, out_dir, args)
+
+    assert used_parallel["value"] is True
+    assert rendered == [record.path for record in records]

@@ -365,6 +365,27 @@ def _load_found_records(found_path: Path) -> list[MeshRecord]:
     return records
 
 
+def _render_record_worker(
+    record: MeshRecord,
+    out_png: Path,
+    *,
+    image_size: int,
+    renderer: str,
+) -> str | None:
+    label = f"{record.subject}\n{record.repeat}\n{record.mesh_id}"
+    try:
+        render_mesh_png(
+            record.path,
+            out_png,
+            label=label,
+            image_size=image_size,
+            renderer=renderer,
+        )
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
 def _render_outputs(
     records: list[MeshRecord],
     summary_rows: list[dict[str, object]],
@@ -384,35 +405,78 @@ def _render_outputs(
         print("[RENDER] No QC-loadable meshes to render", flush=True)
         return
 
-    rendered_by_roi: dict[str, list[Path]] = defaultdict(list)
-    all_rendered: list[Path] = []
-    failures: list[str] = []
-    progress = _make_progress_reporter(args, "Render", len(render_records))
-
+    workers = max(1, min(_resolve_worker_count(args.workers), len(render_records)))
+    task_specs = []
     for idx, record in enumerate(render_records, start=1):
         stem = "__".join(
             _safe_name(part)
             for part in (record.subject, record.repeat, record.mesh_id, record.path.stem)
         )
         out_png = out_dir / "renders" / "meshes" / f"{idx:05d}__{stem}.png"
-        label = f"{record.subject}\n{record.repeat}\n{record.mesh_id}"
-        try:
-            render_mesh_png(
-                record.path,
+        task_specs.append((idx - 1, record, out_png))
+
+    rendered_slots: list[Path | None] = [None] * len(task_specs)
+    failures: list[str] = []
+    progress = _make_progress_reporter(args, "Render", len(render_records))
+
+    if workers == 1:
+        for completed, (slot_idx, record, out_png) in enumerate(task_specs, start=1):
+            error = _render_record_worker(
+                record,
                 out_png,
-                label=label,
                 image_size=args.image_size,
                 renderer=args.renderer,
             )
+            if error is not None:
+                failures.append(f"{record.path}\t{error}")
+                progress.update(completed, _mesh_detail(record, "FAILED"))
+                continue
+            rendered_slots[slot_idx] = out_png
+            progress.update(completed, _mesh_detail(record))
+    else:
+        print(f"[RENDER] Using {workers} worker processes", flush=True)
+        completed = 0
+        try:
+            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as executor:
+                futures = {
+                    executor.submit(
+                        _render_record_worker,
+                        record,
+                        out_png,
+                        image_size=args.image_size,
+                        renderer=args.renderer,
+                    ): (slot_idx, record, out_png)
+                    for slot_idx, record, out_png in task_specs
+                }
+                for future in as_completed(futures):
+                    slot_idx, record, out_png = futures[future]
+                    error = future.result()
+                    completed += 1
+                    if error is not None:
+                        failures.append(f"{record.path}\t{error}")
+                        progress.update(completed, _mesh_detail(record, "FAILED"))
+                        continue
+                    rendered_slots[slot_idx] = out_png
+                    progress.update(completed, _mesh_detail(record))
         except Exception as exc:
-            failures.append(f"{record.path}\t{exc}")
-            progress.update(idx, _mesh_detail(record, "FAILED"))
-            continue
-        rendered_by_roi[record.roi].append(out_png)
-        all_rendered.append(out_png)
-        progress.update(idx, _mesh_detail(record))
+            progress.complete()
+            raise RuntimeError(
+                f"Parallel rendering failed with {workers} workers ({exc}). "
+                "Retry with a smaller worker count such as --workers 8."
+            ) from exc
 
     progress.complete()
+
+    successful = [
+        (record, out_png)
+        for (_, record, _), out_png in zip(task_specs, rendered_slots)
+        if out_png is not None
+    ]
+    rendered_by_roi: dict[str, list[Path]] = defaultdict(list)
+    all_rendered: list[Path] = []
+    for record, out_png in successful:
+        rendered_by_roi[record.roi].append(out_png)
+        all_rendered.append(out_png)
 
     if args.roi_walls:
         for roi, images in sorted(rendered_by_roi.items()):

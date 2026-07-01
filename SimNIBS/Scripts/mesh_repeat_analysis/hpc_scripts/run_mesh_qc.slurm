@@ -15,7 +15,7 @@ module load SimNIBS/4.0.1-foss-2023a
 
 export PYTHONNOUSERSITE=1
 
-# The QC code parallelizes across processes. Keep each worker effectively
+# The QC/render code parallelizes across processes. Keep each worker effectively
 # single-threaded so BLAS/OpenMP does not multiply CPU usage inside the pool.
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1

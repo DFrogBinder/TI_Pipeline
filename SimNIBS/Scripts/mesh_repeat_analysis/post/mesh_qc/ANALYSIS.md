@@ -178,7 +178,7 @@ Software renderer details:
 
 Each mesh is checked independently.
 
-QC therefore parallelizes naturally across worker processes.
+QC and per-mesh PNG rendering therefore parallelize naturally across worker processes.
 
 Current worker behavior:
 
@@ -188,6 +188,8 @@ Current worker behavior:
 - else fall back to `os.cpu_count()`.
 
 This is intended to respect the actual Slurm allocation instead of using the full physical node CPU count.
+
+Mosaic assembly is still serial after per-mesh renders complete.
 
 ## Outputs
 
@@ -233,6 +235,7 @@ Behavior:
 - skip geometry QC,
 - load `found_meshes.csv` and `qc_summary.csv` from `--out`,
 - render only meshes whose `flags` field does not start with `READ_FAIL`,
+- parallelize those per-mesh renders according to `--workers`,
 - rebuild mosaics from those rendered images.
 
 This mode is intended for rerendering after QC has already completed, for example when changing the renderer, image size, or wall layout.

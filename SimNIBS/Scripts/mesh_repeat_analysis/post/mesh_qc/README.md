@@ -29,7 +29,7 @@ Default execution is tuned for large interactive HPC sessions:
 
 - rendering uses the pure Pillow software renderer,
 - renders default to `1200 x 1200`,
-- QC uses all visible CPUs.
+- QC and per-mesh rendering use all visible CPUs.
 
 By default, the tool only scans `.msh` files inside `m2m*` directories. This avoids processing every simulation output mesh in each subject/repeat folder.
 
@@ -74,7 +74,8 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
 - skips discovery,
 - skips geometry QC,
 - reuses the previously written `found_meshes.csv` and `qc_summary.csv`,
-- still skips meshes whose QC flags start with `READ_FAIL`.
+- still skips meshes whose QC flags start with `READ_FAIL`,
+- parallelizes per-mesh PNG rendering with `--workers`.
 
 For volumetric SimNIBS `.msh` files with tetrahedral cells, QC is run on the exterior boundary extracted from the tetrahedra. Stored triangle elements are used only when no tetrahedra are present, because stored triangles may include internal tissue interfaces and can look non-manifold even when the volume mesh is valid.
 
@@ -92,7 +93,7 @@ For full HPC batches, disconnected-component analysis is disabled by default bec
 --check-components
 ```
 
-QC is parallelized because each mesh is checked independently. By default `--workers 0` uses all visible CPUs. Use a smaller explicit count only when you want to cap CPU usage:
+QC and per-mesh rendering are parallelized because each mesh is handled independently. By default `--workers 0` uses all visible CPUs. Use a smaller explicit count only when you want to cap CPU usage:
 
 ```bash
 --workers 8
@@ -103,6 +104,8 @@ Use all visible CPUs with:
 ```bash
 --workers 0
 ```
+
+Mosaic assembly remains serial after the per-mesh renders finish.
 
 Rendering does not require PyVista by default. The default renderer is the pure Pillow/NumPy software renderer. To explicitly request a different mode, pass:
 

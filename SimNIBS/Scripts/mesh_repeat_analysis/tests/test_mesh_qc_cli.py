@@ -78,6 +78,13 @@ def test_cli_writes_csv_reports_in_skip_render_mode(tmp_path, monkeypatch):
     assert rows[0]["status"] == "OK"
 
 
+def test_parser_defaults_to_pillow_and_all_cpus():
+    args = run_mesh_qc.build_parser().parse_args(["--root", "/tmp/in", "--out", "/tmp/out"])
+
+    assert args.renderer == "pillow"
+    assert args.workers == 0
+
+
 def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
     mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
     mesh_path.parent.mkdir(parents=True)

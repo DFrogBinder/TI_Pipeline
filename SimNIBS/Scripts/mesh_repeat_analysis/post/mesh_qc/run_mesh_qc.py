@@ -411,8 +411,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--renderer",
         choices=("auto", "pyvista", "pillow"),
-        default="auto",
-        help="PNG renderer. auto tries PyVista first, then pure Pillow fallback.",
+        default="pillow",
+        help="PNG renderer. Default is the pure Pillow software renderer.",
     )
     parser.add_argument(
         "--check-components",
@@ -425,8 +425,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workers",
         type=int,
-        default=1,
-        help="Number of parallel worker processes for QC. Use 0 for all available CPUs.",
+        default=0,
+        help="Number of parallel worker processes for QC. Default 0 uses all available CPUs.",
     )
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
     parser.add_argument(

@@ -31,15 +31,34 @@ def _from_pyvista_dataset(dataset) -> SurfaceArrays:
 
 
 def _from_meshio_mesh(mesh) -> SurfaceArrays:
+    tetra_faces = []
     triangles = []
     for cell_block in mesh.cells:
         data = np.asarray(cell_block.data, dtype=np.int64)
-        if cell_block.type == "triangle":
+        if cell_block.type in {"tetra", "tetra10"}:
+            tetra = data[:, :4]
+            tetra_faces.append(tetra[:, [0, 2, 1]])
+            tetra_faces.append(tetra[:, [0, 1, 3]])
+            tetra_faces.append(tetra[:, [1, 2, 3]])
+            tetra_faces.append(tetra[:, [2, 0, 3]])
+        elif cell_block.type == "triangle":
             triangles.append(data[:, :3])
         elif cell_block.type == "quad":
             triangles.append(data[:, [0, 1, 2]])
             triangles.append(data[:, [0, 2, 3]])
-    faces = np.vstack(triangles) if triangles else np.empty((0, 3), dtype=np.int64)
+
+    if tetra_faces:
+        all_faces = np.vstack(tetra_faces)
+        sorted_faces = np.sort(all_faces, axis=1)
+        _, first_indices, counts = np.unique(
+            sorted_faces,
+            axis=0,
+            return_index=True,
+            return_counts=True,
+        )
+        faces = all_faces[first_indices[counts == 1]]
+    else:
+        faces = np.vstack(triangles) if triangles else np.empty((0, 3), dtype=np.int64)
     return SurfaceArrays(points=np.asarray(mesh.points, dtype=float), faces=faces)
 
 
@@ -73,4 +92,3 @@ def load_surface_arrays(path: Path) -> SurfaceArrays:
             f"Could not load {path}; pyvista={pyvista_error}; meshio={meshio_error}; "
             f"simnibs={simnibs_error}"
         ) from simnibs_error
-

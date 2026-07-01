@@ -10,6 +10,11 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
   --out /path/to/mesh_qc_outputs
 ```
 
+Default execution is tuned for large interactive HPC sessions:
+
+- rendering uses the pure Pillow software renderer,
+- QC uses all visible CPUs.
+
 By default, the tool only scans `.msh` files inside `m2m*` directories. This avoids processing every simulation output mesh in each subject/repeat folder.
 
 To intentionally scan every `.msh` under the root, pass:
@@ -26,6 +31,8 @@ Outputs:
 - `renders/meshes/*.png`: per-mesh render tiles for meshes that passed QC loading.
 - `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
 
+For volumetric SimNIBS `.msh` files with tetrahedral cells, QC is run on the exterior boundary extracted from the tetrahedra. Stored triangle elements are used only when no tetrahedra are present, because stored triangles may include internal tissue interfaces and can look non-manifold even when the volume mesh is valid.
+
 ROI labels are retained as optional CSV metadata when the path contains ROI run folders, but they are not used by default for progress labels or wall generation. To also write separate ROI wall mosaics, pass:
 
 ```bash
@@ -40,7 +47,7 @@ For full HPC batches, disconnected-component analysis is disabled by default bec
 --check-components
 ```
 
-QC can be parallelized because each mesh is checked independently. Use a modest worker count for shared HPC login nodes and a larger count inside an allocated interactive/SLURM job:
+QC is parallelized because each mesh is checked independently. By default `--workers 0` uses all visible CPUs. Use a smaller explicit count only when you want to cap CPU usage:
 
 ```bash
 --workers 8
@@ -52,9 +59,10 @@ Use all visible CPUs with:
 --workers 0
 ```
 
-Rendering does not require PyVista by default. `--renderer auto` tries PyVista first and falls back to a pure Pillow/NumPy software renderer. To avoid PyVista entirely, pass:
+Rendering does not require PyVista by default. The default renderer is the pure Pillow/NumPy software renderer. To explicitly request a different mode, pass:
 
 ```bash
+--renderer auto
 --renderer pillow
 ```
 

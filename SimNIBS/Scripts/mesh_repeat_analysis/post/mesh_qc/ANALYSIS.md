@@ -157,9 +157,8 @@ Rendering is separate from the geometry calculations.
 
 Default behavior:
 
-- renderer: pure Pillow/NumPy software renderer,
+- renderer: `auto`,
 - default render size: `1200 x 1200`,
-- view: frontal orthographic preview aligned to mesh `x/z` with depth along `y`,
 - render only meshes that did not produce `READ_FAIL`,
 - geometry-flagged meshes are still rendered,
 - write a combined mosaic as `all_mesh_wall.png`,
@@ -167,7 +166,20 @@ Default behavior:
 
 This means a mesh with `NONMANIFOLD_EDGES` or `DEGENERATE_FACES` is still expected to appear in the wall for visual inspection.
 
-Software renderer details:
+Renderer selection order:
+
+1. Gmsh,
+2. PyVista,
+3. Pillow/NumPy.
+
+Gmsh renderer details:
+
+- Gmsh is asked to open the original `.msh` directly and export a PNG.
+- This is intended to keep the render visually close to what a manual Gmsh inspection would show.
+- If no `DISPLAY` is present, the render stage attempts to start one shared Xvfb display before launching parallel render workers.
+- The intended effect is a render that looks much closer to opening the mesh in Gmsh than the earlier software preview did.
+
+Pillow fallback details:
 
 - For smaller surfaces, triangles are rasterized directly.
 - For dense surfaces, the renderer switches to a depth-based frontal preview built from the surface vertices plus sampled face centroids.
@@ -252,8 +264,8 @@ The presence of a flag does not by itself define the scientific exclusion rule. 
 ## Known Limitations
 
 - Repeat labels depend on path naming conventions and may fall back to `unknown_repeat`.
-- The software renderer is designed for robust batch inspection, not high-fidelity 3D presentation.
-- Dense-surface Pillow renders are frontal depth previews rather than exact full-triangle reproductions.
+- Gmsh rendering depends on a working `gmsh` executable and either a real `DISPLAY` or a working Xvfb setup.
+- Dense-surface Pillow renders are still frontal depth previews rather than exact full-triangle reproductions, and are mainly a fallback path.
 - `--render-only` depends on prior `found_meshes.csv` and `qc_summary.csv` outputs being present and consistent.
 - The default QC does not attempt mesh repair.
 - The bounds-outlier rule is empirical and dataset-relative.

@@ -27,7 +27,7 @@ sbatch mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm
 
 Default execution is tuned for large interactive HPC sessions:
 
-- rendering uses the pure Pillow software renderer,
+- rendering defaults to `--renderer auto`, which prefers Gmsh,
 - renders default to `1200 x 1200`,
 - QC and per-mesh rendering use all visible CPUs.
 
@@ -85,7 +85,7 @@ ROI labels are retained as optional CSV metadata when the path contains ROI run 
 --roi-walls
 ```
 
-Use `--skip-renders` for a fast CSV-only dry run or on systems without PyVista display support.
+Use `--skip-renders` for a fast CSV-only dry run.
 
 For full HPC batches, disconnected-component analysis is disabled by default because it is much slower than the degenerate-face, boundary-edge, non-manifold-edge, and bounds checks. To enable it for a smaller diagnostic run, pass:
 
@@ -107,14 +107,24 @@ Use all visible CPUs with:
 
 Mosaic assembly remains serial after the per-mesh renders finish.
 
-Rendering does not require PyVista by default. The default renderer is the pure Pillow/NumPy software renderer. To explicitly request a different mode, pass:
+Rendering now defaults to `--renderer auto`. The fallback order is:
+
+1. Gmsh,
+2. PyVista,
+3. Pillow/NumPy.
+
+To explicitly request a renderer, pass:
 
 ```bash
 --renderer auto
+--renderer gmsh
+--renderer pyvista
 --renderer pillow
 ```
 
-The Pillow path now renders a frontal orthographic QC preview. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based surface preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
+The Gmsh path opens the original `.msh` directly, so the output is much closer to what you see when loading the mesh in Gmsh manually. If the node does not already have a `DISPLAY`, the render stage tries to start a shared Xvfb display once and lets all render workers inherit it.
+
+The Pillow path remains available as a last-resort software fallback. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based frontal preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.
 

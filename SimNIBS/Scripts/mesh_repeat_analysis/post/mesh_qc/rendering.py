@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 
 import numpy as np
 
@@ -18,8 +22,15 @@ def render_mesh_png(
     max_faces: int = 12000,
 ) -> None:
     renderer = renderer.lower()
-    if renderer not in {"auto", "pyvista", "pillow"}:
+    if renderer not in {"auto", "gmsh", "pyvista", "pillow"}:
         raise ValueError(f"Unsupported renderer: {renderer}")
+    if renderer in {"auto", "gmsh"}:
+        try:
+            _render_with_gmsh(path, out_png, label=label, image_size=image_size)
+            return
+        except Exception:
+            if renderer == "gmsh":
+                raise
     if renderer in {"auto", "pyvista"}:
         try:
             _render_with_pyvista(path, out_png, label=label, image_size=image_size)
@@ -30,13 +41,43 @@ def render_mesh_png(
     _render_with_pillow(path, out_png, label=label, image_size=image_size, max_faces=max_faces)
 
 
+def _render_with_gmsh(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
+    with tempfile.TemporaryDirectory(prefix="mesh_qc_gmsh_") as tmp_dir_name:
+        tmp_dir = Path(tmp_dir_name)
+        raw_png = tmp_dir / "render.png"
+        script_path = tmp_dir / "render.geo"
+
+        script_path.write_text(
+            _build_gmsh_geo_script(path, raw_png, image_size=image_size),
+            encoding="utf-8",
+        )
+
+        cmd = _build_gmsh_command(script_path)
+        env = os.environ.copy()
+        env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if completed.returncode != 0 and not raw_png.exists():
+            stderr = completed.stderr.strip()
+            stdout = completed.stdout.strip()
+            detail = stderr or stdout or f"gmsh exited with status {completed.returncode}"
+            raise RuntimeError(f"Gmsh render failed for {path}: {detail}")
+        if not raw_png.exists():
+            raise RuntimeError(f"Gmsh did not write a PNG for {path}")
+
+        _save_labeled_image(raw_png, out_png, label=label, image_size=image_size)
+
+
 def _render_with_pyvista(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
     import pyvista as pv
 
     surface = load_surface_arrays(path)
-    faces = np.asarray(surface.faces, dtype=np.int64)
-    if faces.size == 0:
-        raise RuntimeError("Surface extraction produced an empty mesh.")
+    _, faces = _validated_surface_arrays(surface)
     pv_faces = np.hstack([np.full((faces.shape[0], 1), 3, dtype=np.int64), faces]).ravel()
     mesh = pv.PolyData(np.asarray(surface.points, dtype=float), pv_faces).triangulate()
     if mesh.n_points == 0:
@@ -82,18 +123,10 @@ def _render_with_pillow(
     image_size: int = 600,
     max_faces: int = 12000,
 ) -> None:
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import ImageFilter
 
     surface = load_surface_arrays(path)
-    points = np.asarray(surface.points, dtype=float)
-    faces = np.asarray(surface.faces, dtype=np.int64)
-    if points.size == 0 or faces.size == 0:
-        raise RuntimeError("Surface extraction produced an empty mesh.")
-
-    valid = np.all((faces >= 0) & (faces < len(points)), axis=1)
-    faces = faces[valid]
-    if len(faces) == 0:
-        raise RuntimeError("Surface extraction produced no valid triangular faces.")
+    points, faces = _validated_surface_arrays(surface)
     rotated = _front_view(points)
     pix = _fit_pixels(rotated[:, :2], image_size=image_size)
 
@@ -108,18 +141,116 @@ def _render_with_pillow(
             sample_face_limit=max_faces,
         )
 
-    if label:
-        draw = ImageDraw.Draw(image)
-        font = _font(max(10, image_size // 42))
-        lines = label.splitlines()
-        line_height = max(12, image_size // 32)
-        box_h = 8 + line_height * len(lines)
-        draw.rectangle((0, 0, image_size, box_h), fill=(255, 255, 255))
-        for idx, line in enumerate(lines):
-            draw.text((6, 4 + idx * line_height), line, fill=(0, 0, 0), font=font)
-
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    image.save(out_png)
+    _apply_label_overlay(image, label=label, image_size=image_size).save(out_png)
+
+
+def _validated_surface_arrays(surface) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(surface.points, dtype=float)
+    faces = np.asarray(surface.faces, dtype=np.int64)
+    if points.size == 0 or faces.size == 0:
+        raise RuntimeError("Surface extraction produced an empty mesh.")
+    valid = np.all((faces >= 0) & (faces < len(points)), axis=1)
+    faces = faces[valid]
+    if len(faces) == 0:
+        raise RuntimeError("Surface extraction produced no valid triangular faces.")
+    return points, faces
+
+
+def _build_gmsh_command(script_path: Path) -> list[str]:
+    gmsh_bin = shutil.which("gmsh")
+    if gmsh_bin is None:
+        raise RuntimeError("gmsh executable was not found in PATH.")
+    cmd = [gmsh_bin, str(script_path), "-nopopup", "-v", "2"]
+    if not os.environ.get("DISPLAY"):
+        xvfb_run = shutil.which("xvfb-run")
+        if xvfb_run is not None:
+            cmd = [xvfb_run, "-a", *cmd]
+    return cmd
+
+
+def _build_gmsh_geo_script(surface_msh: Path, out_png: Path, *, image_size: int) -> str:
+    mesh_path = _gmsh_string(surface_msh)
+    png_path = _gmsh_string(out_png)
+    return "\n".join(
+        [
+            f'Merge "{mesh_path}";',
+            "General.Terminal = 1;",
+            "General.SmallAxes = 0;",
+            "General.Axes = 0;",
+            f"General.GraphicsWidth = {int(image_size)};",
+            f"General.GraphicsHeight = {int(image_size)};",
+            "Mesh.Points = 0;",
+            "Mesh.Lines = 0;",
+            "Mesh.SurfaceEdges = 1;",
+            "Mesh.SurfaceFaces = 1;",
+            "Mesh.VolumeEdges = 0;",
+            "Mesh.VolumeFaces = 0;",
+            "Mesh.Light = 1;",
+            "Mesh.LightLines = 1;",
+            "Mesh.LightTwoSide = 1;",
+            "Print.Background = 0;",
+            f"Print.Width = {int(image_size)};",
+            f"Print.Height = {int(image_size)};",
+            "Draw;",
+            f'Print "{png_path}";',
+            "Exit;",
+            "",
+        ]
+    )
+
+
+def _gmsh_string(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "/").replace('"', '\\"')
+
+
+def _write_surface_mesh_msh2(surface, out_mesh: Path) -> None:
+    points, faces = _validated_surface_arrays(surface)
+    out_mesh.parent.mkdir(parents=True, exist_ok=True)
+    with out_mesh.open("w", encoding="utf-8", newline="\n") as f:
+        f.write("$MeshFormat\n")
+        f.write("2.2 0 8\n")
+        f.write("$EndMeshFormat\n")
+        f.write("$Nodes\n")
+        f.write(f"{len(points)}\n")
+        for idx, (x, y, z) in enumerate(points, start=1):
+            f.write(f"{idx} {x:.16g} {y:.16g} {z:.16g}\n")
+        f.write("$EndNodes\n")
+        f.write("$Elements\n")
+        f.write(f"{len(faces)}\n")
+        for idx, (a, b, c) in enumerate(faces, start=1):
+            f.write(f"{idx} 2 0 {int(a) + 1} {int(b) + 1} {int(c) + 1}\n")
+        f.write("$EndElements\n")
+
+
+def _save_labeled_image(src_png: Path, out_png: Path, *, label: str, image_size: int) -> None:
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from PIL import Image
+    except Exception:
+        shutil.copyfile(src_png, out_png)
+        return
+
+    with Image.open(src_png) as image:
+        labeled = _apply_label_overlay(image.convert("RGB"), label=label, image_size=image_size)
+    labeled.save(out_png)
+
+
+def _apply_label_overlay(image, *, label: str, image_size: int):
+    if not label:
+        return image
+
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(image)
+    font = _font(max(10, image_size // 42))
+    lines = label.splitlines()
+    line_height = max(12, image_size // 32)
+    box_h = 8 + line_height * len(lines)
+    draw.rectangle((0, 0, image_size, box_h), fill=(255, 255, 255))
+    for idx, line in enumerate(lines):
+        draw.text((6, 4 + idx * line_height), line, fill=(0, 0, 0), font=font)
+    return image
 
 
 def _front_view(points: np.ndarray) -> np.ndarray:

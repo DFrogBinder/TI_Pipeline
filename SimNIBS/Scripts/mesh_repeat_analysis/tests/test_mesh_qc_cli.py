@@ -82,14 +82,18 @@ def test_cli_writes_csv_reports_in_skip_render_mode(tmp_path, monkeypatch):
     assert rows[0]["status"] == "OK"
 
 
-def test_parser_defaults_to_pillow_and_all_cpus():
+def test_parser_defaults_to_auto_and_all_cpus():
     args = run_mesh_qc.build_parser().parse_args(["--root", "/tmp/in", "--out", "/tmp/out"])
+    gmsh_args = run_mesh_qc.build_parser().parse_args(
+        ["--root", "/tmp/in", "--out", "/tmp/out", "--renderer", "gmsh"]
+    )
 
-    assert args.renderer == "pillow"
+    assert args.renderer == "auto"
     assert args.workers == 0
     assert args.image_size == 1200
     assert args.qc_only is False
     assert args.render_only is False
+    assert gmsh_args.renderer == "gmsh"
 
 
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):

@@ -4,11 +4,14 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import shutil
+import subprocess
 import sys
 import time
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from statistics import median
 
@@ -121,6 +124,92 @@ class TqdmDiscoveryReporter:
 
     def complete(self) -> None:
         self.bar.close()
+
+
+class VirtualDisplaySession:
+    def __init__(self, *, width: int = 1600, height: int = 1600, depth: int = 24) -> None:
+        self.width = max(width, 800)
+        self.height = max(height, 800)
+        self.depth = max(depth, 24)
+        self.proc: subprocess.Popen | None = None
+        self.previous_display = os.environ.get("DISPLAY")
+        self._set_libgl = False
+
+    def start(self) -> str:
+        xvfb_bin = shutil.which("Xvfb")
+        if xvfb_bin is None:
+            raise RuntimeError("Xvfb executable was not found in PATH.")
+
+        read_fd, write_fd = os.pipe()
+        try:
+            cmd = [
+                xvfb_bin,
+                "-displayfd",
+                str(write_fd),
+                "-screen",
+                "0",
+                f"{self.width}x{self.height}x{self.depth}",
+                "+extension",
+                "GLX",
+                "+render",
+                "-nolisten",
+                "tcp",
+            ]
+            self.proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                pass_fds=(write_fd,),
+                close_fds=True,
+            )
+        finally:
+            os.close(write_fd)
+
+        try:
+            with os.fdopen(read_fd, "r", encoding="utf-8", closefd=True) as pipe:
+                display_number = pipe.readline().strip()
+        except Exception:
+            display_number = ""
+
+        if not display_number:
+            detail = "unknown Xvfb startup failure"
+            if self.proc is not None:
+                try:
+                    _, stderr = self.proc.communicate(timeout=1)
+                    detail = stderr.strip() or detail
+                except Exception:
+                    self.proc.kill()
+                    _, stderr = self.proc.communicate()
+                    detail = stderr.strip() or detail
+            self.stop()
+            raise RuntimeError(detail)
+
+        os.environ["DISPLAY"] = f":{display_number}"
+        if "LIBGL_ALWAYS_SOFTWARE" not in os.environ:
+            os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+            self._set_libgl = True
+        return os.environ["DISPLAY"]
+
+    def stop(self) -> None:
+        if self.previous_display is None:
+            os.environ.pop("DISPLAY", None)
+        else:
+            os.environ["DISPLAY"] = self.previous_display
+        if self._set_libgl:
+            os.environ.pop("LIBGL_ALWAYS_SOFTWARE", None)
+            self._set_libgl = False
+
+        if self.proc is None:
+            return
+        try:
+            self.proc.terminate()
+            self.proc.wait(timeout=5)
+        except Exception:
+            self.proc.kill()
+            self.proc.wait(timeout=5)
+        finally:
+            self.proc = None
 
 
 def _use_tqdm_progress(args: argparse.Namespace) -> bool:
@@ -386,6 +475,40 @@ def _render_record_worker(
         return str(exc)
 
 
+@contextmanager
+def _render_display_context(args: argparse.Namespace):
+    wants_gmsh = args.renderer in {"auto", "gmsh"}
+    if not wants_gmsh or os.environ.get("DISPLAY"):
+        yield
+        return
+
+    session = VirtualDisplaySession(
+        width=max(args.image_size, 1200),
+        height=max(args.image_size, 1200),
+    )
+    try:
+        display = session.start()
+    except Exception as exc:
+        if args.renderer == "gmsh":
+            raise RuntimeError(
+                "Gmsh rendering requires a DISPLAY or a working Xvfb installation. "
+                f"Automatic Xvfb startup failed: {exc}"
+            ) from exc
+        print(
+            "[RENDER] Could not start Xvfb for auto renderer; "
+            f"Gmsh may be skipped and auto will fall back ({exc})",
+            flush=True,
+        )
+        yield
+        return
+
+    print(f"[RENDER] Started virtual display {display} for Gmsh rendering", flush=True)
+    try:
+        yield
+    finally:
+        session.stop()
+
+
 def _render_outputs(
     records: list[MeshRecord],
     summary_rows: list[dict[str, object]],
@@ -419,51 +542,52 @@ def _render_outputs(
     failures: list[str] = []
     progress = _make_progress_reporter(args, "Render", len(render_records))
 
-    if workers == 1:
-        for completed, (slot_idx, record, out_png) in enumerate(task_specs, start=1):
-            error = _render_record_worker(
-                record,
-                out_png,
-                image_size=args.image_size,
-                renderer=args.renderer,
-            )
-            if error is not None:
-                failures.append(f"{record.path}\t{error}")
-                progress.update(completed, _mesh_detail(record, "FAILED"))
-                continue
-            rendered_slots[slot_idx] = out_png
-            progress.update(completed, _mesh_detail(record))
-    else:
-        print(f"[RENDER] Using {workers} worker processes", flush=True)
-        completed = 0
-        try:
-            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as executor:
-                futures = {
-                    executor.submit(
-                        _render_record_worker,
-                        record,
-                        out_png,
-                        image_size=args.image_size,
-                        renderer=args.renderer,
-                    ): (slot_idx, record, out_png)
-                    for slot_idx, record, out_png in task_specs
-                }
-                for future in as_completed(futures):
-                    slot_idx, record, out_png = futures[future]
-                    error = future.result()
-                    completed += 1
-                    if error is not None:
-                        failures.append(f"{record.path}\t{error}")
-                        progress.update(completed, _mesh_detail(record, "FAILED"))
-                        continue
-                    rendered_slots[slot_idx] = out_png
-                    progress.update(completed, _mesh_detail(record))
-        except Exception as exc:
-            progress.complete()
-            raise RuntimeError(
-                f"Parallel rendering failed with {workers} workers ({exc}). "
-                "Retry with a smaller worker count such as --workers 8."
-            ) from exc
+    with _render_display_context(args):
+        if workers == 1:
+            for completed, (slot_idx, record, out_png) in enumerate(task_specs, start=1):
+                error = _render_record_worker(
+                    record,
+                    out_png,
+                    image_size=args.image_size,
+                    renderer=args.renderer,
+                )
+                if error is not None:
+                    failures.append(f"{record.path}\t{error}")
+                    progress.update(completed, _mesh_detail(record, "FAILED"))
+                    continue
+                rendered_slots[slot_idx] = out_png
+                progress.update(completed, _mesh_detail(record))
+        else:
+            print(f"[RENDER] Using {workers} worker processes", flush=True)
+            completed = 0
+            try:
+                with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as executor:
+                    futures = {
+                        executor.submit(
+                            _render_record_worker,
+                            record,
+                            out_png,
+                            image_size=args.image_size,
+                            renderer=args.renderer,
+                        ): (slot_idx, record, out_png)
+                        for slot_idx, record, out_png in task_specs
+                    }
+                    for future in as_completed(futures):
+                        slot_idx, record, out_png = futures[future]
+                        error = future.result()
+                        completed += 1
+                        if error is not None:
+                            failures.append(f"{record.path}\t{error}")
+                            progress.update(completed, _mesh_detail(record, "FAILED"))
+                            continue
+                        rendered_slots[slot_idx] = out_png
+                        progress.update(completed, _mesh_detail(record))
+            except Exception as exc:
+                progress.complete()
+                raise RuntimeError(
+                    f"Parallel rendering failed with {workers} workers ({exc}). "
+                    "Retry with a smaller worker count such as --workers 8."
+                ) from exc
 
     progress.complete()
 
@@ -606,9 +730,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cols", type=int, default=None, help="Mosaic columns; default uses square-ish grid.")
     parser.add_argument(
         "--renderer",
-        choices=("auto", "pyvista", "pillow"),
-        default="pillow",
-        help="PNG renderer. Default is the pure Pillow software renderer.",
+        choices=("auto", "gmsh", "pyvista", "pillow"),
+        default="auto",
+        help="PNG renderer. auto prefers Gmsh, then PyVista, then Pillow.",
     )
     parser.add_argument(
         "--check-components",
@@ -622,7 +746,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--workers",
         type=int,
         default=0,
-        help="Number of parallel worker processes for QC. Default 0 uses all available CPUs.",
+        help="Number of parallel worker processes for QC and rendering. Default 0 uses all visible CPUs.",
     )
     parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
     parser.add_argument(

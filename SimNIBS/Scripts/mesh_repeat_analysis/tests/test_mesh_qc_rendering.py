@@ -83,6 +83,84 @@ def test_auto_renderer_falls_back_to_pillow_when_pyvista_fails(tmp_path, monkeyp
     assert calls == [(mesh_path, out, "mesh", 99, 123)]
 
 
+def test_auto_renderer_prefers_gmsh_before_other_renderers(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "head.msh"
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out = tmp_path / "render.png"
+    calls = []
+
+    def fake_gmsh(path, out_png, *, label, image_size):
+        calls.append((path, out_png, label, image_size))
+        out_png.write_bytes(b"png")
+
+    monkeypatch.setattr(rendering, "_render_with_gmsh", fake_gmsh)
+    monkeypatch.setattr(
+        rendering,
+        "_render_with_pyvista",
+        lambda *args, **kwargs: pytest.fail("pyvista fallback should not run when gmsh succeeds"),
+    )
+    monkeypatch.setattr(
+        rendering,
+        "_render_with_pillow",
+        lambda *args, **kwargs: pytest.fail("pillow fallback should not run when gmsh succeeds"),
+    )
+
+    render_mesh_png(mesh_path, out, label="mesh", image_size=144, renderer="auto")
+
+    assert calls == [(mesh_path, out, "mesh", 144)]
+
+
+def test_auto_renderer_falls_back_from_gmsh_and_pyvista_to_pillow(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "head.msh"
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out = tmp_path / "render.png"
+    calls = []
+
+    def fail_gmsh(*args, **kwargs):
+        raise RuntimeError("gmsh unavailable")
+
+    def fail_pyvista(*args, **kwargs):
+        raise ImportError("no pyvista")
+
+    def fake_pillow(path, out_png, *, label, image_size, max_faces):
+        calls.append((path, out_png, label, image_size, max_faces))
+        out_png.write_bytes(b"png")
+
+    monkeypatch.setattr(rendering, "_render_with_gmsh", fail_gmsh)
+    monkeypatch.setattr(rendering, "_render_with_pyvista", fail_pyvista)
+    monkeypatch.setattr(rendering, "_render_with_pillow", fake_pillow)
+
+    render_mesh_png(mesh_path, out, label="mesh", image_size=111, renderer="auto", max_faces=321)
+
+    assert calls == [(mesh_path, out, "mesh", 111, 321)]
+
+
+def test_write_surface_mesh_msh2_exports_triangles(tmp_path):
+    surface = SurfaceArrays(
+        points=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        ),
+        faces=np.array([[0, 1, 2], [0, 1, 3]], dtype=np.int64),
+    )
+    out = tmp_path / "surface_only.msh"
+
+    rendering._write_surface_mesh_msh2(surface, out)
+
+    text = out.read_text(encoding="utf-8")
+    assert "$MeshFormat" in text
+    assert "2.2 0 8" in text
+    assert "$Nodes" in text
+    assert "$Elements" in text
+    assert "\n4\n" in text
+    assert "\n2\n1 2 0 1 2 3\n2 2 0 1 2 4\n" in text
+
+
 def test_pillow_renderer_keeps_dense_surface_filled_in_front_view(tmp_path, monkeypatch):
     try:
         from PIL import Image

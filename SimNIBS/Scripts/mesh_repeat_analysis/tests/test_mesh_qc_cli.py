@@ -2,6 +2,7 @@ import csv
 import os
 
 import numpy as np
+import pytest
 
 from mesh_repeat_analysis.post.mesh_qc import run_mesh_qc
 from mesh_repeat_analysis.post.mesh_qc.geometry_qc import SurfaceArrays
@@ -86,6 +87,9 @@ def test_parser_defaults_to_pillow_and_all_cpus():
 
     assert args.renderer == "pillow"
     assert args.workers == 0
+    assert args.image_size == 1200
+    assert args.qc_only is False
+    assert args.render_only is False
 
 
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):
@@ -380,3 +384,154 @@ def test_cli_renders_meshes_with_geometry_qc_flags(tmp_path, monkeypatch):
 
     assert rc == 0
     assert rendered == [flagged_mesh]
+
+
+def test_cli_qc_only_runs_qc_without_rendering(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "load_surface_arrays",
+        lambda path: SurfaceArrays(
+            points=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            ),
+            faces=np.array(
+                [
+                    [0, 2, 1],
+                    [0, 1, 3],
+                    [1, 2, 3],
+                    [2, 0, 3],
+                ]
+            ),
+        ),
+    )
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", lambda *args, **kwargs: pytest.fail("render should not run"))
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "1",
+            "--qc-only",
+        ]
+    )
+
+    assert rc == 0
+    assert (out_dir / "qc_summary.csv").exists()
+    assert not (out_dir / "mosaics" / "all_mesh_wall.png").exists()
+
+
+def test_cli_render_only_uses_existing_qc_outputs(tmp_path, monkeypatch):
+    out_dir = tmp_path / "qc"
+    out_dir.mkdir(parents=True)
+    ok_mesh = tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    bad_mesh = tmp_path / "Runs" / "sub-CC2" / "repeat_01" / "m2m_sub-CC2" / "head.msh"
+
+    with (out_dir / "found_meshes.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=run_mesh_qc.FOUND_FIELDS)
+        writer.writeheader()
+        writer.writerows(
+            [
+                {
+                    "mesh_id": "m2m_sub-CC1",
+                    "subject": "sub-CC1",
+                    "repeat": "repeat_01",
+                    "roi": "unknown_roi",
+                    "path": str(ok_mesh),
+                },
+                {
+                    "mesh_id": "m2m_sub-CC2",
+                    "subject": "sub-CC2",
+                    "repeat": "repeat_01",
+                    "roi": "unknown_roi",
+                    "path": str(bad_mesh),
+                },
+            ]
+        )
+
+    with (out_dir / "qc_summary.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=run_mesh_qc.SUMMARY_FIELDS)
+        writer.writeheader()
+        writer.writerows(
+            [
+                {
+                    "mesh_id": "m2m_sub-CC1",
+                    "subject": "sub-CC1",
+                    "repeat": "repeat_01",
+                    "roi": "unknown_roi",
+                    "path": str(ok_mesh),
+                    "status": "OK",
+                    "flags": "",
+                    "n_points": 4,
+                    "n_faces": 4,
+                    "degenerate_faces": 0,
+                    "boundary_edges": 0,
+                    "nonmanifold_edges": 0,
+                    "connected_components": -1,
+                    "x_size": 1.0,
+                    "y_size": 1.0,
+                    "z_size": 1.0,
+                },
+                {
+                    "mesh_id": "m2m_sub-CC2",
+                    "subject": "sub-CC2",
+                    "repeat": "repeat_01",
+                    "roi": "unknown_roi",
+                    "path": str(bad_mesh),
+                    "status": "FAIL",
+                    "flags": "READ_FAIL:not readable",
+                    "n_points": 0,
+                    "n_faces": 0,
+                    "degenerate_faces": 0,
+                    "boundary_edges": 0,
+                    "nonmanifold_edges": 0,
+                    "connected_components": 0,
+                    "x_size": 0.0,
+                    "y_size": 0.0,
+                    "z_size": 0.0,
+                },
+            ]
+        )
+
+    monkeypatch.setattr(run_mesh_qc, "discover_meshes", lambda *args, **kwargs: pytest.fail("discovery should not run"))
+    monkeypatch.setattr(run_mesh_qc, "_run_qc", lambda *args, **kwargs: pytest.fail("qc should not run"))
+
+    rendered = []
+
+    def fake_render(path, out_png, *, label, image_size, renderer):
+        rendered.append((path, label))
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake png")
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake mosaic")
+
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--render-only",
+        ]
+    )
+
+    assert rc == 0
+    assert rendered == [(ok_mesh, "sub-CC1\nrepeat_01\nm2m_sub-CC1")]
+    assert (out_dir / "mosaics" / "all_mesh_wall.png").exists()

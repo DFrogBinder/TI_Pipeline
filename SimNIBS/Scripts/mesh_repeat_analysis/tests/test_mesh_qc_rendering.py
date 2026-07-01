@@ -81,3 +81,49 @@ def test_auto_renderer_falls_back_to_pillow_when_pyvista_fails(tmp_path, monkeyp
     render_mesh_png(mesh_path, out, label="mesh", image_size=99, renderer="auto", max_faces=123)
 
     assert calls == [(mesh_path, out, "mesh", 99, 123)]
+
+
+def test_pillow_renderer_keeps_dense_surface_filled_in_front_view(tmp_path, monkeypatch):
+    try:
+        from PIL import Image
+    except Exception:
+        pytest.skip("Pillow is not installed")
+
+    mesh_path = tmp_path / "head.msh"
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out = tmp_path / "render.png"
+
+    nx = 41
+    nz = 61
+    points = []
+    faces = []
+    for iz in range(nz):
+        z = 1.8 * (iz / (nz - 1) - 0.5)
+        for ix in range(nx):
+            x = 1.0 * (ix / (nx - 1) - 0.5)
+            points.append([x, 0.0, z])
+    for iz in range(nz - 1):
+        for ix in range(nx - 1):
+            a = iz * nx + ix
+            b = a + 1
+            c = a + nx
+            d = c + 1
+            faces.append([a, c, b])
+            faces.append([b, c, d])
+
+    monkeypatch.setattr(
+        rendering,
+        "load_surface_arrays",
+        lambda path: SurfaceArrays(points=np.asarray(points, dtype=float), faces=np.asarray(faces, dtype=np.int64)),
+    )
+
+    render_mesh_png(mesh_path, out, label="", image_size=200, renderer="pillow", max_faces=20)
+
+    with Image.open(out) as image:
+        arr = np.asarray(image.convert("L"))
+    mask = arr < 250
+    ys, xs = np.nonzero(mask)
+
+    assert mask.sum() > 12000
+    aspect = (xs.max() - xs.min() + 1) / (ys.max() - ys.min() + 1)
+    assert 0.48 < aspect < 0.62

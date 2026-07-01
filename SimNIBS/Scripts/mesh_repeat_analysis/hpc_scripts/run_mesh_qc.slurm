@@ -51,9 +51,9 @@ COLS_CONFIG=""
 DISCOVERY_PROGRESS_SECONDS_CONFIG="5"
 PROGRESS_EVERY_CONFIG="25"
 
-# Logs. Leave LOG_DIR_CONFIG blank to use <pipeline>/logs.
-LOG_DIR_CONFIG=""
-LOG_FILE_CONFIG=""
+# Logs. Leave these blank to use <pipeline>/logs.
+MESH_QC_LOG_DIR_CONFIG=""
+MESH_QC_LOG_FILE_CONFIG=""
 
 PIPELINE_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_CONFIG}}"
 MESH_QC_ROOT="${MESH_QC_ROOT:-${MESH_QC_ROOT_CONFIG}}"
@@ -86,10 +86,10 @@ fi
 
 cd "${PIPELINE_DIR}"
 
-LOG_DIR="${LOG_DIR:-${LOG_DIR_CONFIG:-${PIPELINE_DIR}/logs}}"
-mkdir -p "${LOG_DIR}"
+MESH_QC_LOG_DIR="${MESH_QC_LOG_DIR:-${MESH_QC_LOG_DIR_CONFIG:-${PIPELINE_DIR}/logs}}"
+mkdir -p "${MESH_QC_LOG_DIR}"
 JOB_ID="${SLURM_JOB_ID:-manual}"
-LOG_FILE="${LOG_FILE:-${LOG_FILE_CONFIG:-${LOG_DIR}/mesh_qc_${JOB_ID}.log}}"
+MESH_QC_LOG_FILE="${MESH_QC_LOG_FILE:-${MESH_QC_LOG_FILE_CONFIG:-${MESH_QC_LOG_DIR}/mesh_qc_${JOB_ID}.log}}"
 
 echo "[INFO] Mesh QC batch run"
 echo "[INFO] Job ID:         ${JOB_ID}"
@@ -105,7 +105,7 @@ echo "[INFO] Renderer:       ${RENDERER}"
 echo "[INFO] Progress mode:  ${PROGRESS_MODE}"
 echo "[INFO] Check comps:    ${CHECK_COMPONENTS}"
 echo "[INFO] ROI walls:      ${ROI_WALLS}"
-echo "[INFO] Log file:       ${LOG_FILE}"
+echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
 
 PYTHON_CMD=(
     python
@@ -154,4 +154,4 @@ echo "[INFO] Command:"
 printf '  %q' "${PYTHON_CMD[@]}"
 printf '\n'
 
-"${PYTHON_CMD[@]}" 2>&1 | tee "${LOG_FILE}"
+"${PYTHON_CMD[@]}" 2>&1 | tee "${MESH_QC_LOG_FILE}"

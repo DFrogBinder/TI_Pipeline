@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import inspect
 import json
 import os
+import resource
 import shutil
 import socket
 import subprocess
@@ -337,11 +339,133 @@ def _affinity_cpu_count() -> int | None:
     return None
 
 
+def _maxrss_bytes() -> int:
+    value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        return value
+    return value * 1024
+
+
+def _format_bytes(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    size = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024.0 or unit == "TiB":
+            if unit == "B":
+                return f"{int(size)}{unit}"
+            return f"{size:.1f}{unit}"
+        size /= 1024.0
+    return f"{int(value)}B"
+
+
+def _parse_memory_value_to_bytes(value: str | None, *, default_unit: str = "M") -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "unlimited", "max"}:
+        return None
+    suffix = text[-1].upper()
+    if suffix.isalpha():
+        number = text[:-1].strip()
+        unit = suffix
+    else:
+        number = text
+        unit = default_unit.upper()
+    try:
+        base_value = float(number)
+    except ValueError:
+        return None
+    units = {
+        "B": 1,
+        "K": 1024,
+        "M": 1024**2,
+        "G": 1024**3,
+        "T": 1024**4,
+    }
+    multiplier = units.get(unit)
+    if multiplier is None:
+        return None
+    return int(base_value * multiplier)
+
+
+def _resolve_memory_budget_bytes(visible_workers: int) -> int | None:
+    per_node = _parse_memory_value_to_bytes(os.environ.get("SLURM_MEM_PER_NODE"), default_unit="M")
+    if per_node:
+        return per_node
+
+    per_cpu = _parse_memory_value_to_bytes(os.environ.get("SLURM_MEM_PER_CPU"), default_unit="M")
+    if per_cpu:
+        return per_cpu * max(visible_workers, 1)
+
+    for candidate in (
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ):
+        path = Path(candidate)
+        if not path.exists():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        limit = _parse_memory_value_to_bytes(raw, default_unit="B")
+        if limit and limit < (1 << 60):
+            return limit
+    return None
+
+
+def _choose_stage_worker_count(
+    *,
+    stage: str,
+    task_count: int,
+    visible_workers: int,
+    memory_budget_bytes: int | None,
+    sampled_worker_rss_bytes: int | None,
+) -> tuple[int, dict[str, object]]:
+    upper = max(1, min(visible_workers, max(task_count, 1)))
+    chosen = upper
+    limited_by_memory = False
+    usable_memory_bytes = None
+    per_worker_budget_bytes = None
+    if memory_budget_bytes and sampled_worker_rss_bytes and sampled_worker_rss_bytes > 0:
+        usable_memory_bytes = int(memory_budget_bytes * 0.70)
+        per_worker_budget_bytes = max(int(sampled_worker_rss_bytes * 1.40), 256 * 1024**2)
+        chosen = max(1, min(chosen, usable_memory_bytes // per_worker_budget_bytes))
+        limited_by_memory = chosen < upper
+    details = {
+        "stage": stage,
+        "visible_workers": upper,
+        "memory_budget_bytes": memory_budget_bytes,
+        "sampled_worker_rss_bytes": sampled_worker_rss_bytes,
+        "usable_memory_bytes": usable_memory_bytes,
+        "per_worker_budget_bytes": per_worker_budget_bytes,
+        "limited_by_memory": limited_by_memory,
+    }
+    return chosen, details
+
+
+def _process_pool_executor_kwargs(workers: int) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "max_workers": workers,
+        "mp_context": mp.get_context("spawn"),
+    }
+    try:
+        supports_recycling = "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters
+    except (TypeError, ValueError):
+        supports_recycling = True
+    if supports_recycling:
+        kwargs["max_tasks_per_child"] = 1
+    return kwargs
+
+
 def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv: list[str] | None) -> dict[str, object]:
+    visible_workers = _resolve_worker_count(args.workers)
     return {
         "time_utc": _utc_now(),
         "argv": list(argv) if argv is not None else sys.argv[1:],
         "cwd": str(Path.cwd()),
+        "script_path": str(Path(__file__).resolve()),
         "hostname": socket.gethostname(),
         "pid": os.getpid(),
         "python_executable": sys.executable,
@@ -352,7 +476,8 @@ def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv
         "renderer": args.renderer,
         "mesh_glob": args.mesh_glob,
         "workers_requested": args.workers,
-        "workers_visible": _resolve_worker_count(0),
+        "workers_visible": visible_workers,
+        "memory_budget_bytes": _resolve_memory_budget_bytes(visible_workers),
         "cpu_count": os.cpu_count(),
         "affinity_cpu_count": _affinity_cpu_count(),
         "progress": args.progress,
@@ -588,75 +713,257 @@ def _qc_record_worker(
         )
 
 
+def _qc_record_worker_profiled(
+    record: MeshRecord, check_components: bool
+) -> tuple[dict[str, object], dict[str, object] | None, int]:
+    row, exception_row = _qc_record_worker(record, check_components)
+    return row, exception_row, _maxrss_bytes()
+
+
+def _isolated_worker_entry(queue, fn, args) -> None:
+    queue.put(fn(*args))
+
+
+def _run_isolated_worker(fn, *args):
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue(maxsize=1)
+    proc = ctx.Process(target=_isolated_worker_entry, args=(queue, fn, args))
+    proc.start()
+    proc.join()
+    payload = None
+    if proc.exitcode == 0:
+        try:
+            payload = queue.get_nowait()
+        except Exception:
+            payload = None
+    queue.close()
+    queue.join_thread()
+    return payload, int(proc.exitcode or 0)
+
+
+def _qc_worker_exit_payload(
+    record: MeshRecord,
+    exitcode: int,
+) -> tuple[dict[str, object], dict[str, object], int]:
+    message = f"worker process exited before returning a QC result (exitcode={exitcode})"
+    row = _record_row(record)
+    row.update(
+        {
+            "status": "FAIL",
+            "flags": f"READ_FAIL:WORKER_EXIT_{exitcode}",
+            "n_points": 0,
+            "n_faces": 0,
+            "degenerate_faces": 0,
+            "boundary_edges": 0,
+            "nonmanifold_edges": 0,
+            "connected_components": 0,
+            "x_size": 0.0,
+            "y_size": 0.0,
+            "z_size": 0.0,
+        }
+    )
+    exception_row = _exception_row(
+        record,
+        stage="qc",
+        exc=RuntimeError(message),
+        traceback_text=message,
+    )
+    return row, exception_row, 0
+
+
+def _run_qc_isolated_once(
+    record: MeshRecord,
+    check_components: bool,
+) -> tuple[dict[str, object], dict[str, object] | None, int]:
+    payload, exitcode = _run_isolated_worker(_qc_record_worker_profiled, record, check_components)
+    if exitcode != 0 or payload is None:
+        return _qc_worker_exit_payload(record, exitcode)
+    return payload
+
+
+def _run_qc_direct_once(
+    record: MeshRecord,
+    check_components: bool,
+) -> tuple[dict[str, object], dict[str, object] | None, int]:
+    row, exception_row = _qc_record_worker(record, check_components)
+    return row, exception_row, 0
+
+
+def _run_qc_warmup_samples(
+    records: list[MeshRecord],
+    args: argparse.Namespace,
+    summary_rows: list[dict[str, object] | None],
+    exception_rows: list[dict[str, object]],
+    progress,
+) -> tuple[int, int | None, list[int]]:
+    warmup_count = 0
+    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(records)))
+    if visible_workers > 1 and len(records) >= 4:
+        warmup_count = min(2, len(records))
+    completed = 0
+    peak_rss = 0
+    for idx in range(warmup_count):
+        record = records[idx]
+        row, exception_row, rss_bytes = _run_qc_isolated_once(record, args.check_components)
+        summary_rows[idx] = row
+        if exception_row is not None:
+            exception_rows.append(exception_row)
+        peak_rss = max(peak_rss, rss_bytes)
+        completed += 1
+        progress.update(completed, _mesh_detail(record, _status_label(row)))
+    remaining_indices = list(range(warmup_count, len(records)))
+    return completed, (peak_rss or None), remaining_indices
+
+
+def _run_qc_parallel_attempt(
+    records: list[MeshRecord],
+    indices: list[int],
+    args: argparse.Namespace,
+    workers: int,
+    summary_rows: list[dict[str, object] | None],
+    exception_rows: list[dict[str, object]],
+    progress,
+    completed: int,
+) -> tuple[int, list[int], int, Exception | None]:
+    in_flight: dict[object, int] = {}
+    next_pos = 0
+    peak_rss = 0
+    backlog = max(workers * 2, workers)
+    current_idx: int | None = None
+    try:
+        with ProcessPoolExecutor(**_process_pool_executor_kwargs(workers)) as executor:
+            while next_pos < len(indices) and len(in_flight) < backlog:
+                idx = indices[next_pos]
+                next_pos += 1
+                in_flight[executor.submit(_qc_record_worker_profiled, records[idx], args.check_components)] = idx
+
+            while in_flight:
+                future = next(iter(as_completed(tuple(in_flight))))
+                current_idx = in_flight.pop(future)
+                row, exception_row, rss_bytes = future.result()
+                summary_rows[current_idx] = row
+                if exception_row is not None:
+                    exception_rows.append(exception_row)
+                peak_rss = max(peak_rss, rss_bytes)
+                completed += 1
+                progress.update(completed, _mesh_detail(records[current_idx], _status_label(row)))
+                current_idx = None
+
+                while next_pos < len(indices) and len(in_flight) < backlog:
+                    next_idx = indices[next_pos]
+                    next_pos += 1
+                    in_flight[executor.submit(_qc_record_worker_profiled, records[next_idx], args.check_components)] = next_idx
+    except Exception as exc:
+        remaining = []
+        if current_idx is not None:
+            remaining.append(current_idx)
+        remaining.extend(in_flight.values())
+        remaining.extend(indices[next_pos:])
+        dedup_remaining = list(dict.fromkeys(remaining))
+        return completed, dedup_remaining, peak_rss, exc
+
+    return completed, [], peak_rss, None
+
+
 def _run_qc_detailed(
     records: list[MeshRecord],
     args: argparse.Namespace,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    workers = max(1, _resolve_worker_count(args.workers))
-
     summary_rows: list[dict[str, object] | None] = [None] * len(records)
     exception_rows: list[dict[str, object]] = []
     progress = _make_progress_reporter(args, "QC", len(records))
-    _log_info("QC", "Starting QC stage", meshes=len(records), workers=workers)
+    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(records) or 1))
+    memory_budget_bytes = _resolve_memory_budget_bytes(visible_workers)
+    _log_info(
+        "QC",
+        "Starting QC stage",
+        meshes=len(records),
+        visible_workers=visible_workers,
+        memory_budget=_format_bytes(memory_budget_bytes),
+    )
 
-    if workers == 1:
-        for idx, record in enumerate(records, start=1):
-            row, exception_row = _qc_record_worker(record, args.check_components)
-            summary_rows[idx - 1] = row
-            if exception_row is not None:
-                exception_rows.append(exception_row)
-            progress.update(idx, _mesh_detail(record, _status_label(row)))
-        progress.complete()
-        final_rows = [row for row in summary_rows if row is not None]
-        _log_info(
-            "QC",
-            "Completed QC stage",
-            meshes=len(final_rows),
-            exceptions=len(exception_rows),
-            failed=sum(1 for row in final_rows if row["status"] != "OK"),
-        )
-        return final_rows, exception_rows
+    completed, sampled_worker_rss_bytes, remaining_indices = _run_qc_warmup_samples(
+        records,
+        args,
+        summary_rows,
+        exception_rows,
+        progress,
+    )
+    workers, worker_details = _choose_stage_worker_count(
+        stage="QC",
+        task_count=len(remaining_indices),
+        visible_workers=visible_workers,
+        memory_budget_bytes=memory_budget_bytes,
+        sampled_worker_rss_bytes=sampled_worker_rss_bytes,
+    )
+    _log_info(
+        "QC",
+        "Selected worker count",
+        workers=workers,
+        sampled_worker_rss=_format_bytes(sampled_worker_rss_bytes),
+        memory_limited=worker_details["limited_by_memory"],
+        per_worker_budget=_format_bytes(worker_details["per_worker_budget_bytes"]),
+    )
 
-    print(f"[QC] Using {workers} worker processes", flush=True)
-    completed = 0
-    completed_futures = set()
-    futures = {}
-    try:
-        with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as executor:
-            futures = {
-                executor.submit(_qc_record_worker, record, args.check_components): (idx, record)
-                for idx, record in enumerate(records)
-            }
-            for future in as_completed(futures):
-                completed_futures.add(future)
-                idx, record = futures[future]
-                row, exception_row = future.result()
+    recovery_mode = False
+    while remaining_indices:
+        if workers <= 1:
+            if recovery_mode:
+                _log_warning("QC", "Falling back to isolated single-mesh execution", remaining=len(remaining_indices))
+                print(
+                    f"[QC] Falling back to isolated single-mesh execution for {len(remaining_indices)} mesh(es)",
+                    flush=True,
+                )
+            for idx in remaining_indices:
+                if recovery_mode:
+                    row, exception_row, rss_bytes = _run_qc_isolated_once(records[idx], args.check_components)
+                else:
+                    row, exception_row, rss_bytes = _run_qc_direct_once(records[idx], args.check_components)
                 summary_rows[idx] = row
                 if exception_row is not None:
                     exception_rows.append(exception_row)
                 completed += 1
-                progress.update(completed, _mesh_detail(record, _status_label(row)))
-    except Exception as exc:
-        progress.complete()
-        pending = [
-            _mesh_detail(record)
-            for future, (_, record) in futures.items()
-            if future not in completed_futures
-        ][:10]
+                sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, rss_bytes) or sampled_worker_rss_bytes
+                progress.update(completed, _mesh_detail(records[idx], _status_label(row)))
+            remaining_indices = []
+            break
+
+        print(f"[QC] Using {workers} worker processes", flush=True)
+        completed, remaining_indices, attempt_peak_rss, attempt_error = _run_qc_parallel_attempt(
+            records,
+            remaining_indices,
+            args,
+            workers,
+            summary_rows,
+            exception_rows,
+            progress,
+            completed,
+        )
+        sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, attempt_peak_rss) or sampled_worker_rss_bytes
+        if attempt_error is None:
+            break
+
+        pending = [_mesh_detail(records[idx]) for idx in remaining_indices[:10]]
         _log_error(
             "QC",
-            "Parallel QC crashed",
+            "Parallel QC crashed; retrying with fewer workers",
             workers=workers,
             completed=completed,
-            total=len(records),
-            error_type=type(exc).__name__,
-            error_message=str(exc),
+            remaining=len(remaining_indices),
+            error_type=type(attempt_error).__name__,
+            error_message=str(attempt_error),
             pending=" || ".join(pending),
         )
-        raise RuntimeError(
-            f"Parallel QC failed with {workers} workers ({exc}). "
-            "Retry with a smaller worker count such as --workers 8."
-        ) from exc
+        next_workers = max(1, workers // 2)
+        print(
+            f"[QC] Worker pool crashed at {workers} workers; retrying remaining {len(remaining_indices)} mesh(es) with {next_workers}",
+            flush=True,
+        )
+        if workers == next_workers == 1 and remaining_indices:
+            break
+        recovery_mode = True
+        workers = next_workers
+
     progress.complete()
     final_rows = [row for row in summary_rows if row is not None]
     _log_info(
@@ -717,6 +1024,173 @@ def _render_record_worker(
         )
 
 
+def _render_record_worker_profiled(
+    record: MeshRecord,
+    out_png: Path,
+    image_size: int,
+    renderer: str,
+) -> tuple[dict[str, object] | None, int]:
+    failure_row = _render_record_worker(
+        record,
+        out_png,
+        image_size=image_size,
+        renderer=renderer,
+    )
+    return failure_row, _maxrss_bytes()
+
+
+def _render_worker_exit_payload(
+    record: MeshRecord,
+    out_png: Path,
+    exitcode: int,
+) -> tuple[dict[str, object], int]:
+    message = f"worker process exited before returning a render result (exitcode={exitcode})"
+    return (
+        _exception_row(
+            record,
+            stage="render",
+            exc=RuntimeError(message),
+            traceback_text=message,
+            output_path=out_png,
+        ),
+        0,
+    )
+
+
+def _run_render_isolated_once(
+    record: MeshRecord,
+    out_png: Path,
+    *,
+    image_size: int,
+    renderer: str,
+) -> tuple[dict[str, object] | None, int]:
+    payload, exitcode = _run_isolated_worker(
+        _render_record_worker_profiled,
+        record,
+        out_png,
+        image_size,
+        renderer,
+    )
+    if exitcode != 0 or payload is None:
+        return _render_worker_exit_payload(record, out_png, exitcode)
+    return payload
+
+
+def _run_render_direct_once(
+    record: MeshRecord,
+    out_png: Path,
+    *,
+    image_size: int,
+    renderer: str,
+) -> tuple[dict[str, object] | None, int]:
+    failure_row = _render_record_worker(
+        record,
+        out_png,
+        image_size=image_size,
+        renderer=renderer,
+    )
+    return failure_row, 0
+
+
+def _run_render_warmup_samples(
+    task_specs: list[tuple[int, MeshRecord, Path]],
+    args: argparse.Namespace,
+    rendered_slots: list[Path | None],
+    failure_rows: list[dict[str, object]],
+    progress,
+) -> tuple[int, int | None, list[tuple[int, MeshRecord, Path]]]:
+    warmup_count = 0
+    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(task_specs)))
+    if visible_workers > 1 and len(task_specs) >= 4:
+        warmup_count = 1
+    completed = 0
+    peak_rss = 0
+    for slot_idx, record, out_png in task_specs[:warmup_count]:
+        failure_row, rss_bytes = _run_render_isolated_once(
+            record,
+            out_png,
+            image_size=args.image_size,
+            renderer=args.renderer,
+        )
+        if failure_row is not None:
+            failure_rows.append(failure_row)
+            progress.update(completed + 1, _mesh_detail(record, "FAILED"))
+        else:
+            rendered_slots[slot_idx] = out_png
+            progress.update(completed + 1, _mesh_detail(record))
+        peak_rss = max(peak_rss, rss_bytes)
+        completed += 1
+    return completed, (peak_rss or None), task_specs[warmup_count:]
+
+
+def _run_render_parallel_attempt(
+    task_specs: list[tuple[int, MeshRecord, Path]],
+    args: argparse.Namespace,
+    workers: int,
+    rendered_slots: list[Path | None],
+    failure_rows: list[dict[str, object]],
+    progress,
+    completed: int,
+) -> tuple[int, list[tuple[int, MeshRecord, Path]], int, Exception | None]:
+    in_flight: dict[object, tuple[int, MeshRecord, Path]] = {}
+    next_pos = 0
+    peak_rss = 0
+    backlog = max(workers * 2, workers)
+    current_task: tuple[int, MeshRecord, Path] | None = None
+    try:
+        with ProcessPoolExecutor(**_process_pool_executor_kwargs(workers)) as executor:
+            while next_pos < len(task_specs) and len(in_flight) < backlog:
+                slot_idx, record, out_png = task_specs[next_pos]
+                next_pos += 1
+                in_flight[
+                    executor.submit(
+                        _render_record_worker_profiled,
+                        record,
+                        out_png,
+                        args.image_size,
+                        args.renderer,
+                    )
+                ] = (slot_idx, record, out_png)
+
+            while in_flight:
+                future = next(iter(as_completed(tuple(in_flight))))
+                current_task = in_flight.pop(future)
+                slot_idx, record, out_png = current_task
+                failure_row, rss_bytes = future.result()
+                peak_rss = max(peak_rss, rss_bytes)
+                completed += 1
+                if failure_row is not None:
+                    failure_rows.append(failure_row)
+                    progress.update(completed, _mesh_detail(record, "FAILED"))
+                else:
+                    rendered_slots[slot_idx] = out_png
+                    progress.update(completed, _mesh_detail(record))
+                current_task = None
+
+                while next_pos < len(task_specs) and len(in_flight) < backlog:
+                    next_slot_idx, next_record, next_out_png = task_specs[next_pos]
+                    next_pos += 1
+                    in_flight[
+                        executor.submit(
+                            _render_record_worker_profiled,
+                            next_record,
+                            next_out_png,
+                            args.image_size,
+                            args.renderer,
+                        )
+                    ] = (next_slot_idx, next_record, next_out_png)
+    except Exception as exc:
+        remaining = []
+        if current_task is not None:
+            remaining.append(current_task)
+        remaining.extend(in_flight.values())
+        remaining.extend(task_specs[next_pos:])
+        dedup_remaining = list(dict.fromkeys(remaining))
+        return completed, dedup_remaining, peak_rss, exc
+
+    return completed, [], peak_rss, None
+
+
 @contextmanager
 def _render_display_context(args: argparse.Namespace):
     wants_gmsh = args.renderer in {"auto", "gmsh"}
@@ -775,7 +1249,8 @@ def _render_outputs(
         _write_optional_csv(out_dir / "render_exception_details.csv", [], EXCEPTION_FIELDS)
         return
 
-    workers = max(1, min(_resolve_worker_count(args.workers), len(render_records)))
+    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(render_records)))
+    memory_budget_bytes = _resolve_memory_budget_bytes(visible_workers)
     task_specs = []
     for idx, record in enumerate(render_records, start=1):
         stem = "__".join(
@@ -793,75 +1268,103 @@ def _render_outputs(
         "Starting render stage",
         meshes=len(render_records),
         skipped_qc_read_failures=skipped,
-        workers=workers,
+        visible_workers=visible_workers,
+        memory_budget=_format_bytes(memory_budget_bytes),
         renderer=args.renderer,
     )
 
     with _render_display_context(args):
-        if workers == 1:
-            for completed, (slot_idx, record, out_png) in enumerate(task_specs, start=1):
-                failure_row = _render_record_worker(
-                    record,
-                    out_png,
-                    image_size=args.image_size,
-                    renderer=args.renderer,
-                )
-                if failure_row is not None:
-                    failure_rows.append(failure_row)
-                    progress.update(completed, _mesh_detail(record, "FAILED"))
-                    continue
-                rendered_slots[slot_idx] = out_png
-                progress.update(completed, _mesh_detail(record))
-        else:
-            print(f"[RENDER] Using {workers} worker processes", flush=True)
-            completed = 0
-            completed_futures = set()
-            futures = {}
-            try:
-                with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as executor:
-                    futures = {
-                        executor.submit(
-                            _render_record_worker,
+        completed, sampled_worker_rss_bytes, remaining_specs = _run_render_warmup_samples(
+            task_specs,
+            args,
+            rendered_slots,
+            failure_rows,
+            progress,
+        )
+        workers, worker_details = _choose_stage_worker_count(
+            stage="RENDER",
+            task_count=len(remaining_specs),
+            visible_workers=visible_workers,
+            memory_budget_bytes=memory_budget_bytes,
+            sampled_worker_rss_bytes=sampled_worker_rss_bytes,
+        )
+        _log_info(
+            "RENDER",
+            "Selected worker count",
+            workers=workers,
+            sampled_worker_rss=_format_bytes(sampled_worker_rss_bytes),
+            memory_limited=worker_details["limited_by_memory"],
+            per_worker_budget=_format_bytes(worker_details["per_worker_budget_bytes"]),
+        )
+
+        recovery_mode = False
+        while remaining_specs:
+            if workers <= 1:
+                if recovery_mode:
+                    _log_warning("RENDER", "Falling back to isolated single-mesh execution", remaining=len(remaining_specs))
+                    print(
+                        f"[RENDER] Falling back to isolated single-mesh execution for {len(remaining_specs)} mesh(es)",
+                        flush=True,
+                    )
+                for slot_idx, record, out_png in remaining_specs:
+                    if recovery_mode:
+                        failure_row, rss_bytes = _run_render_isolated_once(
                             record,
                             out_png,
                             image_size=args.image_size,
                             renderer=args.renderer,
-                        ): (slot_idx, record, out_png)
-                        for slot_idx, record, out_png in task_specs
-                    }
-                    for future in as_completed(futures):
-                        completed_futures.add(future)
-                        slot_idx, record, out_png = futures[future]
-                        failure_row = future.result()
-                        completed += 1
-                        if failure_row is not None:
-                            failure_rows.append(failure_row)
-                            progress.update(completed, _mesh_detail(record, "FAILED"))
-                            continue
+                        )
+                    else:
+                        failure_row, rss_bytes = _run_render_direct_once(
+                            record,
+                            out_png,
+                            image_size=args.image_size,
+                            renderer=args.renderer,
+                        )
+                    sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, rss_bytes) or sampled_worker_rss_bytes
+                    completed += 1
+                    if failure_row is not None:
+                        failure_rows.append(failure_row)
+                        progress.update(completed, _mesh_detail(record, "FAILED"))
+                    else:
                         rendered_slots[slot_idx] = out_png
                         progress.update(completed, _mesh_detail(record))
-            except Exception as exc:
-                progress.complete()
-                pending = [
-                    _mesh_detail(record)
-                    for future, (_, record, _) in futures.items()
-                    if future not in completed_futures
-                ][:10]
-                _log_error(
-                    "RENDER",
-                    "Parallel render crashed",
-                    workers=workers,
-                    completed=completed,
-                    total=len(render_records),
-                    renderer=args.renderer,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                    pending=" || ".join(pending),
-                )
-                raise RuntimeError(
-                    f"Parallel rendering failed with {workers} workers ({exc}). "
-                    "Retry with a smaller worker count such as --workers 8."
-                ) from exc
+                remaining_specs = []
+                break
+
+            print(f"[RENDER] Using {workers} worker processes", flush=True)
+            completed, remaining_specs, attempt_peak_rss, attempt_error = _run_render_parallel_attempt(
+                remaining_specs,
+                args,
+                workers,
+                rendered_slots,
+                failure_rows,
+                progress,
+                completed,
+            )
+            sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, attempt_peak_rss) or sampled_worker_rss_bytes
+            if attempt_error is None:
+                break
+
+            pending = [_mesh_detail(record) for _, record, _ in remaining_specs[:10]]
+            _log_error(
+                "RENDER",
+                "Parallel render crashed; retrying with fewer workers",
+                workers=workers,
+                completed=completed,
+                remaining=len(remaining_specs),
+                renderer=args.renderer,
+                error_type=type(attempt_error).__name__,
+                error_message=str(attempt_error),
+                pending=" || ".join(pending),
+            )
+            next_workers = max(1, workers // 2)
+            print(
+                f"[RENDER] Worker pool crashed at {workers} workers; retrying remaining {len(remaining_specs)} mesh(es) with {next_workers}",
+                flush=True,
+            )
+            recovery_mode = True
+            workers = next_workers
 
     progress.complete()
 
@@ -1117,6 +1620,7 @@ def main(argv: list[str] | None = None) -> int:
         "MAIN",
         "Starting mesh QC run",
         run_stage=_resolved_stage_name(args),
+        script_path=str(Path(__file__).resolve()),
         root=str(root),
         out=str(out_dir),
         renderer=args.renderer,

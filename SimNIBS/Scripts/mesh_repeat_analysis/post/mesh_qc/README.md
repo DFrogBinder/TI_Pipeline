@@ -98,7 +98,7 @@ For full HPC batches, disconnected-component analysis is disabled by default bec
 --check-components
 ```
 
-QC and per-mesh rendering are parallelized because each mesh is handled independently. By default `--workers 0` uses all visible CPUs. Use a smaller explicit count only when you want to cap CPU usage:
+QC and per-mesh rendering are parallelized because each mesh is handled independently. By default `--workers 0` exposes all visible CPUs to the scheduler and lets the code scale down automatically if memory looks tight or a worker pool proves unstable. Use a smaller explicit count only when you want to cap CPU usage:
 
 ```bash
 --workers 8
@@ -109,6 +109,24 @@ Use all visible CPUs with:
 ```bash
 --workers 0
 ```
+
+Current resource behavior:
+
+1. Resolve the visible CPU budget from `--workers`, Slurm CPU allocation, CPU affinity, or `os.cpu_count()`.
+2. Resolve a memory budget from `SLURM_MEM_PER_NODE`, `SLURM_MEM_PER_CPU`, or cgroup limits when available.
+3. Run a short isolated warmup on the first mesh(es) to estimate per-worker peak RSS.
+4. Choose a stage worker count that fits both the visible CPU budget and the estimated memory budget.
+5. When the active Python build supports it, use `max_tasks_per_child=1` so long QC or render runs do not keep accumulating memory inside reused worker processes.
+6. If a worker pool still crashes, automatically halve the worker count and retry only the unfinished meshes.
+7. If repeated pool crashes drive the worker count down to `1`, finish the remaining meshes one at a time in isolated subprocesses so that one bad mesh does not abort the whole stage.
+
+In practice, the recommended mode on Slurm is now simply:
+
+```bash
+--workers 0
+```
+
+That treats the detected allocation as an upper bound and avoids hand-tuning worker counts.
 
 Mosaic assembly remains serial after the per-mesh renders finish.
 

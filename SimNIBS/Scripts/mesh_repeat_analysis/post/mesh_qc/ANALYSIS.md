@@ -201,6 +201,18 @@ Current worker behavior:
 
 This is intended to respect the actual Slurm allocation instead of using the full physical node CPU count.
 
+Current resource-management behavior on top of that:
+
+- The resolved CPU count is treated as an upper bound, not a promise that all workers will actually be launched.
+- The code tries to resolve a memory budget from `SLURM_MEM_PER_NODE`, `SLURM_MEM_PER_CPU`, or the active cgroup memory limit.
+- QC runs a small isolated warmup on the first meshes; rendering does the same on the first render task when parallelism is possible.
+- That warmup captures peak worker RSS and uses it to estimate a safer worker count for the full stage.
+- The current heuristic uses a 70% usable-memory budget and a 1.4x safety factor over the sampled peak RSS.
+- When supported by the active Python build, parallel pools use `max_tasks_per_child=1` so worker memory does not accumulate across thousands of meshes.
+- Submission backlog is bounded to roughly `2 * workers`, which avoids queueing the entire dataset in-flight at once.
+- If a pool still fails with `BrokenProcessPool` or a similar worker-level crash, the stage automatically retries only the unfinished meshes with half as many workers.
+- If retries eventually reduce the stage to one worker after a pool crash, the remaining meshes are executed one at a time in isolated subprocesses, allowing a single native-code failure to be marked and logged instead of aborting the entire run.
+
 Mosaic assembly is still serial after per-mesh renders complete.
 
 ## Outputs
@@ -264,7 +276,7 @@ The pipeline now writes persistent diagnostics into `--out` for every run.
 Current behavior:
 
 - Stage starts and completions are written to `logs/mesh_qc.log`.
-- The resolved root/output paths, selected stage, renderer, worker request, visible CPU context, and key Slurm variables are written to `logs/run_context.json`.
+- The resolved root/output paths, selected stage, renderer, worker request, visible CPU context, detected memory budget, and key Slurm variables are written to `logs/run_context.json`.
 - Per-mesh exceptions during QC loading or QC computation are written to `qc_exception_details.csv`.
 - Per-mesh exceptions during rendering are written to `render_exception_details.csv`.
 - If the pipeline aborts outside the per-mesh exception paths, a full traceback is written to `logs/fatal_error.txt`.

@@ -34,7 +34,8 @@ set -euo pipefail
 # Blank optional values are ignored. Environment variables with the same names
 # still override these defaults for one-off runs.
 # ---------------------------------------------------------------------------
-PIPELINE_DIR_CONFIG="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIPELINE_DIR_CONFIG="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MESH_QC_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data"
 MESH_QC_OUT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall"
 MESH_GLOB_CONFIG=""

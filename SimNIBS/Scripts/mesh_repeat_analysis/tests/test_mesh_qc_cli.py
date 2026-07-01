@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+from concurrent.futures.process import BrokenProcessPool
 
 import numpy as np
 import pytest
@@ -110,6 +111,34 @@ def test_resolve_auto_workers_uses_affinity_when_available(monkeypatch):
     monkeypatch.setattr(run_mesh_qc.os, "sched_getaffinity", lambda pid: set(range(12)))
 
     assert run_mesh_qc._resolve_worker_count(0) == 12
+
+
+def test_choose_stage_worker_count_respects_memory_budget():
+    workers, details = run_mesh_qc._choose_stage_worker_count(
+        stage="QC",
+        task_count=100,
+        visible_workers=32,
+        memory_budget_bytes=64 * 1024**3,
+        sampled_worker_rss_bytes=2 * 1024**3,
+    )
+
+    assert workers == 16
+    assert details["limited_by_memory"] is True
+
+
+def test_process_pool_executor_kwargs_skip_recycling_when_unsupported(monkeypatch):
+    class LegacyExecutor:
+        def __init__(self, max_workers, mp_context):
+            self.max_workers = max_workers
+            self.mp_context = mp_context
+
+    monkeypatch.setattr(run_mesh_qc, "ProcessPoolExecutor", LegacyExecutor)
+
+    kwargs = run_mesh_qc._process_pool_executor_kwargs(4)
+
+    assert kwargs["max_workers"] == 4
+    assert "mp_context" in kwargs
+    assert "max_tasks_per_child" not in kwargs
 
 
 def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
@@ -279,6 +308,85 @@ def test_run_qc_preserves_order_with_parallel_workers(tmp_path):
 
     assert [row["subject"] for row in rows] == ["sub-CC2", "sub-CC1"]
     assert all(str(row["flags"]).startswith("READ_FAIL") for row in rows)
+
+
+def test_run_qc_detailed_retries_with_fewer_workers_after_pool_crash(tmp_path, monkeypatch):
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / f"mesh_{idx}.msh",
+            roi="unknown_roi",
+            subject=f"sub-CC{idx}",
+            repeat="repeat_01",
+            mesh_id=f"m2m_sub-CC{idx}",
+        )
+        for idx in range(4)
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", str(tmp_path), "--out", str(tmp_path / "out"), "--workers", "0", "--progress", "none"]
+    )
+
+    monkeypatch.setattr(run_mesh_qc, "_resolve_worker_count", lambda requested: 4)
+    monkeypatch.setattr(run_mesh_qc, "_resolve_memory_budget_bytes", lambda visible_workers: None)
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_run_qc_warmup_samples",
+        lambda records, args, summary_rows, exception_rows, progress: (0, None, list(range(len(records)))),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_qc_record_worker_profiled",
+        lambda record, check_components: (
+            {
+                "mesh_id": record.mesh_id,
+                "subject": record.subject,
+                "repeat": record.repeat,
+                "roi": record.roi,
+                "path": str(record.path),
+                "status": "OK",
+                "flags": "",
+            },
+            None,
+            123,
+        ),
+    )
+    monkeypatch.setattr(run_mesh_qc, "as_completed", lambda futures: list(futures))
+
+    attempts = []
+
+    class FakeFuture:
+        def __init__(self, max_workers, fn, args, kwargs):
+            self.max_workers = max_workers
+            self.fn = fn
+            self.args = args
+            self.kwargs = kwargs
+
+        def result(self):
+            if self.max_workers > 2:
+                raise BrokenProcessPool("worker died")
+            return self.fn(*self.args, **self.kwargs)
+
+    class FakeExecutor:
+        def __init__(self, max_workers, *args, **kwargs):
+            attempts.append(max_workers)
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            return FakeFuture(self.max_workers, fn, args, kwargs)
+
+    monkeypatch.setattr(run_mesh_qc, "ProcessPoolExecutor", FakeExecutor)
+
+    rows, exception_rows = run_mesh_qc._run_qc_detailed(records, args)
+
+    assert attempts == [4, 2]
+    assert len(rows) == 4
+    assert exception_rows == []
+    assert [row["subject"] for row in rows] == [f"sub-CC{idx}" for idx in range(4)]
 
 
 def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch, capsys):

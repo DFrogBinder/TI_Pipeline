@@ -19,7 +19,15 @@ That default command runs the full pipeline:
 3. mesh renders,
 4. mosaic generation.
 
-For long runs, a Slurm batch wrapper is available at:
+For long runs, use the submission helper:
+
+```bash
+bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh
+```
+
+That helper explicitly exports safe log paths into the batch job so cluster-level `LOG_DIR` environment variables cannot break startup.
+
+The raw Slurm wrapper is still available at:
 
 ```bash
 sbatch mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm

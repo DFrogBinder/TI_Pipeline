@@ -24,6 +24,10 @@ export NUMEXPR_NUM_THREADS=1
 
 set -euo pipefail
 
+if [ -n "${LOG_DIR:-}" ] || [ -n "${LOG_FILE:-}" ]; then
+    echo "[INFO] Ignoring inherited LOG_DIR/LOG_FILE for mesh QC; use MESH_QC_LOG_DIR/MESH_QC_LOG_FILE instead."
+fi
+
 # ---------------------------------------------------------------------------
 # Mesh QC batch settings
 #

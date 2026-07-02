@@ -18,6 +18,7 @@ This repository runs temporal interference (TI) simulations on CamCan subjects, 
 - **Atlas generation**: `atlas/make_atlas.sh`, `atlas/run_atlasMaker.py` (FastSurfer+FreeSurfer Docker; post-processing expects per-subject atlas files under `<fastsurfer_root>/<subject>.nii.gz`).
 - **Simulation**: `simulation/TI_runner_multi-core.py` (Slurm array/local multi-subject), `simulation/TI_runner_single-core.py` (sequential/local debug), and `simulation/TI_runner_MNI152.py` (dedicated MNI152 template runner) create meshes or use the built-in MNI mesh, run SimNIBS TDCS pairs, compute TImax, and export TI volumes (`ti_brain_only.nii.gz`).
 - **Simulation repair planning**: `simulation/plan_simulation_repair.py` scans repeat dataset roots such as `Left_Hippocampus_Data_01` to `Left_Hippocampus_Data_10`, writes discovery reports and per-repeat Slurm repair plans, then can submit one repair array per repeat when run in simulation mode.
+- **Defacing experiment tutorial**: `docs/DEFACING_EXPERIMENT_TUTORIAL.md` documents the `sub-CCMe` intact-vs-defaced repeat-batch workflow across `left-hippocampus` and `left-m1`, including local staging and HPC launch steps.
 - **Subject post-processing**: `post/post_process.py` + `post/post_functions.py` consume TI volume + T1 + atlas; write ROI masks, CSVs, overlays, region stats, and subject-level metrics.
 - **Population analysis**: `post/post_population.py` aggregates subject outputs into cohort-wide variability/robustness/hotspot tables.
 - **Pipeline entrypoint**: `post/run_post_processing.py` runs subject post-processing and optional population aggregation from one config.
@@ -119,6 +120,15 @@ the file-completion checks. Instead, set `REPAIR_MONTAGE_PRESET` to the correct
 preset, set `REPAIR_STAGE="simulate"`, keep `REPAIR_OUT_DIR` pointed at the
 repair plan from the mistaken launch, and resubmit the launcher. The runner
 cleans each listed subject's existing SimNIBS outputs before rerunning it.
+
+## Defacing repeat experiment
+For the `sub-CCMe` intact-vs-defaced experiment, use the dedicated tutorial:
+
+- `docs/DEFACING_EXPERIMENT_TUTORIAL.md`
+
+That workflow stages four repeat-batch roots, reruns CHARM without a custom
+segmentation, and compares intact-input meshing against SimNIBS face
+reconstruction from defaced `T1w` and `T2w`.
 
 ## Post-processing pipeline
 1) Edit the pipeline config in `post/run_post_processing.py`:

@@ -46,7 +46,7 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --out-root /tmp/defacing_repeat_batch
 ```
 
-If needed, point the script at a specific `fsl_deface` binary:
+If needed, point the script at a specific `pydeface` binary:
 
 ```bash
 python3 defacing_experiment/prepare_defacing_repeat_batch.py \
@@ -54,8 +54,13 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --intact-t1 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T1w.nii.gz \
   --intact-t2 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T2w.nii \
   --out-root /tmp/defacing_repeat_batch \
-  --fsl-deface-bin /home/boyan/fsl/bin/fsl_deface
+  --pydeface-bin /home/boyan/fsl/bin/pydeface
 ```
+
+This workflow uses `pydeface` for the `T1w`, then resamples the saved defacing
+mask into `T2w` space before masking the `T2w`. That is deliberate: for
+`sub-CCMe`, the `T1w` and `T2w` are not on the same voxel grid, so a direct
+`pydeface --applyto` call would not be reliable.
 
 The script produces:
 

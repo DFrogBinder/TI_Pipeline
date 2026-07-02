@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -149,14 +150,27 @@ def _write_tsv(path: str | Path, fieldnames: Sequence[str], rows: Iterable[dict[
     return out
 
 
-def run_fsl_deface(
+def _pydeface_mask_sidecar(path: str | Path) -> Path:
+    path = Path(path).expanduser().resolve()
+    suffix = _nifti_suffix(path)
+    stem = path.name[: -len(suffix)]
+    return path.with_name(f"{stem}_pydeface_mask.nii.gz")
+
+
+def _pydeface_mat_sidecar(path: str | Path) -> Path:
+    path = Path(path).expanduser().resolve()
+    suffix = _nifti_suffix(path)
+    stem = path.name[: -len(suffix)]
+    return path.with_name(f"{stem}_pydeface.mat")
+
+
+def run_pydeface(
     *,
     intact_t1: str | Path,
     defaced_t1: str | Path,
     keep_mask_path: str | Path,
-    fsl_deface_bin: str,
+    pydeface_bin: str,
     force: bool,
-    qc_base: str | Path | None = None,
 ) -> None:
     intact_t1 = Path(intact_t1).expanduser().resolve()
     defaced_t1 = Path(defaced_t1).expanduser().resolve()
@@ -167,22 +181,62 @@ def run_fsl_deface(
 
     defaced_t1.parent.mkdir(parents=True, exist_ok=True)
     keep_mask_path.parent.mkdir(parents=True, exist_ok=True)
+
+    resolved_pydeface = shutil.which(pydeface_bin)
+    if resolved_pydeface is None:
+        raise RuntimeError(f"pydeface executable not found: {pydeface_bin}")
+
+    work_dir = defaced_t1.parent / "_pydeface_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    temp_input_t1 = work_dir / intact_t1.name
+    temp_mask_path = _pydeface_mask_sidecar(temp_input_t1)
+    temp_mat_path = _pydeface_mat_sidecar(temp_input_t1)
+
+    if temp_input_t1.exists():
+        temp_input_t1.unlink()
+    if temp_mask_path.exists():
+        temp_mask_path.unlink()
+    if temp_mat_path.exists():
+        temp_mat_path.unlink()
+
+    shutil.copy2(intact_t1, temp_input_t1)
+    if defaced_t1.exists() and force:
+        defaced_t1.unlink()
+    if keep_mask_path.exists() and force:
+        keep_mask_path.unlink()
+
     cmd = [
-        fsl_deface_bin,
-        str(intact_t1),
+        resolved_pydeface,
+        str(temp_input_t1),
+        "--outfile",
         str(defaced_t1),
-        "-d",
-        str(keep_mask_path),
+        "--force",
+        "--nocleanup",
     ]
-    if qc_base is not None:
-        qc_path = Path(qc_base).expanduser().resolve()
-        qc_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd.extend(["-p", str(qc_path)])
 
     print(f"[CMD] {' '.join(cmd)}", flush=True)
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        raise RuntimeError(f"fsl_deface failed with exit code {result.returncode}")
+    env = os.environ.copy()
+    pydeface_dir = str(Path(resolved_pydeface).parent)
+    env["PATH"] = f"{pydeface_dir}:{env.get('PATH', '')}" if env.get("PATH") else pydeface_dir
+    result = subprocess.run(cmd, env=env)
+    try:
+        if result.returncode != 0:
+            raise RuntimeError(f"pydeface failed with exit code {result.returncode}")
+        if not temp_mask_path.exists():
+            raise RuntimeError(f"pydeface did not produce expected mask: {temp_mask_path}")
+        shutil.move(str(temp_mask_path), str(keep_mask_path))
+    finally:
+        if temp_input_t1.exists():
+            temp_input_t1.unlink()
+        if temp_mask_path.exists():
+            temp_mask_path.unlink()
+        if temp_mat_path.exists():
+            temp_mat_path.unlink()
+        if work_dir.exists():
+            try:
+                work_dir.rmdir()
+            except OSError:
+                pass
 
 
 def generate_defaced_modalities(
@@ -191,7 +245,7 @@ def generate_defaced_modalities(
     intact_t1: str | Path,
     intact_t2: str | Path,
     generated_root: str | Path,
-    fsl_deface_bin: str = "fsl_deface",
+    pydeface_bin: str = "pydeface",
     force: bool = False,
 ) -> tuple[Path, Path, Path, Path]:
     generated_root = Path(generated_root).expanduser().resolve()
@@ -206,13 +260,12 @@ def generate_defaced_modalities(
     defaced_t2 = anat_dir / f"{subject}_desc-deface_T2w{t2_suffix}"
     keep_mask_t2 = anat_dir / f"{subject}_desc-deface_mask_T2w{t2_suffix}"
 
-    run_fsl_deface(
+    run_pydeface(
         intact_t1=intact_t1,
         defaced_t1=defaced_t1,
         keep_mask_path=keep_mask_t1,
-        fsl_deface_bin=fsl_deface_bin,
+        pydeface_bin=pydeface_bin,
         force=force,
-        qc_base=anat_dir / f"{subject}_desc-deface_qc",
     )
 
     if defaced_t2.exists() and keep_mask_t2.exists() and not force:
@@ -353,7 +406,7 @@ def parse_args() -> argparse.Namespace:
         default=list(DEFAULT_TARGETS),
         help="Target presets to stage. Default: left-hippocampus left-m1",
     )
-    parser.add_argument("--fsl-deface-bin", default="fsl_deface", help="Path or name for fsl_deface")
+    parser.add_argument("--pydeface-bin", default="pydeface", help="Path or name for pydeface")
     parser.add_argument("--force", action="store_true", help="Overwrite generated defaced files and staged repeats")
     return parser.parse_args()
 
@@ -372,7 +425,7 @@ def main() -> None:
         intact_t1=args.intact_t1,
         intact_t2=args.intact_t2,
         generated_root=generated_root,
-        fsl_deface_bin=args.fsl_deface_bin,
+        pydeface_bin=args.pydeface_bin,
         force=args.force,
     )
 

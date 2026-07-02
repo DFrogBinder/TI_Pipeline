@@ -25,7 +25,7 @@ For long runs, use the submission helper:
 bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh
 ```
 
-That helper explicitly exports safe log paths into the batch job so cluster-level `LOG_DIR` environment variables cannot break startup.
+That helper explicitly exports safe log paths into the batch job so cluster-level `LOG_DIR` environment variables cannot break startup. It also defaults the HPC batch path to `RENDERER=gmsh`, so a cluster run now fails loudly if Gmsh rendering is unavailable instead of silently producing PyVista/Pillow-style fallback images.
 
 The raw Slurm wrapper is still available at:
 

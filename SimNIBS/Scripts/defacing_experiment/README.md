@@ -41,8 +41,8 @@ python3 defacing_experiment/deface_fsl_batch.py \
 
 Main entrypoint for this experiment. It:
 
-1. defaces the intact `T1w` with `fsl_deface`
-2. saves the `T1w` keep-mask produced by `fsl_deface`
+1. defaces the intact `T1w` with `pydeface`
+2. saves the `T1w` face-removal mask produced by `pydeface`
 3. resamples that keep-mask into `T2w` space
 4. applies the resampled keep-mask to the intact `T2w`
 5. stages four repeat-batch parent roots:
@@ -61,7 +61,7 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --out-root /tmp/defacing_repeat_batch
 ```
 
-If `fsl_deface` is not on `PATH`, pass it explicitly:
+If `pydeface` is not on `PATH`, pass it explicitly:
 
 ```bash
 python3 defacing_experiment/prepare_defacing_repeat_batch.py \
@@ -69,7 +69,7 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --intact-t1 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T1w.nii.gz \
   --intact-t2 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T2w.nii \
   --out-root /tmp/defacing_repeat_batch \
-  --fsl-deface-bin /home/boyan/fsl/bin/fsl_deface
+  --pydeface-bin /home/boyan/fsl/bin/pydeface
 ```
 
 ## Output layout
@@ -118,6 +118,9 @@ subject-input discovery path.
   and `T2w`
 - when no custom segmentation exists, the runner uses the CHARM-produced mesh
   directly instead of trying to merge a manual segmentation
+- `pydeface --applyto` is not used because the `T1w` and `T2w` live on different
+  grids for `sub-CCMe`; the script resamples the saved `T1w` mask onto `T2w`
+  instead
 
 For the end-to-end HPC workflow, see
 `CamCan_Experiment/docs/DEFACING_EXPERIMENT_TUTORIAL.md`.

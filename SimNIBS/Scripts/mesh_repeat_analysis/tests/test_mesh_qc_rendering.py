@@ -1,5 +1,7 @@
 import pytest
 import numpy as np
+import sys
+from pathlib import Path
 
 from mesh_repeat_analysis.post.mesh_qc import rendering
 from mesh_repeat_analysis.post.mesh_qc.geometry_qc import SurfaceArrays
@@ -205,3 +207,100 @@ def test_pillow_renderer_keeps_dense_surface_filled_in_front_view(tmp_path, monk
     assert mask.sum() > 12000
     aspect = (xs.max() - xs.min() + 1) / (ys.max() - ys.min() + 1)
     assert 0.48 < aspect < 0.62
+
+
+def test_gmsh_geo_script_hides_surface_edges(tmp_path):
+    script = rendering._build_gmsh_geo_script(tmp_path / "head.msh", tmp_path / "render.png", image_size=320)
+
+    assert "Mesh.SurfaceFaces = 1;" in script
+    assert "Mesh.SurfaceEdges = 0;" in script
+
+
+def test_pyvista_renderer_uses_shaded_nonfrontal_view(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "head.msh"
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out = tmp_path / "render.png"
+    surface = SurfaceArrays(
+        points=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        ),
+        faces=np.array(
+            [
+                [0, 2, 1],
+                [0, 1, 3],
+                [1, 2, 3],
+                [2, 0, 3],
+            ]
+        ),
+    )
+    monkeypatch.setattr(rendering, "load_surface_arrays", lambda path: surface)
+
+    calls = {}
+
+    class FakePolyData:
+        def __init__(self, points, faces):
+            self.points = np.asarray(points, dtype=float)
+            self._faces = faces
+            mins = self.points.min(axis=0)
+            maxs = self.points.max(axis=0)
+            self.center = tuple(((mins + maxs) * 0.5).tolist())
+            self.bounds = (mins[0], maxs[0], mins[1], maxs[1], mins[2], maxs[2])
+            self.n_points = len(self.points)
+
+        def triangulate(self):
+            return self
+
+    class FakeCamera:
+        def __init__(self):
+            self.parallel_projection = None
+            self.focal_point = None
+            self.position = None
+            self.view_up = None
+            self.parallel_scale = None
+
+    class FakePlotter:
+        def __init__(self, off_screen, window_size):
+            calls["plotter"] = self
+            calls["off_screen"] = off_screen
+            calls["window_size"] = window_size
+            self.camera = FakeCamera()
+
+        def set_background(self, color):
+            calls["background"] = color
+
+        def add_mesh(self, mesh, **kwargs):
+            calls["add_mesh_kwargs"] = kwargs
+
+        def add_text(self, label, **kwargs):
+            calls["label"] = label
+
+        def reset_camera_clipping_range(self):
+            calls["reset_camera"] = True
+
+        def screenshot(self, path):
+            calls["screenshot"] = path
+            Path(path).write_bytes(b"png")
+
+        def close(self):
+            calls["closed"] = True
+
+    class FakePyVista:
+        PolyData = FakePolyData
+        Plotter = FakePlotter
+
+    monkeypatch.setitem(sys.modules, "pyvista", FakePyVista)
+
+    rendering._render_with_pyvista(mesh_path, out, label="mesh", image_size=180)
+
+    assert out.exists()
+    assert calls["add_mesh_kwargs"]["show_edges"] is False
+    assert calls["plotter"].camera.parallel_projection is False
+    x, y, z = calls["plotter"].camera.position
+    assert x != 0.0
+    assert y != 0.0
+    assert z != 0.0

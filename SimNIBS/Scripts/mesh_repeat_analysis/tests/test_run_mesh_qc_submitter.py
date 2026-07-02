@@ -12,4 +12,5 @@ def test_submit_mesh_qc_helper_exports_safe_log_paths():
     assert "--export=" in text
     assert "MESH_QC_LOG_DIR=" in text
     assert "LOG_DIR=" in text
+    assert 'RENDERER_CONFIG="gmsh"' in text
     assert "run_mesh_qc.slurm" in text

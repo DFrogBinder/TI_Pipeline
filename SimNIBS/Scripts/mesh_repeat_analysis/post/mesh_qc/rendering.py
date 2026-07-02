@@ -20,25 +20,26 @@ def render_mesh_png(
     image_size: int = 600,
     renderer: str = "auto",
     max_faces: int = 12000,
-) -> None:
+) -> str:
     renderer = renderer.lower()
     if renderer not in {"auto", "gmsh", "pyvista", "pillow"}:
         raise ValueError(f"Unsupported renderer: {renderer}")
     if renderer in {"auto", "gmsh"}:
         try:
             _render_with_gmsh(path, out_png, label=label, image_size=image_size)
-            return
+            return "gmsh"
         except Exception:
             if renderer == "gmsh":
                 raise
     if renderer in {"auto", "pyvista"}:
         try:
             _render_with_pyvista(path, out_png, label=label, image_size=image_size)
-            return
+            return "pyvista"
         except Exception:
             if renderer == "pyvista":
                 raise
     _render_with_pillow(path, out_png, label=label, image_size=image_size, max_faces=max_faces)
+    return "pillow"
 
 
 def _render_with_gmsh(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
@@ -98,16 +99,15 @@ def _render_with_pyvista(path: Path, out_png: Path, *, label: str, image_size: i
     plotter.add_mesh(
         mesh,
         color="lightgray",
-        show_edges=True,
-        edge_color="black",
+        show_edges=False,
         smooth_shading=True,
     )
     plotter.add_text(label, position="upper_left", font_size=10, color="black")
-    plotter.camera.parallel_projection = True
+    plotter.camera.parallel_projection = False
     plotter.camera.focal_point = (0.0, 0.0, 0.0)
-    plotter.camera.position = (0.0, span * 2.5, 0.0)
+    plotter.camera.position = (span * 1.35, span * 2.35, span * 0.85)
     plotter.camera.view_up = (0.0, 0.0, 1.0)
-    plotter.camera.parallel_scale = span * 0.62
+    plotter.camera.parallel_scale = span * 0.75
     plotter.reset_camera_clipping_range()
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +182,7 @@ def _build_gmsh_geo_script(surface_msh: Path, out_png: Path, *, image_size: int)
             f"General.GraphicsHeight = {int(image_size)};",
             "Mesh.Points = 0;",
             "Mesh.Lines = 0;",
-            "Mesh.SurfaceEdges = 1;",
+            "Mesh.SurfaceEdges = 0;",
             "Mesh.SurfaceFaces = 1;",
             "Mesh.VolumeEdges = 0;",
             "Mesh.VolumeFaces = 0;",

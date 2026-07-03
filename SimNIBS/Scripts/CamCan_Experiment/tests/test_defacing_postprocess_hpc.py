@@ -42,4 +42,4 @@ def test_arm_specific_postprocess_wrappers_exist_and_pin_expected_roots():
         assert 'PIPELINE_FASTSURFER_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/atlases"' in text
         assert 'PIPELINE_MNI_FIXED_ATLAS_PATH="/mnt/parscratch/users/cop23bi/ZIPs/atlases/sub-mni152.nii.gz"' in text
         assert 'BATCH_REPEATS="01 02 03 04 05 06 07 08 09 10"' in text
-        assert '"${SCRIPT_DIR}/run_post_processing_batch_common.sh"' in text
+        assert 'source "${SCRIPT_DIR}/run_post_processing_batch_common.sh"' in text

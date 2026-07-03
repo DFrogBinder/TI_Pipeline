@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 import sys
+import subprocess
 from pathlib import Path
 
 from mesh_repeat_analysis.post.mesh_qc import rendering
@@ -214,6 +215,23 @@ def test_gmsh_geo_script_hides_surface_edges(tmp_path):
 
     assert "Mesh.SurfaceFaces = 1;" in script
     assert "Mesh.SurfaceEdges = 0;" in script
+
+
+def test_gmsh_renderer_reports_timeout_as_runtime_error(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "head.msh"
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out = tmp_path / "render.png"
+
+    monkeypatch.setattr(rendering, "_build_gmsh_command", lambda script_path: ["gmsh", str(script_path)])
+
+    def fake_run(cmd, *, check, capture_output, text, env, timeout):
+        assert timeout == 120
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(rendering.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="timed out after 120 seconds"):
+        rendering._render_with_gmsh(mesh_path, out, label="mesh", image_size=320)
 
 
 def test_pyvista_renderer_uses_shaded_nonfrontal_view(tmp_path, monkeypatch):

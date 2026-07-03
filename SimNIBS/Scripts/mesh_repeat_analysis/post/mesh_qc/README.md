@@ -162,6 +162,12 @@ To explicitly request a renderer, pass:
 
 The Gmsh path opens the original `.msh` directly, so the output is much closer to what you see when loading the mesh in Gmsh manually. If the node does not already have a `DISPLAY`, the render stage tries to start a shared Xvfb display once and lets all render workers inherit it.
 
+When `--renderer gmsh` is forced, the render stage now runs a single-mesh Gmsh preflight before starting the worker pool. If Gmsh, Xvfb, or the display backend is broken, the stage aborts immediately with one logged error instead of marking every mesh as a render failure. Gmsh subprocesses also have a bounded timeout, configurable with:
+
+```bash
+MESH_QC_GMSH_TIMEOUT_SECONDS=120
+```
+
 The Pillow path remains available as a last-resort software fallback. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based frontal preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.

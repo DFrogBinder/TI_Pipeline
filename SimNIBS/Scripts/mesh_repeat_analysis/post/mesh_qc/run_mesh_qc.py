@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import resource
+import select
 import shutil
 import socket
 import subprocess
@@ -217,10 +218,11 @@ class TqdmDiscoveryReporter:
 
 
 class VirtualDisplaySession:
-    def __init__(self, *, width: int = 1600, height: int = 1600, depth: int = 24) -> None:
+    def __init__(self, *, width: int = 1600, height: int = 1600, depth: int = 24, startup_timeout: float = 10.0) -> None:
         self.width = max(width, 800)
         self.height = max(height, 800)
         self.depth = max(depth, 24)
+        self.startup_timeout = max(float(startup_timeout), 1.0)
         self.proc: subprocess.Popen | None = None
         self.previous_display = os.environ.get("DISPLAY")
         self._set_libgl = False
@@ -257,13 +259,18 @@ class VirtualDisplaySession:
             os.close(write_fd)
 
         try:
-            with os.fdopen(read_fd, "r", encoding="utf-8", closefd=True) as pipe:
-                display_number = pipe.readline().strip()
+            ready, _, _ = select.select([read_fd], [], [], self.startup_timeout)
+            if ready:
+                with os.fdopen(read_fd, "r", encoding="utf-8", closefd=True) as pipe:
+                    display_number = pipe.readline().strip()
+            else:
+                os.close(read_fd)
+                display_number = ""
         except Exception:
             display_number = ""
 
         if not display_number:
-            detail = "unknown Xvfb startup failure"
+            detail = f"Xvfb did not report a display within {self.startup_timeout:.0f} seconds"
             if self.proc is not None:
                 try:
                     _, stderr = self.proc.communicate(timeout=1)
@@ -273,7 +280,7 @@ class VirtualDisplaySession:
                     _, stderr = self.proc.communicate()
                     detail = stderr.strip() or detail
             self.stop()
-            raise RuntimeError(detail)
+            raise RuntimeError(_short_error(detail))
 
         os.environ["DISPLAY"] = f":{display_number}"
         if "LIBGL_ALWAYS_SOFTWARE" not in os.environ:
@@ -319,6 +326,13 @@ def _log_warning(stage: str, message: str, **fields) -> None:
 def _log_error(stage: str, message: str, **fields) -> None:
     if _RUN_LOGGER is not None:
         _RUN_LOGGER.log("ERROR", stage, message, **fields)
+
+
+def _short_error(exc: Exception | str, *, limit: int = 1200) -> str:
+    text = str(exc).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + " ... [truncated]"
 
 
 def _write_optional_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]) -> None:
@@ -1241,7 +1255,11 @@ def _run_render_parallel_attempt(
 @contextmanager
 def _render_display_context(args: argparse.Namespace):
     wants_gmsh = args.renderer in {"auto", "gmsh"}
-    if not wants_gmsh or os.environ.get("DISPLAY"):
+    if not wants_gmsh:
+        yield
+        return
+
+    if os.environ.get("MESH_QC_USE_EXISTING_DISPLAY") == "1" and os.environ.get("DISPLAY"):
         yield
         return
 
@@ -1252,21 +1270,38 @@ def _render_display_context(args: argparse.Namespace):
     try:
         display = session.start()
     except Exception as exc:
+        error_message = _short_error(exc)
         if args.renderer == "gmsh":
-            _log_error("RENDER", "Failed to start Xvfb for gmsh renderer", error_message=str(exc))
+            _log_error("RENDER", "Failed to start Xvfb for gmsh renderer", error_message=error_message)
             raise RuntimeError(
                 "Gmsh rendering requires a DISPLAY or a working Xvfb installation. "
-                f"Automatic Xvfb startup failed: {exc}"
+                f"Automatic Xvfb startup failed: {error_message}"
             ) from exc
-        _log_warning("RENDER", "Could not start Xvfb for auto renderer", error_message=str(exc))
+        existing_display = os.environ.get("DISPLAY")
+        if existing_display:
+            _log_warning(
+                "RENDER",
+                "Could not start managed Xvfb; falling back to existing DISPLAY",
+                display=existing_display,
+                error_message=error_message,
+            )
+            print(
+                "[RENDER] Could not start managed Xvfb; "
+                f"falling back to existing DISPLAY={existing_display} ({error_message})",
+                flush=True,
+            )
+            yield
+            return
+        _log_warning("RENDER", "Could not start Xvfb for auto renderer", error_message=error_message)
         print(
             "[RENDER] Could not start Xvfb for auto renderer; "
-            f"Gmsh may be skipped and auto will fall back ({exc})",
+            f"Gmsh may be skipped and auto will fall back ({error_message})",
             flush=True,
         )
         yield
         return
 
+    os.environ["DISPLAY"] = display
     print(f"[RENDER] Started virtual display {display} for Gmsh rendering", flush=True)
     _log_info("RENDER", "Started virtual display", display=display)
     try:
@@ -1274,6 +1309,67 @@ def _render_display_context(args: argparse.Namespace):
     finally:
         session.stop()
         _log_info("RENDER", "Stopped virtual display")
+
+
+def _write_render_failure_outputs(out_dir: Path, failure_rows: list[dict[str, object]]) -> None:
+    _write_optional_csv(out_dir / "render_exception_details.csv", failure_rows, EXCEPTION_FIELDS)
+    if failure_rows:
+        fail_path = out_dir / "render_failures.txt"
+        fail_lines = [
+            f"{row['path']}\t{row['error_type']}: {row['error_message']}"
+            for row in failure_rows
+        ]
+        fail_path.write_text("\n".join(fail_lines) + "\n", encoding="utf-8")
+    else:
+        try:
+            (out_dir / "render_failures.txt").unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _run_forced_gmsh_preflight(
+    task_specs: list[tuple[int, MeshRecord, Path]],
+    args: argparse.Namespace,
+    rendered_slots: list[Path | None],
+    failure_rows: list[dict[str, object]],
+    manifest_rows: list[dict[str, object]],
+    progress,
+    out_dir: Path,
+) -> tuple[int, int | None, list[tuple[int, MeshRecord, Path]]]:
+    if args.renderer != "gmsh" or not task_specs:
+        return 0, None, task_specs
+
+    slot_idx, record, out_png = task_specs[0]
+    print(f"[RENDER] Running forced-Gmsh preflight on {_mesh_detail(record)}", flush=True)
+    failure_row, manifest_row, rss_bytes = _run_render_isolated_once(
+        record,
+        out_png,
+        image_size=args.image_size,
+        renderer=args.renderer,
+    )
+    if failure_row is not None:
+        failure_rows.append(failure_row)
+        progress.update(1, _mesh_detail(record, "FAILED"))
+        _write_render_failure_outputs(out_dir, failure_rows)
+        _log_error(
+            "RENDER",
+            "Forced Gmsh preflight failed",
+            mesh=_mesh_detail(record),
+            output_path=str(out_png),
+            error_type=failure_row["error_type"],
+            error_message=failure_row["error_message"],
+        )
+        raise RuntimeError(
+            "Forced Gmsh render preflight failed for "
+            f"{record.path}. First error: {failure_row['error_type']}: {failure_row['error_message']}. "
+            f"See {out_dir / 'render_exception_details.csv'}."
+        )
+
+    rendered_slots[slot_idx] = out_png
+    if manifest_row is not None:
+        manifest_rows.append(manifest_row)
+    progress.update(1, _mesh_detail(record))
+    return 1, (rss_bytes or None), task_specs[1:]
 
 
 def _render_outputs(
@@ -1346,15 +1442,31 @@ def _render_outputs(
     )
 
     with _render_display_context(args):
-        completed, sampled_worker_rss_bytes, remaining_specs = _run_render_warmup_samples(
+        completed = resumed_count
+        if resumed_count:
+            progress.update(completed, f"reused {resumed_count} existing render(s)")
+
+        preflight_completed, preflight_rss_bytes, remaining_after_preflight = _run_forced_gmsh_preflight(
             remaining_task_specs,
             args,
             rendered_slots,
             failure_rows,
             manifest_rows,
             progress,
+            out_dir,
         )
-        completed += resumed_count
+        completed += preflight_completed
+
+        warmup_completed, sampled_worker_rss_bytes, remaining_specs = _run_render_warmup_samples(
+            remaining_after_preflight,
+            args,
+            rendered_slots,
+            failure_rows,
+            manifest_rows,
+            progress,
+        )
+        completed += warmup_completed
+        sampled_worker_rss_bytes = max(preflight_rss_bytes or 0, sampled_worker_rss_bytes or 0) or None
         workers, worker_details = _choose_stage_worker_count(
             stage="RENDER",
             task_count=len(remaining_specs),
@@ -1476,7 +1588,7 @@ def _render_outputs(
         )
 
     manifest_rows = sorted(manifest_rows, key=lambda row: str(row["output_path"]))
-    _write_optional_csv(out_dir / "render_exception_details.csv", failure_rows, EXCEPTION_FIELDS)
+    _write_render_failure_outputs(out_dir, failure_rows)
     _write_optional_csv(out_dir / "render_manifest.csv", manifest_rows, RENDER_MANIFEST_FIELDS)
     renderer_counts = Counter(str(row["actual_renderer"]) for row in manifest_rows)
     if renderer_counts:
@@ -1486,19 +1598,6 @@ def _render_outputs(
             path=str(out_dir / "render_manifest.csv"),
             renderer_counts=" ".join(f"{key}:{renderer_counts[key]}" for key in sorted(renderer_counts)),
         )
-
-    if failure_rows:
-        fail_path = out_dir / "render_failures.txt"
-        fail_lines = [
-            f"{row['path']}\t{row['error_type']}: {row['error_message']}"
-            for row in failure_rows
-        ]
-        fail_path.write_text("\n".join(fail_lines) + "\n", encoding="utf-8")
-    else:
-        try:
-            (out_dir / "render_failures.txt").unlink()
-        except FileNotFoundError:
-            pass
 
     _log_info(
         "RENDER",

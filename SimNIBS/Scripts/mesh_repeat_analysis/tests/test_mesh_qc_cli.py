@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+from contextlib import nullcontext
 from concurrent.futures.process import BrokenProcessPool
 
 import numpy as np
@@ -714,6 +715,151 @@ def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
     assert [row["actual_renderer"] for row in manifest_rows] == ["unknown_existing", "gmsh"]
     assert [row["requested_renderer"] for row in manifest_rows] == ["auto", "auto"]
     assert [row["resumed"] for row in manifest_rows] == ["1", "0"]
+
+
+def test_render_display_context_prefers_managed_xvfb_for_gmsh(monkeypatch):
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", "/tmp/in", "--out", "/tmp/out", "--renderer", "gmsh"]
+    )
+    calls = []
+    monkeypatch.setenv("DISPLAY", ":stale")
+
+    class FakeDisplaySession:
+        def __init__(self, *, width, height):
+            calls.append(("init", width, height))
+
+        def start(self):
+            calls.append(("start",))
+            return ":123"
+
+        def stop(self):
+            calls.append(("stop",))
+
+    monkeypatch.setattr(run_mesh_qc, "VirtualDisplaySession", FakeDisplaySession)
+
+    with run_mesh_qc._render_display_context(args):
+        assert os.environ["DISPLAY"] == ":123"
+
+    assert calls == [("init", 1200, 1200), ("start",), ("stop",)]
+
+
+def test_render_display_context_does_not_fallback_to_stale_display_for_forced_gmsh(monkeypatch):
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", "/tmp/in", "--out", "/tmp/out", "--renderer", "gmsh"]
+    )
+    monkeypatch.setenv("DISPLAY", ":stale")
+
+    class BrokenDisplaySession:
+        def __init__(self, *, width, height):
+            pass
+
+        def start(self):
+            raise RuntimeError("xvfb broken")
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(run_mesh_qc, "VirtualDisplaySession", BrokenDisplaySession)
+
+    with pytest.raises(RuntimeError, match="Gmsh rendering requires"):
+        with run_mesh_qc._render_display_context(args):
+            pass
+
+
+def test_virtual_display_start_times_out_waiting_for_displayfd(monkeypatch):
+    monkeypatch.setattr(run_mesh_qc.shutil, "which", lambda name: "/fake/Xvfb")
+    monkeypatch.setattr(run_mesh_qc.select, "select", lambda read, write, err, timeout: ([], [], []))
+
+    class FakeProc:
+        def communicate(self, timeout=None):
+            return "", ""
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 1
+
+    monkeypatch.setattr(run_mesh_qc.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+
+    with pytest.raises(RuntimeError, match="did not report a display"):
+        run_mesh_qc.VirtualDisplaySession().start()
+
+
+def test_forced_gmsh_render_aborts_after_preflight_failure(tmp_path, monkeypatch):
+    out_dir = tmp_path / "qc"
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "sub-CC1.msh",
+            roi="unknown_roi",
+            subject="sub-CC1",
+            repeat="repeat_01",
+            mesh_id="m2m_sub-CC1",
+        ),
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "sub-CC2.msh",
+            roi="unknown_roi",
+            subject="sub-CC2",
+            repeat="repeat_01",
+            mesh_id="m2m_sub-CC2",
+        ),
+    ]
+    summary_rows = [
+        {
+            "mesh_id": record.mesh_id,
+            "subject": record.subject,
+            "repeat": record.repeat,
+            "roi": record.roi,
+            "path": str(record.path),
+            "status": "OK",
+            "flags": "",
+        }
+        for record in records
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--renderer",
+            "gmsh",
+            "--workers",
+            "2",
+            "--progress",
+            "none",
+        ]
+    )
+    calls = []
+
+    def fake_preflight(record, out_png, *, image_size, renderer):
+        calls.append(record.subject)
+        return (
+            run_mesh_qc._exception_row(
+                record,
+                stage="render",
+                exc=RuntimeError("gmsh exited with status 1"),
+                traceback_text="gmsh exited with status 1",
+                output_path=out_png,
+            ),
+            None,
+            0,
+        )
+
+    monkeypatch.setattr(run_mesh_qc, "_render_display_context", lambda args: nullcontext())
+    monkeypatch.setattr(run_mesh_qc, "_run_render_isolated_once", fake_preflight)
+    monkeypatch.setattr(run_mesh_qc, "_run_render_parallel_attempt", lambda *args, **kwargs: pytest.fail("parallel render should not start"))
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", lambda *args, **kwargs: pytest.fail("mosaic should not run"))
+
+    with pytest.raises(RuntimeError, match="Forced Gmsh render preflight failed"):
+        run_mesh_qc._render_outputs(records, summary_rows, out_dir, args)
+
+    assert calls == ["sub-CC1"]
+    with (out_dir / "render_exception_details.csv").open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "sub-CC1"
+    assert "gmsh exited with status 1" in rows[0]["error_message"]
 
 
 def test_render_outputs_uses_parallel_workers_when_requested(tmp_path, monkeypatch):

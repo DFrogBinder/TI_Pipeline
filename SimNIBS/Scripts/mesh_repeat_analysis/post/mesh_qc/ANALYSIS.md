@@ -178,7 +178,10 @@ Gmsh renderer details:
 
 - Gmsh is asked to open the original `.msh` directly and export a PNG.
 - This is intended to keep the render visually close to what a manual Gmsh inspection would show.
-- If no `DISPLAY` is present, the render stage attempts to start one shared Xvfb display before launching parallel render workers.
+- The render stage prefers one managed Xvfb display before launching parallel render workers, rather than trusting an inherited `DISPLAY` from the shell or scheduler.
+- If `--renderer gmsh` is forced, the stage renders one mesh as a strict preflight before starting the worker pool.
+- If that forced-Gmsh preflight fails, the stage aborts immediately and writes the first error to `render_exception_details.csv` and `render_failures.txt` instead of recording thousands of duplicate failures.
+- Gmsh subprocesses are bounded by `MESH_QC_GMSH_TIMEOUT_SECONDS`, defaulting to 120 seconds.
 - The intended effect is a render that looks much closer to opening the mesh in Gmsh than the earlier software preview did.
 
 Pillow fallback details:

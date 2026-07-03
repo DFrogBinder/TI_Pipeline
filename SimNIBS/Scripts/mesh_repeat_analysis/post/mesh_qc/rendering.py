@@ -56,22 +56,42 @@ def _render_with_gmsh(path: Path, out_png: Path, *, label: str, image_size: int 
         cmd = _build_gmsh_command(script_path)
         env = os.environ.copy()
         env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
-        completed = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        timeout_seconds = _gmsh_timeout_seconds()
+        try:
+            completed = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Gmsh render timed out after {timeout_seconds} seconds for {path}. "
+                f"Command: {' '.join(cmd)}"
+            ) from exc
         if completed.returncode != 0 and not raw_png.exists():
             stderr = completed.stderr.strip()
             stdout = completed.stdout.strip()
-            detail = stderr or stdout or f"gmsh exited with status {completed.returncode}"
+            detail = stderr or stdout or (
+                f"gmsh exited with status {completed.returncode}; "
+                f"DISPLAY={env.get('DISPLAY', '')!r}; command={' '.join(cmd)}"
+            )
             raise RuntimeError(f"Gmsh render failed for {path}: {detail}")
         if not raw_png.exists():
             raise RuntimeError(f"Gmsh did not write a PNG for {path}")
 
         _save_labeled_image(raw_png, out_png, label=label, image_size=image_size)
+
+
+def _gmsh_timeout_seconds() -> int:
+    raw = os.environ.get("MESH_QC_GMSH_TIMEOUT_SECONDS", "120")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 120
+    return max(value, 1)
 
 
 def _render_with_pyvista(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:

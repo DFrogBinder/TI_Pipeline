@@ -242,6 +242,28 @@ if [[ "${BATCH_ROOT}" == "/path/to/rootDIR" || -z "${BATCH_ROOT}" ]]; then
     exit 2
 fi
 
+if [[ "${PIPELINE_ATLAS_MODE}" == "fastsurfer" \
+      && -z "${PIPELINE_FS_MRI_PATH}" \
+      && -z "${PIPELINE_FASTSURFER_ATLAS_FILENAME}" \
+      && -n "${PIPELINE_FASTSURFER_ROOT}" \
+      && -n "${PIPELINE_SUBJECTS}" ]]; then
+    missing_subject_atlases=()
+    for subject in ${PIPELINE_SUBJECTS}; do
+        if [[ ! -f "${PIPELINE_FASTSURFER_ROOT}/${subject}.nii" \
+              && ! -f "${PIPELINE_FASTSURFER_ROOT}/${subject}.nii.gz" ]]; then
+            missing_subject_atlases+=("${PIPELINE_FASTSURFER_ROOT}/${subject}.nii[.gz]")
+        fi
+    done
+
+    if (( ${#missing_subject_atlases[@]} > 0 )); then
+        echo "[ERROR] FastSurfer atlas mode needs a subject-space atlas for each subject." >&2
+        echo "[ERROR] Missing atlas path(s):" >&2
+        printf '  - %s\n' "${missing_subject_atlases[@]}" >&2
+        echo "[ERROR] Do not point this at the raw MNI atlas; the atlas must be aligned to the subject T1/TI grid." >&2
+        exit 2
+    fi
+fi
+
 if ! command -v "${PYTHON}" >/dev/null 2>&1; then
     echo "[ERROR] Python executable not found: ${PYTHON}" >&2
     exit 2

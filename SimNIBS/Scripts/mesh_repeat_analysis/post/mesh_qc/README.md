@@ -25,7 +25,7 @@ For long runs, use the submission helper:
 bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh
 ```
 
-That helper explicitly exports safe log paths into the batch job so cluster-level `LOG_DIR` environment variables cannot break startup. It also defaults the HPC batch path to `RENDERER=gmsh`, so a cluster run now fails loudly if Gmsh rendering is unavailable instead of silently producing PyVista/Pillow-style fallback images.
+That helper explicitly exports safe log paths into the batch job so cluster-level `LOG_DIR` environment variables cannot break startup. It writes Slurm stdout/stderr as `slurm-<jobid>.out` and `slurm-<jobid>.err` in the mesh QC log directory. It also defaults the HPC batch path to `RENDERER=gmsh`, so a cluster run now fails loudly if Gmsh rendering is unavailable instead of silently producing PyVista/Pillow-style fallback images.
 
 The raw Slurm wrapper is still available at:
 
@@ -33,9 +33,10 @@ The raw Slurm wrapper is still available at:
 sbatch mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm
 ```
 
-Default execution is tuned for large interactive HPC sessions:
+Default command-line execution is tuned for large interactive HPC sessions:
 
-- rendering defaults to `--renderer auto`, which prefers Gmsh,
+- direct Python rendering defaults to `--renderer auto`, which prefers Gmsh and then falls back,
+- both Slurm launchers default to `RENDERER=gmsh`, which fails loudly if native Gmsh rendering is unavailable,
 - renders default to `1200 x 1200`,
 - QC and per-mesh rendering use all visible CPUs.
 
@@ -54,6 +55,7 @@ Outputs:
 - `qc_flags.csv`: only non-OK meshes.
 - `qc_exception_details.csv`: per-mesh QC/read exceptions with traceback text.
 - `render_exception_details.csv`: per-mesh render exceptions with traceback text.
+- `render_manifest.csv`: per-render audit trail with requested renderer, actual renderer, output path, and whether the PNG was reused from a previous run.
 - `renders/meshes/*.png`: per-mesh render tiles for meshes that passed QC loading.
 - `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
 - `logs/mesh_qc.log`: stage-level run log.
@@ -88,7 +90,12 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
 - skips geometry QC,
 - reuses the previously written `found_meshes.csv` and `qc_summary.csv`,
 - still skips meshes whose QC flags start with `READ_FAIL`,
+- reuses existing non-empty files in `renders/meshes/`,
 - parallelizes per-mesh PNG rendering with `--workers`.
+
+This means a Gmsh render job that hits a Slurm time limit can be submitted again with the same `--out` directory. Already completed per-mesh PNGs are kept, only missing renders are generated, and mosaics are rebuilt from the combined set.
+
+Resumed PNGs are recorded in `render_manifest.csv` with `actual_renderer=unknown_existing`, because the rerun can only prove that the file already existed. Newly rendered PNGs record the renderer actually used, for example `gmsh`. If a previous run used `--renderer auto` and produced images you do not trust, use a fresh output directory for the Gmsh rerun or remove only the old per-mesh PNGs before rerendering.
 
 For volumetric SimNIBS `.msh` files with tetrahedral cells, QC is run on the exterior boundary extracted from the tetrahedra. Stored triangle elements are used only when no tetrahedra are present, because stored triangles may include internal tissue interfaces and can look non-manifold even when the volume mesh is valid.
 

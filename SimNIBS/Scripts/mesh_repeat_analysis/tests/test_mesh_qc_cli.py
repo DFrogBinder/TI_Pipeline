@@ -650,6 +650,72 @@ def test_cli_render_only_uses_existing_qc_outputs(tmp_path, monkeypatch):
     assert (out_dir / "mosaics" / "all_mesh_wall.png").exists()
 
 
+def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
+    out_dir = tmp_path / "qc"
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "sub-CC1.msh",
+            roi="unknown_roi",
+            subject="sub-CC1",
+            repeat="repeat_01",
+            mesh_id="m2m_sub-CC1",
+        ),
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "sub-CC2.msh",
+            roi="unknown_roi",
+            subject="sub-CC2",
+            repeat="repeat_01",
+            mesh_id="m2m_sub-CC2",
+        ),
+    ]
+    summary_rows = [
+        {
+            "mesh_id": record.mesh_id,
+            "subject": record.subject,
+            "repeat": record.repeat,
+            "roi": record.roi,
+            "path": str(record.path),
+            "status": "OK",
+            "flags": "",
+        }
+        for record in records
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1", "--progress", "none"]
+    )
+    existing_png = out_dir / "renders" / "meshes" / "00001__sub-CC1__repeat_01__m2m_sub-CC1__sub-CC1.png"
+    existing_png.parent.mkdir(parents=True)
+    existing_png.write_bytes(b"already rendered")
+    rendered = []
+    mosaic_inputs = []
+
+    def fake_render(path, out_png, *, label, image_size, renderer):
+        rendered.append(path)
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"new render")
+        return "gmsh"
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        mosaic_inputs.extend(image_paths)
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"fake mosaic")
+
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+
+    run_mesh_qc._render_outputs(records, summary_rows, out_dir, args)
+
+    assert rendered == [records[1].path]
+    assert mosaic_inputs[0] == existing_png
+    assert mosaic_inputs[1].name.startswith("00002__sub-CC2__")
+    with (out_dir / "render_manifest.csv").open(newline="", encoding="utf-8") as f:
+        manifest_rows = list(csv.DictReader(f))
+    assert [row["subject"] for row in manifest_rows] == ["sub-CC1", "sub-CC2"]
+    assert [row["actual_renderer"] for row in manifest_rows] == ["unknown_existing", "gmsh"]
+    assert [row["requested_renderer"] for row in manifest_rows] == ["auto", "auto"]
+    assert [row["resumed"] for row in manifest_rows] == ["1", "0"]
+
+
 def test_render_outputs_uses_parallel_workers_when_requested(tmp_path, monkeypatch):
     out_dir = tmp_path / "qc"
     records = [

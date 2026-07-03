@@ -166,6 +166,8 @@ Default behavior:
 
 This means a mesh with `NONMANIFOLD_EDGES` or `DEGENERATE_FACES` is still expected to appear in the wall for visual inspection.
 
+The direct Python CLI keeps `auto` as its default renderer. The HPC Slurm launchers default to `gmsh` so batch visualization jobs fail clearly if native Gmsh rendering is unavailable instead of silently falling back to the software preview path.
+
 Renderer selection order:
 
 1. Gmsh,
@@ -224,6 +226,7 @@ The main outputs are:
 - `qc_flags.csv`: subset of rows where `status != OK`,
 - `qc_exception_details.csv`: per-mesh QC/read exceptions with error type, message, and traceback,
 - `render_exception_details.csv`: per-mesh render exceptions with error type, message, and traceback,
+- `render_manifest.csv`: one row per successful render, including requested renderer, actual renderer, output PNG, and whether the image was reused from an earlier run,
 - `renders/meshes/*.png`: per-mesh renders for non-`READ_FAIL` meshes,
 - `mosaics/all_mesh_wall.png`: combined visual wall,
 - `render_failures.txt`: meshes that passed QC loading but failed rendering.
@@ -264,10 +267,18 @@ Behavior:
 - skip geometry QC,
 - load `found_meshes.csv` and `qc_summary.csv` from `--out`,
 - render only meshes whose `flags` field does not start with `READ_FAIL`,
+- treat existing non-empty files in `renders/meshes/` as completed renders,
 - parallelize those per-mesh renders according to `--workers`,
+- write `render_manifest.csv` so the run can be audited for actual renderer use and resumed files,
 - rebuild mosaics from those rendered images.
 
 This mode is intended for rerendering after QC has already completed, for example when changing the renderer, image size, or wall layout.
+
+Because Gmsh rendering is slower than the software fallbacks, this mode is also the recovery path for Slurm wall-clock limits. Re-running the same render-only command continues from the missing PNGs instead of overwriting completed ones.
+
+Resumed files are marked with `actual_renderer=unknown_existing`, because an existing PNG does not prove how it was originally produced. Newly generated files record the renderer returned by the render backend, such as `gmsh`, `pyvista`, or `pillow`.
+
+The render loop and mosaic assembly are separate. A Slurm log can therefore show `RENDER Complete` for all individual PNGs and still be cancelled afterwards if the job hits its wall-clock limit while building `mosaics/all_mesh_wall.png`.
 
 ## Logging And Crash Diagnostics
 
@@ -279,6 +290,7 @@ Current behavior:
 - The resolved root/output paths, selected stage, renderer, worker request, visible CPU context, detected memory budget, and key Slurm variables are written to `logs/run_context.json`.
 - Per-mesh exceptions during QC loading or QC computation are written to `qc_exception_details.csv`.
 - Per-mesh exceptions during rendering are written to `render_exception_details.csv`.
+- Successful render provenance is written to `render_manifest.csv`.
 - If the pipeline aborts outside the per-mesh exception paths, a full traceback is written to `logs/fatal_error.txt`.
 
 This logging is specifically intended to preserve evidence for pathing mistakes, dependency issues, virtual-display failures, and worker-pool crashes that would otherwise be visible only in transient stdout/stderr.

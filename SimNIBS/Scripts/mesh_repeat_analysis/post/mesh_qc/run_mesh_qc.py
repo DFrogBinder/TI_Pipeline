@@ -15,7 +15,7 @@ import time
 import traceback
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from collections import defaultdict
+from collections import Counter, defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +69,17 @@ EXCEPTION_FIELDS = (
     "error_type",
     "error_message",
     "traceback",
+)
+RENDER_MANIFEST_FIELDS = (
+    "mesh_id",
+    "subject",
+    "repeat",
+    "roi",
+    "path",
+    "output_path",
+    "requested_renderer",
+    "actual_renderer",
+    "resumed",
 )
 
 
@@ -1003,25 +1014,54 @@ def _render_record_worker(
     *,
     image_size: int,
     renderer: str,
-) -> dict[str, object] | None:
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     label = f"{record.subject}\n{record.repeat}\n{record.mesh_id}"
     try:
-        render_mesh_png(
+        actual_renderer = render_mesh_png(
             record.path,
             out_png,
             label=label,
             image_size=image_size,
             renderer=renderer,
-        )
-        return None
-    except Exception as exc:
-        return _exception_row(
+        ) or renderer
+        return None, _render_manifest_row(
             record,
-            stage="render",
-            exc=exc,
-            traceback_text=traceback.format_exc(),
-            output_path=out_png,
+            out_png,
+            requested_renderer=renderer,
+            actual_renderer=str(actual_renderer),
+            resumed=False,
         )
+    except Exception as exc:
+        return (
+            _exception_row(
+                record,
+                stage="render",
+                exc=exc,
+                traceback_text=traceback.format_exc(),
+                output_path=out_png,
+            ),
+            None,
+        )
+
+
+def _render_manifest_row(
+    record: MeshRecord,
+    out_png: Path,
+    *,
+    requested_renderer: str,
+    actual_renderer: str,
+    resumed: bool,
+) -> dict[str, object]:
+    row = _record_row(record)
+    row.update(
+        {
+            "output_path": str(out_png),
+            "requested_renderer": requested_renderer,
+            "actual_renderer": actual_renderer,
+            "resumed": "1" if resumed else "0",
+        }
+    )
+    return row
 
 
 def _render_record_worker_profiled(
@@ -1029,21 +1069,21 @@ def _render_record_worker_profiled(
     out_png: Path,
     image_size: int,
     renderer: str,
-) -> tuple[dict[str, object] | None, int]:
-    failure_row = _render_record_worker(
+) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
+    failure_row, manifest_row = _render_record_worker(
         record,
         out_png,
         image_size=image_size,
         renderer=renderer,
     )
-    return failure_row, _maxrss_bytes()
+    return failure_row, manifest_row, _maxrss_bytes()
 
 
 def _render_worker_exit_payload(
     record: MeshRecord,
     out_png: Path,
     exitcode: int,
-) -> tuple[dict[str, object], int]:
+) -> tuple[dict[str, object], None, int]:
     message = f"worker process exited before returning a render result (exitcode={exitcode})"
     return (
         _exception_row(
@@ -1053,6 +1093,7 @@ def _render_worker_exit_payload(
             traceback_text=message,
             output_path=out_png,
         ),
+        None,
         0,
     )
 
@@ -1063,7 +1104,7 @@ def _run_render_isolated_once(
     *,
     image_size: int,
     renderer: str,
-) -> tuple[dict[str, object] | None, int]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
     payload, exitcode = _run_isolated_worker(
         _render_record_worker_profiled,
         record,
@@ -1082,14 +1123,14 @@ def _run_render_direct_once(
     *,
     image_size: int,
     renderer: str,
-) -> tuple[dict[str, object] | None, int]:
-    failure_row = _render_record_worker(
+) -> tuple[dict[str, object] | None, dict[str, object] | None, int]:
+    failure_row, manifest_row = _render_record_worker(
         record,
         out_png,
         image_size=image_size,
         renderer=renderer,
     )
-    return failure_row, 0
+    return failure_row, manifest_row, 0
 
 
 def _run_render_warmup_samples(
@@ -1097,6 +1138,7 @@ def _run_render_warmup_samples(
     args: argparse.Namespace,
     rendered_slots: list[Path | None],
     failure_rows: list[dict[str, object]],
+    manifest_rows: list[dict[str, object]],
     progress,
 ) -> tuple[int, int | None, list[tuple[int, MeshRecord, Path]]]:
     warmup_count = 0
@@ -1106,7 +1148,7 @@ def _run_render_warmup_samples(
     completed = 0
     peak_rss = 0
     for slot_idx, record, out_png in task_specs[:warmup_count]:
-        failure_row, rss_bytes = _run_render_isolated_once(
+        failure_row, manifest_row, rss_bytes = _run_render_isolated_once(
             record,
             out_png,
             image_size=args.image_size,
@@ -1117,6 +1159,8 @@ def _run_render_warmup_samples(
             progress.update(completed + 1, _mesh_detail(record, "FAILED"))
         else:
             rendered_slots[slot_idx] = out_png
+            if manifest_row is not None:
+                manifest_rows.append(manifest_row)
             progress.update(completed + 1, _mesh_detail(record))
         peak_rss = max(peak_rss, rss_bytes)
         completed += 1
@@ -1129,6 +1173,7 @@ def _run_render_parallel_attempt(
     workers: int,
     rendered_slots: list[Path | None],
     failure_rows: list[dict[str, object]],
+    manifest_rows: list[dict[str, object]],
     progress,
     completed: int,
 ) -> tuple[int, list[tuple[int, MeshRecord, Path]], int, Exception | None]:
@@ -1156,7 +1201,7 @@ def _run_render_parallel_attempt(
                 future = next(iter(as_completed(tuple(in_flight))))
                 current_task = in_flight.pop(future)
                 slot_idx, record, out_png = current_task
-                failure_row, rss_bytes = future.result()
+                failure_row, manifest_row, rss_bytes = future.result()
                 peak_rss = max(peak_rss, rss_bytes)
                 completed += 1
                 if failure_row is not None:
@@ -1164,6 +1209,8 @@ def _run_render_parallel_attempt(
                     progress.update(completed, _mesh_detail(record, "FAILED"))
                 else:
                     rendered_slots[slot_idx] = out_png
+                    if manifest_row is not None:
+                        manifest_rows.append(manifest_row)
                     progress.update(completed, _mesh_detail(record))
                 current_task = None
 
@@ -1261,12 +1308,37 @@ def _render_outputs(
         task_specs.append((idx - 1, record, out_png))
 
     rendered_slots: list[Path | None] = [None] * len(task_specs)
+    manifest_rows: list[dict[str, object]] = []
+    remaining_task_specs = []
+    resumed_count = 0
+    for slot_idx, record, out_png in task_specs:
+        try:
+            if out_png.is_file() and out_png.stat().st_size > 0:
+                rendered_slots[slot_idx] = out_png
+                manifest_rows.append(
+                    _render_manifest_row(
+                        record,
+                        out_png,
+                        requested_renderer=args.renderer,
+                        actual_renderer="unknown_existing",
+                        resumed=True,
+                    )
+                )
+                resumed_count += 1
+                continue
+        except OSError:
+            pass
+        remaining_task_specs.append((slot_idx, record, out_png))
+    if resumed_count:
+        print(f"[RENDER] Reusing {resumed_count} existing render(s)", flush=True)
     failure_rows: list[dict[str, object]] = []
     progress = _make_progress_reporter(args, "Render", len(render_records))
     _log_info(
         "RENDER",
         "Starting render stage",
         meshes=len(render_records),
+        existing_renders=resumed_count,
+        pending_renders=len(remaining_task_specs),
         skipped_qc_read_failures=skipped,
         visible_workers=visible_workers,
         memory_budget=_format_bytes(memory_budget_bytes),
@@ -1275,12 +1347,14 @@ def _render_outputs(
 
     with _render_display_context(args):
         completed, sampled_worker_rss_bytes, remaining_specs = _run_render_warmup_samples(
-            task_specs,
+            remaining_task_specs,
             args,
             rendered_slots,
             failure_rows,
+            manifest_rows,
             progress,
         )
+        completed += resumed_count
         workers, worker_details = _choose_stage_worker_count(
             stage="RENDER",
             task_count=len(remaining_specs),
@@ -1308,14 +1382,14 @@ def _render_outputs(
                     )
                 for slot_idx, record, out_png in remaining_specs:
                     if recovery_mode:
-                        failure_row, rss_bytes = _run_render_isolated_once(
+                        failure_row, manifest_row, rss_bytes = _run_render_isolated_once(
                             record,
                             out_png,
                             image_size=args.image_size,
                             renderer=args.renderer,
                         )
                     else:
-                        failure_row, rss_bytes = _run_render_direct_once(
+                        failure_row, manifest_row, rss_bytes = _run_render_direct_once(
                             record,
                             out_png,
                             image_size=args.image_size,
@@ -1328,6 +1402,8 @@ def _render_outputs(
                         progress.update(completed, _mesh_detail(record, "FAILED"))
                     else:
                         rendered_slots[slot_idx] = out_png
+                        if manifest_row is not None:
+                            manifest_rows.append(manifest_row)
                         progress.update(completed, _mesh_detail(record))
                 remaining_specs = []
                 break
@@ -1339,6 +1415,7 @@ def _render_outputs(
                 workers,
                 rendered_slots,
                 failure_rows,
+                manifest_rows,
                 progress,
                 completed,
             )
@@ -1369,9 +1446,9 @@ def _render_outputs(
     progress.complete()
 
     successful = [
-        (record, out_png)
-        for (_, record, _), out_png in zip(task_specs, rendered_slots)
-        if out_png is not None
+        (record, rendered_slots[slot_idx])
+        for slot_idx, record, _ in task_specs
+        if rendered_slots[slot_idx] is not None
     ]
     rendered_by_roi: dict[str, list[Path]] = defaultdict(list)
     all_rendered: list[Path] = []
@@ -1398,7 +1475,17 @@ def _render_outputs(
             tile_size=args.tile_size,
         )
 
+    manifest_rows = sorted(manifest_rows, key=lambda row: str(row["output_path"]))
     _write_optional_csv(out_dir / "render_exception_details.csv", failure_rows, EXCEPTION_FIELDS)
+    _write_optional_csv(out_dir / "render_manifest.csv", manifest_rows, RENDER_MANIFEST_FIELDS)
+    renderer_counts = Counter(str(row["actual_renderer"]) for row in manifest_rows)
+    if renderer_counts:
+        _log_info(
+            "RENDER",
+            "Render manifest written",
+            path=str(out_dir / "render_manifest.csv"),
+            renderer_counts=" ".join(f"{key}:{renderer_counts[key]}" for key in sorted(renderer_counts)),
+        )
 
     if failure_rows:
         fail_path = out_dir / "render_failures.txt"

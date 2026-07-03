@@ -10,6 +10,9 @@ def test_submit_mesh_qc_helper_exports_safe_log_paths():
     text = script.read_text(encoding="utf-8")
 
     assert "--export=" in text
+    assert "--output=" in text
+    assert "--error=" in text
+    assert "SLURM_ERROR" in text
     assert "MESH_QC_LOG_DIR=" in text
     assert "LOG_DIR=" in text
     assert 'RENDERER_CONFIG="gmsh"' in text

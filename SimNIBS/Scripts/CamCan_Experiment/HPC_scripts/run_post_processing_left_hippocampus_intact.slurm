@@ -30,4 +30,4 @@ PIPELINE_PLOT_ROI=""
 PIPELINE_MNI_BASELINE_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data/MNI152-left-hippocampus"
 PIPELINE_MNI_FIXED_ATLAS_PATH="/mnt/parscratch/users/cop23bi/ZIPs/atlases/sub-mni152.nii.gz"
 
-source "${SCRIPT_DIR}/run_post_processing_batch_common.sh"
+source "${REPO_DIR}/HPC_scripts/run_post_processing_batch_common.sh"

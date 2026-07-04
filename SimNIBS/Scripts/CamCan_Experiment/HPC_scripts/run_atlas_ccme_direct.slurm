@@ -18,6 +18,7 @@ ATLAS_SUBJECT="${ATLAS_SUBJECT:-sub-CCMe}"
 ATLAS_THREADS_PER_JOB="${ATLAS_THREADS_PER_JOB:-${SLURM_CPUS_PER_TASK:-9}}"
 FREESURFER_MODULE="${FREESURFER_MODULE:-FreeSurfer/7.4.1-centos7_x86_64}"
 RECON_ALL_EXTRA_ARGS="${RECON_ALL_EXTRA_ARGS:--cw256}"
+ATLAS_TRACE="${ATLAS_TRACE:-0}"
 
 if ! type module >/dev/null 2>&1; then
     if [[ -f /etc/profile.d/modules.sh ]]; then
@@ -46,6 +47,7 @@ echo "[INFO] License:     ${ATLAS_LICENSE_PATH}"
 echo "[INFO] Threads:     ${ATLAS_THREADS_PER_JOB}"
 echo "[INFO] FS module:   ${FREESURFER_MODULE}"
 echo "[INFO] Recon args:  ${RECON_ALL_EXTRA_ARGS}"
+echo "[INFO] Trace mode:  ${ATLAS_TRACE}"
 echo "[INFO] recon-all:   $(command -v recon-all || true)"
 echo "[INFO] mri_convert: $(command -v mri_convert || true)"
 echo
@@ -81,9 +83,14 @@ echo
 
 cd "${REPO_DIR}" || exit 2
 
+trace_args=()
+if [[ "${ATLAS_TRACE}" == "1" ]]; then
+    trace_args=(-x)
+fi
+
 ATLAS_BACKEND=native \
 RECON_ALL_EXTRA_ARGS="${RECON_ALL_EXTRA_ARGS}" \
-bash -x atlas/make_atlas.sh \
+bash "${trace_args[@]}" atlas/make_atlas.sh \
     "${ATLAS_DATA_DIR}" \
     "${ATLAS_THREADS_PER_JOB}" \
     "${ATLAS_LICENSE_PATH}" \

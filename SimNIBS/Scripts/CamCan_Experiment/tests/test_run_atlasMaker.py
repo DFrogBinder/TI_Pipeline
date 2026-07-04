@@ -147,6 +147,137 @@ cp "$1" "$2"
     assert "aparc.a2009s+aseg.mgz" in convert_log.read_text(encoding="utf-8")
 
 
+def test_make_atlas_native_backend_does_not_precreate_subject_before_input_recon(tmp_path: Path):
+    data_dir = tmp_path / "CamCan_Data"
+    subject = "sub-01"
+    anat_dir = data_dir / subject / "anat"
+    anat_dir.mkdir(parents=True)
+    (anat_dir / f"{subject}_T1w.nii.gz").write_text("t1", encoding="utf-8")
+    license_path = tmp_path / "license.txt"
+    license_path.write_text("license", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    recon_log = tmp_path / "recon-all.log"
+
+    write_executable(
+        bin_dir / "recon-all",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "{recon_log}"
+sid=""
+has_input=0
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    -s) sid="$2"; shift 2 ;;
+    -i) has_input=1; shift 2 ;;
+    *) shift ;;
+  esac
+done
+subject_dir="${{SUBJECTS_DIR}}/${{sid}}"
+if [[ "${{has_input}}" == "1" && -d "${{subject_dir}}" ]]; then
+  echo "recon-all refuses -i for an existing subject directory" >&2
+  exit 64
+fi
+mkdir -p "${{subject_dir}}/mri" "${{subject_dir}}/surf" "${{subject_dir}}/scripts"
+printf 't1' > "${{subject_dir}}/mri/T1.mgz"
+printf 'destrieux' > "${{subject_dir}}/mri/aparc.a2009s+aseg.mgz"
+touch "${{subject_dir}}/surf/lh.white" "${{subject_dir}}/surf/rh.white"
+touch "${{subject_dir}}/scripts/recon-all.done"
+""",
+    )
+    write_executable(
+        bin_dir / "mri_convert",
+        """#!/usr/bin/env bash
+set -euo pipefail
+cp "$1" "$2"
+""",
+    )
+
+    script = Path(__file__).resolve().parents[1] / "atlas" / "make_atlas.sh"
+    env = os.environ.copy()
+    env["ATLAS_BACKEND"] = "native"
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(script), str(data_dir), "2", str(license_path), subject],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (data_dir / "FastSurfer_out" / subject / "mri" / "aparc.a2009s+aseg.nii.gz").is_file()
+    assert f"-s {subject}" in recon_log.read_text(encoding="utf-8")
+
+
+def test_make_atlas_native_backend_removes_stale_empty_subject_before_input_recon(tmp_path: Path):
+    data_dir = tmp_path / "CamCan_Data"
+    subject = "sub-01"
+    anat_dir = data_dir / subject / "anat"
+    anat_dir.mkdir(parents=True)
+    (anat_dir / f"{subject}_T1w.nii.gz").write_text("t1", encoding="utf-8")
+    license_path = tmp_path / "license.txt"
+    license_path.write_text("license", encoding="utf-8")
+    (data_dir / "FastSurfer_out" / subject).mkdir(parents=True)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    recon_log = tmp_path / "recon-all.log"
+
+    write_executable(
+        bin_dir / "recon-all",
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "{recon_log}"
+sid=""
+has_input=0
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    -s) sid="$2"; shift 2 ;;
+    -i) has_input=1; shift 2 ;;
+    *) shift ;;
+  esac
+done
+subject_dir="${{SUBJECTS_DIR}}/${{sid}}"
+if [[ "${{has_input}}" == "1" && -d "${{subject_dir}}" ]]; then
+  echo "recon-all refuses -i for an existing subject directory" >&2
+  exit 64
+fi
+mkdir -p "${{subject_dir}}/mri" "${{subject_dir}}/surf" "${{subject_dir}}/scripts"
+printf 't1' > "${{subject_dir}}/mri/T1.mgz"
+printf 'destrieux' > "${{subject_dir}}/mri/aparc.a2009s+aseg.mgz"
+touch "${{subject_dir}}/surf/lh.white" "${{subject_dir}}/surf/rh.white"
+touch "${{subject_dir}}/scripts/recon-all.done"
+""",
+    )
+    write_executable(
+        bin_dir / "mri_convert",
+        """#!/usr/bin/env bash
+set -euo pipefail
+cp "$1" "$2"
+""",
+    )
+
+    script = Path(__file__).resolve().parents[1] / "atlas" / "make_atlas.sh"
+    env = os.environ.copy()
+    env["ATLAS_BACKEND"] = "native"
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(script), str(data_dir), "2", str(license_path), subject],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (data_dir / "FastSurfer_out" / subject / "mri" / "aparc.a2009s+aseg.nii.gz").is_file()
+    assert f"-s {subject}" in recon_log.read_text(encoding="utf-8")
+
+
 def test_make_atlas_native_backend_converts_existing_destrieux_mgz_without_recon(tmp_path: Path):
     data_dir = tmp_path / "CamCan_Data"
     subject = "sub-01"

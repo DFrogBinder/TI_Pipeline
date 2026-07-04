@@ -233,6 +233,10 @@ process_subject_native() {
     if subject_dir_has_state "${subj_dir_host}"; then
       recon-all -s "${sid}" -all -openmp "${threads}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}" || return 1
     else
+      if [[ -d "${subj_dir_host}" ]]; then
+        log "[cleanup] ${sid}: Removing empty subject directory before initial recon-all."
+        rmdir "${subj_dir_host}" || return 1
+      fi
       recon-all -s "${sid}" -i "${t1_host}" -all -openmp "${threads}" "${RECON_ALL_EXTRA_ARGS_ARRAY[@]}" || return 1
     fi
     log "[done] ${sid}: Native FreeSurfer recon-all."
@@ -415,8 +419,6 @@ for SID in "${SUBJECT_IDS[@]}"; do
     report_progress "${completed_count}" "${total_subjects}" "${total_subject_duration}" "${timed_count}"
     continue
   fi
-
-  mkdir -p "${SUBJ_DIR_HOST}"
 
   log "=== ${SID}: starting processing ==="
   subject_start=$(date +%s)

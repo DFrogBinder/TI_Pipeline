@@ -9,9 +9,15 @@
 #SBATCH --output=mesh_qc_%j.out
 #SBATCH --error=mesh_qc_%j.err
 
+XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
+XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
+
 module purge
 module use "$HOME/modules"
 module load SimNIBS/4.0.1-foss-2023a
+if [ -n "${XVFB_MODULE}" ]; then
+    module load "${XVFB_MODULE}"
+fi
 
 export PYTHONNOUSERSITE=1
 
@@ -110,6 +116,9 @@ echo "[INFO] Progress mode:  ${PROGRESS_MODE}"
 echo "[INFO] Check comps:    ${CHECK_COMPONENTS}"
 echo "[INFO] ROI walls:      ${ROI_WALLS}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
+echo "[INFO] Xvfb module:    ${XVFB_MODULE:-<none>}"
+echo "[INFO] Xvfb path:      $(which Xvfb 2>/dev/null || echo '<not found>')"
+echo "[INFO] xvfb-run path:  $(which xvfb-run 2>/dev/null || echo '<not found>')"
 
 PYTHON_CMD=(
     python

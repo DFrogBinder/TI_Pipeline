@@ -90,7 +90,7 @@ export POST_EXPORT_WORKERS="${POST_COLLECT_WORKERS}"
 module purge
 
 activate_post_python() {
-    if [[ -n "${PYTHON}" ]]; then
+    if [[ -n "${PYTHON}" && "${PYTHON}" == /* ]]; then
         return
     fi
 
@@ -139,6 +139,10 @@ activate_post_python() {
 }
 
 activate_post_python
+hash -r
+if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" && "${PYTHON}" != /* ]]; then
+    PYTHON="${CONDA_PREFIX}/bin/python"
+fi
 PYTHON="${PYTHON:-python}"
 
 echo "[INFO] Repository:       ${REPO_DIR}"

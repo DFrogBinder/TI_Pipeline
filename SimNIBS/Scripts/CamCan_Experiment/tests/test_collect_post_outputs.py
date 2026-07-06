@@ -7,6 +7,19 @@ from post.utils.collect_post_outputs import (
 )
 
 
+def test_collect_post_outputs_slurm_prefers_activated_conda_python():
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "HPC_scripts"
+        / "collect_post_outputs.slurm"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert '${CONDA_PREFIX}/bin/python' in text
+    assert '"${PYTHON}" != /*' in text
+    assert 'hash -r' in text
+
+
 def test_build_export_plan_for_batch_root_includes_post_population_and_summary(tmp_path):
     dataset_root = tmp_path / "Left_Hippocampus_Data_01"
     post_dir = dataset_root / "sub-01" / "anat" / "post"

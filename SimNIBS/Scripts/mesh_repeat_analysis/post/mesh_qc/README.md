@@ -168,6 +168,17 @@ When `--renderer gmsh` is forced, the render stage now runs a single-mesh Gmsh p
 MESH_QC_GMSH_TIMEOUT_SECONDS=120
 ```
 
+On Stanage, the SimNIBS module can put a bundled `gmsh` on `PATH` that fails on older nodes with a `GLIBC_2.23 not found` error. The renderer validates `gmsh -version` and skips unusable `gmsh` binaries. For Slurm runs, prefer loading a compatible Gmsh module or setting an explicit binary:
+
+```bash
+GMSH_MODULE=gmsh/<compatible-module-name>
+MESH_QC_GMSH_BIN=/path/to/compatible/gmsh
+```
+
+`MESH_QC_GMSH_BIN` takes precedence when set.
+
+For `MESH_QC_STAGE=render` with `RENDERER=gmsh`, the Slurm wrapper skips loading the SimNIBS module by default. This avoids Stanage module-stack conflicts where `SimNIBS/4.0.1-foss-2023a` loads `GCCcore/12.3.0`, while the site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0` modules require `GCCcore/12.2.0`. Force the old behavior only for debugging with `MESH_QC_LOAD_SIMNIBS_FOR_RENDER=1`.
+
 The Pillow path remains available as a last-resort software fallback. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based frontal preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.

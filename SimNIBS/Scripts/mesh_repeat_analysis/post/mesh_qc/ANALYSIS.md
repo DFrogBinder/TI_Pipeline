@@ -182,6 +182,9 @@ Gmsh renderer details:
 - If `--renderer gmsh` is forced, the stage renders one mesh as a strict preflight before starting the worker pool.
 - If that forced-Gmsh preflight fails, the stage aborts immediately and writes the first error to `render_exception_details.csv` and `render_failures.txt` instead of recording thousands of duplicate failures.
 - Gmsh subprocesses are bounded by `MESH_QC_GMSH_TIMEOUT_SECONDS`, defaulting to 120 seconds.
+- The selected Gmsh binary is validated with `gmsh -version`; unusable binaries, such as the SimNIBS-bundled Gmsh that fails with `GLIBC_2.23 not found` on some Stanage nodes, are skipped or rejected before rendering.
+- Slurm runs can select a compatible Gmsh with `GMSH_MODULE` or bypass `PATH` entirely with `MESH_QC_GMSH_BIN`.
+- On Stanage render-only Gmsh jobs skip loading `SimNIBS/4.0.1-foss-2023a` by default, because that module loads `GCCcore/12.3.0` while the compatible site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0` modules need `GCCcore/12.2.0`.
 - The intended effect is a render that looks much closer to opening the mesh in Gmsh than the earlier software preview did.
 
 Pillow fallback details:

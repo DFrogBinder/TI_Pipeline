@@ -12,6 +12,9 @@ import numpy as np
 from .loaders import load_surface_arrays
 
 
+_GMSH_BIN_CACHE: str | None = None
+
+
 def render_mesh_png(
     path: Path,
     out_png: Path,
@@ -178,15 +181,79 @@ def _validated_surface_arrays(surface) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _build_gmsh_command(script_path: Path) -> list[str]:
-    gmsh_bin = shutil.which("gmsh")
-    if gmsh_bin is None:
-        raise RuntimeError("gmsh executable was not found in PATH.")
+    gmsh_bin = _find_gmsh_binary()
     cmd = [gmsh_bin, str(script_path), "-nopopup", "-v", "2"]
     if not os.environ.get("DISPLAY"):
         xvfb_run = shutil.which("xvfb-run")
         if xvfb_run is not None:
             cmd = [xvfb_run, "-a", *cmd]
     return cmd
+
+
+def _find_gmsh_binary() -> str:
+    global _GMSH_BIN_CACHE
+    if _GMSH_BIN_CACHE is not None:
+        return _GMSH_BIN_CACHE
+
+    failures = []
+    for candidate in _candidate_gmsh_binaries():
+        ok, detail = _gmsh_binary_is_usable(candidate)
+        if ok:
+            _GMSH_BIN_CACHE = candidate
+            return candidate
+        failures.append(f"{candidate}: {detail}")
+
+    detail = "; ".join(failures) if failures else "no gmsh executable was found in PATH"
+    raise RuntimeError(
+        "No usable gmsh executable was found. "
+        "Set MESH_QC_GMSH_BIN to a compatible gmsh binary or load a compatible Gmsh module. "
+        f"Tried: {detail}"
+    )
+
+
+def _candidate_gmsh_binaries() -> list[str]:
+    override = os.environ.get("MESH_QC_GMSH_BIN")
+    if override:
+        return [str(Path(override).expanduser())]
+
+    candidates = []
+    seen = set()
+    for item in os.environ.get("PATH", "").split(os.pathsep):
+        if not item:
+            continue
+        candidate = str(Path(item) / "gmsh")
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            candidates.append(candidate)
+    return candidates
+
+
+def _gmsh_binary_is_usable(gmsh_bin: str) -> tuple[bool, str]:
+    try:
+        completed = subprocess.run(
+            [gmsh_bin, "-version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_gmsh_version_timeout_seconds(),
+        )
+    except Exception as exc:
+        return False, str(exc)
+    if completed.returncode == 0:
+        return True, (completed.stdout or completed.stderr).strip()
+    detail = completed.stderr.strip() or completed.stdout.strip() or f"exit status {completed.returncode}"
+    return False, detail
+
+
+def _gmsh_version_timeout_seconds() -> int:
+    raw = os.environ.get("MESH_QC_GMSH_VERSION_TIMEOUT_SECONDS", "10")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 10
+    return max(value, 1)
 
 
 def _build_gmsh_geo_script(surface_msh: Path, out_png: Path, *, image_size: int) -> str:

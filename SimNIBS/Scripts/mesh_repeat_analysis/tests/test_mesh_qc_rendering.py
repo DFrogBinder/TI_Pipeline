@@ -234,6 +234,42 @@ def test_gmsh_renderer_reports_timeout_as_runtime_error(tmp_path, monkeypatch):
         rendering._render_with_gmsh(mesh_path, out, label="mesh", image_size=320)
 
 
+def test_find_gmsh_binary_skips_unusable_path_entries(tmp_path, monkeypatch):
+    bad_dir = tmp_path / "bad"
+    good_dir = tmp_path / "good"
+    bad_dir.mkdir()
+    good_dir.mkdir()
+    bad = bad_dir / "gmsh"
+    good = good_dir / "gmsh"
+    bad.write_text(
+        "#!/bin/sh\n"
+        "echo \"gmsh: /lib64/libm.so.6: version GLIBC_2.23 not found\" >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    good.write_text("#!/bin/sh\necho 4.11.1\n", encoding="utf-8")
+    bad.chmod(0o755)
+    good.chmod(0o755)
+
+    monkeypatch.delenv("MESH_QC_GMSH_BIN", raising=False)
+    monkeypatch.setenv("PATH", f"{bad_dir}:{good_dir}")
+    monkeypatch.setattr(rendering, "_GMSH_BIN_CACHE", None)
+
+    assert rendering._find_gmsh_binary() == str(good)
+
+
+def test_find_gmsh_binary_uses_explicit_env_override(tmp_path, monkeypatch):
+    gmsh = tmp_path / "gmsh-custom"
+    gmsh.write_text("#!/bin/sh\necho 4.12.0\n", encoding="utf-8")
+    gmsh.chmod(0o755)
+
+    monkeypatch.setenv("MESH_QC_GMSH_BIN", str(gmsh))
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(rendering, "_GMSH_BIN_CACHE", None)
+
+    assert rendering._find_gmsh_binary() == str(gmsh)
+
+
 def test_pyvista_renderer_uses_shaded_nonfrontal_view(tmp_path, monkeypatch):
     mesh_path = tmp_path / "head.msh"
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")

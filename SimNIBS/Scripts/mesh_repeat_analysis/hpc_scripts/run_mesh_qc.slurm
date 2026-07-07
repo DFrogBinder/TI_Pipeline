@@ -9,15 +9,12 @@
 #SBATCH --output=mesh_qc_%j.out
 #SBATCH --error=mesh_qc_%j.err
 
-XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
-XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
+set -euo pipefail
 
-module purge
-module use "$HOME/modules"
-module load SimNIBS/4.0.1-foss-2023a
-if [ -n "${XVFB_MODULE}" ]; then
-    module load "${XVFB_MODULE}"
-fi
+SIMNIBS_MODULE_CONFIG="SimNIBS/4.0.1-foss-2023a"
+XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
+GMSH_MODULE_CONFIG=""
+MESH_QC_GMSH_BIN_CONFIG=""
 
 export PYTHONNOUSERSITE=1
 
@@ -27,8 +24,6 @@ export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
-
-set -euo pipefail
 
 if [ -n "${LOG_DIR:-}" ] || [ -n "${LOG_FILE:-}" ]; then
     echo "[INFO] Ignoring inherited LOG_DIR/LOG_FILE for mesh QC; use MESH_QC_LOG_DIR/MESH_QC_LOG_FILE instead."
@@ -80,6 +75,35 @@ TILE_SIZE="${TILE_SIZE:-${TILE_SIZE_CONFIG}}"
 COLS="${COLS:-${COLS_CONFIG}}"
 DISCOVERY_PROGRESS_SECONDS="${DISCOVERY_PROGRESS_SECONDS:-${DISCOVERY_PROGRESS_SECONDS_CONFIG}}"
 PROGRESS_EVERY="${PROGRESS_EVERY:-${PROGRESS_EVERY_CONFIG}}"
+SIMNIBS_MODULE="${SIMNIBS_MODULE:-${SIMNIBS_MODULE_CONFIG}}"
+XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
+GMSH_MODULE="${GMSH_MODULE:-${GMSH_MODULE_CONFIG}}"
+MESH_QC_GMSH_BIN="${MESH_QC_GMSH_BIN:-${MESH_QC_GMSH_BIN_CONFIG}}"
+
+SIMNIBS_MODULE_EFFECTIVE="${SIMNIBS_MODULE}"
+if [ "${MESH_QC_STAGE}" = "render" ] && [ "${RENDERER}" = "gmsh" ] && [ "${MESH_QC_LOAD_SIMNIBS_FOR_RENDER:-0}" != "1" ]; then
+    # Stanage's SimNIBS 4.0.1 module loads GCCcore/12.3.0, while the
+    # compatible gmsh/Xvfb modules currently use GCCcore/12.2.0. Render-only
+    # jobs do not need SimNIBS, so skip it unless explicitly forced.
+    SIMNIBS_MODULE_EFFECTIVE=""
+fi
+case "${SIMNIBS_MODULE}" in
+    none|NONE|None|0|false|False|FALSE)
+        SIMNIBS_MODULE_EFFECTIVE=""
+        ;;
+esac
+
+module purge
+module use "$HOME/modules"
+if [ -n "${SIMNIBS_MODULE_EFFECTIVE}" ]; then
+    module load "${SIMNIBS_MODULE_EFFECTIVE}"
+fi
+if [ -n "${GMSH_MODULE}" ]; then
+    module load "${GMSH_MODULE}"
+fi
+if [ -n "${XVFB_MODULE}" ]; then
+    module load "${XVFB_MODULE}"
+fi
 
 if [ -z "${PIPELINE_DIR}" ] || [ ! -d "${PIPELINE_DIR}" ]; then
     echo "[ERROR] Pipeline directory does not exist: ${PIPELINE_DIR}" >&2
@@ -116,9 +140,36 @@ echo "[INFO] Progress mode:  ${PROGRESS_MODE}"
 echo "[INFO] Check comps:    ${CHECK_COMPONENTS}"
 echo "[INFO] ROI walls:      ${ROI_WALLS}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
+echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE_EFFECTIVE:-<none>}"
+echo "[INFO] SimNIBS request: ${SIMNIBS_MODULE:-<none>}"
+echo "[INFO] Gmsh module:    ${GMSH_MODULE:-<none>}"
 echo "[INFO] Xvfb module:    ${XVFB_MODULE:-<none>}"
+if [ -n "${MESH_QC_GMSH_BIN}" ]; then
+    export MESH_QC_GMSH_BIN
+fi
+GMSH_CHECK_BIN="${MESH_QC_GMSH_BIN:-$(command -v gmsh 2>/dev/null || true)}"
+echo "[INFO] Gmsh override:  ${MESH_QC_GMSH_BIN:-<none>}"
+echo "[INFO] Gmsh path:      ${GMSH_CHECK_BIN:-<not found>}"
 echo "[INFO] Xvfb path:      $(which Xvfb 2>/dev/null || echo '<not found>')"
 echo "[INFO] xvfb-run path:  $(which xvfb-run 2>/dev/null || echo '<not found>')"
+
+if [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; then
+    if [ -z "${GMSH_CHECK_BIN}" ]; then
+        echo "[ERROR] No gmsh executable found. Load a compatible GMSH_MODULE or set MESH_QC_GMSH_BIN." >&2
+        exit 2
+    fi
+    if ! "${GMSH_CHECK_BIN}" -version >/dev/null 2>&1; then
+        echo "[ERROR] gmsh exists but cannot run: ${GMSH_CHECK_BIN}" >&2
+        "${GMSH_CHECK_BIN}" -version >&2 || true
+        echo "[ERROR] Load a compatible GMSH_MODULE or set MESH_QC_GMSH_BIN to a compatible binary." >&2
+        exit 2
+    fi
+fi
+if [ "${RENDERER}" = "gmsh" ] && [ -z "${DISPLAY:-}" ] && ! command -v Xvfb >/dev/null 2>&1; then
+    echo "[ERROR] Forced Gmsh rendering requires Xvfb when DISPLAY is unset." >&2
+    echo "[ERROR] Load a working XVFB_MODULE or set DISPLAY and MESH_QC_USE_EXISTING_DISPLAY=1." >&2
+    exit 2
+fi
 
 PYTHON_CMD=(
     python

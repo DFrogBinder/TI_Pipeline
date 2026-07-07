@@ -95,6 +95,8 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
 
 This means a Gmsh render job that hits a Slurm time limit can be submitted again with the same `--out` directory. Already completed per-mesh PNGs are kept, only missing renders are generated, and mosaics are rebuilt from the combined set.
 
+Mosaic assembly is separate from per-mesh rendering. Individual renders may be complete even if `mosaics/all_mesh_wall.png` is missing. The mosaic builder uses Pillow first and falls back to ImageMagick `magick montage` or `montage` if Pillow is unavailable. On Slurm, set `IMAGEMAGICK_MODULE=<module-name>` to load a site ImageMagick module after the wrapper's `module purge`, or set `MESH_QC_MONTAGE_BIN=/path/to/magick-or-montage`.
+
 Resumed PNGs are recorded in `render_manifest.csv` with `actual_renderer=unknown_existing`, because the rerun can only prove that the file already existed. Newly rendered PNGs record the renderer actually used, for example `gmsh`. If a previous run used `--renderer auto` and produced images you do not trust, use a fresh output directory for the Gmsh rerun or remove only the old per-mesh PNGs before rerendering.
 
 For volumetric SimNIBS `.msh` files with tetrahedral cells, QC is run on the exterior boundary extracted from the tetrahedra. Stored triangle elements are used only when no tetrahedra are present, because stored triangles may include internal tissue interfaces and can look non-manifold even when the volume mesh is valid.
@@ -178,6 +180,8 @@ MESH_QC_GMSH_BIN=/path/to/compatible/gmsh
 `MESH_QC_GMSH_BIN` takes precedence when set.
 
 For `MESH_QC_STAGE=render` with `RENDERER=gmsh`, the Slurm wrapper skips loading the SimNIBS module by default. This avoids Stanage module-stack conflicts where `SimNIBS/4.0.1-foss-2023a` loads `GCCcore/12.3.0`, while the site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0` modules require `GCCcore/12.2.0`. Force the old behavior only for debugging with `MESH_QC_LOAD_SIMNIBS_FOR_RENDER=1`.
+
+The final mosaic wall still needs an image-composition backend. Pillow is preferred. If Pillow is not installed in the active Python environment, the code falls back to ImageMagick if `magick` or `montage` is on `PATH`.
 
 The Pillow path remains available as a last-resort software fallback. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based frontal preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 

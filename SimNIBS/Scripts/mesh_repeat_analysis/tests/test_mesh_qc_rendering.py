@@ -1,7 +1,8 @@
-import pytest
 import numpy as np
+import pytest
 import sys
 import subprocess
+import builtins
 from pathlib import Path
 
 from mesh_repeat_analysis.post.mesh_qc import rendering
@@ -27,6 +28,65 @@ def test_make_mosaic_combines_png_tiles(tmp_path):
     with Image.open(out) as mosaic:
         assert mosaic.size[0] > 40
         assert mosaic.size[1] > 20
+
+
+def test_make_mosaic_falls_back_to_imagemagick_when_pillow_is_missing(tmp_path, monkeypatch):
+    img1 = tmp_path / "a.png"
+    img2 = tmp_path / "b.png"
+    img1.write_bytes(b"fake-png")
+    img2.write_bytes(b"fake-png")
+    out = tmp_path / "wall.png"
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ModuleNotFoundError("No module named 'PIL'")
+        return real_import(name, *args, **kwargs)
+
+    calls = []
+
+    def fake_which(name):
+        if name == "magick":
+            return "/usr/bin/magick"
+        return None
+
+    def fake_run(cmd, *, check, capture_output, text):
+        calls.append(cmd)
+        out.write_bytes(b"mosaic-png")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(rendering.shutil, "which", fake_which)
+    monkeypatch.setattr(rendering.subprocess, "run", fake_run)
+
+    make_mosaic([img1, img2], out, cols=2, tile_size=20, label_height=10)
+
+    assert out.exists()
+    assert calls
+    assert calls[0][:2] == ["/usr/bin/magick", "montage"]
+    assert str(img1) in calls[0]
+    assert str(img2) in calls[0]
+    assert str(out) == calls[0][-1]
+
+
+def test_make_mosaic_reports_missing_mosaic_backends(tmp_path, monkeypatch):
+    img = tmp_path / "a.png"
+    img.write_bytes(b"fake-png")
+    out = tmp_path / "wall.png"
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ModuleNotFoundError("No module named 'PIL'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(rendering.shutil, "which", lambda name: None)
+
+    with pytest.raises(RuntimeError, match="Pillow.*ImageMagick"):
+        make_mosaic([img], out, cols=1, tile_size=20)
 
 
 def test_pillow_renderer_writes_png_without_pyvista(tmp_path, monkeypatch):

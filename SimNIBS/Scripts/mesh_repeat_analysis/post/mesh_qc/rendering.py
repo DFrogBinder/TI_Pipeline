@@ -508,12 +508,48 @@ def make_mosaic(
     margin: int = 16,
     label_height: int = 28,
 ) -> None:
-    from PIL import Image, ImageDraw
-
     if not image_paths:
         raise ValueError("No images supplied for mosaic.")
 
     image_paths = [Path(p) for p in image_paths]
+    try:
+        _make_mosaic_with_pillow(
+            image_paths,
+            out_png,
+            cols=cols,
+            tile_size=tile_size,
+            padding=padding,
+            margin=margin,
+            label_height=label_height,
+        )
+    except ModuleNotFoundError as exc:
+        if not _is_missing_pillow_error(exc):
+            raise
+        _make_mosaic_with_imagemagick(
+            image_paths,
+            out_png,
+            cols=cols,
+            tile_size=tile_size,
+            padding=padding,
+        )
+
+
+def _is_missing_pillow_error(exc: ModuleNotFoundError) -> bool:
+    return exc.name == "PIL" or str(exc).startswith("No module named 'PIL'")
+
+
+def _make_mosaic_with_pillow(
+    image_paths: list[Path],
+    out_png: Path,
+    *,
+    cols: int | None,
+    tile_size: int,
+    padding: int,
+    margin: int,
+    label_height: int,
+) -> None:
+    from PIL import Image, ImageDraw
+
     cols = cols or math.ceil(math.sqrt(len(image_paths)))
     rows = math.ceil(len(image_paths) / cols)
     per_tile_h = tile_size + label_height
@@ -538,3 +574,71 @@ def make_mosaic(
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_png)
+
+
+def _make_mosaic_with_imagemagick(
+    image_paths: list[Path],
+    out_png: Path,
+    *,
+    cols: int | None,
+    tile_size: int,
+    padding: int,
+) -> None:
+    montage_cmd = _imagemagick_montage_command()
+    if montage_cmd is None:
+        raise RuntimeError(
+            "Pillow is not installed and no ImageMagick montage executable was found. "
+            "Install Pillow in the Python environment, load an ImageMagick module, or set "
+            "MESH_QC_MONTAGE_BIN to a compatible 'magick' or 'montage' executable. "
+            "Existing per-mesh renders can be reused by rerunning the render-only stage."
+        )
+
+    cols = cols or math.ceil(math.sqrt(len(image_paths)))
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        *montage_cmd,
+        "-background",
+        "white",
+        "-fill",
+        "black",
+        "-pointsize",
+        "11",
+        "-label",
+        "%t",
+        "-thumbnail",
+        f"{int(tile_size)}x{int(tile_size)}!",
+        "-tile",
+        f"{int(cols)}x",
+        "-geometry",
+        f"{int(tile_size)}x{int(tile_size)}+{int(padding)}+{int(padding)}",
+        *[str(path) for path in image_paths],
+        str(out_png),
+    ]
+    try:
+        completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError as exc:
+        raise RuntimeError(f"ImageMagick mosaic assembly failed to start: {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit status {completed.returncode}"
+        raise RuntimeError(f"ImageMagick mosaic assembly failed: {detail}")
+    if not out_png.exists():
+        raise RuntimeError(f"ImageMagick mosaic assembly did not write {out_png}")
+
+
+def _imagemagick_montage_command() -> list[str] | None:
+    override = os.environ.get("MESH_QC_MONTAGE_BIN")
+    if override:
+        binary = str(Path(override).expanduser())
+        if Path(binary).name.lower() == "magick":
+            return [binary, "montage"]
+        return [binary]
+
+    magick = shutil.which("magick")
+    if magick is not None:
+        return [magick, "montage"]
+
+    montage = shutil.which("montage")
+    if montage is not None:
+        return [montage]
+
+    return None

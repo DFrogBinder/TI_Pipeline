@@ -15,6 +15,7 @@ SIMNIBS_MODULE_CONFIG="SimNIBS/4.0.1-foss-2023a"
 XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
 GMSH_MODULE_CONFIG=""
 MESH_QC_GMSH_BIN_CONFIG=""
+IMAGEMAGICK_MODULE_CONFIG=""
 
 export PYTHONNOUSERSITE=1
 
@@ -79,6 +80,7 @@ SIMNIBS_MODULE="${SIMNIBS_MODULE:-${SIMNIBS_MODULE_CONFIG}}"
 XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
 GMSH_MODULE="${GMSH_MODULE:-${GMSH_MODULE_CONFIG}}"
 MESH_QC_GMSH_BIN="${MESH_QC_GMSH_BIN:-${MESH_QC_GMSH_BIN_CONFIG}}"
+IMAGEMAGICK_MODULE="${IMAGEMAGICK_MODULE:-${IMAGEMAGICK_MODULE_CONFIG}}"
 
 SIMNIBS_MODULE_EFFECTIVE="${SIMNIBS_MODULE}"
 if [ "${MESH_QC_STAGE}" = "render" ] && [ "${RENDERER}" = "gmsh" ] && [ "${MESH_QC_LOAD_SIMNIBS_FOR_RENDER:-0}" != "1" ]; then
@@ -103,6 +105,9 @@ if [ -n "${GMSH_MODULE}" ]; then
 fi
 if [ -n "${XVFB_MODULE}" ]; then
     module load "${XVFB_MODULE}"
+fi
+if [ -n "${IMAGEMAGICK_MODULE}" ]; then
+    module load "${IMAGEMAGICK_MODULE}"
 fi
 
 if [ -z "${PIPELINE_DIR}" ] || [ ! -d "${PIPELINE_DIR}" ]; then
@@ -144,6 +149,7 @@ echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE_EFFECTIVE:-<none>}"
 echo "[INFO] SimNIBS request: ${SIMNIBS_MODULE:-<none>}"
 echo "[INFO] Gmsh module:    ${GMSH_MODULE:-<none>}"
 echo "[INFO] Xvfb module:    ${XVFB_MODULE:-<none>}"
+echo "[INFO] ImageMagick module: ${IMAGEMAGICK_MODULE:-<none>}"
 if [ -n "${MESH_QC_GMSH_BIN}" ]; then
     export MESH_QC_GMSH_BIN
 fi
@@ -152,6 +158,8 @@ echo "[INFO] Gmsh override:  ${MESH_QC_GMSH_BIN:-<none>}"
 echo "[INFO] Gmsh path:      ${GMSH_CHECK_BIN:-<not found>}"
 echo "[INFO] Xvfb path:      $(which Xvfb 2>/dev/null || echo '<not found>')"
 echo "[INFO] xvfb-run path:  $(which xvfb-run 2>/dev/null || echo '<not found>')"
+echo "[INFO] magick path:    $(which magick 2>/dev/null || echo '<not found>')"
+echo "[INFO] montage path:   $(which montage 2>/dev/null || echo '<not found>')"
 
 if [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; then
     if [ -z "${GMSH_CHECK_BIN}" ]; then

@@ -61,6 +61,22 @@ def test_submitter_exports_configurable_gmsh_module_and_binary_override():
     assert '"${GMSH_CHECK_BIN}" -version' in slurm_text
 
 
+def test_submitter_exports_configurable_imagemagick_module_for_mosaics():
+    repo_root = Path(__file__).resolve().parents[1]
+    submitter = repo_root / "hpc_scripts" / "submit_mesh_qc.sh"
+    slurm_script = repo_root / "hpc_scripts" / "run_mesh_qc.slurm"
+
+    submitter_text = submitter.read_text(encoding="utf-8")
+    slurm_text = slurm_script.read_text(encoding="utf-8")
+
+    assert "IMAGEMAGICK_MODULE_CONFIG" in submitter_text
+    assert "IMAGEMAGICK_MODULE=${IMAGEMAGICK_MODULE}" in submitter_text
+    assert 'echo "[INFO] ImageMagick module:' in submitter_text
+    assert "IMAGEMAGICK_MODULE_CONFIG" in slurm_text
+    assert 'module load "${IMAGEMAGICK_MODULE}"' in slurm_text
+    assert "which montage" in slurm_text
+
+
 def test_submitter_exports_configurable_simnibs_module():
     repo_root = Path(__file__).resolve().parents[1]
     submitter = repo_root / "hpc_scripts" / "submit_mesh_qc.sh"

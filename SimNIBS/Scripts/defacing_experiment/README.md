@@ -19,7 +19,8 @@ The staged experiment covers:
 
 - `left-hippocampus`
 - `left-m1`
-- `10` repeats per target and condition
+- `40` repeats per target and condition
+- `160` total simulations: 2 targets x 2 conditions x 40 repeats
 
 ## Scripts
 
@@ -58,7 +59,8 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --subject sub-CCMe \
   --intact-t1 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T1w.nii.gz \
   --intact-t2 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T2w.nii \
-  --out-root /tmp/defacing_repeat_batch
+  --out-root /tmp/defacing_repeat_batch \
+  --repeats 40
 ```
 
 If `pydeface` is not on `PATH`, pass it explicitly:
@@ -69,6 +71,7 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --intact-t1 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T1w.nii.gz \
   --intact-t2 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T2w.nii \
   --out-root /tmp/defacing_repeat_batch \
+  --repeats 40 \
   --pydeface-bin /home/boyan/fsl/bin/pydeface
 ```
 
@@ -94,7 +97,7 @@ batches:
 
 Each parent root contains:
 
-- `Left_<Target>_Data_01` through `Left_<Target>_Data_10`
+- `Left_<Target>_Data_01` through `Left_<Target>_Data_40`
 - `slurm/manifest.tsv`
 
 Each repeat dataset contains:

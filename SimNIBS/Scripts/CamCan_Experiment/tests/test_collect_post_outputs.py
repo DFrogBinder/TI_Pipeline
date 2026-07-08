@@ -18,6 +18,8 @@ def test_collect_post_outputs_slurm_prefers_activated_conda_python():
     assert '${CONDA_PREFIX}/bin/python' in text
     assert '"${PYTHON}" != /*' in text
     assert 'hash -r' in text
+    expected_repeats = " ".join(f"{idx:02d}" for idx in range(1, 41))
+    assert f'POST_COLLECT_REPEATS="${{POST_COLLECT_REPEATS:-{expected_repeats}}}"' in text
 
 
 def test_build_export_plan_for_batch_root_includes_post_population_and_summary(tmp_path):

@@ -4,6 +4,7 @@ import nibabel as nib
 import numpy as np
 
 from defacing_experiment.prepare_defacing_repeat_batch import (
+    DEFAULT_REPEATS,
     apply_keep_mask,
     build_repeat_batch_specs,
     resample_keep_mask_to_target,
@@ -32,6 +33,21 @@ def test_build_repeat_batch_specs_creates_four_expected_arms(tmp_path):
     assert specs[2].parent_root == tmp_path / "Left_M1_Intact"
     assert specs[3].parent_root == tmp_path / "Left_M1_Defaced"
     assert specs[0].repeat_ids == ("01", "02")
+
+
+def test_defacing_experiment_default_repeat_count_is_40_per_arm(tmp_path):
+    specs = build_repeat_batch_specs(
+        out_root=tmp_path,
+        subject="sub-CCMe",
+        repeats=DEFAULT_REPEATS,
+    )
+
+    assert DEFAULT_REPEATS == 40
+    assert len(specs) == 4
+    for spec in specs:
+        assert len(spec.repeat_ids) == 40
+        assert spec.repeat_ids[0] == "01"
+        assert spec.repeat_ids[-1] == "40"
 
 
 def test_apply_keep_mask_zeroes_voxels_outside_mask():

@@ -1,6 +1,9 @@
 from pathlib import Path
 
 
+REPEATS_01_TO_40 = " ".join(f"{idx:02d}" for idx in range(1, 41))
+
+
 SCRIPTS = {
     "run_post_processing_left_hippocampus_intact.slurm": {
         "batch_root": '/mnt/parscratch/users/cop23bi/defacing_sub_CCMe/defacing_prep/Left_Hippocampus_Intact',
@@ -42,7 +45,7 @@ def test_arm_specific_postprocess_wrappers_exist_and_pin_expected_roots():
         assert 'PIPELINE_MNI_FIXED_ATLAS_PATH=""' in text
         assert 'PIPELINE_WRITE_NEIGHBOR_TABLE="0"' in text
         assert 'PIPELINE_WRITE_NEIGHBOR_VISUALIZATION="0"' in text
-        assert 'BATCH_REPEATS="01 02 03 04 05 06 07 08 09 10"' in text
+        assert f'BATCH_REPEATS="{REPEATS_01_TO_40}"' in text
         assert 'source "${REPO_DIR}/HPC_scripts/run_post_processing_batch_common.sh"' in text
         assert 'source "${SCRIPT_DIR}/run_post_processing_batch_common.sh"' not in text
 

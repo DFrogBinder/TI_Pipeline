@@ -16,6 +16,7 @@ from nibabel.processing import resample_from_to
 
 
 DEFAULT_TARGETS = ("left-hippocampus", "left-m1")
+DEFAULT_REPEATS = 40
 TASK_FIELDNAMES = (
     "task_id",
     "dataset_name",
@@ -393,13 +394,13 @@ def stage_repeat_batches(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate defaced T1/T2 inputs and stage 10-repeat intact/defaced CamCan experiment roots."
+        description="Generate defaced T1/T2 inputs and stage 40-repeat intact/defaced CamCan experiment roots."
     )
     parser.add_argument("--subject", default="sub-CCMe", help="Subject ID. Default: sub-CCMe")
     parser.add_argument("--intact-t1", type=Path, required=True, help="Path to intact T1 NIfTI")
     parser.add_argument("--intact-t2", type=Path, required=True, help="Path to intact T2 NIfTI")
     parser.add_argument("--out-root", type=Path, required=True, help="Output root for generated defaced files and staged experiment roots")
-    parser.add_argument("--repeats", type=int, default=10, help="Number of repeats per arm. Default: 10")
+    parser.add_argument("--repeats", type=int, default=DEFAULT_REPEATS, help=f"Number of repeats per arm. Default: {DEFAULT_REPEATS}")
     parser.add_argument(
         "--targets",
         nargs="+",

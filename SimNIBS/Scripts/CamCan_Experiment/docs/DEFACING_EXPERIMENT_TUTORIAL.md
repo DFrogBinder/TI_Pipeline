@@ -21,7 +21,8 @@ This workflow stages and runs:
 - subject: `sub-CCMe`
 - targets: `left-hippocampus`, `left-m1`
 - conditions: `intact`, `defaced`
-- repeats: `10` per target and condition
+- repeats: `40` per target and condition
+- total simulations: `160`
 
 ## What changed in the runner
 
@@ -43,7 +44,8 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --subject sub-CCMe \
   --intact-t1 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T1w.nii.gz \
   --intact-t2 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T2w.nii \
-  --out-root /tmp/defacing_repeat_batch
+  --out-root /tmp/defacing_repeat_batch \
+  --repeats 40
 ```
 
 If needed, point the script at a specific `pydeface` binary:
@@ -54,6 +56,7 @@ python3 defacing_experiment/prepare_defacing_repeat_batch.py \
   --intact-t1 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T1w.nii.gz \
   --intact-t2 /home/boyan/sandbox/Jake_Data/SimME/sub-CCMe/anat/sub-CCMe_T2w.nii \
   --out-root /tmp/defacing_repeat_batch \
+  --repeats 40 \
   --pydeface-bin /home/boyan/fsl/bin/pydeface
 ```
 
@@ -73,7 +76,7 @@ The script produces:
 
 Each parent root contains:
 
-- `Left_<Target>_Data_01` through `Left_<Target>_Data_10`
+- `Left_<Target>_Data_01` through `Left_<Target>_Data_40`
 - `slurm/manifest.tsv`
 
 Important: the defaced repeats keep the normal filenames
@@ -159,6 +162,31 @@ MAX_CONCURRENT_TASKS=4 \
 bash CamCan_Experiment/HPC_scripts/submit_defacing_repeat_batch.sh
 ```
 
+### Expanding an existing 10-repeat staging tree to the planned 40 repeats
+
+If repeats `01` through `10` have already completed, regenerate or update the
+staged tree with `--repeats 40` and upload the updated parent roots/manifests.
+Then submit only the missing repeat rows by setting `START_TASK_OFFSET=10`.
+
+The manifest task index is zero-based, so:
+
+- `START_TASK_OFFSET=0` starts at repeat `01`
+- `START_TASK_OFFSET=10` starts at repeat `11`
+
+Example for left hippocampus intact:
+
+```bash
+PARENT_ROOT="$BASE/Left_Hippocampus_Intact" \
+MONTAGE_PRESET=left-hippocampus \
+LOG_DIR="$BASE/logs/left_hippocampus_intact_r11_r40" \
+START_TASK_OFFSET=10 \
+bash CamCan_Experiment/HPC_scripts/submit_defacing_repeat_batch.sh
+```
+
+Use the same `START_TASK_OFFSET=10` pattern for the other three arms. Do not
+submit the full manifest from offset `0` unless you intentionally want to rerun
+repeats `01` through `10`.
+
 ## Output layout on HPC
 
 For each parent root, every repeat dataset follows the standard runner layout:
@@ -219,7 +247,7 @@ That entrypoint reads `BATCH_ROOT`, `PIPELINE_MNI_BASELINE_ROOT`, and the other
 
 ## Sanity checks before launch
 
-- each parent root has `10` repeat directories
+- each parent root has `40` repeat directories
 - each parent root has `slurm/manifest.tsv`
 - each repeat has both `sub-CCMe_T1w...` and `sub-CCMe_T2w...`
 - no manual segmentation file is present in the repeat datasets

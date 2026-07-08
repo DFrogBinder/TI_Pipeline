@@ -179,7 +179,11 @@ MESH_QC_GMSH_BIN=/path/to/compatible/gmsh
 
 `MESH_QC_GMSH_BIN` takes precedence when set.
 
-For `MESH_QC_STAGE=render` with `RENDERER=gmsh`, the Slurm wrapper skips loading the SimNIBS module by default. This avoids Stanage module-stack conflicts where `SimNIBS/4.0.1-foss-2023a` loads `GCCcore/12.3.0`, while the site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0` modules require `GCCcore/12.2.0`. Force the old behavior only for debugging with `MESH_QC_LOAD_SIMNIBS_FOR_RENDER=1`.
+For `MESH_QC_STAGE=render` with `RENDERER=gmsh`, the Slurm wrapper still loads the SimNIBS module by default because SimNIBS may be the only provider of `gmsh` on Stanage. If you explicitly configure a separate `GMSH_MODULE` or `MESH_QC_GMSH_BIN` and need to avoid SimNIBS module-stack conflicts, opt out with:
+
+```bash
+MESH_QC_SKIP_SIMNIBS_FOR_RENDER=1
+```
 
 The final mosaic wall still needs an image-composition backend. Pillow is preferred. If Pillow is not installed in the active Python environment, the code falls back to ImageMagick if `magick` or `montage` is on `PATH`.
 

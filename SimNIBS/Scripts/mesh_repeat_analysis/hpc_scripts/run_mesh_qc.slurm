@@ -91,10 +91,9 @@ IMAGEMAGICK_MODULE="${IMAGEMAGICK_MODULE:-${IMAGEMAGICK_MODULE_CONFIG}}"
 SIMNIBS_MODULE_EFFECTIVE="${SIMNIBS_MODULE}"
 GMSH_MODULE_EFFECTIVE="${GMSH_MODULE}"
 XVFB_MODULE_EFFECTIVE="${XVFB_MODULE}"
-if [ "${MESH_QC_STAGE}" = "render" ] && [ "${RENDERER}" = "gmsh" ] && [ "${MESH_QC_LOAD_SIMNIBS_FOR_RENDER:-0}" != "1" ]; then
-    # Stanage's SimNIBS 4.0.1 module loads GCCcore/12.3.0, while the
-    # compatible gmsh/Xvfb modules currently use GCCcore/12.2.0. Render-only
-    # jobs do not need SimNIBS, so skip it unless explicitly forced.
+if [ "${MESH_QC_STAGE}" = "render" ] && [ "${RENDERER}" = "gmsh" ] && [ "${MESH_QC_SKIP_SIMNIBS_FOR_RENDER:-0}" = "1" ]; then
+    # Preserve the historical default: SimNIBS may be the only provider of
+    # gmsh on Stanage. Skip it only when a separate gmsh source is configured.
     SIMNIBS_MODULE_EFFECTIVE=""
 fi
 if [ "${MESH_QC_STAGE}" = "qc" ]; then

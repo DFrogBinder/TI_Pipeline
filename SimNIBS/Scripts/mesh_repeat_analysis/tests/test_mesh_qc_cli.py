@@ -717,6 +717,73 @@ def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
     assert [row["resumed"] for row in manifest_rows] == ["1", "0"]
 
 
+def test_render_completeness_reports_missing_tiles_per_roi(tmp_path):
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "a.msh",
+            roi="Left_M1_Intact",
+            subject="sub-CCMe",
+            repeat="01",
+            mesh_id="m2m_sub-CCMe",
+        ),
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "b.msh",
+            roi="Left_M1_Intact",
+            subject="sub-CCMe",
+            repeat="02",
+            mesh_id="m2m_sub-CCMe",
+        ),
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / "c.msh",
+            roi="Left_M1_Intact",
+            subject="sub-CCMe",
+            repeat="03",
+            mesh_id="m2m_sub-CCMe",
+        ),
+    ]
+    render_records = records[:2]
+    successful = [(records[0], tmp_path / "a.png")]
+    failure_rows = [
+        {
+            "roi": "Left_M1_Intact",
+            "subject": "sub-CCMe",
+            "repeat": "02",
+            "mesh_id": "m2m_sub-CCMe",
+            "path": str(records[1].path),
+            "stage": "render",
+            "output_path": str(tmp_path / "b.png"),
+            "error_type": "RuntimeError",
+            "error_message": "timeout",
+            "traceback": "timeout",
+        }
+    ]
+
+    rows = run_mesh_qc._write_render_completeness_outputs(
+        tmp_path,
+        records=records,
+        render_records=render_records,
+        successful=successful,
+        failure_rows=failure_rows,
+    )
+
+    assert rows == [
+        {
+            "roi": "Left_M1_Intact",
+            "status": "INCOMPLETE",
+            "discovered_meshes": 3,
+            "qc_loadable_meshes": 2,
+            "rendered_meshes": 1,
+            "qc_read_failures": 1,
+            "render_failures": 1,
+            "missing_tiles": 2,
+        }
+    ]
+    with (tmp_path / "render_completeness.csv").open(newline="", encoding="utf-8") as f:
+        csv_rows = list(csv.DictReader(f))
+    assert csv_rows[0]["status"] == "INCOMPLETE"
+    assert csv_rows[0]["missing_tiles"] == "2"
+
+
 def test_render_display_context_prefers_managed_xvfb_for_gmsh(monkeypatch):
     args = run_mesh_qc.build_parser().parse_args(
         ["--root", "/tmp/in", "--out", "/tmp/out", "--renderer", "gmsh"]

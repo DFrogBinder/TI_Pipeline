@@ -22,6 +22,19 @@ def test_collect_post_outputs_slurm_prefers_activated_conda_python():
     assert f'POST_COLLECT_REPEATS="${{POST_COLLECT_REPEATS:-{expected_repeats}}}"' in text
 
 
+def test_collect_post_outputs_slurm_prefers_stanage_checkout_over_spool_path():
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "HPC_scripts"
+        / "collect_post_outputs.slurm"
+    )
+    text = script.read_text(encoding="utf-8")
+
+    assert 'STANAGE_REPO_DIR="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"' in text
+    assert 'REPO_DIR="${STANAGE_REPO_DIR}"' in text
+    assert 'REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"' in text
+
+
 def test_build_export_plan_for_batch_root_includes_post_population_and_summary(tmp_path):
     dataset_root = tmp_path / "Left_Hippocampus_Data_01"
     post_dir = dataset_root / "sub-01" / "anat" / "post"

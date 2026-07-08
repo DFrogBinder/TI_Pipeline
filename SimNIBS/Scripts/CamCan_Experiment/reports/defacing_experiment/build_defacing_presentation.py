@@ -83,10 +83,42 @@ CONDITION_LABELS = {
     "defaced": "Face removed",
 }
 
+ARM_NAMES = (
+    "Left_Hippocampus_Intact",
+    "Left_Hippocampus_Defaced",
+    "Left_M1_Intact",
+    "Left_M1_Defaced",
+)
+
+
+def resolve_source_root() -> Path:
+    candidates = [DATA_ROOT, DATA_ROOT / "post_export_40repeats"]
+    candidates.extend(sorted(DATA_ROOT.glob("post_export*")))
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.expanduser().resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if all((candidate / arm).is_dir() for arm in ARM_NAMES):
+            return candidate
+
+    raise FileNotFoundError(
+        "Could not find the four defacing arm folders under "
+        f"{DATA_ROOT} or a post_export* child directory."
+    )
+
+
+SOURCE_ROOT = resolve_source_root()
+
 
 def arm_from_path(path: Path) -> str:
-    arm = path.relative_to(DATA_ROOT).parts[0]
-    return arm.replace("post_export ", "")
+    parts = path.relative_to(SOURCE_ROOT).parts
+    for part in parts:
+        if part in ARM_NAMES:
+            return part
+    raise ValueError(f"Cannot infer arm from path: {path}")
 
 
 def target_from_arm(arm: str) -> str:
@@ -118,7 +150,7 @@ def numeric(value):
 
 def load_records() -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for path in sorted(DATA_ROOT.rglob("subject_metrics.json")):
+    for path in sorted(SOURCE_ROOT.rglob("subject_metrics.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         arm = arm_from_path(path)
         target = target_from_arm(arm)
@@ -397,15 +429,16 @@ def plot_repeat_lines(records: list[dict[str, object]], path: Path) -> None:
 
 
 def representative_overlay(target: str, condition: str) -> Path | None:
+    suffix = "Defaced" if condition == "defaced" else "Intact"
     if target == "left-hippocampus":
-        arm = f"post_export Left_Hippocampus_{'Defaced' if condition == 'defaced' else 'Intact'}"
+        arm = f"Left_Hippocampus_{suffix}"
         pattern = "Left_Hippocampus_TI_overlay_roi_focus_sub-CCMe_top95.png"
         dataset = "Left_Hippocampus_Data_01"
     else:
-        arm = f"Left_M1_{'Defaced' if condition == 'defaced' else 'Intact'}"
+        arm = f"Left_M1_{suffix}"
         pattern = "ctx_lh_G_precentral_TI_overlay_roi_focus_sub-CCMe_top95.png"
         dataset = "Left_M1_Data_01"
-    path = DATA_ROOT / arm / dataset / "sub-CCMe" / "anat" / "post" / pattern
+    path = SOURCE_ROOT / arm / dataset / "sub-CCMe" / "anat" / "post" / pattern
     return path if path.is_file() else None
 
 
@@ -513,6 +546,23 @@ def mean_text(row: dict[str, object], key: str, metric_key: str) -> str:
     return fmt_value(float(row[key]), metric_key)
 
 
+def percent_number(row: dict[str, object]) -> float:
+    return float(row["percent_delta"])
+
+
+def percent_magnitude_text(row: dict[str, object], *, decimals: int = 1) -> str:
+    return f"{abs(percent_number(row)):.{decimals}f}%"
+
+
+def direction_phrase(row: dict[str, object], *, decimals: int = 1) -> str:
+    value = percent_number(row)
+    if value > 0:
+        return f"increased +{abs(value):.{decimals}f}%"
+    if value < 0:
+        return f"decreased -{abs(value):.{decimals}f}%"
+    return "was unchanged"
+
+
 def experiment_counts(records: list[dict[str, object]], delta_rows: list[dict[str, object]]) -> dict[str, int]:
     targets = {str(r["target"]) for r in records}
     conditions = {str(r["condition"]) for r in records}
@@ -534,6 +584,8 @@ def experiment_counts(records: list[dict[str, object]], delta_rows: list[dict[st
 
 def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object]], delta_rows: list[dict[str, object]], figures: dict[str, Path]) -> Path:
     counts = experiment_counts(records, delta_rows)
+    hip_p95_title = metric_row(delta_rows, "left-hippocampus", "roi_percentile_value")
+    m1_focal_title = metric_row(delta_rows, "left-m1", "focality_in_roi_volume_mm3_gt_threshold")
     prs = Presentation()
     prs.slide_width = SLIDE_W
     prs.slide_height = SLIDE_H
@@ -555,11 +607,11 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         2.6,
         10.9,
         1.1,
-        "Current finding: in the analyzed subset, defacing leaves hippocampal amplitude largely stable but shifts cortical M1 high-field endpoints upward across technical repeats.",
+        f"Across {counts['pair_count']} paired technical repeats, hippocampal ROI P95 {direction_phrase(hip_p95_title)} while M1 above-threshold ROI volume {direction_phrase(m1_focal_title)} after defacing.",
         size=21,
         color=WHITE,
     )
-    textbox(slide, 0.76, 6.76, 10.8, 0.25, "Generated from local post-processing outputs in /home/boyan/sandbox/Jake_Data/defacing_experiment", size=9, color=RGBColor(190, 204, 218))
+    textbox(slide, 0.76, 6.76, 10.8, 0.25, f"Generated from local post-processing outputs in {SOURCE_ROOT}", size=9, color=RGBColor(190, 204, 218))
 
     slide = prs.slides.add_slide(blank)
     add_bg(slide, "Why this matters: anonymization can change model inputs")
@@ -616,13 +668,13 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
     add_metric_card(slide, 9.55, 1.25, 2.2, 1.25, "Repeats per arm", f"{counts['repeat_count']} / {counts['planned_repeats']}", "Observed repeats versus planned repeats.", TEAL)
     add_metric_card(slide, 7.0, 2.95, 2.2, 1.25, "Targets", str(counts["target_count"]), "Deep and cortical target classes.", GOLD)
     add_metric_card(slide, 9.55, 2.95, 2.2, 1.25, "QC status", "Complete", "Subject, extended metrics, and QC all complete.", BLUE)
-    textbox(slide, 0.75, 5.25, 11.7, 0.55, f"Pairing by repeat ID controls the comparison. Current analyzed subset pairs repeats 01-{counts['repeat_count']:02d}; planned final analysis pairs repeats 01-{counts['planned_repeats']:02d}.", size=15, color=MUTED)
+    textbox(slide, 0.75, 5.25, 11.7, 0.55, f"Pairing by repeat ID controls the comparison. This analysis pairs repeats 01-{counts['repeat_count']:02d} within each target-condition arm.", size=15, color=MUTED)
 
     slide = prs.slides.add_slide(blank)
     add_bg(slide, "Analysis workflow: from post outputs to paired deltas")
     add_footer(slide)
     add_metric_card(slide, 0.72, 1.15, 2.6, 1.25, "1. Inputs", f"{counts['actual_runs']} JSONs", "Read subject_metrics.json from every completed run.", BLUE)
-    add_metric_card(slide, 3.72, 1.15, 2.6, 1.25, "2. Extract", "8 metrics", "Pull ROI, whole-brain, threshold, and QC fields.", TEAL)
+    add_metric_card(slide, 3.72, 1.15, 2.6, 1.25, "2. Extract", f"{len(METRICS)} metrics", "Pull ROI, whole-brain, threshold, and QC fields.", TEAL)
     add_metric_card(slide, 6.72, 1.15, 2.6, 1.25, "3. Pair", f"{counts['pair_count']} / {counts['planned_repeats']} pairs", "Match intact and defaced runs by repeat ID within each target.", GOLD)
     add_metric_card(slide, 9.72, 1.15, 2.6, 1.25, "4. Summarize", "Deltas", "Report defaced minus intact effects and descriptive paired tests.", BLUE)
     add_table(
@@ -726,6 +778,7 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
     slide = prs.slides.add_slide(blank)
     add_bg(slide, "Hippocampus: amplitude is stable; spatial overlap drops modestly")
     add_footer(slide)
+    hip_mean = metric_row(delta_rows, "left-hippocampus", "roi_mean")
     hip_p95 = metric_row(delta_rows, "left-hippocampus", "roi_percentile_value")
     hip_overlap = metric_row(delta_rows, "left-hippocampus", "overlap_fraction")
     hip_focal = metric_row(delta_rows, "left-hippocampus", "focality_in_roi_volume_mm3_gt_threshold")
@@ -739,7 +792,7 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         3.38,
         5.7,
         0.72,
-        "Amplitude endpoints were stable: ROI P95 shifted only 0.3% downward and ROI mean shifted 1.0% downward across paired repeats.",
+        f"Amplitude endpoints were stable: ROI P95 {direction_phrase(hip_p95)} and ROI mean {direction_phrase(hip_mean)} across paired repeats.",
         size=15,
         color=INK,
     )
@@ -749,7 +802,7 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         4.28,
         5.7,
         0.72,
-        "The clearest hippocampal signal is spatial: top-5% overlap decreased -6.0%, indicating modest redistribution of the highest-field voxels.",
+        f"The clearest hippocampal signal is spatial: top-5% overlap {direction_phrase(hip_overlap)}, indicating modest redistribution of the highest-field voxels.",
         size=15,
         color=INK,
     )
@@ -766,6 +819,8 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
     m1_mean = metric_row(delta_rows, "left-m1", "roi_mean")
     m1_p95 = metric_row(delta_rows, "left-m1", "roi_percentile_value")
     m1_focal = metric_row(delta_rows, "left-m1", "focality_in_roi_volume_mm3_gt_threshold")
+    m1_whole_focal = metric_row(delta_rows, "left-m1", "focality_volume_mm3_gt_threshold")
+    m1_overlap = metric_row(delta_rows, "left-m1", "overlap_fraction")
     add_metric_card(slide, 0.72, 1.18, 2.65, 1.25, "ROI mean", pct_text(m1_mean), f"paired p={p_text(m1_mean)}", BLUE)
     add_metric_card(slide, 3.65, 1.18, 2.65, 1.25, "ROI P95", pct_text(m1_p95), f"{mean_text(m1_p95, 'intact_mean', 'roi_percentile_value')} -> {mean_text(m1_p95, 'defaced_mean', 'roi_percentile_value')} V/m", TEAL)
     add_metric_card(slide, 6.58, 1.18, 2.65, 1.25, "ROI >=0.2 V/m", pct_text(m1_focal), f"paired p={p_text(m1_focal)}", GOLD)
@@ -776,7 +831,7 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         3.38,
         5.7,
         0.72,
-        "Defaced runs showed higher cortical amplitude: M1 ROI P95 increased +3.3% across paired repeats.",
+        f"Defaced runs showed higher cortical amplitude: M1 ROI P95 {direction_phrase(m1_p95)} across paired repeats.",
         size=15,
         color=INK,
     )
@@ -786,11 +841,11 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         4.28,
         5.7,
         0.92,
-        "The larger effect is threshold extent: ROI volume >=0.2 V/m increased +24.2%, while whole-brain high-field volume increased +15.1%.",
+        f"The larger effect is threshold extent: ROI volume >=0.2 V/m {direction_phrase(m1_focal)}, while whole-brain high-field volume {direction_phrase(m1_whole_focal)}.",
         size=15,
         color=INK,
     )
-    textbox(slide, 0.82, 5.45, 5.7, 0.44, "Top-5% overlap was unchanged, so the target remains spatially engaged while magnitude and extent shift.", size=10, color=MUTED)
+    textbox(slide, 0.82, 5.45, 5.7, 0.44, f"Top-5% overlap {direction_phrase(m1_overlap)}, so interpret magnitude and extent shifts alongside spatial engagement.", size=10, color=MUTED)
     imgs = [representative_overlay("left-m1", "intact"), representative_overlay("left-m1", "defaced")]
     for i, img in enumerate(imgs):
         if img:
@@ -801,9 +856,11 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
     add_bg(slide, "Controls: atlas and brain volume do not explain the effects")
     add_footer(slide)
     rows = []
+    brain_volume_changes = []
     for target in ("left-hippocampus", "left-m1"):
         roi_vol = metric_row(delta_rows, target, "roi_volume_mm3")
         brain_vol = metric_row(delta_rows, target, "whole_brain_volume_mm3")
+        brain_volume_changes.append(f"{TARGET_LABELS[target]} {pct_text(brain_vol)}")
         rows.append(
             [
                 TARGET_LABELS[target],
@@ -831,7 +888,7 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         1.8,
         [
             "ROI volume was identical within each target, consistent with using a fixed subject-space atlas.",
-            "Whole-brain volume changed by only about +0.02% after defacing in both targets.",
+            f"Whole-brain volume changes were minimal after defacing ({'; '.join(brain_volume_changes)}).",
             "Therefore, observed endpoint changes are unlikely to be driven by gross ROI-size or brain-volume changes.",
         ],
         size=15,
@@ -848,9 +905,9 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
         4.9,
         [
             "Defacing did not create a uniform bias across targets; effects were target-specific.",
-            "The hippocampal target was robust in amplitude endpoints, with a modest reduction in top-field overlap.",
-            "The cortical M1 target was more sensitive to defacing, with higher high-field ROI endpoints and larger above-threshold field extent.",
-            "Peak field should be interpreted cautiously because it was more repeat-variable and showed outlier behavior, especially for M1 intact repeat 01.",
+            f"The hippocampal target was robust in amplitude endpoints, with ROI P95 {direction_phrase(hip_p95)} and top-field overlap {direction_phrase(hip_overlap)}.",
+            f"The cortical M1 target was more sensitive to defacing, with ROI P95 {direction_phrase(m1_p95)} and above-threshold ROI volume {direction_phrase(m1_focal)}.",
+            "Peak field should be interpreted cautiously because it is more outlier-sensitive; conclusions emphasize ROI mean, ROI P95, overlap, and threshold-volume endpoints.",
             "The experiment supports reporting target-specific defacing sensitivity rather than one global defacing effect.",
         ],
         size=17,
@@ -915,10 +972,15 @@ def build_deck(records: list[dict[str, object]], arm_rows: list[dict[str, object
 def write_summary_md(records: list[dict[str, object]], delta_rows: list[dict[str, object]], path: Path) -> None:
     counts = experiment_counts(records, delta_rows)
     status = "complete" if counts["is_complete"] else "incomplete"
+    hip_p95 = metric_row(delta_rows, "left-hippocampus", "roi_percentile_value")
+    hip_overlap = metric_row(delta_rows, "left-hippocampus", "overlap_fraction")
+    m1_p95 = metric_row(delta_rows, "left-m1", "roi_percentile_value")
+    m1_focal = metric_row(delta_rows, "left-m1", "focality_in_roi_volume_mm3_gt_threshold")
+    m1_overlap = metric_row(delta_rows, "left-m1", "overlap_fraction")
     lines = [
         "# Defacing experiment summary",
         "",
-        f"Source: `{DATA_ROOT}`",
+        f"Source: `{SOURCE_ROOT}`",
         "",
         "## Completeness",
         "",
@@ -957,10 +1019,10 @@ def write_summary_md(records: list[dict[str, object]], delta_rows: list[dict[str
             "",
             "## Interpretation",
             "",
-            "- Left hippocampus: ROI amplitude endpoints were stable; top-5% overlap decreased by about 6%.",
-            "- Left M1: ROI P95 increased by about 3.3%; ROI volume above 0.2 V/m increased by about 24.2%; top-5% overlap was unchanged.",
+            f"- Left hippocampus: ROI P95 {direction_phrase(hip_p95)}; top-5% overlap {direction_phrase(hip_overlap)}.",
+            f"- Left M1: ROI P95 {direction_phrase(m1_p95)}; ROI volume above 0.2 V/m {direction_phrase(m1_focal)}; top-5% overlap {direction_phrase(m1_overlap)}.",
             "- ROI volume was identical across intact and defaced conditions for both targets, confirming fixed subject-space atlas behavior.",
-            "- Whole-brain volume changed by about +0.02%, so gross brain-volume changes do not explain the endpoint shifts.",
+            "- Whole-brain volume changes were minimal, so gross brain-volume changes do not explain the endpoint shifts.",
             "",
             "## Caution",
             "",

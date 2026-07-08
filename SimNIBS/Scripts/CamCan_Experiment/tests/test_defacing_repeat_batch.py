@@ -10,6 +10,7 @@ from defacing_experiment.prepare_defacing_repeat_batch import (
     resample_keep_mask_to_target,
     stage_repeat_batches,
 )
+from defacing_experiment.stage_existing_defaced_repeat_batch import main as stage_existing_main
 
 
 def test_build_repeat_batch_specs_creates_four_expected_arms(tmp_path):
@@ -124,3 +125,44 @@ def test_stage_repeat_batches_writes_manifest_and_canonical_repeat_inputs(tmp_pa
     assert (defaced_repeat / "sub-CCMe_T1w.nii.gz").read_text(encoding="utf-8") == "sub-CCMe_desc-deface_T1w.nii.gz"
     assert (parent_roots[0] / "slurm" / "manifest.tsv").is_file()
     assert (parent_roots[1] / "slurm" / "manifest.tsv").is_file()
+
+
+def test_stage_existing_defaced_cli_reuses_uploaded_defaced_pair(tmp_path):
+    source = tmp_path / "source" / "sub-IXI025" / "anat"
+    intact_t1 = source / "sub-IXI025_T1w.nii.gz"
+    intact_t2 = source / "sub-IXI025_T2w.nii.gz"
+    defaced_t1 = source / "sub-IXI025_desc-deface_T1w.nii.gz"
+    defaced_t2 = source / "sub-IXI025_desc-deface_T2w.nii.gz"
+    for path in (intact_t1, intact_t2, defaced_t1, defaced_t2):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(path.name, encoding="utf-8")
+
+    out_root = tmp_path / "prep"
+    stage_existing_main(
+        [
+            "--subject",
+            "sub-IXI025",
+            "--intact-t1",
+            str(intact_t1),
+            "--intact-t2",
+            str(intact_t2),
+            "--defaced-t1",
+            str(defaced_t1),
+            "--defaced-t2",
+            str(defaced_t2),
+            "--out-root",
+            str(out_root),
+            "--repeats",
+            "2",
+            "--targets",
+            "left-hippocampus",
+            "--force",
+        ]
+    )
+
+    intact_repeat = out_root / "Left_Hippocampus_Intact" / "Left_Hippocampus_Data_01" / "sub-IXI025" / "anat"
+    defaced_repeat = out_root / "Left_Hippocampus_Defaced" / "Left_Hippocampus_Data_01" / "sub-IXI025" / "anat"
+    assert (intact_repeat / "sub-IXI025_T1w.nii.gz").read_text(encoding="utf-8") == "sub-IXI025_T1w.nii.gz"
+    assert (defaced_repeat / "sub-IXI025_T1w.nii.gz").read_text(encoding="utf-8") == "sub-IXI025_desc-deface_T1w.nii.gz"
+    assert sum(1 for _ in (out_root / "Left_Hippocampus_Intact" / "slurm" / "manifest.tsv").open()) == 3
+    assert sum(1 for _ in (out_root / "experiment_manifest.tsv").open()) == 5

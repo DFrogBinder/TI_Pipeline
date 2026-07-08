@@ -82,6 +82,16 @@ RENDER_MANIFEST_FIELDS = (
     "actual_renderer",
     "resumed",
 )
+RENDER_COMPLETENESS_FIELDS = (
+    "roi",
+    "status",
+    "discovered_meshes",
+    "qc_loadable_meshes",
+    "rendered_meshes",
+    "qc_read_failures",
+    "render_failures",
+    "missing_tiles",
+)
 
 
 _RUN_LOGGER = None
@@ -1327,6 +1337,64 @@ def _write_render_failure_outputs(out_dir: Path, failure_rows: list[dict[str, ob
             pass
 
 
+def _write_render_completeness_outputs(
+    out_dir: Path,
+    *,
+    records: list[MeshRecord],
+    render_records: list[MeshRecord],
+    successful: list[tuple[MeshRecord, Path | None]],
+    failure_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    discovered = Counter(record.roi for record in records)
+    qc_loadable = Counter(record.roi for record in render_records)
+    rendered = Counter(record.roi for record, out_png in successful if out_png is not None)
+    render_failures = Counter(str(row.get("roi", "unknown_roi")) for row in failure_rows)
+
+    rois = sorted(set(discovered) | set(qc_loadable) | set(rendered) | set(render_failures))
+    rows = []
+    for roi in rois:
+        discovered_count = discovered[roi]
+        qc_loadable_count = qc_loadable[roi]
+        rendered_count = rendered[roi]
+        qc_read_failures = max(0, discovered_count - qc_loadable_count)
+        missing_tiles = max(0, discovered_count - rendered_count)
+        rows.append(
+            {
+                "roi": roi,
+                "status": "OK" if missing_tiles == 0 else "INCOMPLETE",
+                "discovered_meshes": discovered_count,
+                "qc_loadable_meshes": qc_loadable_count,
+                "rendered_meshes": rendered_count,
+                "qc_read_failures": qc_read_failures,
+                "render_failures": render_failures[roi],
+                "missing_tiles": missing_tiles,
+            }
+        )
+
+    _write_csv(out_dir / "render_completeness.csv", rows, RENDER_COMPLETENESS_FIELDS)
+    incomplete = [row for row in rows if row["status"] != "OK"]
+    if incomplete:
+        for row in incomplete:
+            print(
+                "[WARN] Incomplete mesh wall for "
+                f"{row['roi']}: rendered {row['rendered_meshes']}/"
+                f"{row['discovered_meshes']} tiles "
+                f"(qc_read_failures={row['qc_read_failures']}, "
+                f"render_failures={row['render_failures']}).",
+                flush=True,
+            )
+        _log_warning(
+            "RENDER",
+            "One or more mesh walls are incomplete",
+            details="; ".join(
+                f"{row['roi']} {row['rendered_meshes']}/{row['discovered_meshes']}"
+                for row in incomplete
+            ),
+            path=str(out_dir / "render_completeness.csv"),
+        )
+    return rows
+
+
 def _run_forced_gmsh_preflight(
     task_specs: list[tuple[int, MeshRecord, Path]],
     args: argparse.Namespace,
@@ -1567,6 +1635,14 @@ def _render_outputs(
     for record, out_png in successful:
         rendered_by_roi[record.roi].append(out_png)
         all_rendered.append(out_png)
+
+    _write_render_completeness_outputs(
+        out_dir,
+        records=records,
+        render_records=render_records,
+        successful=successful,
+        failure_rows=failure_rows,
+    )
 
     if args.roi_walls:
         for roi, images in sorted(rendered_by_roi.items()):

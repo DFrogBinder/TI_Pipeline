@@ -20,9 +20,12 @@ set -euo pipefail
 # ------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STANAGE_REPO_DIR="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"
 
 if [[ -z "${REPO_DIR:-}" ]]; then
-    if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/post/utils/collect_post_outputs.py" ]]; then
+    if [[ -f "${STANAGE_REPO_DIR}/post/utils/collect_post_outputs.py" ]]; then
+        REPO_DIR="${STANAGE_REPO_DIR}"
+    elif [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/post/utils/collect_post_outputs.py" ]]; then
         REPO_DIR="${SLURM_SUBMIT_DIR}"
     elif [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/../post/utils/collect_post_outputs.py" ]]; then
         REPO_DIR="$(cd "${SLURM_SUBMIT_DIR}/.." && pwd)"

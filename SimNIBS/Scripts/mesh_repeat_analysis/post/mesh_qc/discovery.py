@@ -28,6 +28,7 @@ class DiscoveryStats:
 ROI_HINTS = ("roi", "hippocampus", "pallidum", "m1", "motor", "target")
 SUBJECT_RE = re.compile(r"^(sub-[A-Za-z0-9_-]+|CC\d+)$", re.IGNORECASE)
 REPEAT_RE = re.compile(r"^(repeat[-_ ]?\d+|rep[-_ ]?\d+|seed[-_ ]?\d+)$", re.IGNORECASE)
+DATA_REPEAT_RE = re.compile(r"(?:^|[-_ ])(?:data|run|runs|repeat|rep|seed)[-_ ]?(\d+)$", re.IGNORECASE)
 
 
 def _relative_parts(path: Path, root: Path) -> tuple[str, ...]:
@@ -78,6 +79,12 @@ def infer_record(
     repeat = _first_regex(dir_parts, repeat_regex)
     if repeat is None:
         repeat = next((part for part in dir_parts if REPEAT_RE.match(part)), "unknown_repeat")
+    if repeat == "unknown_repeat":
+        for part in dir_parts:
+            match = DATA_REPEAT_RE.search(part)
+            if match:
+                repeat = match.group(1)
+                break
     if repeat == "unknown_repeat":
         for idx, part in enumerate(dir_parts[:-1]):
             if "repeat" in part.lower() and dir_parts[idx + 1].isdigit():

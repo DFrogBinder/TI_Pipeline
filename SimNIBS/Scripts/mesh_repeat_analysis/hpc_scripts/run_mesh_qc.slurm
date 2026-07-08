@@ -45,6 +45,9 @@ PIPELINE_DIR_CONFIG="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MESH_QC_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data"
 MESH_QC_OUT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall"
 MESH_GLOB_CONFIG=""
+ROI_REGEX_CONFIG=""
+SUBJECT_REGEX_CONFIG=""
+REPEAT_REGEX_CONFIG=""
 RENDERER_CONFIG="gmsh"
 CHECK_COMPONENTS_CONFIG="0"
 ROI_WALLS_CONFIG="0"
@@ -65,6 +68,9 @@ PIPELINE_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_CONFIG}}"
 MESH_QC_ROOT="${MESH_QC_ROOT:-${MESH_QC_ROOT_CONFIG}}"
 MESH_QC_OUT="${MESH_QC_OUT:-${MESH_QC_OUT_CONFIG}}"
 MESH_GLOB="${MESH_GLOB:-${MESH_GLOB_CONFIG}}"
+ROI_REGEX="${ROI_REGEX:-${ROI_REGEX_CONFIG}}"
+SUBJECT_REGEX="${SUBJECT_REGEX:-${SUBJECT_REGEX_CONFIG}}"
+REPEAT_REGEX="${REPEAT_REGEX:-${REPEAT_REGEX_CONFIG}}"
 RENDERER="${RENDERER:-${RENDERER_CONFIG}}"
 CHECK_COMPONENTS="${CHECK_COMPONENTS:-${CHECK_COMPONENTS_CONFIG}}"
 ROI_WALLS="${ROI_WALLS:-${ROI_WALLS_CONFIG}}"
@@ -142,6 +148,9 @@ echo "[INFO] Workers:        ${WORKERS}"
 echo "[INFO] Stage:          ${MESH_QC_STAGE}"
 echo "[INFO] Renderer:       ${RENDERER}"
 echo "[INFO] Progress mode:  ${PROGRESS_MODE}"
+echo "[INFO] ROI regex:      ${ROI_REGEX:-<none>}"
+echo "[INFO] Subject regex:  ${SUBJECT_REGEX:-<none>}"
+echo "[INFO] Repeat regex:   ${REPEAT_REGEX:-<none>}"
 echo "[INFO] Check comps:    ${CHECK_COMPONENTS}"
 echo "[INFO] ROI walls:      ${ROI_WALLS}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
@@ -196,6 +205,15 @@ PYTHON_CMD=(
 
 if [ -n "${MESH_GLOB}" ]; then
     PYTHON_CMD+=(--mesh-glob "${MESH_GLOB}")
+fi
+if [ -n "${ROI_REGEX}" ]; then
+    PYTHON_CMD+=(--roi-regex "${ROI_REGEX}")
+fi
+if [ -n "${SUBJECT_REGEX}" ]; then
+    PYTHON_CMD+=(--subject-regex "${SUBJECT_REGEX}")
+fi
+if [ -n "${REPEAT_REGEX}" ]; then
+    PYTHON_CMD+=(--repeat-regex "${REPEAT_REGEX}")
 fi
 if [ -n "${COLS}" ]; then
     PYTHON_CMD+=(--cols "${COLS}")

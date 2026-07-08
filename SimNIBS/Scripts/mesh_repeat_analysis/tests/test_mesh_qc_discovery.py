@@ -52,3 +52,24 @@ def test_discover_meshes_defaults_to_m2m_directories_only(tmp_path):
     assert [r.path for r in default_records] == [wanted]
     assert [r.path for r in explicit_records] == [extra, wanted]
     assert default_records[0].mesh_id == "m2m_sub-CC1"
+
+
+def test_infer_record_extracts_repeat_from_data_folder(tmp_path):
+    path = (
+        tmp_path
+        / "Left_Hippocampus_Runs"
+        / "Left_Hippocampus_Data_07"
+        / "sub-CC110056"
+        / "anat"
+        / "m2m_sub-CC110056"
+        / "sub-CC110056.msh"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text("$MeshFormat\n", encoding="utf-8")
+
+    record = infer_record(path, root=tmp_path)
+
+    assert record.roi == "Left_Hippocampus_Runs"
+    assert record.subject == "sub-CC110056"
+    assert record.repeat == "07"
+    assert record.mesh_id == "m2m_sub-CC110056"

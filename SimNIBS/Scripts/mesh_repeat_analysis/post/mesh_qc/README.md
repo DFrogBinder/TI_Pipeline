@@ -217,5 +217,7 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
   --out /path/to/mesh_qc_outputs \
   --roi-regex "(Left_Hippocampus|Right_Hippocampus|M1|Pallidum)" \
   --subject-regex "(sub-CC[0-9]+)" \
-  --repeat-regex "(repeat_[0-9]+)"
+  --repeat-regex "Data_([0-9]+)$"
 ```
+
+The default repeat inference also recognizes staged dataset folders such as `Left_Hippocampus_Data_07`, yielding repeat `07`. Slurm runs can pass the same overrides with `ROI_REGEX`, `SUBJECT_REGEX`, and `REPEAT_REGEX`.

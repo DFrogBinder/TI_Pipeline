@@ -32,10 +32,12 @@ The discovery stage also infers metadata from the path:
 
 - `mesh_id`: prefers the nearest `m2m*` directory name, otherwise the mesh filename stem,
 - `subject`: first path component matching `sub-*` or `CC[0-9]+`,
-- `repeat`: first path component matching `repeat*`, `rep*`, or `seed*`,
+- `repeat`: first path component matching `repeat*`, `rep*`, or `seed*`, or a staged dataset component such as `Left_Hippocampus_Data_07`,
 - `roi`: optional path metadata only; not the primary grouping for QC.
 
 If a path does not expose a repeat token, the record is labeled `unknown_repeat`.
+
+Path-specific overrides can be supplied with `--roi-regex`, `--subject-regex`, and `--repeat-regex`. The Slurm wrapper exposes the same controls as `ROI_REGEX`, `SUBJECT_REGEX`, and `REPEAT_REGEX`.
 
 ## Surface Extraction
 

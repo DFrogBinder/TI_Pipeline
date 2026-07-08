@@ -77,6 +77,25 @@ def test_submitter_exports_configurable_imagemagick_module_for_mosaics():
     assert "which montage" in slurm_text
 
 
+def test_submitter_exports_label_regex_overrides():
+    repo_root = Path(__file__).resolve().parents[1]
+    submitter = repo_root / "hpc_scripts" / "submit_mesh_qc.sh"
+    slurm_script = repo_root / "hpc_scripts" / "run_mesh_qc.slurm"
+
+    submitter_text = submitter.read_text(encoding="utf-8")
+    slurm_text = slurm_script.read_text(encoding="utf-8")
+
+    assert "ROI_REGEX_CONFIG" in submitter_text
+    assert "SUBJECT_REGEX_CONFIG" in submitter_text
+    assert "REPEAT_REGEX_CONFIG" in submitter_text
+    assert "ROI_REGEX=${ROI_REGEX}" in submitter_text
+    assert "SUBJECT_REGEX=${SUBJECT_REGEX}" in submitter_text
+    assert "REPEAT_REGEX=${REPEAT_REGEX}" in submitter_text
+    assert 'PYTHON_CMD+=(--roi-regex "${ROI_REGEX}")' in slurm_text
+    assert 'PYTHON_CMD+=(--subject-regex "${SUBJECT_REGEX}")' in slurm_text
+    assert 'PYTHON_CMD+=(--repeat-regex "${REPEAT_REGEX}")' in slurm_text
+
+
 def test_submitter_exports_configurable_simnibs_module():
     repo_root = Path(__file__).resolve().parents[1]
     submitter = repo_root / "hpc_scripts" / "submit_mesh_qc.sh"

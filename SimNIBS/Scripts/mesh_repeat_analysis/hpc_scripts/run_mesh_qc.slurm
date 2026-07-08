@@ -180,15 +180,22 @@ echo "[INFO] ImageMagick module: ${IMAGEMAGICK_MODULE:-<none>}"
 if [ -n "${MESH_QC_GMSH_BIN}" ]; then
     export MESH_QC_GMSH_BIN
 fi
-GMSH_CHECK_BIN="${MESH_QC_GMSH_BIN:-$(command -v gmsh 2>/dev/null || true)}"
+NEEDS_GMSH_CHECK=0
+if [ "${MESH_QC_STAGE}" != "qc" ] && { [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; }; then
+    NEEDS_GMSH_CHECK=1
+fi
+GMSH_CHECK_BIN=""
+if [ "${NEEDS_GMSH_CHECK}" = "1" ]; then
+    GMSH_CHECK_BIN="${MESH_QC_GMSH_BIN:-$(command -v gmsh 2>/dev/null || true)}"
+fi
 echo "[INFO] Gmsh override:  ${MESH_QC_GMSH_BIN:-<none>}"
-echo "[INFO] Gmsh path:      ${GMSH_CHECK_BIN:-<not found>}"
+echo "[INFO] Gmsh path:      ${GMSH_CHECK_BIN:-<not checked>}"
 echo "[INFO] Xvfb path:      $(which Xvfb 2>/dev/null || echo '<not found>')"
 echo "[INFO] xvfb-run path:  $(which xvfb-run 2>/dev/null || echo '<not found>')"
 echo "[INFO] magick path:    $(which magick 2>/dev/null || echo '<not found>')"
 echo "[INFO] montage path:   $(which montage 2>/dev/null || echo '<not found>')"
 
-if [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; then
+if [ "${NEEDS_GMSH_CHECK}" = "1" ]; then
     if [ -z "${GMSH_CHECK_BIN}" ]; then
         echo "[ERROR] No gmsh executable found. Load a compatible GMSH_MODULE or set MESH_QC_GMSH_BIN." >&2
         exit 2
@@ -200,7 +207,7 @@ if [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; then
         exit 2
     fi
 fi
-if [ "${RENDERER}" = "gmsh" ] && [ -z "${DISPLAY:-}" ] && ! command -v Xvfb >/dev/null 2>&1; then
+if [ "${NEEDS_GMSH_CHECK}" = "1" ] && [ "${RENDERER}" = "gmsh" ] && [ -z "${DISPLAY:-}" ] && ! command -v Xvfb >/dev/null 2>&1; then
     echo "[ERROR] Forced Gmsh rendering requires Xvfb when DISPLAY is unset." >&2
     echo "[ERROR] Load a working XVFB_MODULE or set DISPLAY and MESH_QC_USE_EXISTING_DISPLAY=1." >&2
     exit 2

@@ -136,3 +136,5 @@ def test_qc_only_slurm_skips_render_modules_to_avoid_module_conflicts():
     assert 'XVFB_MODULE_EFFECTIVE=""' in text
     assert 'module load "${GMSH_MODULE_EFFECTIVE}"' in text
     assert 'module load "${XVFB_MODULE_EFFECTIVE}"' in text
+    assert "NEEDS_GMSH_CHECK" in text
+    assert '[ "${MESH_QC_STAGE}" != "qc" ]' in text

@@ -31,8 +31,8 @@ def test_mesh_qc_slurm_loads_configured_xvfb_module_for_gmsh():
     assert "XVFB_MODULE=" in submitter_text
     assert "XVFB_MODULE=${XVFB_MODULE}" in submitter_text
     assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in slurm_text
-    assert 'if [ -n "${XVFB_MODULE}" ]; then' in slurm_text
-    assert 'module load "${XVFB_MODULE}"' in slurm_text
+    assert 'if [ -n "${XVFB_MODULE_EFFECTIVE}" ]; then' in slurm_text
+    assert 'module load "${XVFB_MODULE_EFFECTIVE}"' in slurm_text
     assert "which Xvfb" in slurm_text
 
 
@@ -56,7 +56,7 @@ def test_submitter_exports_configurable_gmsh_module_and_binary_override():
     assert "MESH_QC_GMSH_BIN_CONFIG" in submitter_text
     assert "GMSH_MODULE=${GMSH_MODULE}" in submitter_text
     assert "MESH_QC_GMSH_BIN=${MESH_QC_GMSH_BIN}" in submitter_text
-    assert 'module load "${GMSH_MODULE}"' in slurm_text
+    assert 'module load "${GMSH_MODULE_EFFECTIVE}"' in slurm_text
     assert "MESH_QC_GMSH_BIN" in slurm_text
     assert '"${GMSH_CHECK_BIN}" -version' in slurm_text
 
@@ -121,3 +121,18 @@ def test_render_gmsh_slurm_skips_simnibs_module_to_avoid_module_conflicts():
     assert 'module load "${SIMNIBS_MODULE_EFFECTIVE}"' in text
     assert 'module load "${SIMNIBS_MODULE}"' not in text
     assert text.index("MESH_QC_STAGE=") < text.index("module purge")
+
+
+def test_qc_only_slurm_skips_render_modules_to_avoid_module_conflicts():
+    repo_root = Path(__file__).resolve().parents[1]
+    slurm_script = repo_root / "hpc_scripts" / "run_mesh_qc.slurm"
+
+    text = slurm_script.read_text(encoding="utf-8")
+
+    assert "GMSH_MODULE_EFFECTIVE" in text
+    assert "XVFB_MODULE_EFFECTIVE" in text
+    assert '[ "${MESH_QC_STAGE}" = "qc" ]' in text
+    assert 'GMSH_MODULE_EFFECTIVE=""' in text
+    assert 'XVFB_MODULE_EFFECTIVE=""' in text
+    assert 'module load "${GMSH_MODULE_EFFECTIVE}"' in text
+    assert 'module load "${XVFB_MODULE_EFFECTIVE}"' in text

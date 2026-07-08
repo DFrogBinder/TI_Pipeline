@@ -89,15 +89,31 @@ MESH_QC_GMSH_BIN="${MESH_QC_GMSH_BIN:-${MESH_QC_GMSH_BIN_CONFIG}}"
 IMAGEMAGICK_MODULE="${IMAGEMAGICK_MODULE:-${IMAGEMAGICK_MODULE_CONFIG}}"
 
 SIMNIBS_MODULE_EFFECTIVE="${SIMNIBS_MODULE}"
+GMSH_MODULE_EFFECTIVE="${GMSH_MODULE}"
+XVFB_MODULE_EFFECTIVE="${XVFB_MODULE}"
 if [ "${MESH_QC_STAGE}" = "render" ] && [ "${RENDERER}" = "gmsh" ] && [ "${MESH_QC_LOAD_SIMNIBS_FOR_RENDER:-0}" != "1" ]; then
     # Stanage's SimNIBS 4.0.1 module loads GCCcore/12.3.0, while the
     # compatible gmsh/Xvfb modules currently use GCCcore/12.2.0. Render-only
     # jobs do not need SimNIBS, so skip it unless explicitly forced.
     SIMNIBS_MODULE_EFFECTIVE=""
 fi
+if [ "${MESH_QC_STAGE}" = "qc" ]; then
+    GMSH_MODULE_EFFECTIVE=""
+    XVFB_MODULE_EFFECTIVE=""
+fi
 case "${SIMNIBS_MODULE}" in
     none|NONE|None|0|false|False|FALSE)
         SIMNIBS_MODULE_EFFECTIVE=""
+        ;;
+esac
+case "${GMSH_MODULE}" in
+    none|NONE|None|0|false|False|FALSE)
+        GMSH_MODULE_EFFECTIVE=""
+        ;;
+esac
+case "${XVFB_MODULE}" in
+    none|NONE|None|0|false|False|FALSE)
+        XVFB_MODULE_EFFECTIVE=""
         ;;
 esac
 
@@ -106,11 +122,11 @@ module use "$HOME/modules"
 if [ -n "${SIMNIBS_MODULE_EFFECTIVE}" ]; then
     module load "${SIMNIBS_MODULE_EFFECTIVE}"
 fi
-if [ -n "${GMSH_MODULE}" ]; then
-    module load "${GMSH_MODULE}"
+if [ -n "${GMSH_MODULE_EFFECTIVE}" ]; then
+    module load "${GMSH_MODULE_EFFECTIVE}"
 fi
-if [ -n "${XVFB_MODULE}" ]; then
-    module load "${XVFB_MODULE}"
+if [ -n "${XVFB_MODULE_EFFECTIVE}" ]; then
+    module load "${XVFB_MODULE_EFFECTIVE}"
 fi
 if [ -n "${IMAGEMAGICK_MODULE}" ]; then
     module load "${IMAGEMAGICK_MODULE}"
@@ -156,8 +172,10 @@ echo "[INFO] ROI walls:      ${ROI_WALLS}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
 echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE_EFFECTIVE:-<none>}"
 echo "[INFO] SimNIBS request: ${SIMNIBS_MODULE:-<none>}"
-echo "[INFO] Gmsh module:    ${GMSH_MODULE:-<none>}"
-echo "[INFO] Xvfb module:    ${XVFB_MODULE:-<none>}"
+echo "[INFO] Gmsh module:    ${GMSH_MODULE_EFFECTIVE:-<none>}"
+echo "[INFO] Gmsh request:   ${GMSH_MODULE:-<none>}"
+echo "[INFO] Xvfb module:    ${XVFB_MODULE_EFFECTIVE:-<none>}"
+echo "[INFO] Xvfb request:   ${XVFB_MODULE:-<none>}"
 echo "[INFO] ImageMagick module: ${IMAGEMAGICK_MODULE:-<none>}"
 if [ -n "${MESH_QC_GMSH_BIN}" ]; then
     export MESH_QC_GMSH_BIN

@@ -24,12 +24,12 @@ from statistics import median
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from mesh_repeat_analysis.post.mesh_qc.discovery import DiscoveryStats, MeshRecord, discover_meshes
+    from mesh_repeat_analysis.post.mesh_qc.discovery import DiscoveryStats, MeshRecord, discover_meshes, infer_record
     from mesh_repeat_analysis.post.mesh_qc.geometry_qc import QCMetrics, compute_qc_metrics
     from mesh_repeat_analysis.post.mesh_qc.loaders import load_surface_arrays
     from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png
 else:
-    from .discovery import DiscoveryStats, MeshRecord, discover_meshes
+    from .discovery import DiscoveryStats, MeshRecord, discover_meshes, infer_record
     from .geometry_qc import QCMetrics, compute_qc_metrics
     from .loaders import load_surface_arrays
     from .rendering import make_mosaic, render_mesh_png
@@ -1032,6 +1032,63 @@ def _load_found_records(found_path: Path) -> list[MeshRecord]:
     return records
 
 
+def _refresh_loaded_metadata(
+    records: list[MeshRecord],
+    summary_rows: list[dict[str, str]],
+    *,
+    root: Path,
+    args: argparse.Namespace,
+) -> tuple[list[MeshRecord], int]:
+    refreshed_records: list[MeshRecord] = []
+    force_roi = bool(args.roi_regex)
+    force_subject = bool(args.subject_regex)
+    force_repeat = bool(args.repeat_regex)
+    changed = 0
+
+    for record in records:
+        inferred = infer_record(
+            record.path,
+            root=root,
+            roi_regex=args.roi_regex,
+            subject_regex=args.subject_regex,
+            repeat_regex=args.repeat_regex,
+        )
+        roi = inferred.roi if force_roi or record.roi in {"", "unknown_roi"} else record.roi
+        subject = (
+            inferred.subject
+            if force_subject or record.subject in {"", "unknown_subject"}
+            else record.subject
+        )
+        repeat = (
+            inferred.repeat
+            if force_repeat or record.repeat in {"", "unknown_repeat"}
+            else record.repeat
+        )
+        mesh_id = inferred.mesh_id if record.mesh_id in {"", "unknown_mesh"} else record.mesh_id
+        refreshed = MeshRecord(
+            path=record.path,
+            roi=roi,
+            subject=subject,
+            repeat=repeat,
+            mesh_id=mesh_id,
+        )
+        if refreshed != record:
+            changed += 1
+        refreshed_records.append(refreshed)
+
+    records_by_path = {str(record.path): record for record in refreshed_records}
+    for row in summary_rows:
+        record = records_by_path.get(str(Path(row["path"]).expanduser()))
+        if record is None:
+            continue
+        for field in ("mesh_id", "subject", "repeat", "roi"):
+            value = getattr(record, field)
+            if row.get(field) != value:
+                row[field] = value
+
+    return refreshed_records, changed
+
+
 def _render_record_worker(
     record: MeshRecord,
     out_png: Path,
@@ -1823,6 +1880,28 @@ def _run_render_only(out_dir: Path, args: argparse.Namespace) -> int:
         _log_warning("RENDER", "Render-only input had no records", path=str(found_path))
         print(f"No meshes found in {found_path}", file=sys.stderr)
         return 2
+
+    records, refreshed_metadata = _refresh_loaded_metadata(
+        records,
+        summary_rows,
+        root=Path(args.root).expanduser(),
+        args=args,
+    )
+    if refreshed_metadata:
+        _write_csv(found_path, [_record_row(record) for record in records], FOUND_FIELDS)
+        _write_csv(summary_path, summary_rows, SUMMARY_FIELDS)
+        _write_csv(out_dir / "qc_flags.csv", [row for row in summary_rows if row["status"] != "OK"], SUMMARY_FIELDS)
+        print(
+            f"[RENDER] Refreshed path-derived metadata for {refreshed_metadata} mesh(es)",
+            flush=True,
+        )
+        _log_info(
+            "RENDER",
+            "Refreshed path-derived metadata",
+            meshes=refreshed_metadata,
+            found_path=str(found_path),
+            summary_path=str(summary_path),
+        )
 
     print(
         f"[RENDER] Loaded {len(records)} discovered mesh(es) and {len(summary_rows)} QC row(s)",

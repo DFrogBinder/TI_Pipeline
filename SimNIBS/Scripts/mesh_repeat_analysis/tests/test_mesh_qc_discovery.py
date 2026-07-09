@@ -73,3 +73,22 @@ def test_infer_record_extracts_repeat_from_data_folder(tmp_path):
     assert record.subject == "sub-CC110056"
     assert record.repeat == "07"
     assert record.mesh_id == "m2m_sub-CC110056"
+
+
+def test_infer_record_recognizes_four_roi_run_names(tmp_path):
+    for roi_name in ("Left_Hippocampus_Runs", "Left_M1_Runs", "Right_DLPC_Runs", "Right_Thalamus_Runs"):
+        path = (
+            tmp_path
+            / roi_name
+            / f"{roi_name.removesuffix('_Runs')}_Data_01"
+            / "sub-CC110056"
+            / "anat"
+            / "m2m_sub-CC110056"
+            / "sub-CC110056.msh"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("$MeshFormat\n", encoding="utf-8")
+
+        record = infer_record(path, root=tmp_path)
+
+        assert record.roi == roi_name

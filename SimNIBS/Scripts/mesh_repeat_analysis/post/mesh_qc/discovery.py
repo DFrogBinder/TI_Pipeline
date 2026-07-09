@@ -25,7 +25,7 @@ class DiscoveryStats:
     current_dir: Path
 
 
-ROI_HINTS = ("roi", "hippocampus", "pallidum", "m1", "motor", "target")
+ROI_HINTS = ("roi", "hippocampus", "pallidum", "m1", "motor", "target", "dlpc", "dlpfc", "thalamus")
 SUBJECT_RE = re.compile(r"^(sub-[A-Za-z0-9_-]+|CC\d+)$", re.IGNORECASE)
 REPEAT_RE = re.compile(r"^(repeat[-_ ]?\d+|rep[-_ ]?\d+|seed[-_ ]?\d+)$", re.IGNORECASE)
 DATA_REPEAT_RE = re.compile(r"(?:^|[-_ ])(?:data|run|runs|repeat|rep|seed)[-_ ]?(\d+)$", re.IGNORECASE)

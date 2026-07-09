@@ -89,6 +89,7 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
 - skips discovery,
 - skips geometry QC,
 - reuses the previously written `found_meshes.csv` and `qc_summary.csv`,
+- refreshes path-derived subject/repeat/ROI labels from stored mesh paths when labels are unknown or a regex override is supplied,
 - still skips meshes whose QC flags start with `READ_FAIL`,
 - reuses existing non-empty files in `renders/meshes/`,
 - parallelizes per-mesh PNG rendering with `--workers`.
@@ -105,6 +106,12 @@ ROI labels are retained as optional CSV metadata when the path contains ROI run 
 
 ```bash
 --roi-walls
+```
+
+If old QC outputs contain `unknown_roi`, rerun `--render-only --roi-walls` after pulling the current code. Render-only will refresh ROI labels from the stored paths and rewrite the metadata CSVs before rebuilding mosaics. For explicit 4-ROI grouping, use:
+
+```bash
+--roi-regex '(Left_Hippocampus_Runs|Left_M1_Runs|Right_DLPC_Runs|Right_Thalamus_Runs)'
 ```
 
 Use `--skip-renders` for a fast CSV-only dry run.

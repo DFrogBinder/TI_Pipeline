@@ -274,6 +274,7 @@ Behavior:
 - skip discovery,
 - skip geometry QC,
 - load `found_meshes.csv` and `qc_summary.csv` from `--out`,
+- refresh unknown or regex-overridden path-derived subject, repeat, and ROI labels without recomputing QC,
 - render only meshes whose `flags` field does not start with `READ_FAIL`,
 - treat existing non-empty files in `renders/meshes/` as completed renders,
 - parallelize those per-mesh renders according to `--workers`,
@@ -309,6 +310,7 @@ Current behavior:
 - Per-mesh exceptions during rendering are written to `render_exception_details.csv`.
 - Successful render provenance is written to `render_manifest.csv`.
 - If the pipeline aborts outside the per-mesh exception paths, a full traceback is written to `logs/fatal_error.txt`.
+- A successful later rerun does not delete an older `logs/fatal_error.txt`; compare the timestamp and current Slurm job ID before treating it as the latest failure.
 
 This logging is specifically intended to preserve evidence for pathing mistakes, dependency issues, virtual-display failures, and worker-pool crashes that would otherwise be visible only in transient stdout/stderr.
 

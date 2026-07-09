@@ -651,6 +651,94 @@ def test_cli_render_only_uses_existing_qc_outputs(tmp_path, monkeypatch):
     assert (out_dir / "mosaics" / "all_mesh_wall.png").exists()
 
 
+def test_render_only_refreshes_unknown_roi_metadata_from_paths(tmp_path, monkeypatch):
+    mesh_path = (
+        tmp_path
+        / "Right_DLPC_Runs"
+        / "Right_DLPC_Data_04"
+        / "sub-CC1"
+        / "anat"
+        / "m2m_sub-CC1"
+        / "sub-CC1.msh"
+    )
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "qc"
+    out_dir.mkdir()
+    run_mesh_qc._write_csv(
+        out_dir / "found_meshes.csv",
+        [
+            {
+                "mesh_id": "m2m_sub-CC1",
+                "subject": "sub-CC1",
+                "repeat": "04",
+                "roi": "unknown_roi",
+                "path": str(mesh_path),
+            }
+        ],
+        run_mesh_qc.FOUND_FIELDS,
+    )
+    run_mesh_qc._write_csv(
+        out_dir / "qc_summary.csv",
+        [
+            {
+                "mesh_id": "m2m_sub-CC1",
+                "subject": "sub-CC1",
+                "repeat": "04",
+                "roi": "unknown_roi",
+                "path": str(mesh_path),
+                "status": "OK",
+                "flags": "",
+                "n_points": 4,
+                "n_faces": 4,
+                "degenerate_faces": 0,
+                "boundary_edges": 0,
+                "nonmanifold_edges": 0,
+                "connected_components": -1,
+                "x_size": 1.0,
+                "y_size": 1.0,
+                "z_size": 1.0,
+            }
+        ],
+        run_mesh_qc.SUMMARY_FIELDS,
+    )
+
+    monkeypatch.setattr(run_mesh_qc, "discover_meshes", lambda *args, **kwargs: pytest.fail("discovery should not run"))
+    monkeypatch.setattr(run_mesh_qc, "_run_qc", lambda *args, **kwargs: pytest.fail("qc should not run"))
+
+    def fake_render(path, out_png, *, label, image_size, renderer):
+        out_png.parent.mkdir(parents=True)
+        out_png.write_bytes(b"fake png")
+        return "gmsh"
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"fake mosaic")
+
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--render-only",
+            "--roi-walls",
+        ]
+    )
+
+    assert rc == 0
+    with (out_dir / "found_meshes.csv").open(newline="", encoding="utf-8") as f:
+        found_rows = list(csv.DictReader(f))
+    with (out_dir / "qc_summary.csv").open(newline="", encoding="utf-8") as f:
+        summary_rows = list(csv.DictReader(f))
+    assert found_rows[0]["roi"] == "Right_DLPC_Runs"
+    assert summary_rows[0]["roi"] == "Right_DLPC_Runs"
+    assert (out_dir / "mosaics" / "Right_DLPC_Runs_wall.png").exists()
+
+
 def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
     out_dir = tmp_path / "qc"
     records = [

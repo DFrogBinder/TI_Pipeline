@@ -95,7 +95,7 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
 
 This means a Gmsh render job that hits a Slurm time limit can be submitted again with the same `--out` directory. Already completed per-mesh PNGs are kept, only missing renders are generated, and mosaics are rebuilt from the combined set.
 
-Mosaic assembly is separate from per-mesh rendering. Individual renders may be complete even if `mosaics/all_mesh_wall.png` is missing. The mosaic builder uses Pillow first and falls back to ImageMagick `magick montage` or `montage` if Pillow is unavailable. On Slurm, set `IMAGEMAGICK_MODULE=<module-name>` to load a site ImageMagick module after the wrapper's `module purge`, or set `MESH_QC_MONTAGE_BIN=/path/to/magick-or-montage`.
+Mosaic assembly is separate from per-mesh rendering. Individual renders may be complete even if `mosaics/all_mesh_wall.png` is missing. The mosaic builder uses Pillow first and falls back to ImageMagick `magick montage` or `montage` if Pillow is unavailable. Large ImageMagick mosaics are assembled in stripes to avoid one high-memory command over thousands of PNGs. On Slurm, set `IMAGEMAGICK_MODULE=<module-name>` to load a site ImageMagick module after the wrapper's `module purge`, or set `MESH_QC_MONTAGE_BIN=/path/to/magick-or-montage`.
 
 Resumed PNGs are recorded in `render_manifest.csv` with `actual_renderer=unknown_existing`, because the rerun can only prove that the file already existed. Newly rendered PNGs record the renderer actually used, for example `gmsh`. If a previous run used `--renderer auto` and produced images you do not trust, use a fresh output directory for the Gmsh rerun or remove only the old per-mesh PNGs before rerendering.
 
@@ -185,7 +185,7 @@ For `MESH_QC_STAGE=render` with `RENDERER=gmsh`, the Slurm wrapper still loads t
 MESH_QC_SKIP_SIMNIBS_FOR_RENDER=1
 ```
 
-The final mosaic wall still needs an image-composition backend. Pillow is preferred. If Pillow is not installed in the active Python environment, the code falls back to ImageMagick if `magick` or `montage` is on `PATH`.
+The final mosaic wall still needs an image-composition backend. Pillow is preferred. If Pillow is not installed in the active Python environment, the code falls back to ImageMagick if `magick` or `montage` is on `PATH`. The ImageMagick fallback limits each montage call to 512 input PNGs by default and stacks temporary stripe images afterward; override this with `MESH_QC_IMAGEMAGICK_MAX_INPUTS` only if the scheduler memory limit requires it.
 
 The Pillow path remains available as a last-resort software fallback. For smaller meshes it rasterizes triangles directly; for dense meshes it switches to a depth-based frontal preview so the output stays surface-like instead of collapsing into a sparse triangle cloud.
 

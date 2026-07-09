@@ -70,6 +70,48 @@ def test_make_mosaic_falls_back_to_imagemagick_when_pillow_is_missing(tmp_path, 
     assert str(out) == calls[0][-1]
 
 
+def test_make_mosaic_chunks_large_imagemagick_walls(tmp_path, monkeypatch):
+    image_paths = []
+    for idx in range(5):
+        image_path = tmp_path / f"tile_{idx}.png"
+        image_path.write_bytes(b"fake-png")
+        image_paths.append(image_path)
+    out = tmp_path / "wall.png"
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ModuleNotFoundError("No module named 'PIL'")
+        return real_import(name, *args, **kwargs)
+
+    calls = []
+
+    def fake_which(name):
+        if name == "montage":
+            return "/usr/bin/montage"
+        return None
+
+    def fake_run(cmd, *, check, capture_output, text):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"mosaic-png")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(rendering.shutil, "which", fake_which)
+    monkeypatch.setattr(rendering.subprocess, "run", fake_run)
+    monkeypatch.setenv("MESH_QC_IMAGEMAGICK_MAX_INPUTS", "2")
+
+    make_mosaic(image_paths, out, cols=2, tile_size=20)
+
+    assert out.exists()
+    assert len(calls) == 4
+    assert all("-label" in call for call in calls[:3])
+    assert "-label" not in calls[-1]
+    assert calls[-1][:2] == ["/usr/bin/montage", "-background"]
+    assert calls[-1][-1] == str(out)
+
+
 def test_make_mosaic_reports_missing_mosaic_backends(tmp_path, monkeypatch):
     img = tmp_path / "a.png"
     img.write_bytes(b"fake-png")

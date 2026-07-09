@@ -717,6 +717,56 @@ def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
     assert [row["resumed"] for row in manifest_rows] == ["1", "0"]
 
 
+def test_render_manifest_is_written_before_mosaic_failure(tmp_path, monkeypatch):
+    out_dir = tmp_path / "qc"
+    record = run_mesh_qc.MeshRecord(
+        path=tmp_path / "sub-CC1.msh",
+        roi="unknown_roi",
+        subject="sub-CC1",
+        repeat="repeat_01",
+        mesh_id="m2m_sub-CC1",
+    )
+    summary_rows = [
+        {
+            "mesh_id": record.mesh_id,
+            "subject": record.subject,
+            "repeat": record.repeat,
+            "roi": record.roi,
+            "path": str(record.path),
+            "status": "OK",
+            "flags": "",
+        }
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1", "--progress", "none"]
+    )
+
+    def fake_render(path, out_png, *, label, image_size, renderer):
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"new render")
+        return "gmsh"
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        raise RuntimeError("mosaic backend was killed")
+
+    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+
+    with pytest.raises(RuntimeError, match="mosaic assemblies failed"):
+        run_mesh_qc._render_outputs([record], summary_rows, out_dir, args)
+
+    with (out_dir / "render_manifest.csv").open(newline="", encoding="utf-8") as f:
+        manifest_rows = list(csv.DictReader(f))
+    assert manifest_rows[0]["subject"] == "sub-CC1"
+    assert manifest_rows[0]["actual_renderer"] == "gmsh"
+
+    with (out_dir / "mosaic_exception_details.csv").open(newline="", encoding="utf-8") as f:
+        mosaic_rows = list(csv.DictReader(f))
+    assert mosaic_rows[0]["stage"] == "mosaic"
+    assert mosaic_rows[0]["roi"] == "all"
+    assert "mosaic backend was killed" in mosaic_rows[0]["error_message"]
+
+
 def test_render_completeness_reports_missing_tiles_per_roi(tmp_path):
     records = [
         run_mesh_qc.MeshRecord(

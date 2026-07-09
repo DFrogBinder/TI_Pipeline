@@ -595,34 +595,150 @@ def _make_mosaic_with_imagemagick(
 
     cols = cols or math.ceil(math.sqrt(len(image_paths)))
     out_png.parent.mkdir(parents=True, exist_ok=True)
+
+    max_inputs = _imagemagick_max_inputs_per_call()
+    if len(image_paths) > max_inputs:
+        _make_mosaic_with_imagemagick_stripes(
+            image_paths,
+            out_png,
+            montage_cmd=montage_cmd,
+            cols=cols,
+            tile_size=tile_size,
+            padding=padding,
+            max_inputs=max_inputs,
+        )
+        return
+
+    _run_imagemagick_mosaic_command(
+        _imagemagick_tile_command(
+            montage_cmd,
+            image_paths,
+            out_png,
+            cols=cols,
+            tile_size=tile_size,
+            padding=padding,
+            include_labels=True,
+        ),
+        out_png,
+    )
+
+
+def _make_mosaic_with_imagemagick_stripes(
+    image_paths: list[Path],
+    out_png: Path,
+    *,
+    montage_cmd: list[str],
+    cols: int,
+    tile_size: int,
+    padding: int,
+    max_inputs: int,
+) -> None:
+    rows_per_stripe = max(1, max_inputs // max(cols, 1))
+    chunk_size = max(cols, rows_per_stripe * cols)
+    stripe_count = math.ceil(len(image_paths) / chunk_size)
+    print(
+        "[MOSAIC] Pillow unavailable; assembling large wall with "
+        f"ImageMagick stripes ({len(image_paths)} tiles, {stripe_count} stripes)",
+        flush=True,
+    )
+
+    with tempfile.TemporaryDirectory(prefix=f"{out_png.stem}_parts_", dir=str(out_png.parent)) as tmp_name:
+        tmp_dir = Path(tmp_name)
+        stripe_paths: list[Path] = []
+        for stripe_idx, start in enumerate(range(0, len(image_paths), chunk_size), start=1):
+            chunk = image_paths[start : start + chunk_size]
+            stripe_png = tmp_dir / f"stripe_{stripe_idx:04d}.png"
+            _run_imagemagick_mosaic_command(
+                _imagemagick_tile_command(
+                    montage_cmd,
+                    chunk,
+                    stripe_png,
+                    cols=cols,
+                    tile_size=tile_size,
+                    padding=padding,
+                    include_labels=True,
+                ),
+                stripe_png,
+            )
+            stripe_paths.append(stripe_png)
+
+        _run_imagemagick_mosaic_command(
+            [
+                *montage_cmd,
+                "-background",
+                "white",
+                "-tile",
+                "1x",
+                "-geometry",
+                "+0+0",
+                *[str(path) for path in stripe_paths],
+                str(out_png),
+            ],
+            out_png,
+        )
+
+
+def _imagemagick_tile_command(
+    montage_cmd: list[str],
+    image_paths: list[Path],
+    out_png: Path,
+    *,
+    cols: int,
+    tile_size: int,
+    padding: int,
+    include_labels: bool,
+) -> list[str]:
     cmd = [
         *montage_cmd,
         "-background",
         "white",
-        "-fill",
-        "black",
-        "-pointsize",
-        "11",
-        "-label",
-        "%t",
-        "-thumbnail",
-        f"{int(tile_size)}x{int(tile_size)}!",
-        "-tile",
-        f"{int(cols)}x",
-        "-geometry",
-        f"{int(tile_size)}x{int(tile_size)}+{int(padding)}+{int(padding)}",
-        *[str(path) for path in image_paths],
-        str(out_png),
     ]
+    if include_labels:
+        cmd.extend(["-fill", "black", "-pointsize", "11", "-label", "%t"])
+    cmd.extend(
+        [
+            "-thumbnail",
+            f"{int(tile_size)}x{int(tile_size)}!",
+            "-tile",
+            f"{int(cols)}x",
+            "-geometry",
+            f"{int(tile_size)}x{int(tile_size)}+{int(padding)}+{int(padding)}",
+            *[str(path) for path in image_paths],
+            str(out_png),
+        ]
+    )
+    return cmd
+
+
+def _run_imagemagick_mosaic_command(cmd: list[str], out_png: Path) -> None:
     try:
         completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
     except OSError as exc:
         raise RuntimeError(f"ImageMagick mosaic assembly failed to start: {exc}") from exc
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or f"exit status {completed.returncode}"
+        detail = completed.stderr.strip() or completed.stdout.strip() or _imagemagick_exit_detail(completed.returncode)
         raise RuntimeError(f"ImageMagick mosaic assembly failed: {detail}")
     if not out_png.exists():
         raise RuntimeError(f"ImageMagick mosaic assembly did not write {out_png}")
+
+
+def _imagemagick_exit_detail(returncode: int) -> str:
+    if returncode < 0:
+        return (
+            f"exit status {returncode} (process was killed by signal {-returncode}; "
+            "this commonly indicates an out-of-memory kill during mosaic assembly)"
+        )
+    return f"exit status {returncode}"
+
+
+def _imagemagick_max_inputs_per_call() -> int:
+    raw = os.environ.get("MESH_QC_IMAGEMAGICK_MAX_INPUTS", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    return 512
 
 
 def _imagemagick_montage_command() -> list[str] | None:

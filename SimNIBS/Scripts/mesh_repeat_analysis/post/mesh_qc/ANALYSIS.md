@@ -293,7 +293,9 @@ Mosaic assembly is dependency-separated from rendering:
 - per-mesh Gmsh renders can complete without Pillow,
 - `mosaics/all_mesh_wall.png` is assembled with Pillow when available,
 - if Pillow is unavailable, assembly falls back to ImageMagick `magick montage` or `montage`,
+- large ImageMagick walls are assembled in stripes instead of one all-input command to reduce memory spikes,
 - Slurm runs can load a site ImageMagick module with `IMAGEMAGICK_MODULE` or use a specific executable with `MESH_QC_MONTAGE_BIN`.
+- if mosaic assembly fails, `render_manifest.csv` is still written and the mosaic-specific traceback is written to `mosaic_exception_details.csv`.
 
 ## Logging And Crash Diagnostics
 

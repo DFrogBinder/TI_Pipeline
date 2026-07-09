@@ -1644,25 +1644,6 @@ def _render_outputs(
         failure_rows=failure_rows,
     )
 
-    if args.roi_walls:
-        for roi, images in sorted(rendered_by_roi.items()):
-            print(f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)", flush=True)
-            make_mosaic(
-                images,
-                out_dir / "mosaics" / f"{_safe_name(roi)}_wall.png",
-                cols=args.cols,
-                tile_size=args.tile_size,
-            )
-
-    if all_rendered:
-        print(f"[MOSAIC] Building combined mesh wall ({len(all_rendered)} tiles)", flush=True)
-        make_mosaic(
-            all_rendered,
-            out_dir / "mosaics" / "all_mesh_wall.png",
-            cols=args.cols,
-            tile_size=args.tile_size,
-        )
-
     manifest_rows = sorted(manifest_rows, key=lambda row: str(row["output_path"]))
     _write_render_failure_outputs(out_dir, failure_rows)
     _write_optional_csv(out_dir / "render_manifest.csv", manifest_rows, RENDER_MANIFEST_FIELDS)
@@ -1673,6 +1654,70 @@ def _render_outputs(
             "Render manifest written",
             path=str(out_dir / "render_manifest.csv"),
             renderer_counts=" ".join(f"{key}:{renderer_counts[key]}" for key in sorted(renderer_counts)),
+        )
+
+    mosaic_exception_rows: list[dict[str, object]] = []
+
+    def build_mosaic(name: str, images: list[Path], out_png: Path) -> None:
+        try:
+            make_mosaic(
+                images,
+                out_png,
+                cols=args.cols,
+                tile_size=args.tile_size,
+            )
+        except Exception as exc:
+            tb = traceback.format_exc()
+            mosaic_exception_rows.append(
+                {
+                    "stage": "mosaic",
+                    "subject": "",
+                    "repeat": "",
+                    "roi": name,
+                    "mesh_id": name,
+                    "path": "",
+                    "output_path": str(out_png),
+                    "error_type": type(exc).__name__,
+                    "error_message": _short_error(exc),
+                    "traceback": tb,
+                }
+            )
+            _log_error(
+                "MOSAIC",
+                "Mosaic assembly failed",
+                name=name,
+                output_path=str(out_png),
+                tiles=len(images),
+                error_type=type(exc).__name__,
+                error_message=_short_error(exc),
+            )
+            print(f"[MOSAIC] FAILED {name}: {_short_error(exc, limit=240)}", flush=True)
+
+    if args.roi_walls:
+        for roi, images in sorted(rendered_by_roi.items()):
+            print(f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)", flush=True)
+            build_mosaic(
+                roi,
+                images,
+                out_dir / "mosaics" / f"{_safe_name(roi)}_wall.png",
+            )
+
+    if all_rendered:
+        print(f"[MOSAIC] Building combined mesh wall ({len(all_rendered)} tiles)", flush=True)
+        build_mosaic(
+            "all",
+            all_rendered,
+            out_dir / "mosaics" / "all_mesh_wall.png",
+        )
+
+    _write_optional_csv(out_dir / "mosaic_exception_details.csv", mosaic_exception_rows, EXCEPTION_FIELDS)
+    if mosaic_exception_rows:
+        failed_names = ", ".join(str(row["roi"]) for row in mosaic_exception_rows[:8])
+        if len(mosaic_exception_rows) > 8:
+            failed_names += f", ... ({len(mosaic_exception_rows)} total)"
+        raise RuntimeError(
+            "One or more mosaic assemblies failed after per-mesh rendering completed: "
+            f"{failed_names}. See {out_dir / 'mosaic_exception_details.csv'}."
         )
 
     _log_info(

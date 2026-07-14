@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Segmentation Merge Strategy Explainer</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --ink: #18212f;
+      --muted: #5b6472;
+      --line: #d7dce5;
+      --manual: #2f80ed;
+      --skin: #ef8f35;
+      --charm: #43a047;
+      --risk: #c62828;
+      --panel: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.35;
+    }
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+    .tag {
+      display: inline-block;
+      margin-bottom: 12px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #eef2f8;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .formula {
+      font-family: Menlo, Consolas, monospace;
+      background: #f1f4f8;
+      border-radius: 6px;
+      padding: 10px;
+      margin: 12px 0;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 12px 0 4px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      margin-right: 5px;
+      vertical-align: -1px;
+    }
+    .takeaway {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .takeaway div {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .takeaway strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+    .label {
+      font-size: 14px;
+      font-weight: 700;
+      fill: var(--ink);
+    }
+    .small {
+      font-size: 12px;
+      fill: var(--muted);
+    }
+    .skin { fill: #ef8f35; opacity: 0.95; }
+    .charmSkin { fill: #f3a760; opacity: 0.95; }
+    .skull { fill: #f2d37b; opacity: 0.95; }
+    .csf { fill: #75c9e6; opacity: 0.95; }
+    .brain { fill: #2f80ed; opacity: 0.98; }
+    .manualBad { fill: #d75d2a; opacity: 0.42; }
+    .gap { fill: #ffffff; stroke: #c62828; stroke-width: 2; stroke-dasharray: 5 4; }
+    .riskFill { fill: #f7c7c7; opacity: 0.95; }
+    .outline { fill: none; stroke: #344054; stroke-width: 2; }
+    .arrow {
+      stroke: #596276;
+      stroke-width: 2;
+      fill: none;
+      marker-end: url(#arrowhead);
+    }
+    .pulse {
+      animation: pulse 2.4s ease-in-out infinite;
+      transform-origin: center;
+    }
+    .slide {
+      animation: slideIn 4.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 0.95; }
+    }
+    @keyframes slideIn {
+      0%, 20% { opacity: 0; transform: translateX(-18px); }
+      35%, 85% { opacity: 1; transform: translateX(0); }
+      100% { opacity: 0; transform: translateX(0); }
+    }
+    @media (max-width: 850px) {
+      main { padding: 18px; }
+      .grid, .takeaway { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Two Ways to Replace Bad Manual Skin</h1>
+  <p class="subtitle">In both candidates we keep the manually corrected labels, except manual skin label 5. The difference is what fills the space after manual skin is removed.</p>
+
+  <div class="legend">
+    <span><span class="swatch" style="background: var(--manual)"></span>manual non-skin labels kept</span>
+    <span><span class="swatch" style="background: var(--skin)"></span>skin/scalp</span>
+    <span><span class="swatch" style="background: #f2d37b"></span>CHARM fallback tissue</span>
+    <span><span class="swatch" style="background: #f7c7c7"></span>risk: gap hidden as skin</span>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Candidate A</h2>
+      <span class="tag">Full CHARM fallback, then manual overlay</span>
+      <svg viewBox="0 0 560 390" role="img" aria-label="Candidate A merge visualization">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L10,4 L0,8 Z" fill="#596276"></path>
+          </marker>
+          <clipPath id="headA">
+            <ellipse cx="420" cy="205" rx="85" ry="112"></ellipse>
+          </clipPath>
+        </defs>
+
+        <text x="32" y="34" class="label">1. Start from CHARM full tissue map</text>
+        <ellipse cx="135" cy="190" rx="82" ry="112" class="charmSkin"></ellipse>
+        <ellipse cx="135" cy="190" rx="68" ry="94" class="skull"></ellipse>
+        <ellipse cx="135" cy="190" rx="51" ry="74" class="csf"></ellipse>
+        <ellipse cx="135" cy="196" rx="38" ry="55" class="brain"></ellipse>
+        <path d="M120 90 C82 126 68 218 103 294" class="gap pulse"></path>
+        <text x="72" y="330" class="small">CHARM already has skin, skull, CSF, brain</text>
+
+        <path d="M235 190 H320" class="arrow"></path>
+        <text x="244" y="170" class="small">paste manual</text>
+        <text x="254" y="186" class="small">non-skin</text>
+
+        <text x="340" y="34" class="label">2. Final: CHARM fills gaps</text>
+        <ellipse cx="420" cy="190" rx="82" ry="112" class="charmSkin"></ellipse>
+        <ellipse cx="420" cy="190" rx="68" ry="94" class="skull"></ellipse>
+        <ellipse cx="420" cy="190" rx="51" ry="74" class="csf"></ellipse>
+        <ellipse cx="420" cy="196" rx="38" ry="55" class="brain slide"></ellipse>
+        <path d="M405 90 C367 126 353 218 388 294" fill="none" stroke="#43a047" stroke-width="4" class="pulse"></path>
+        <ellipse cx="420" cy="190" rx="82" ry="112" class="outline"></ellipse>
+        <text x="344" y="330" class="small">Manual skin is ignored; CHARM tissue remains underneath</text>
+      </svg>
+      <div class="formula">final = CHARM full tissue map
+final[manual label != 0 and manual label != 5] = manual label</div>
+      <p><strong>Simple meaning:</strong> CHARM provides the whole backup head. We paste the trusted manual non-skin labels over it.</p>
+      <p><strong>Implication:</strong> safest anatomically. If removing manual skin creates a gap, CHARM fills it with its own tissue labels instead of forcing it to skin.</p>
+    </section>
+
+    <section class="card">
+      <h2>Candidate B</h2>
+      <span class="tag">Solid CHARM head mask labelled as skin, then manual overlay</span>
+      <svg viewBox="0 0 560 390" role="img" aria-label="Candidate B merge visualization">
+        <defs>
+          <clipPath id="headB">
+            <ellipse cx="420" cy="190" rx="82" ry="112"></ellipse>
+          </clipPath>
+        </defs>
+
+        <text x="32" y="34" class="label">1. Start from solid CHARM head envelope</text>
+        <ellipse cx="135" cy="190" rx="82" ry="112" class="skin"></ellipse>
+        <ellipse cx="135" cy="190" rx="82" ry="112" class="outline"></ellipse>
+        <text x="73" y="330" class="small">Everything inside envelope starts as skin</text>
+
+        <path d="M235 190 H320" class="arrow"></path>
+        <text x="244" y="170" class="small">paste manual</text>
+        <text x="254" y="186" class="small">non-skin</text>
+
+        <text x="340" y="34" class="label">2. Final: remaining gaps become skin</text>
+        <ellipse cx="420" cy="190" rx="82" ry="112" class="skin"></ellipse>
+        <path d="M390 118 C366 146 362 232 389 286" class="riskFill pulse"></path>
+        <ellipse cx="420" cy="196" rx="38" ry="55" class="brain slide"></ellipse>
+        <ellipse cx="420" cy="190" rx="82" ry="112" class="outline"></ellipse>
+        <text x="347" y="330" class="small">Mesh may look closed, but leftover space is skin</text>
+      </svg>
+      <div class="formula">solid_head = fill_holes(CHARM label > 0)
+final = background
+final[solid_head] = skin label 5
+final[manual label != 0 and manual label != 5] = manual label</div>
+      <p><strong>Simple meaning:</strong> CHARM provides only a solid head-shaped shell. We paste the trusted manual non-skin labels into it.</p>
+      <p><strong>Implication:</strong> more aggressive. It can close holes, but it may turn unknown/gap regions into skin/scalp even if they should be skull or CSF.</p>
+    </section>
+  </div>
+
+  <section class="takeaway">
+    <div>
+      <strong>What both candidates do</strong>
+      Manual skin label 5 is thrown away. Manual non-skin labels are preserved.
+    </div>
+    <div>
+      <strong>The real difference</strong>
+      Candidate A fills gaps with CHARM tissue labels. Candidate B fills gaps with skin.
+    </div>
+    <div>
+      <strong>Supervisor-friendly summary</strong>
+      A is anatomically conservative. B is geometry-first and may over-label gap space as scalp.
+    </div>
+  </section>
+</main>
+</body>
+</html>

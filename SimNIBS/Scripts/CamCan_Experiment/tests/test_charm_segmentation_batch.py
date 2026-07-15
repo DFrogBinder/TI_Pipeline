@@ -296,6 +296,31 @@ def test_installer_preflight_discovers_nested_4_roi_by_10_repeat_tree(tmp_path):
     assert plan.tasks[0].destination.name == TARGET_BASENAME
 
 
+def test_installer_parent_suffix_resolves_run_vs_post_export_duplicate(tmp_path):
+    maps_root, roi_root = seed_install_tree(tmp_path)
+    duplicate = roi_root / "Left_Hippocampus_Post_Export" / "Left_Hippocampus_Data_01"
+    duplicate.mkdir(parents=True)
+
+    ambiguous = build_preflight_plan(
+        maps_root=maps_root,
+        roi_root=roi_root,
+        expected_subjects=2,
+    )
+    filtered = build_preflight_plan(
+        maps_root=maps_root,
+        roi_root=roi_root,
+        expected_subjects=2,
+        dataset_parent_suffix="_Runs",
+    )
+
+    assert not ambiguous.ready
+    assert any(issue["kind"] == "ambiguous_dataset" for issue in ambiguous.issues)
+    assert filtered.ready
+    assert len(filtered.datasets) == 40
+    assert len(filtered.tasks) == 80
+    assert all(path.parent.name.endswith("_Runs") for path in filtered.datasets)
+
+
 def test_installer_preflight_blocks_before_any_change_when_target_is_missing(tmp_path):
     maps_root, roi_root = seed_install_tree(tmp_path)
     missing = (

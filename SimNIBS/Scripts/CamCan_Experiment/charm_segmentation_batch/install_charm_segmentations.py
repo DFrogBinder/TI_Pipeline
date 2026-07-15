@@ -51,6 +51,7 @@ class InstallTask:
 class PreflightPlan:
     maps_root: Path
     roi_root: Path
+    dataset_parent_suffix: str | None
     source_maps: tuple[tuple[str, Path], ...]
     subjects: tuple[str, ...]
     datasets: tuple[Path, ...]
@@ -177,7 +178,10 @@ def discover_source_maps(
 
 
 def discover_dataset_dirs(
-    roi_root: Path, names: Sequence[str]
+    roi_root: Path,
+    names: Sequence[str],
+    *,
+    parent_suffix: str | None = None,
 ) -> tuple[dict[str, Path], list[dict[str, str]]]:
     wanted = set(names)
     matches: dict[str, list[Path]] = {name: [] for name in names}
@@ -188,17 +192,30 @@ def discover_dataset_dirs(
     datasets: dict[str, Path] = {}
     issues: list[dict[str, str]] = []
     for name in names:
-        found = sorted(set(matches[name]))
+        all_found = sorted(set(matches[name]))
+        found = (
+            [path for path in all_found if path.parent.name.endswith(parent_suffix)]
+            if parent_suffix
+            else all_found
+        )
         if len(found) == 1:
             datasets[name] = found[0]
         elif not found:
+            filter_message = (
+                f" with parent-directory suffix {parent_suffix!r}"
+                if parent_suffix
+                else ""
+            )
             issues.append(
                 {
                     "kind": "missing_dataset",
                     "dataset": name,
                     "subject": "",
-                    "path": str(roi_root),
-                    "message": "expected dataset directory was not found recursively",
+                    "path": ";".join(str(path) for path in all_found) or str(roi_root),
+                    "message": (
+                        "expected dataset directory was not found recursively"
+                        f"{filter_message}"
+                    ),
                 }
             )
         else:
@@ -241,6 +258,7 @@ def build_preflight_plan(
     rois: Sequence[str] = DEFAULT_ROIS,
     repeats: Sequence[int] = DEFAULT_REPEATS,
     expected_subjects: int = DEFAULT_EXPECTED_SUBJECTS,
+    dataset_parent_suffix: str | None = None,
 ) -> PreflightPlan:
     maps_root = maps_root.expanduser().resolve()
     roi_root = roi_root.expanduser().resolve()
@@ -283,7 +301,11 @@ def build_preflight_plan(
         )
         datasets: dict[str, Path] = {}
     else:
-        datasets, dataset_issues = discover_dataset_dirs(roi_root, names)
+        datasets, dataset_issues = discover_dataset_dirs(
+            roi_root,
+            names,
+            parent_suffix=dataset_parent_suffix,
+        )
         issues.extend(dataset_issues)
 
     source_subjects = set(sources)
@@ -357,6 +379,7 @@ def build_preflight_plan(
     return PreflightPlan(
         maps_root=maps_root,
         roi_root=roi_root,
+        dataset_parent_suffix=dataset_parent_suffix,
         source_maps=tuple(sorted(sources.items())),
         subjects=tuple(sorted(sources)),
         datasets=tuple(datasets[name] for name in names if name in datasets),
@@ -417,6 +440,7 @@ def write_preflight_reports(
             "status": "ready" if plan.ready else "blocked",
             "maps_root": plan.maps_root,
             "roi_root": plan.roi_root,
+            "dataset_parent_suffix": plan.dataset_parent_suffix,
             "source_subjects": len(plan.subjects),
             "datasets_found": len(plan.datasets),
             "datasets_expected": plan.expected_dataset_count,
@@ -625,6 +649,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--repeats", default="1-10")
     parser.add_argument("--rois", nargs="+", default=list(DEFAULT_ROIS))
+    parser.add_argument(
+        "--dataset-parent-suffix",
+        help=(
+            "Opt-in filter applied to the immediate parent of each dataset, "
+            "for example _Runs to exclude duplicate *_Post_Export trees."
+        ),
+    )
     return parser
 
 
@@ -641,6 +672,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.apply and args.backup_root is None:
         print("[ERROR] --backup-root is required with --apply", file=sys.stderr)
         return 2
+    if args.dataset_parent_suffix and "/" in args.dataset_parent_suffix:
+        print(
+            "[ERROR] --dataset-parent-suffix must be a directory-name suffix, not a path",
+            file=sys.stderr,
+        )
+        return 2
 
     report_dir = args.report_dir.expanduser().resolve()
     plan = build_preflight_plan(
@@ -649,6 +686,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rois=args.rois,
         repeats=repeats,
         expected_subjects=args.expected_subjects,
+        dataset_parent_suffix=args.dataset_parent_suffix,
     )
     hashes = source_hashes(plan) if plan.source_maps else {}
     write_preflight_reports(plan, report_dir, hashes)

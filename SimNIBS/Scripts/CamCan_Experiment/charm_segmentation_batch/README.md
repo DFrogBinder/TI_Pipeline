@@ -122,7 +122,9 @@ the exact filename consumed by CHARM meshing:
 The four default ROI prefixes are `Left_Hippocampus`, `Left_M1`, `Right_DLPC`,
 and `Right_Thalamus`; repeats default to 01 through 10. The ROI root is searched
 recursively, so both a flat layout and an HPC layout with `*_Runs` parent
-directories are supported.
+directories are supported. When duplicate dataset names also exist in post
+exports, pass `--dataset-parent-suffix _Runs` to select only datasets whose
+immediate parent directory ends in `_Runs`.
 
 The installer has no target-root default. The CHARM segmentation-generation
 profile is known working, but this 7,000-file installation is a candidate until
@@ -136,7 +138,7 @@ ROI_ROOT=/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data
 RUN_ID=charm-map-install-$(date +%Y%m%d-%H%M%S)
 REPORT_DIR=/mnt/parscratch/users/cop23bi/charm_segmentation_install/$RUN_ID
 BACKUP_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentation_backups/$RUN_ID
-python3 charm_segmentation_batch/install_charm_segmentations.py --maps-root "$MAPS_ROOT" --roi-root "$ROI_ROOT" --report-dir "$REPORT_DIR"
+python3 charm_segmentation_batch/install_charm_segmentations.py --maps-root "$MAPS_ROOT" --roi-root "$ROI_ROOT" --report-dir "$REPORT_DIR" --dataset-parent-suffix _Runs
 ```
 
 The first invocation is audit-only. It changes no segmentation, mesh, or
@@ -158,7 +160,7 @@ the preflight is ready, run the same command with an explicit backup root and
 `--apply`:
 
 ```bash
-python3 charm_segmentation_batch/install_charm_segmentations.py --maps-root "$MAPS_ROOT" --roi-root "$ROI_ROOT" --report-dir "$REPORT_DIR" --backup-root "$BACKUP_ROOT" --apply
+python3 charm_segmentation_batch/install_charm_segmentations.py --maps-root "$MAPS_ROOT" --roi-root "$ROI_ROOT" --report-dir "$REPORT_DIR" --backup-root "$BACKUP_ROOT" --dataset-parent-suffix _Runs --apply
 ```
 
 Each old map is backed up under the same relative path beneath `BACKUP_ROOT`.

@@ -8,6 +8,7 @@ from charm_only_remesh.workflow import (
     remove_installation_backups,
     remove_roast_segmentations,
     run_remesh_task,
+    select_install_rows,
     validate_remesh_results,
 )
 from utils.camcan_dataset import sha256_file
@@ -64,6 +65,60 @@ def _install_manifest(tmp_path: Path):
             }
         )
     return roi_root, install, anat, label, mesh
+
+
+def test_roi_scope_selects_exact_repeat_and_subject_set():
+    rows = [
+        {"dataset": "Left_Hippocampus_Data_01", "subject": "sub-01"},
+        {"dataset": "Left_M1_Data_01", "subject": "sub-01"},
+    ]
+
+    selected = select_install_rows(
+        rows,
+        roi_prefix="Left_Hippocampus",
+        expected_targets=1,
+        expected_repeats=1,
+        expected_subjects=1,
+    )
+
+    assert selected == [rows[0]]
+
+
+def test_roi_scope_refuses_duplicate_subject_rows():
+    row = {"dataset": "Left_Hippocampus_Data_01", "subject": "sub-01"}
+
+    try:
+        select_install_rows(
+            [row, row.copy()],
+            roi_prefix="Left_Hippocampus",
+            expected_targets=2,
+            expected_repeats=1,
+            expected_subjects=1,
+        )
+    except ValueError as exc:
+        assert "unique_subjects=1" in str(exc)
+    else:
+        raise AssertionError("duplicate ROI subject rows must block the scope")
+
+
+def test_roi_scope_refuses_different_subject_sets_between_repeats():
+    rows = [
+        {"dataset": "Left_Hippocampus_Data_01", "subject": "sub-01"},
+        {"dataset": "Left_Hippocampus_Data_02", "subject": "sub-02"},
+    ]
+
+    try:
+        select_install_rows(
+            rows,
+            roi_prefix="Left_Hippocampus",
+            expected_targets=2,
+            expected_repeats=2,
+            expected_subjects=1,
+        )
+    except ValueError as exc:
+        assert "different subject set" in str(exc)
+    else:
+        raise AssertionError("different repeat subject sets must block the scope")
 
 
 def test_installation_backup_removal_is_audited_then_deleted(tmp_path):

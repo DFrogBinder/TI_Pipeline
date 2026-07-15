@@ -1,8 +1,9 @@
 # CHARM-only remesh, simulation, and post-processing campaign
 
 This workflow treats the successful 7,000-row installation manifest as the
-authority for every dataset copy. It never calls CHARM segmentation. The only
-meshing command it permits is:
+authority for every dataset copy and can operate on one validated 1,750-task
+ROI scope at a time. It never calls CHARM segmentation. The only meshing
+command it permits is:
 
 ```text
 charm <subject> --mesh
@@ -23,7 +24,9 @@ Run these commands from the HPC checkout at
 ROI_ROOT=/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data
 INSTALL_REPORT=/mnt/parscratch/users/cop23bi/charm_segmentation_install/charm-map-install-20260715-203145
 INSTALL_MANIFEST="$INSTALL_REPORT/apply_manifest.tsv"
-RUN_ID=charm-only-remesh-$(date +%Y%m%d-%H%M%S)
+ROI_PREFIX=Left_Hippocampus
+EXPECTED_TARGETS=1750
+RUN_ID=charm-only-remesh-${ROI_PREFIX}-$(date +%Y%m%d-%H%M%S)
 CAMPAIGN_ROOT=/mnt/parscratch/users/cop23bi/charm_only_campaigns/$RUN_ID
 REMESH_RESULTS="$CAMPAIGN_ROOT/remesh_results"
 mkdir -p "$CAMPAIGN_ROOT" "$REMESH_RESULTS"
@@ -39,7 +42,9 @@ Audit first; this changes nothing:
 python3 CamCan_Experiment/charm_only_remesh/workflow.py remove-roast \
   --install-manifest "$INSTALL_MANIFEST" \
   --roi-root "$ROI_ROOT" \
-  --report "$CAMPAIGN_ROOT/roast_removal_audit.tsv"
+  --report "$CAMPAIGN_ROOT/roast_removal_audit.tsv" \
+  --roi-prefix "$ROI_PREFIX" \
+  --expected-targets "$EXPECTED_TARGETS"
 ```
 
 Review the TSV and confirm the off-HPC backup is available. Then delete only
@@ -50,11 +55,13 @@ python3 CamCan_Experiment/charm_only_remesh/workflow.py remove-roast \
   --install-manifest "$INSTALL_MANIFEST" \
   --roi-root "$ROI_ROOT" \
   --report "$CAMPAIGN_ROOT/roast_removal_apply.tsv" \
+  --roi-prefix "$ROI_PREFIX" \
+  --expected-targets "$EXPECTED_TARGETS" \
   --apply-delete \
   --confirm-external-backup
 ```
 
-The apply command deletes only
+The apply command deletes only the selected ROI's
 `<subject>_T1w_ras_1mm_T1andT2_masks.nii[.gz]` files discovered through the
 successful 7,000-row installation manifest. The report records their former
 paths, sizes, and hashes.
@@ -70,25 +77,29 @@ INSTALL_BACKUP_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentation_backups/cha
 python3 CamCan_Experiment/charm_only_remesh/workflow.py remove-install-backups \
   --install-manifest "$INSTALL_MANIFEST" \
   --backup-root "$INSTALL_BACKUP_ROOT" \
-  --report "$CAMPAIGN_ROOT/install_backup_removal_audit.tsv"
+  --report "$CAMPAIGN_ROOT/install_backup_removal_audit.tsv" \
+  --roi-prefix "$ROI_PREFIX" \
+  --expected-backups "$EXPECTED_TARGETS"
 ```
 
-Proceed only if the summary reports `status=audit`, `found=7000`,
-`expected=7000`, and `issues=0`. Then delete the exact verified files:
+Proceed only if the summary reports `status=audit`, `found=1750`,
+`expected=1750`, and `issues=0`. Then delete the exact verified files:
 
 ```bash
 python3 CamCan_Experiment/charm_only_remesh/workflow.py remove-install-backups \
   --install-manifest "$INSTALL_MANIFEST" \
   --backup-root "$INSTALL_BACKUP_ROOT" \
   --report "$CAMPAIGN_ROOT/install_backup_removal_apply.tsv" \
+  --roi-prefix "$ROI_PREFIX" \
+  --expected-backups "$EXPECTED_TARGETS" \
   --apply-delete \
   --confirm-external-backup
 ```
 
 This command accepts only backup paths recorded in `apply_manifest.tsv` that
 are inside the declared backup root and whose hashes still match
-`before_sha256`. It removes the empty backup tree afterward but does not touch
-any other campaign backup directory.
+`before_sha256`. During ROI-by-ROI execution the shared backup root remains in
+place until the other ROI backups are removed; no other ROI is touched.
 
 ## 3. Build the immutable remesh manifest
 
@@ -97,10 +108,12 @@ python3 CamCan_Experiment/charm_only_remesh/workflow.py preflight \
   --install-manifest "$INSTALL_MANIFEST" \
   --roi-root "$ROI_ROOT" \
   --manifest "$CAMPAIGN_ROOT/remesh_manifest.tsv" \
-  --summary "$CAMPAIGN_ROOT/remesh_preflight.json"
+  --summary "$CAMPAIGN_ROOT/remesh_preflight.json" \
+  --roi-prefix "$ROI_PREFIX" \
+  --expected-targets "$EXPECTED_TARGETS"
 ```
 
-Do not submit unless the summary reports `status=ready`, `ready=7000`, and
+Do not submit unless the summary reports `status=ready`, `ready=1750`, and
 `blocked=0`.
 
 ## 4. One-task smoke test
@@ -135,7 +148,7 @@ the HPC. A failed task leaves the old mesh absent and is safe to retry.
 
 ### End-to-end smoke simulation and post-processing
 
-Before the full 7,000-mesh submission, carry task 0 through simulation and
+Before the full 1,750-mesh ROI submission, carry task 0 through simulation and
 subject post-processing. Read its identity and select the matching preset:
 
 ```bash
@@ -198,7 +211,7 @@ continuing.
 
 ## 5. Full remesh and validation
 
-After the smoke test passes:
+After the smoke test passes, submit the remaining tasks for this ROI:
 
 ```bash
 MANIFEST="$CAMPAIGN_ROOT/remesh_manifest.tsv" \
@@ -210,7 +223,7 @@ bash CamCan_Experiment/HPC_scripts/submit_charm_only_remesh.sh
 ```
 
 Task 0 is idempotent and will be reported as already complete. Validate all
-7,000 meshes before starting simulations:
+1,750 Left Hippocampus meshes before starting simulations:
 
 ```bash
 python3 CamCan_Experiment/charm_only_remesh/workflow.py validate \
@@ -230,10 +243,10 @@ Run each ROI separately. The four required mappings are:
 | `Right_DLPC_Runs` | `Right_DLPC_Data_*` | `right-dlpfc` |
 | `Right_Thalamus_Runs` | `Right_Thalamus_Data_*` | `right-thalamus` |
 
-Example for left M1, first as a dry run:
+For the current Left Hippocampus campaign, first run a dry audit:
 
 ```bash
-ROI_NAME=Left_M1
+ROI_NAME=Left_Hippocampus
 ROI_PARENT="$ROI_ROOT/${ROI_NAME}_Runs"
 SIM_REPORT="$CAMPAIGN_ROOT/simulation/$ROI_NAME"
 SIM_ARCHIVE=/mnt/parscratch/users/cop23bi/pre_charm_simulation_outputs/$RUN_ID/$ROI_NAME
@@ -274,7 +287,7 @@ refuses non-atomic cross-filesystem moves and existing destinations.
 ```bash
 ROI_ROOT="$ROI_PARENT" \
 MANIFEST="$SIM_REPORT/tasks.tsv" \
-MONTAGE_PRESET=left-m1 \
+MONTAGE_PRESET=left-hippocampus \
 LOG_DIR="$SIM_REPORT/logs" \
 TI_TASK_MAX_RETRIES=2 \
 bash CamCan_Experiment/HPC_scripts/submit_camcan_inplace_rerun.sh

@@ -20,7 +20,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from simulation.mesh_reuse import candidate_mesh_paths, resolve_existing_mesh  # noqa: E402
-from utils.camcan_dataset import parse_dataset_name, sha256_file  # noqa: E402
+from utils.camcan_dataset import (  # noqa: E402
+    CAMCAN_ROI_CONFIGS,
+    parse_dataset_name,
+    sha256_file,
+)
 
 
 TARGET_BASENAME = "tissue_labeling_upsampled.nii.gz"
@@ -122,6 +126,78 @@ def _dataset_root_from_label(label_path: Path, dataset_name: str) -> Path:
     )
 
 
+def select_install_rows(
+    install_rows: list[dict[str, str]],
+    *,
+    roi_prefix: str | None,
+    expected_targets: int,
+    expected_repeats: int = 10,
+    expected_subjects: int = 175,
+) -> list[dict[str, str]]:
+    """Select and validate an exact ROI scope from the full install manifest."""
+    if roi_prefix is None:
+        return install_rows
+
+    allowed = {config.dataset_prefix for config in CAMCAN_ROI_CONFIGS}
+    if roi_prefix not in allowed:
+        raise ValueError(
+            f"unsupported ROI prefix {roi_prefix!r}; expected one of: "
+            + ", ".join(sorted(allowed))
+        )
+    if expected_repeats <= 0 or expected_subjects <= 0:
+        raise ValueError("expected repeats and subjects must be positive")
+
+    selected: list[dict[str, str]] = []
+    subjects_by_dataset: dict[str, set[str]] = {}
+    row_counts: dict[str, int] = {}
+    for row in install_rows:
+        dataset_name = row["dataset"].strip()
+        config, _ = parse_dataset_name(dataset_name)
+        if config.dataset_prefix != roi_prefix:
+            continue
+        selected.append(row)
+        subject = row["subject"].strip()
+        subjects_by_dataset.setdefault(dataset_name, set()).add(subject)
+        row_counts[dataset_name] = row_counts.get(dataset_name, 0) + 1
+
+    expected_datasets = {
+        f"{roi_prefix}_Data_{repeat:02d}"
+        for repeat in range(1, expected_repeats + 1)
+    }
+    actual_datasets = set(subjects_by_dataset)
+    if actual_datasets != expected_datasets:
+        missing = sorted(expected_datasets - actual_datasets)
+        extra = sorted(actual_datasets - expected_datasets)
+        raise ValueError(
+            f"ROI dataset scope mismatch for {roi_prefix}: "
+            f"missing={missing}, extra={extra}"
+        )
+    for dataset_name in sorted(expected_datasets):
+        unique_subjects = len(subjects_by_dataset[dataset_name])
+        rows = row_counts[dataset_name]
+        if unique_subjects != expected_subjects or rows != expected_subjects:
+            raise ValueError(
+                f"dataset {dataset_name} has rows={rows}, "
+                f"unique_subjects={unique_subjects}; expected {expected_subjects}"
+            )
+    reference_dataset = min(expected_datasets)
+    reference_subjects = subjects_by_dataset[reference_dataset]
+    for dataset_name in sorted(expected_datasets - {reference_dataset}):
+        subjects = subjects_by_dataset[dataset_name]
+        if subjects != reference_subjects:
+            raise ValueError(
+                f"dataset {dataset_name} has a different subject set from "
+                f"{reference_dataset}: missing={sorted(reference_subjects - subjects)}, "
+                f"extra={sorted(subjects - reference_subjects)}"
+            )
+    if len(selected) != expected_targets:
+        raise ValueError(
+            f"ROI scope {roi_prefix} has {len(selected)} rows; "
+            f"expected {expected_targets}"
+        )
+    return selected
+
+
 def build_remesh_manifest(
     *,
     install_manifest: str | Path,
@@ -129,10 +205,21 @@ def build_remesh_manifest(
     manifest: str | Path,
     summary: str | Path,
     expected_targets: int = 7000,
+    roi_prefix: str | None = None,
+    expected_repeats: int = 10,
+    expected_subjects: int = 175,
 ) -> dict[str, object]:
     roi_root_path = Path(roi_root).expanduser().resolve()
     install_rows = read_tsv(install_manifest)
     _validate_install_manifest_header(install_rows)
+    install_rows = select_install_rows(
+        install_rows,
+        roi_prefix=roi_prefix,
+        expected_targets=expected_targets,
+        expected_repeats=expected_repeats,
+        expected_subjects=expected_subjects,
+    )
+    selected_roi_prefix = roi_prefix
     rows: list[dict[str, object]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -140,7 +227,7 @@ def build_remesh_manifest(
         dataset_name = install_row["dataset"].strip()
         subject = install_row["subject"].strip()
         messages: list[str] = []
-        roi_prefix = ""
+        row_roi_prefix = ""
         repeat_id = ""
         dataset_root: Path | None = None
         anat_dir: Path | None = None
@@ -157,7 +244,7 @@ def build_remesh_manifest(
 
         try:
             config, repeat_id = parse_dataset_name(dataset_name)
-            roi_prefix = config.dataset_prefix
+            row_roi_prefix = config.dataset_prefix
         except ValueError as exc:
             messages.append(str(exc))
 
@@ -212,7 +299,7 @@ def build_remesh_manifest(
             {
                 "task_id": len(rows),
                 "dataset_name": dataset_name,
-                "roi_prefix": roi_prefix,
+                "roi_prefix": row_roi_prefix,
                 "repeat_id": repeat_id,
                 "dataset_root": dataset_root or "",
                 "subject": subject,
@@ -243,6 +330,7 @@ def build_remesh_manifest(
         "status": "ready" if ready == expected_targets else "blocked",
         "install_manifest": str(Path(install_manifest).expanduser().resolve()),
         "roi_root": str(roi_root_path),
+        "roi_prefix": selected_roi_prefix,
         "manifest": str(manifest_path.resolve()),
         "targets_found": len(rows),
         "targets_expected": expected_targets,
@@ -262,6 +350,9 @@ def remove_roast_segmentations(
     apply_delete: bool = False,
     external_backup_confirmed: bool = False,
     expected_targets: int = 7000,
+    roi_prefix: str | None = None,
+    expected_repeats: int = 10,
+    expected_subjects: int = 175,
 ) -> dict[str, object]:
     roi_root_path = Path(roi_root).expanduser().resolve()
     if apply_delete and not external_backup_confirmed:
@@ -271,6 +362,13 @@ def remove_roast_segmentations(
 
     install_rows = read_tsv(install_manifest)
     _validate_install_manifest_header(install_rows)
+    install_rows = select_install_rows(
+        install_rows,
+        roi_prefix=roi_prefix,
+        expected_targets=expected_targets,
+        expected_repeats=expected_repeats,
+        expected_subjects=expected_subjects,
+    )
     if len(install_rows) != expected_targets:
         raise ValueError(
             f"installation manifest has {len(install_rows)} rows; expected {expected_targets}"
@@ -352,6 +450,7 @@ def remove_roast_segmentations(
         "mode": "apply_delete" if apply_delete else "audit",
         "install_manifest": str(Path(install_manifest).expanduser().resolve()),
         "roi_root": str(roi_root_path),
+        "roi_prefix": roi_prefix,
         "report": str(report_path.resolve()),
         "found": len(candidates),
         "deleted": deleted,
@@ -389,6 +488,9 @@ def remove_installation_backups(
     apply_delete: bool = False,
     external_backup_confirmed: bool = False,
     expected_backups: int = 7000,
+    roi_prefix: str | None = None,
+    expected_repeats: int = 10,
+    expected_subjects: int = 175,
 ) -> dict[str, object]:
     if apply_delete and not external_backup_confirmed:
         raise ValueError(
@@ -400,6 +502,13 @@ def remove_installation_backups(
 
     install_rows = read_tsv(install_manifest)
     _validate_install_manifest_header(install_rows)
+    install_rows = select_install_rows(
+        install_rows,
+        roi_prefix=roi_prefix,
+        expected_targets=expected_backups,
+        expected_repeats=expected_repeats,
+        expected_subjects=expected_subjects,
+    )
     required = {"backup", "before_sha256"}
     missing_columns = sorted(required - set(install_rows[0]))
     if missing_columns:
@@ -503,6 +612,7 @@ def remove_installation_backups(
         "mode": "apply_delete" if apply_delete else "audit",
         "install_manifest": str(Path(install_manifest).expanduser().resolve()),
         "backup_root": str(root),
+        "roi_prefix": roi_prefix,
         "report": str(report_path.resolve()),
         "found": len(candidates),
         "expected": expected_backups,
@@ -800,6 +910,9 @@ def build_parser() -> argparse.ArgumentParser:
     remove_roast.add_argument("--roi-root", required=True)
     remove_roast.add_argument("--report", required=True)
     remove_roast.add_argument("--expected-targets", type=int, default=7000)
+    remove_roast.add_argument("--roi-prefix")
+    remove_roast.add_argument("--expected-repeats", type=int, default=10)
+    remove_roast.add_argument("--expected-subjects", type=int, default=175)
     remove_roast.add_argument("--apply-delete", action="store_true")
     remove_roast.add_argument("--confirm-external-backup", action="store_true")
 
@@ -808,6 +921,9 @@ def build_parser() -> argparse.ArgumentParser:
     remove_backups.add_argument("--backup-root", required=True)
     remove_backups.add_argument("--report", required=True)
     remove_backups.add_argument("--expected-backups", type=int, default=7000)
+    remove_backups.add_argument("--roi-prefix")
+    remove_backups.add_argument("--expected-repeats", type=int, default=10)
+    remove_backups.add_argument("--expected-subjects", type=int, default=175)
     remove_backups.add_argument("--apply-delete", action="store_true")
     remove_backups.add_argument("--confirm-external-backup", action="store_true")
 
@@ -817,6 +933,9 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--manifest", required=True)
     preflight.add_argument("--summary", required=True)
     preflight.add_argument("--expected-targets", type=int, default=7000)
+    preflight.add_argument("--roi-prefix")
+    preflight.add_argument("--expected-repeats", type=int, default=10)
+    preflight.add_argument("--expected-subjects", type=int, default=175)
 
     run_task = subparsers.add_parser("run-task")
     run_task.add_argument("--manifest", required=True)
@@ -849,6 +968,9 @@ def main() -> int:
             apply_delete=args.apply_delete,
             external_backup_confirmed=args.confirm_external_backup,
             expected_targets=args.expected_targets,
+            roi_prefix=args.roi_prefix,
+            expected_repeats=args.expected_repeats,
+            expected_subjects=args.expected_subjects,
         )
     elif args.command == "remove-install-backups":
         result = remove_installation_backups(
@@ -858,6 +980,9 @@ def main() -> int:
             apply_delete=args.apply_delete,
             external_backup_confirmed=args.confirm_external_backup,
             expected_backups=args.expected_backups,
+            roi_prefix=args.roi_prefix,
+            expected_repeats=args.expected_repeats,
+            expected_subjects=args.expected_subjects,
         )
     elif args.command == "preflight":
         result = build_remesh_manifest(
@@ -866,6 +991,9 @@ def main() -> int:
             manifest=args.manifest,
             summary=args.summary,
             expected_targets=args.expected_targets,
+            roi_prefix=args.roi_prefix,
+            expected_repeats=args.expected_repeats,
+            expected_subjects=args.expected_subjects,
         )
     elif args.command == "run-task":
         result = run_remesh_task(

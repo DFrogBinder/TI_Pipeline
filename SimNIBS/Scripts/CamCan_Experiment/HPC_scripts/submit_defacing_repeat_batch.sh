@@ -12,6 +12,9 @@ SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${SCRIPT_DIR}/HPC_scripts/defacing_repeat_array.slurm}"
 SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-${SCRIPT_DIR}/simulation/TI_runner_multi-core.py}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-${SCRIPT_DIR}/simulation/validate_simulation_outputs.py}"
+MONTAGE_VALIDATOR_PY="${TI_MONTAGE_VALIDATOR_PY:-${SCRIPT_DIR}/simulation/validate_montage_selection.py}"
+TARGETS_CSV="${TI_TARGETS_CSV:-${SCRIPT_DIR}/../utils/targets.csv}"
+EXPECTED_TARGETS_SHA256="${TI_EXPECTED_TARGETS_SHA256:-97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6}"
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-8}"
 MAX_ARRAY_TASKS="${MAX_ARRAY_TASKS:-1000}"
 START_TASK_OFFSET="${START_TASK_OFFSET:-0}"
@@ -36,6 +39,8 @@ LOG_DIR="$(resolve_path "${LOG_DIR}")"
 SLURM_SCRIPT="$(resolve_path "${SLURM_SCRIPT}")"
 SIM_RUNNER_PY="$(resolve_path "${SIM_RUNNER_PY}")"
 COMPLETION_CHECK_PY="$(resolve_path "${COMPLETION_CHECK_PY}")"
+MONTAGE_VALIDATOR_PY="$(resolve_path "${MONTAGE_VALIDATOR_PY}")"
+TARGETS_CSV="$(resolve_path "${TARGETS_CSV}")"
 mkdir -p "${LOG_DIR}"
 
 if [ ! -d "${PARENT_ROOT}" ]; then
@@ -56,6 +61,15 @@ if [ ! -f "${SIM_RUNNER_PY}" ]; then
 fi
 if [ ! -f "${COMPLETION_CHECK_PY}" ]; then
     echo "[ERROR] Completion check script not found: ${COMPLETION_CHECK_PY}" >&2
+    exit 1
+fi
+if [ ! -f "${MONTAGE_VALIDATOR_PY}" ] || [ ! -f "${TARGETS_CSV}" ]; then
+    echo "[ERROR] Montage validator or targets.csv is missing." >&2
+    exit 1
+fi
+TARGETS_SHA256=$("${PYTHON_BIN}" -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${TARGETS_CSV}")
+if [ "${TARGETS_SHA256}" != "${EXPECTED_TARGETS_SHA256}" ]; then
+    echo "[ERROR] targets.csv hash mismatch: ${TARGETS_SHA256} != ${EXPECTED_TARGETS_SHA256}" >&2
     exit 1
 fi
 
@@ -83,6 +97,11 @@ if [ "$READY_TASKS" -le 0 ]; then
     echo "[INFO] Blocked tasks: ${BLOCKED_TASKS}"
     exit 0
 fi
+"${PYTHON_BIN}" "${MONTAGE_VALIDATOR_PY}" \
+    --manifest "${MANIFEST}" \
+    --preset "${MONTAGE_PRESET}" \
+    --targets-csv "${TARGETS_CSV}" \
+    --expected-targets-sha256 "${TARGETS_SHA256}"
 if ! [[ "${MAX_ARRAY_TASKS}" =~ ^[0-9]+$ ]] || [ "${MAX_ARRAY_TASKS}" -lt 1 ]; then
     echo "[ERROR] MAX_ARRAY_TASKS must be a positive integer; got '${MAX_ARRAY_TASKS}'." >&2
     exit 1
@@ -109,7 +128,7 @@ if ! [[ "${MESH_MAX_RETRIES}" =~ ^-?[0-9]+$ ]]; then
 fi
 
 SLURM_OUTPUT="${SLURM_OUTPUT:-${LOG_DIR}/defacing-repeat-%A_%a.out}"
-BASE_EXPORT_VARS="ALL,TI_DEFACING_REPEAT_MANIFEST=${MANIFEST},TI_MONTAGE_PRESET=${MONTAGE_PRESET},TI_SIM_RUNNER_PY=${SIM_RUNNER_PY},TI_COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY},LOG_DIR=${LOG_DIR},TI_MESH_TIMEOUT_HOURS=${MESH_TIMEOUT_HOURS},TI_MESH_MAX_RETRIES=${MESH_MAX_RETRIES}"
+BASE_EXPORT_VARS="ALL,TI_DEFACING_REPEAT_MANIFEST=${MANIFEST},TI_MONTAGE_PRESET=${MONTAGE_PRESET},TI_SIM_RUNNER_PY=${SIM_RUNNER_PY},TI_COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY},TI_MONTAGE_VALIDATOR_PY=${MONTAGE_VALIDATOR_PY},TI_TARGETS_CSV=${TARGETS_CSV},TI_EXPECTED_TARGETS_SHA256=${TARGETS_SHA256},LOG_DIR=${LOG_DIR},TI_MESH_TIMEOUT_HOURS=${MESH_TIMEOUT_HOURS},TI_MESH_MAX_RETRIES=${MESH_MAX_RETRIES}"
 
 echo "[INFO] Parent root:       ${PARENT_ROOT}"
 echo "[INFO] Manifest:          ${MANIFEST}"
@@ -128,6 +147,8 @@ fi
 echo "[INFO] Slurm script:      ${SLURM_SCRIPT}"
 echo "[INFO] Runner:            ${SIM_RUNNER_PY}"
 echo "[INFO] Completion check:  ${COMPLETION_CHECK_PY}"
+echo "[INFO] targets.csv:       ${TARGETS_CSV}"
+echo "[INFO] targets SHA-256:   ${TARGETS_SHA256}"
 echo "[INFO] Log dir:           ${LOG_DIR}"
 
 TASK_OFFSET="${START_TASK_OFFSET}"

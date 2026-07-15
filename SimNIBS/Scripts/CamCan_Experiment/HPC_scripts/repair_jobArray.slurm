@@ -178,6 +178,7 @@ requeue_or_fail() {
 TI_SIM_ROOT="$TASK_ROOT" python -u "$SIM_RUNNER_PY" \
     --subject "$SUBJECT" \
     --montage-preset "$MONTAGE_PRESET" \
+    --reuse-existing-mesh \
     --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
 PY_EXIT=$?
 

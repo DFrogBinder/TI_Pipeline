@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,6 +108,14 @@ def _load_montage_presets(csv_path: Path = TARGETS_CSV_PATH) -> dict[str, Montag
 
 MONTAGE_PRESETS = _load_montage_presets()
 MONTAGE_CHOICES = sorted(set(MONTAGE_PRESETS) | set(MONTAGE_ALIASES))
+
+
+def targets_csv_sha256(csv_path: Path = TARGETS_CSV_PATH) -> str:
+    digest = hashlib.sha256()
+    with csv_path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def normalize_montage_preset(name: str) -> str:

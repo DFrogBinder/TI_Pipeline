@@ -17,6 +17,9 @@ fi
 
 : "${TI_INPLACE_RERUN_MANIFEST:?Missing TI_INPLACE_RERUN_MANIFEST.}"
 : "${TI_MONTAGE_PRESET:?Missing TI_MONTAGE_PRESET.}"
+: "${TI_MONTAGE_VALIDATOR_PY:?Missing TI_MONTAGE_VALIDATOR_PY.}"
+: "${TI_TARGETS_CSV:?Missing TI_TARGETS_CSV.}"
+: "${TI_EXPECTED_TARGETS_SHA256:?Missing TI_EXPECTED_TARGETS_SHA256.}"
 
 SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/validate_simulation_outputs.py}"
@@ -147,6 +150,8 @@ echo "[INFO] Mesh path:       ${MESH_PATH}"
 echo "[INFO] Status:          ${STATUS}"
 echo "[INFO] Message:         ${MESSAGE}"
 echo "[INFO] Montage preset:  ${TI_MONTAGE_PRESET}"
+echo "[INFO] targets.csv:     ${TI_TARGETS_CSV}"
+echo "[INFO] targets SHA-256: ${TI_EXPECTED_TARGETS_SHA256}"
 echo "[INFO] Runner:          ${SIM_RUNNER_PY}"
 echo "[INFO] Completion check:${COMPLETION_CHECK_PY}"
 echo "[INFO] Log file:        ${LOG_FILE}"
@@ -156,6 +161,15 @@ if [ "${STATUS}" != "ready" ]; then
     echo "[WARN] Manifest row is not ready; skipping task ${TASK_ID}: ${MESSAGE}"
     rm -f "$RETRY_FILE" "$TASK_FILE"
     exit 0
+fi
+
+if ! python -u "${TI_MONTAGE_VALIDATOR_PY}" \
+    --dataset-name "${DATASET_NAME}" \
+    --preset "${TI_MONTAGE_PRESET}" \
+    --targets-csv "${TI_TARGETS_CSV}" \
+    --expected-targets-sha256 "${TI_EXPECTED_TARGETS_SHA256}" 2>&1 | tee -a "${LOG_FILE}"; then
+    echo "[ERROR] Dataset/montage/targets.csv validation failed; refusing simulation." >&2
+    exit 2
 fi
 
 requeue_or_fail() {

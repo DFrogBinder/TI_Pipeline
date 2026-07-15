@@ -6,12 +6,13 @@ ROOT = Path(__file__).resolve().parents[1]
 HPC_ROOT = ROOT / "HPC_scripts"
 
 
-def test_multi_core_runner_supports_optional_custom_segmentation():
+def test_multi_core_runner_supports_explicit_pure_charm_generation():
     source = (ROOT / "simulation" / "TI_runner_multi-core.py").read_text(encoding="utf-8")
 
     assert "resolve_subject_input_paths" in source
     assert "subject_inputs.custom_segmentation is not None" in source
-    assert "pure_charm_mode" in source
+    assert "pure_charm_generation_complete" in source
+    assert "merge_segmentation_maps" not in source
 
 
 def test_defacing_repeat_shell_scripts_have_expected_entrypoints():
@@ -21,6 +22,7 @@ def test_defacing_repeat_shell_scripts_have_expected_entrypoints():
     assert "TI_DEFACING_REPEAT_MANIFEST" in submit_source
     assert "TI_DEFACING_REPEAT_MANIFEST" in array_source
     assert '--montage-preset "$MONTAGE_PRESET"' in array_source
+    assert "--generate-charm-mesh" in array_source
     assert "--reuse-existing-mesh" not in array_source
 
 

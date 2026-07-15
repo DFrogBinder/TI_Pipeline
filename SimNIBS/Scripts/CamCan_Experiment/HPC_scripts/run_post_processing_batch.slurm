@@ -33,9 +33,9 @@ PYTHON=""  # set to an explicit interpreter to skip activation logic
 POST_ANACONDA_MODULE="Anaconda3/2022.05"
 
 # Batch discovery
-BATCH_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs"
+BATCH_ROOT="${BATCH_ROOT:-/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs}"
 BATCH_DATASET_GLOB="*_Data_*"
-BATCH_REPEATS="01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40"
+BATCH_REPEATS="${BATCH_REPEATS:-01 02 03 04 05 06 07 08 09 10}"
 BATCH_SUMMARY_FILENAME="post_processing_batch_summary.json"  # blank -> disable summary
 BATCH_STOP_ON_ERROR="0"
 
@@ -45,7 +45,7 @@ PIPELINE_FASTSURFER_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/atlases"
 PIPELINE_FASTSURFER_ATLAS_FILENAME=""  # blank -> flat <FASTSURFER_ROOT>/<subject>.nii(.gz); set a relative path like mri/aparc.a2009s+aseg.nii.gz for nested Destrieux layouts, or mri/aparc.DKTatlas+aseg.deep.nii.gz for legacy DKT layouts
 PIPELINE_FS_MRI_PATH=""  # shared atlas path reused for every subject
 PIPELINE_T1_PATH=""  # blank -> infer T1 per subject
-PIPELINE_SUBJECTS=""  # blank -> all subjects in each dataset
+PIPELINE_SUBJECTS="${PIPELINE_SUBJECTS:-}"  # blank -> all subjects in each dataset
 PIPELINE_MAX_WORKERS=""  # blank -> use POST_MAX_WORKERS / SLURM_CPUS_PER_TASK
 PIPELINE_PLOT_ROI=""  # blank -> infer ROI from each dataset name
 PIPELINE_PERCENTILE="95.0"
@@ -55,8 +55,8 @@ PIPELINE_OVERLAY_FULL_FIELD="1"
 PIPELINE_WRITE_REGION_TABLE="1"
 PIPELINE_REGION_PERCENTILE="95.0"
 PIPELINE_OFFTARGET_THRESHOLD="0.2"
-PIPELINE_MNI_BASELINE_ROOT="/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data/MNI152-left-hippocampus"
-PIPELINE_MNI_FIXED_ATLAS_PATH="/mnt/parscratch/users/cop23bi/ZIPs/atlases/sub-mni152.nii.gz"
+PIPELINE_MNI_BASELINE_ROOT="${PIPELINE_MNI_BASELINE_ROOT:-/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data/MNI152-left-hippocampus}"
+PIPELINE_MNI_FIXED_ATLAS_PATH="${PIPELINE_MNI_FIXED_ATLAS_PATH:-/mnt/parscratch/users/cop23bi/ZIPs/atlases/sub-mni152.nii.gz}"
 PIPELINE_NEIGHBOR_DILATION_ITER="1"
 PIPELINE_CSF_LABELS="24"  # space-separated label ids
 PIPELINE_SKULL_LABELS=""  # space-separated label ids, blank -> skip skull-distance metric
@@ -64,10 +64,12 @@ PIPELINE_ELECTRODE_CSV=""  # optional CSV with columns subject,electrode,x,y,z; 
 PIPELINE_ELECTRODE_DATASET_DIR=""  # optional directory with <roi>/<subject>/electrodes.csv files
 PIPELINE_ELECTRODE_NAMES=""  # optional space-separated EEG position names
 PIPELINE_EEG_POSITIONS_PATH_TEMPLATE=""  # optional template, e.g. /path/{subject}/eeg_positions.csv
+PIPELINE_CAMCAN_TARGETS_CSV="${PIPELINE_CAMCAN_TARGETS_CSV:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv}"  # optimized montage source of truth
+PIPELINE_EXPECTED_TARGETS_SHA256="${PIPELINE_EXPECTED_TARGETS_SHA256:-97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6}"
 PIPELINE_WRITE_NEIGHBOR_TABLE="1"
 PIPELINE_WRITE_NEIGHBOR_VISUALIZATION="1"  # write fixed-neighbor masks and overlay PNGs
 PIPELINE_WRITE_ELECTRODE_TABLE="1"
-PIPELINE_FORCE="0"
+PIPELINE_FORCE="${PIPELINE_FORCE:-0}"
 PIPELINE_VERBOSE="1"
 
 # Population aggregation
@@ -80,12 +82,12 @@ PIPELINE_POPULATION_TARGET_ROI=""  # blank -> reuse resolved post ROI
 PIPELINE_POPULATION_TEMPLATE_REGION_CSV=""
 
 # Across-repeat repeatability
-PIPELINE_REPEATABILITY_ENABLED="1"
+PIPELINE_REPEATABILITY_ENABLED="${PIPELINE_REPEATABILITY_ENABLED:-1}"
 PIPELINE_REPEATABILITY_OUTPUT_DIR=""  # blank -> default to <BATCH_ROOT>/subject_metrics_analysis for a single-ROI batch; set a custom root to override
 PIPELINE_REPEATABILITY_LOGS_ROOT=""  # optional directory containing slurm-*.out files for the failure audit
 
 # Static post-processing figures
-PIPELINE_FIGURE_GENERATION_ENABLED="1"
+PIPELINE_FIGURE_GENERATION_ENABLED="${PIPELINE_FIGURE_GENERATION_ENABLED:-1}"
 PIPELINE_FIGURE_OUTPUT_DIR=""  # blank -> default to <BATCH_ROOT>/post_processing_figures
 
 if [[ $# -gt 0 ]]; then
@@ -160,6 +162,8 @@ export PIPELINE_ELECTRODE_CSV
 export PIPELINE_ELECTRODE_DATASET_DIR
 export PIPELINE_ELECTRODE_NAMES
 export PIPELINE_EEG_POSITIONS_PATH_TEMPLATE
+export PIPELINE_CAMCAN_TARGETS_CSV
+export PIPELINE_EXPECTED_TARGETS_SHA256
 export PIPELINE_WRITE_NEIGHBOR_TABLE
 export PIPELINE_WRITE_NEIGHBOR_VISUALIZATION
 export PIPELINE_WRITE_ELECTRODE_TABLE
@@ -275,6 +279,8 @@ echo "[INFO] Explicit atlas path: ${PIPELINE_FS_MRI_PATH:-<none>}"
 echo "[INFO] MNI baseline root:   ${PIPELINE_MNI_BASELINE_ROOT:-<none>}"
 echo "[INFO] Fixed MNI atlas:     ${PIPELINE_MNI_FIXED_ATLAS_PATH:-<none>}"
 echo "[INFO] Electrode CSV:       ${PIPELINE_ELECTRODE_CSV:-<none>}"
+echo "[INFO] CamCan targets.csv:  ${PIPELINE_CAMCAN_TARGETS_CSV:-<disabled>}"
+echo "[INFO] Expected target SHA: ${PIPELINE_EXPECTED_TARGETS_SHA256:-<none>}"
 echo "[INFO] Population enabled:  ${PIPELINE_POPULATION_ENABLED}"
 echo "[INFO] Repeatability:       ${PIPELINE_REPEATABILITY_ENABLED}"
 echo "[INFO] Repeatability out:   ${PIPELINE_REPEATABILITY_OUTPUT_DIR:-<default>}"

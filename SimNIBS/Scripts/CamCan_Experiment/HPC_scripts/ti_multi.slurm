@@ -35,4 +35,5 @@ PYTHON=/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # Otherwise set max_workers directly in the script before submitting.
 echo "[INFO] Montage preset: ${TI_MONTAGE_PRESET}"
 $PYTHON simulation/TI_runner_multi-core.py \
+    --reuse-existing-mesh \
     --montage-preset "$TI_MONTAGE_PRESET"

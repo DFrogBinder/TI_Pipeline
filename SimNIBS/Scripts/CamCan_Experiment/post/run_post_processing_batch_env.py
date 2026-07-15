@@ -8,6 +8,7 @@ multiprocessing with the "spawn" start method on HPC.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import sys
@@ -17,8 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from post.run_post_processing import make_default_config
-from post.run_post_processing_batch import RepeatBatchConfig, run_repeat_batch
+from post.run_post_processing import make_default_config  # noqa: E402
+from post.run_post_processing_batch import RepeatBatchConfig, run_repeat_batch  # noqa: E402
+from post.camcan_electrodes import (  # noqa: E402
+    CONFIRMED_TARGETS_SHA256,
+    resolve_camcan_post_electrodes,
+)
 
 
 def read_text(name: str) -> str:
@@ -119,12 +124,46 @@ def build_configs():
     pipeline_cfg.post.skull_labels = [
         int(value) for value in read_optional_list("PIPELINE_SKULL_LABELS") or []
     ] or None
-    pipeline_cfg.post.electrode_csv = read_optional_text("PIPELINE_ELECTRODE_CSV")
-    pipeline_cfg.post.electrode_dataset_dir = read_optional_text("PIPELINE_ELECTRODE_DATASET_DIR")
-    pipeline_cfg.post.electrode_names = read_optional_list("PIPELINE_ELECTRODE_NAMES")
-    pipeline_cfg.post.eeg_positions_path_template = read_optional_text(
-        "PIPELINE_EEG_POSITIONS_PATH_TEMPLATE"
-    )
+    electrode_csv = read_optional_text("PIPELINE_ELECTRODE_CSV")
+    electrode_dataset_dir = read_optional_text("PIPELINE_ELECTRODE_DATASET_DIR")
+    electrode_names = read_optional_list("PIPELINE_ELECTRODE_NAMES")
+    eeg_template = read_optional_text("PIPELINE_EEG_POSITIONS_PATH_TEMPLATE")
+    camcan_targets_csv = read_optional_text("PIPELINE_CAMCAN_TARGETS_CSV")
+    if camcan_targets_csv:
+        if any((electrode_csv, electrode_dataset_dir, electrode_names, eeg_template)):
+            raise SystemExit(
+                "PIPELINE_CAMCAN_TARGETS_CSV is mutually exclusive with manual electrode "
+                "CSV/dataset/name/template settings."
+            )
+        resolved = resolve_camcan_post_electrodes(
+            batch_root,
+            camcan_targets_csv,
+            dataset_glob=read_text("BATCH_DATASET_GLOB").strip() or "*_Data_*",
+            expected_targets_sha256=(
+                read_text("PIPELINE_EXPECTED_TARGETS_SHA256").strip()
+                or CONFIRMED_TARGETS_SHA256
+            ),
+        )
+        electrode_names = list(resolved.names)
+        eeg_template = resolved.eeg_positions_path_template
+        print(
+            json.dumps(
+                {
+                    "event": "camcan_post_electrodes",
+                    "dataset_prefix": resolved.roi.dataset_prefix,
+                    "targets_roi": resolved.roi.targets_roi,
+                    "electrode_names": electrode_names,
+                    "eeg_positions_path_template": eeg_template,
+                    "targets_csv": str(Path(camcan_targets_csv).expanduser().resolve()),
+                    "targets_csv_sha256": resolved.targets_csv_sha256,
+                },
+                sort_keys=True,
+            )
+        )
+    pipeline_cfg.post.electrode_csv = electrode_csv
+    pipeline_cfg.post.electrode_dataset_dir = electrode_dataset_dir
+    pipeline_cfg.post.electrode_names = electrode_names
+    pipeline_cfg.post.eeg_positions_path_template = eeg_template
     pipeline_cfg.post.write_neighbor_table = read_bool(
         "PIPELINE_WRITE_NEIGHBOR_TABLE",
         default=pipeline_cfg.post.write_neighbor_table,

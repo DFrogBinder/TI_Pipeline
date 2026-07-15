@@ -17,6 +17,9 @@ fi
 
 : "${TI_DEFACING_REPEAT_MANIFEST:?Missing TI_DEFACING_REPEAT_MANIFEST.}"
 : "${TI_MONTAGE_PRESET:?Missing TI_MONTAGE_PRESET.}"
+: "${TI_MONTAGE_VALIDATOR_PY:?Missing TI_MONTAGE_VALIDATOR_PY.}"
+: "${TI_TARGETS_CSV:?Missing TI_TARGETS_CSV.}"
+: "${TI_EXPECTED_TARGETS_SHA256:?Missing TI_EXPECTED_TARGETS_SHA256.}"
 MONTAGE_PRESET="${TI_MONTAGE_PRESET}"
 
 SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py}"
@@ -160,6 +163,15 @@ if [ "${STATUS}" != "ready" ]; then
     exit 0
 fi
 
+if ! python -u "${TI_MONTAGE_VALIDATOR_PY}" \
+    --dataset-name "${DATASET_NAME}" \
+    --preset "${MONTAGE_PRESET}" \
+    --targets-csv "${TI_TARGETS_CSV}" \
+    --expected-targets-sha256 "${TI_EXPECTED_TARGETS_SHA256}" 2>&1 | tee -a "${LOG_FILE}"; then
+    echo "[ERROR] Dataset/montage/targets.csv validation failed; refusing simulation." >&2
+    exit 2
+fi
+
 requeue_or_fail() {
     local reason="$1"
     local final_exit_code="$2"
@@ -192,6 +204,7 @@ set +e
 TI_SIM_ROOT="$DATASET_ROOT" python -u "$SIM_RUNNER_PY" \
     --subject "$SUBJECT" \
     --montage-preset "$MONTAGE_PRESET" \
+    --generate-charm-mesh \
     --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
 PY_EXIT=${PIPESTATUS[0]}
 set -e

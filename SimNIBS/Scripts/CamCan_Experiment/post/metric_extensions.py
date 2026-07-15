@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
+from post.eeg_positions import read_eeg_positions
+
 from utils.roi_registry import (
     FASTSURFER_DKT_LABELS,
     resolve_fastsurfer_roi_label_ids,
@@ -544,33 +546,7 @@ def _load_electrode_centers_from_dataset_dir(
 
 
 def _read_eeg_positions(path: Path) -> Dict[str, np.ndarray]:
-    if not path.is_file():
-        return {}
-
-    try:
-        df = pd.read_csv(path)
-        cols = {column.lower(): column for column in df.columns}
-        if {"name", "x", "y", "z"}.issubset(cols):
-            out = {}
-            for _, row in df.iterrows():
-                out[str(row[cols["name"]])] = np.array(
-                    [row[cols["x"]], row[cols["y"]], row[cols["z"]]],
-                    dtype=float,
-                )
-            return out
-    except Exception:
-        pass
-
-    out = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        try:
-            out[parts[0]] = np.array([float(parts[1]), float(parts[2]), float(parts[3])], dtype=float)
-        except ValueError:
-            continue
-    return out
+    return read_eeg_positions(path)
 
 
 def resolve_electrode_centers(
@@ -611,11 +587,13 @@ def resolve_electrode_centers(
         eeg_path = Path(root_dir) / subject / "anat" / f"m2m_{subject}" / "eeg_positions.csv"
 
     positions = _read_eeg_positions(eeg_path)
-    return [
-        (name, positions[name])
-        for name in electrode_names
-        if name in positions
-    ]
+    missing = [name for name in electrode_names if name not in positions]
+    if missing:
+        raise ValueError(
+            f"EEG positions file {eeg_path} is missing requested electrode(s): "
+            + ", ".join(missing)
+        )
+    return [(name, positions[name]) for name in electrode_names]
 
 
 def _neighbor_stats(

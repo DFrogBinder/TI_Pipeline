@@ -26,8 +26,6 @@ if str(ROOT) not in sys.path:
 
 from utils.sim_utils import (
     format_output_dir,
-    merge_segmentation_maps,
-    atomic_replace,
     img_info,
 )
 from utils.subject_inputs import SubjectInputPaths, resolve_subject_input_paths
@@ -35,16 +33,22 @@ from simulation.mesh_reuse import (
     candidate_mesh_paths,
     resolve_existing_mesh,
 )
+from utils.camcan_dataset import (
+    CONFIRMED_TARGETS_SHA256,
+    REPEAT_DATASET_PATTERN,
+    sha256_file,
+    validate_dataset_montage,
+)
 from target_montages import (
     MONTAGE_PRESETS,
+    TARGETS_CSV_PATH,
     resolve_montage_preset,
+    targets_csv_sha256,
 )
 import time
 
 
 
-#? Set appropriate flags
-meshPresent = False
 runMNI152 = False
 rootDIR = os.environ.get("TI_SIM_ROOT", "/mnt/parscratch/users/cop23bi/LM1")
 DEFAULT_MESH_TIMEOUT_HOURS = 4.0
@@ -54,6 +58,7 @@ SIM_INPUT_EXIT_CODE = 126
 DEFAULT_MONTAGE_PRESET = "right-m1"
 SELECTED_MONTAGE = None
 REUSE_EXISTING_MESH = False
+GENERATE_CHARM_MESH = False
 
 
 def log_event(event: str, **fields) -> None:
@@ -120,41 +125,6 @@ def _kill_process_group(process: subprocess.Popen, *, label: str, sig: int, name
         log_event("cmd_signal_error", label=label, signal=name, pid=process.pid, error=str(exc))
 
 
-def cleanup_subject_mesh_outputs(subject_dir: str, subject: str) -> None:
-    subject_path = Path(subject_dir)
-    suffix = subject.split("-")[-1].upper()
-    dir_candidates = [
-        subject_path / f"m2m_{subject}",
-        subject_path / f"m2m_sub-{suffix}",
-    ]
-    file_candidates = [
-        subject_path / f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii",
-        subject_path / f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii",
-        subject_path / "skin_mask.nii.gz",
-    ]
-
-    seen: set[Path] = set()
-    for path in dir_candidates:
-        if path in seen or not path.exists():
-            continue
-        seen.add(path)
-        try:
-            shutil.rmtree(path, ignore_errors=False)
-            log_event("mesh_cleanup", kind="dir", path=str(path))
-        except Exception as exc:
-            log_event("mesh_cleanup_error", kind="dir", path=str(path), error=str(exc))
-
-    for path in file_candidates:
-        if path in seen or not path.exists():
-            continue
-        seen.add(path)
-        try:
-            path.unlink()
-            log_event("mesh_cleanup", kind="file", path=str(path))
-        except Exception as exc:
-            log_event("mesh_cleanup_error", kind="file", path=str(path), error=str(exc))
-
-
 def cleanup_subject_generated_outputs(output_root: str, subject: str) -> None:
     """Remove generated TI simulation outputs so retries cannot validate stale data."""
     simnibs_path = Path(output_root)
@@ -192,6 +162,33 @@ def validate_subject_inputs(subject_dir: str, subject: str) -> SubjectInputPaths
         raise SimulationInputError(message) from exc
 
 
+def validate_charm_only_mesh_reuse(
+    subject_inputs: SubjectInputPaths,
+    mesh_path: Path,
+) -> Path:
+    if subject_inputs.custom_segmentation is not None:
+        raise SimulationInputError(
+            "CHARM-only mesh reuse refuses the live ROAST/custom segmentation: "
+            f"{subject_inputs.custom_segmentation}"
+        )
+    label_path = mesh_path.parent / "label_prep" / "tissue_labeling_upsampled.nii.gz"
+    if not label_path.is_file():
+        raise SimulationInputError(
+            "Installed CHARM label is missing beside the reused mesh: "
+            f"{label_path}"
+        )
+    log_event(
+        "charm_only_mesh_reuse_validated",
+        subject=subject_inputs.subject,
+        mesh_path=str(mesh_path),
+        mesh_sha256=sha256_file(mesh_path),
+        label_path=str(label_path),
+        label_sha256=sha256_file(label_path),
+        roast_custom_segmentation_present=False,
+    )
+    return label_path
+
+
 def _remaining_timeout(deadline: float | None) -> float | None:
     if deadline is None:
         return None
@@ -207,9 +204,7 @@ def run_mesh_cmd(
 ) -> None:
     timeout_sec = _remaining_timeout(mesh_deadline)
     if timeout_sec is not None and timeout_sec <= 0:
-        log_event("mesh_timeout_budget_exhausted", label=label, timeout_sec=MESH_TOTAL_TIMEOUT_SECONDS)
-        raise MeshTimeoutError(label=label, cmd=cmd, timeout_sec=MESH_TOTAL_TIMEOUT_SECONDS)
-
+        raise MeshTimeoutError(label=label, cmd=cmd, timeout_sec=0.0)
     run_cmd(cmd, cwd=cwd, label=label, timeout_sec=timeout_sec)
 
 
@@ -315,6 +310,7 @@ def process_subject(subject_entry):
                 f"{subject}. Checked: {', '.join(candidates)}"
             )
         fnamehead = str(resolved_mesh)
+        validate_charm_only_mesh_reuse(subject_inputs, resolved_mesh)
         print(f"[INFO] ({subject_source}) Reusing existing mesh: {fnamehead}")
         log_event(
             "mesh_reuse_enabled",
@@ -324,111 +320,57 @@ def process_subject(subject_entry):
 
     cleanup_subject_generated_outputs(output_root, subject)
 
-    # region Meshing
     if REUSE_EXISTING_MESH:
-        print(f"[INFO] ({subject_source}) Existing mesh reuse enabled; skipping meshing step.")
-    elif meshPresent:
-        print(f"[INFO] ({subject_source}) Mesh present, skipping meshing step.")
-    else:
+        print(f"[INFO] ({subject_source}) CHARM-only mesh reuse enabled; no meshing command will run.")
+    elif GENERATE_CHARM_MESH:
+        if runMNI152:
+            raise SimulationInputError("--generate-charm-mesh cannot be used for MNI152 mode")
+        if subject_inputs.custom_segmentation is not None:
+            raise SimulationInputError(
+                "Pure CHARM generation refuses the ROAST/custom segmentation: "
+                f"{subject_inputs.custom_segmentation}"
+            )
         mesh_deadline = (
             time.monotonic() + MESH_TOTAL_TIMEOUT_SECONDS
-            if MESH_TOTAL_TIMEOUT_SECONDS is not None else None
+            if MESH_TOTAL_TIMEOUT_SECONDS is not None
+            else None
         )
-        cmd = [
+        command = [
             "charm",
-            subject,  # SUBJECT_ID must be first
+            subject,
             str(subject_inputs.t1),
             str(subject_inputs.t2),
             "--forcerun",
-	        "--forceqform"
-            ]
-
-        try:
-            run_mesh_cmd(
-                cmd,
-                cwd=str(subject_dir),
-                label="charm_init",
-                mesh_deadline=mesh_deadline,
+            "--forceqform",
+        ]
+        run_mesh_cmd(
+            command,
+            cwd=str(subject_dir),
+            label="pure_charm_generation",
+            mesh_deadline=mesh_deadline,
+        )
+        generated_mesh = resolve_existing_mesh(subject_dir, subject)
+        if generated_mesh is None:
+            raise SimulationInputError(
+                f"Pure CHARM generation completed without a mesh for {subject}"
             )
-        except MeshTimeoutError as e:
-            log_event("error", stage="charm_init", subject=subject, error=str(e))
-            cleanup_subject_mesh_outputs(subject_dir, subject)
-            raise
-        except Exception as e:
-            log_event("error", stage="charm_init", subject=subject, error=str(e))
-            raise
-
-        if subject_inputs.custom_segmentation is not None:
-            custom_seg_map_path = str(subject_inputs.custom_segmentation)
-            custom_seg_map = nib.load(custom_seg_map_path)
-
-            charm_seg_map_path = os.path.join(subject_dir, f"m2m_sub-{subject.split('-')[-1].upper()}", 'label_prep', 'tissue_labeling_upsampled.nii.gz')
-            charm_seg_map = nib.load(charm_seg_map_path)
-            log_file_info("custom_seg_map", custom_seg_map_path)
-            log_file_info("charm_seg_map", charm_seg_map_path)
-
-            # Ensure integer labels; nibabel exposes floats via get_fdata().
-            # We'll round+cast only if dtype isn't int-like.
-            def to_int_img(img, like):
-                data = img.get_fdata(dtype=np.float32)  # safe access; may be float
-                if not np.allclose(data, np.round(data)):
-                    print("[WARN] Custom segmentation contains non-integer values; rounding to nearest integers.")
-                data = np.rint(data).astype(np.int16)
-                return nib.Nifti1Image(data, like.affine, like.header)
-
-            same_shape = custom_seg_map.shape == charm_seg_map.shape
-            same_affine = np.allclose(custom_seg_map.affine, charm_seg_map.affine, atol=1e-5)
-
-            if not (same_shape and same_affine):
-                print("[INFO] Resampling CHARM segmentation to custom label grid (nearest-neighbor).")
-                src_img_nn = nib.Nifti1Image(
-                    np.rint(charm_seg_map.get_fdata()).astype(np.int16), charm_seg_map.affine, charm_seg_map.header
-                )
-                resampled = resample_from_to(src_img_nn, custom_seg_map, order=0)
-            else:
-                resampled = to_int_img(charm_seg_map, custom_seg_map)
-
-            merged_img, debug = merge_segmentation_maps(custom_seg_map, resampled,
-                manual_skin_id=5,
-                dilate_envelope_voxels=1,
-                background_label=0,
-                output_path=os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_clipped.nii"),
-                save_envelope_path=os.path.join(subject_dir,"skin_mask.nii.gz"))
-            _ = debug
-
-            merged_seg_img_path = os.path.join(subject_dir, f"{subject}_T1w_ras_1mm_T1andT2_masks_merged.nii")
-            nib.save(merged_img, merged_seg_img_path)
-
-            atomic_replace(merged_seg_img_path, charm_seg_map_path, force_int=True, int_dtype="uint16")
-
-            remesh_cmd = [
-                "charm",
-                subject,
-                "--mesh"
-            ]
-
-            try:
-                run_mesh_cmd(
-                    remesh_cmd,
-                    cwd=str(subject_dir),
-                    label="charm_remesh",
-                    mesh_deadline=mesh_deadline,
-                )
-            except MeshTimeoutError as e:
-                log_event("error", stage="charm_remesh", subject=subject, error=str(e))
-                cleanup_subject_mesh_outputs(subject_dir, subject)
-                raise
-            except Exception as e:
-                log_event("error", stage="charm_remesh", subject=subject, error=str(e))
-                raise
-        else:
-            print(f"[INFO] ({subject_source}) No custom segmentation found; using CHARM-generated segmentation and mesh.")
-            log_event(
-                "pure_charm_mode",
-                subject=subject_source,
-                subject_dir=subject_dir,
+        fnamehead = str(generated_mesh)
+        label_path = generated_mesh.parent / "label_prep" / "tissue_labeling_upsampled.nii.gz"
+        if not label_path.is_file():
+            raise SimulationInputError(
+                f"Pure CHARM generation completed without its label map: {label_path}"
             )
-
+        log_event(
+            "pure_charm_generation_complete",
+            subject=subject,
+            mesh_path=fnamehead,
+            mesh_sha256=sha256_file(generated_mesh),
+            label_path=str(label_path),
+            label_sha256=sha256_file(label_path),
+            roast_custom_segmentation_present=False,
+        )
+    else:
+        raise AssertionError("no mesh mode selected")
 
     montage = SELECTED_MONTAGE or resolve_montage_preset(DEFAULT_MONTAGE_PRESET)
     electrode_size = [montage.electrode_radius_mm, montage.electrode_thickness_mm]
@@ -779,15 +721,6 @@ def main():
         ),
     )
     parser.add_argument(
-        "--mesh-timeout-hours",
-        type=float,
-        default=DEFAULT_MESH_TIMEOUT_HOURS,
-        help=(
-            "Total timeout in hours across all meshing/remeshing work for one subject. "
-            "Set to 0 or a negative value to disable the timeout."
-        ),
-    )
-    parser.add_argument(
         "--montage-preset",
         default=os.environ.get("TI_MONTAGE_PRESET", DEFAULT_MONTAGE_PRESET),
         help=(
@@ -803,7 +736,24 @@ def main():
     parser.add_argument(
         "--reuse-existing-mesh",
         action="store_true",
-        help="Skip CHARM/remeshing and run simulations with an existing m2m mesh.",
+        help=(
+            "Run simulation only with an existing CHARM mesh. This mode also "
+            "requires the installed CHARM label and refuses live ROAST/custom maps."
+        ),
+    )
+    parser.add_argument(
+        "--generate-charm-mesh",
+        action="store_true",
+        help=(
+            "Explicit pure-CHARM mode for experiments that start from T1/T2 only. "
+            "This mode refuses ROAST/custom maps and never merges segmentations."
+        ),
+    )
+    parser.add_argument(
+        "--mesh-timeout-hours",
+        type=float,
+        default=DEFAULT_MESH_TIMEOUT_HOURS,
+        help="Timeout for explicit --generate-charm-mesh mode; ignored for mesh reuse.",
     )
 
     args = parser.parse_args()
@@ -818,6 +768,15 @@ def main():
         parser.error(str(exc))
     global REUSE_EXISTING_MESH
     REUSE_EXISTING_MESH = bool(args.reuse_existing_mesh)
+    global GENERATE_CHARM_MESH
+    GENERATE_CHARM_MESH = bool(args.generate_charm_mesh)
+    if REUSE_EXISTING_MESH and GENERATE_CHARM_MESH:
+        parser.error("--reuse-existing-mesh and --generate-charm-mesh are mutually exclusive.")
+    if not REUSE_EXISTING_MESH and not GENERATE_CHARM_MESH:
+        parser.error(
+            "Select --reuse-existing-mesh for CamCan reruns or the explicit "
+            "--generate-charm-mesh pure-CHARM experiment mode."
+        )
 
     start = time.time()
     global MESH_TOTAL_TIMEOUT_SECONDS
@@ -825,21 +784,33 @@ def main():
         args.mesh_timeout_hours * 60 * 60 if args.mesh_timeout_hours > 0 else None
     )
     print(f"[INFO] Montage preset: {SELECTED_MONTAGE.name}")
+    actual_targets_hash = targets_csv_sha256()
+    if actual_targets_hash != CONFIRMED_TARGETS_SHA256:
+        parser.error(
+            "targets.csv is not the confirmed optimized file: "
+            f"{actual_targets_hash} != {CONFIRMED_TARGETS_SHA256}"
+        )
+    dataset_name = Path(rootDIR).name
+    if REPEAT_DATASET_PATTERN.fullmatch(dataset_name):
+        try:
+            validate_dataset_montage([dataset_name], SELECTED_MONTAGE.name)
+        except ValueError as exc:
+            parser.error(str(exc))
     log_event(
         "montage_preset_selected",
         preset=SELECTED_MONTAGE.name,
         requested=args.montage_preset,
-    )
-    log_event(
-        "mesh_timeout_config",
-        mesh_timeout_hours=args.mesh_timeout_hours,
-        mesh_timeout_scope="total_meshing_phase",
-        mesh_timeout_seconds=MESH_TOTAL_TIMEOUT_SECONDS,
-        mesh_timeout_exit_code=MESH_TIMEOUT_EXIT_CODE,
+        targets_csv=str(TARGETS_CSV_PATH),
+        targets_csv_sha256=actual_targets_hash,
     )
     log_event(
         "mesh_reuse_enabled",
         enabled=REUSE_EXISTING_MESH,
+    )
+    log_event(
+        "pure_charm_generation_enabled",
+        enabled=GENERATE_CHARM_MESH,
+        mesh_timeout_seconds=MESH_TOTAL_TIMEOUT_SECONDS if GENERATE_CHARM_MESH else None,
     )
 
     if args.subject:
@@ -869,10 +840,7 @@ def main():
                 total_runtime_sec=total_runtime,
                 exit_code=MESH_TIMEOUT_EXIT_CODE,
             )
-            print(
-                f"[ERROR] Mesh step '{exc.label}' timed out after "
-                f"{exc.timeout_sec / 3600:.2f} hour(s) for {subject_id}."
-            )
+            print(f"[ERROR] Pure CHARM generation timed out for {subject_id}.")
             sys.exit(MESH_TIMEOUT_EXIT_CODE)
         total_runtime = time.time() - start
 

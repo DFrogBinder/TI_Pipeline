@@ -195,6 +195,7 @@ requeue_or_fail() {
 python -u /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/simulation/TI_runner_multi-core.py \
     --subject "$SUBJECT" \
     --montage-preset "$MONTAGE_PRESET" \
+    --reuse-existing-mesh \
     --mesh-timeout-hours "$MESH_TIMEOUT_HOURS" 2>&1 | tee -a "$LOG_FILE"
 PY_EXIT=$?
 

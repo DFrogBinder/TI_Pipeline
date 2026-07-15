@@ -13,6 +13,9 @@ SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${SCRIPT_DIR}/HPC_scripts/camcan_inplace_rerun_array.slurm}"
 SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-${SCRIPT_DIR}/simulation/TI_runner_multi-core.py}"
 COMPLETION_CHECK_PY="${TI_COMPLETION_CHECK_PY:-${SCRIPT_DIR}/simulation/validate_simulation_outputs.py}"
+MONTAGE_VALIDATOR_PY="${TI_MONTAGE_VALIDATOR_PY:-${SCRIPT_DIR}/simulation/validate_montage_selection.py}"
+TARGETS_CSV="${TI_TARGETS_CSV:-${SCRIPT_DIR}/../utils/targets.csv}"
+EXPECTED_TARGETS_SHA256="${TI_EXPECTED_TARGETS_SHA256:-97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6}"
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-8}"
 MAX_ARRAY_TASKS="${MAX_ARRAY_TASKS:-1000}"
 START_TASK_OFFSET="${START_TASK_OFFSET:-0}"
@@ -23,6 +26,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
 MEMORY="${MEMORY:-32G}"
 TIME_LIMIT="${TIME_LIMIT:-08:00:00}"
 TASK_MAX_RETRIES="${TI_TASK_MAX_RETRIES:-${TI_MESH_MAX_RETRIES:-0}}"
+EXPECTED_TASKS="${EXPECTED_TASKS:-1750}"
 
 resolve_path() {
     "${PYTHON_BIN}" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$1"
@@ -34,6 +38,8 @@ LOG_DIR="$(resolve_path "${LOG_DIR}")"
 SLURM_SCRIPT="$(resolve_path "${SLURM_SCRIPT}")"
 SIM_RUNNER_PY="$(resolve_path "${SIM_RUNNER_PY}")"
 COMPLETION_CHECK_PY="$(resolve_path "${COMPLETION_CHECK_PY}")"
+MONTAGE_VALIDATOR_PY="$(resolve_path "${MONTAGE_VALIDATOR_PY}")"
+TARGETS_CSV="$(resolve_path "${TARGETS_CSV}")"
 mkdir -p "${LOG_DIR}"
 
 if [ ! -d "${ROI_ROOT}" ]; then
@@ -56,6 +62,17 @@ if [ ! -f "${COMPLETION_CHECK_PY}" ]; then
     echo "[ERROR] Completion check script not found: ${COMPLETION_CHECK_PY}" >&2
     exit 1
 fi
+if [ ! -f "${MONTAGE_VALIDATOR_PY}" ] || [ ! -f "${TARGETS_CSV}" ]; then
+    echo "[ERROR] Montage validator or targets.csv is missing." >&2
+    exit 1
+fi
+
+TARGETS_SHA256=$("${PYTHON_BIN}" -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${TARGETS_CSV}")
+if [ "${TARGETS_SHA256}" != "${EXPECTED_TARGETS_SHA256}" ]; then
+    echo "[ERROR] targets.csv is not the confirmed optimized file." >&2
+    echo "[ERROR] actual=${TARGETS_SHA256} expected=${EXPECTED_TARGETS_SHA256}" >&2
+    exit 1
+fi
 
 awk -F '\t' 'NR == 1 { exit !(($1 == "task_id") && ($4 == "dataset_root") && ($5 == "subject") && ($8 == "status")) }' "$MANIFEST" || {
     echo "[ERROR] Manifest has an unexpected header: ${MANIFEST}" >&2
@@ -76,11 +93,25 @@ if [ "$TOTAL_TASKS" -le 0 ]; then
     echo "[INFO] Manifest contains no task rows: ${MANIFEST}"
     exit 0
 fi
+if ! [[ "${EXPECTED_TASKS}" =~ ^[0-9]+$ ]] || [ "${EXPECTED_TASKS}" -lt 1 ]; then
+    echo "[ERROR] EXPECTED_TASKS must be a positive integer." >&2
+    exit 1
+fi
+if [ "${TOTAL_TASKS}" -ne "${EXPECTED_TASKS}" ]; then
+    echo "[ERROR] Refusing partial campaign: found ${TOTAL_TASKS} tasks, expected ${EXPECTED_TASKS}." >&2
+    exit 1
+fi
 if [ "$READY_TASKS" -le 0 ]; then
     echo "[INFO] Manifest contains no ready tasks: ${MANIFEST}"
     echo "[INFO] Blocked tasks: ${BLOCKED_TASKS}"
     exit 0
 fi
+
+"${PYTHON_BIN}" "${MONTAGE_VALIDATOR_PY}" \
+    --manifest "${MANIFEST}" \
+    --preset "${MONTAGE_PRESET}" \
+    --targets-csv "${TARGETS_CSV}" \
+    --expected-targets-sha256 "${TARGETS_SHA256}"
 if ! [[ "${MAX_ARRAY_TASKS}" =~ ^[0-9]+$ ]] || [ "${MAX_ARRAY_TASKS}" -lt 1 ]; then
     echo "[ERROR] MAX_ARRAY_TASKS must be a positive integer; got '${MAX_ARRAY_TASKS}'." >&2
     exit 1
@@ -107,12 +138,13 @@ if ! [[ "${TASK_MAX_RETRIES}" =~ ^-?[0-9]+$ ]]; then
 fi
 
 SLURM_OUTPUT="${SLURM_OUTPUT:-${LOG_DIR}/camcan-inplace-rerun-%A_%a.out}"
-BASE_EXPORT_VARS="ALL,TI_INPLACE_RERUN_MANIFEST=${MANIFEST},TI_MONTAGE_PRESET=${MONTAGE_PRESET},TI_SIM_RUNNER_PY=${SIM_RUNNER_PY},TI_COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY},LOG_DIR=${LOG_DIR},TI_TASK_MAX_RETRIES=${TASK_MAX_RETRIES}"
+BASE_EXPORT_VARS="ALL,TI_INPLACE_RERUN_MANIFEST=${MANIFEST},TI_MONTAGE_PRESET=${MONTAGE_PRESET},TI_SIM_RUNNER_PY=${SIM_RUNNER_PY},TI_COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY},TI_MONTAGE_VALIDATOR_PY=${MONTAGE_VALIDATOR_PY},TI_TARGETS_CSV=${TARGETS_CSV},TI_EXPECTED_TARGETS_SHA256=${TARGETS_SHA256},LOG_DIR=${LOG_DIR},TI_TASK_MAX_RETRIES=${TASK_MAX_RETRIES}"
 
 echo "[INFO] ROI root:          ${ROI_ROOT}"
 echo "[INFO] Manifest:          ${MANIFEST}"
 echo "[INFO] Montage preset:    ${MONTAGE_PRESET}"
 echo "[INFO] Total rows:        ${TOTAL_TASKS}"
+echo "[INFO] Expected rows:     ${EXPECTED_TASKS}"
 echo "[INFO] Ready tasks:       ${READY_TASKS}"
 echo "[INFO] Blocked tasks:     ${BLOCKED_TASKS}"
 echo "[INFO] Start task offset: ${START_TASK_OFFSET}"
@@ -126,6 +158,8 @@ fi
 echo "[INFO] Slurm script:      ${SLURM_SCRIPT}"
 echo "[INFO] Runner:            ${SIM_RUNNER_PY}"
 echo "[INFO] Completion check:  ${COMPLETION_CHECK_PY}"
+echo "[INFO] targets.csv:       ${TARGETS_CSV}"
+echo "[INFO] targets SHA-256:   ${TARGETS_SHA256}"
 echo "[INFO] Log dir:           ${LOG_DIR}"
 
 TASK_OFFSET="${START_TASK_OFFSET}"

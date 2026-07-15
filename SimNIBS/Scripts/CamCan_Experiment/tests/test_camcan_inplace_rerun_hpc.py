@@ -20,12 +20,16 @@ def test_inplace_rerun_slurm_scripts_have_expected_entrypoints():
 
     assert array_script.is_file()
     assert submit_script.is_file()
+    assert (ROOT / "HPC_scripts" / "charm_only_remesh_array.slurm").is_file()
+    assert (ROOT / "HPC_scripts" / "submit_charm_only_remesh.sh").is_file()
 
 
 def test_inplace_rerun_shell_scripts_pass_bash_syntax_check():
     for relative in (
         "HPC_scripts/camcan_inplace_rerun_array.slurm",
         "HPC_scripts/submit_camcan_inplace_rerun.sh",
+        "HPC_scripts/charm_only_remesh_array.slurm",
+        "HPC_scripts/submit_charm_only_remesh.sh",
     ):
         result = subprocess.run(
             ["bash", "-n", str(ROOT / relative)],
@@ -48,6 +52,8 @@ def test_inplace_rerun_scripts_use_manifest_and_reuse_mesh_flag():
     assert "TASK_OFFSET" in array_source
     assert "MONTAGE_PRESET" in submit_source
     assert "MAX_ARRAY_TASKS" in submit_source
+    assert "TI_EXPECTED_TARGETS_SHA256" in array_source
+    assert "validate_montage_selection.py" in submit_source
 
 
 def test_submit_wrapper_supports_chunk_resume_controls():

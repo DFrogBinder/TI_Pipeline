@@ -22,6 +22,7 @@ import pandas as pd
 import nibabel as nib
 from scipy.ndimage import binary_dilation, distance_transform_edt
 
+from post.eeg_positions import read_eeg_positions
 from post.metric_extensions import compute_extended_subject_metrics
 from post.post_functions import (
     _resolve_fastsurfer_atlas,
@@ -81,35 +82,7 @@ def _load_electrode_centers(path: Path) -> Dict[str, List[Tuple[str, np.ndarray]
 
 
 def _read_eeg_positions(path: Path) -> Dict[str, np.ndarray]:
-    if not path.is_file():
-        return {}
-    try:
-        df = pd.read_csv(path)
-        cols = {c.lower(): c for c in df.columns}
-        if {"name", "x", "y", "z"}.issubset(cols):
-            out = {}
-            for _, row in df.iterrows():
-                name = str(row[cols["name"]])
-                out[name] = np.array(
-                    [row[cols["x"]], row[cols["y"]], row[cols["z"]]], dtype=float
-                )
-            return out
-    except Exception:
-        pass
-
-    out = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        parts = line.split()
-        if len(parts) >= 4:
-            name = parts[0]
-            try:
-                xyz = np.array([float(parts[1]), float(parts[2]), float(parts[3])], dtype=float)
-            except ValueError:
-                continue
-            out[name] = xyz
-    return out
+    return read_eeg_positions(path)
 
 
 def _electrode_centers_from_names(

@@ -109,3 +109,85 @@ partial subjects are regenerated only inside the dedicated CHARM output root;
 the source TI dataset is never modified. To deliberately regenerate a single
 subject, invoke `run_charm_segmentation.py` with `--force` from a SimNIBS-loaded
 HPC shell.
+
+## Install the 175 CHARM maps into all 40 repeat datasets
+
+`install_charm_segmentations.py` installs the collected map for each subject as
+the exact filename consumed by CHARM meshing:
+
+```text
+<ROI>_Data_<repeat>/<subject>/anat/m2m_<subject>/label_prep/tissue_labeling_upsampled.nii.gz
+```
+
+The four default ROI prefixes are `Left_Hippocampus`, `Left_M1`, `Right_DLPC`,
+and `Right_Thalamus`; repeats default to 01 through 10. The ROI root is searched
+recursively, so both a flat layout and an HPC layout with `*_Runs` parent
+directories are supported.
+
+The installer has no target-root default. The CHARM segmentation-generation
+profile is known working, but this 7,000-file installation is a candidate until
+the audit is run against the live HPC tree. Set the actual uploaded-map and ROI
+roots explicitly:
+
+```bash
+cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment
+MAPS_ROOT=/mnt/parscratch/users/cop23bi/all-seg-maps
+ROI_ROOT=/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data
+RUN_ID=charm-map-install-$(date +%Y%m%d-%H%M%S)
+REPORT_DIR=/mnt/parscratch/users/cop23bi/charm_segmentation_install/$RUN_ID
+BACKUP_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentation_backups/$RUN_ID
+python3 charm_segmentation_batch/install_charm_segmentations.py --maps-root "$MAPS_ROOT" --roi-root "$ROI_ROOT" --report-dir "$REPORT_DIR"
+```
+
+The first invocation is audit-only. It changes no segmentation, mesh, or
+simulation file. A ready preflight must report all of the following:
+
+```text
+sources=175/175 datasets=40/40 targets=7000/7000 issues=0
+```
+
+Inspect the machine-readable evidence before applying:
+
+```bash
+sed -n '1,160p' "$REPORT_DIR/preflight_summary.json"
+wc -l "$REPORT_DIR/sources.tsv" "$REPORT_DIR/targets.tsv" "$REPORT_DIR/issues.tsv"
+```
+
+Expected line counts, including headers, are 176, 7001, and 1. If and only if
+the preflight is ready, run the same command with an explicit backup root and
+`--apply`:
+
+```bash
+python3 charm_segmentation_batch/install_charm_segmentations.py --maps-root "$MAPS_ROOT" --roi-root "$ROI_ROOT" --report-dir "$REPORT_DIR" --backup-root "$BACKUP_ROOT" --apply
+```
+
+Each old map is backed up under the same relative path beneath `BACKUP_ROOT`.
+On the same filesystem this uses a space-efficient hard link; otherwise it
+falls back to a verified copy. Each CHARM map is copied to a temporary file,
+SHA-256 checked, atomically moved onto the target, and checked again. The apply
+manifest is flushed after every target, and rerunning with a new report and
+backup directory skips targets that already have the source hash.
+
+Keep the backup tree and `apply_manifest.tsv` until all new meshes and
+simulations have passed validation. The installer deliberately does not remove
+or regenerate the existing `.msh` files, so they remain stale immediately after
+map replacement.
+
+### Required remesh handoff
+
+Do not use the normal meshing branch of `TI_runner_multi-core.py` after this
+installation. That branch calls CHARM with `--forcerun` and, when the existing
+manual/ROAST map is present, merges it back into the CHARM map. This would undo
+the CHARM-only replacement.
+
+Regenerate each mesh from the installed map with the equivalent of the
+following command in the subject's `anat` directory:
+
+```bash
+charm <subject> --mesh
+```
+
+After remeshing has succeeded, run the simulations through the existing
+mesh-reuse path (`--reuse-existing-mesh`). A separate array launcher should be
+used for the 7,000 remesh operations so completion can be validated before the
+simulation arrays are submitted.

@@ -11,6 +11,16 @@ WORKFLOW = ROOT / "charm_segmentation_batch"
 sys.path.insert(0, str(WORKFLOW))
 
 from collect_charm_segmentations import collect  # noqa: E402
+from install_charm_segmentations import (  # noqa: E402
+    DEFAULT_REPEATS,
+    DEFAULT_ROIS,
+    SOURCE_SUFFIX,
+    TARGET_BASENAME,
+    apply_plan,
+    build_preflight_plan,
+    source_hashes,
+    write_preflight_reports,
+)
 from run_charm_segmentation import (  # noqa: E402
     INCOMPLETE_EXIT_CODE,
     completed_output_is_valid,
@@ -239,3 +249,126 @@ def test_submitter_discovers_subjects_and_submits_array_then_collector(tmp_path)
     preflight = (out_root / "submission" / "preflight.tsv").read_text(encoding="utf-8")
     assert preflight.count("\n") == 5
     assert "sub-04\t\t\tblocked\t" in preflight
+
+
+def seed_install_tree(
+    root: Path,
+    *,
+    subjects: tuple[str, ...] = ("sub-01", "sub-02"),
+) -> tuple[Path, Path]:
+    maps_root = root / "all-seg-maps"
+    roi_root = root / "analysed-data"
+    maps_root.mkdir(parents=True)
+    for subject in subjects:
+        (maps_root / f"{subject}{SOURCE_SUFFIX}").write_bytes(
+            f"charm-{subject}".encode()
+        )
+    for roi in DEFAULT_ROIS:
+        for repeat in DEFAULT_REPEATS:
+            dataset = roi_root / f"{roi}_Runs" / f"{roi}_Data_{repeat:02d}"
+            for subject in subjects:
+                destination = (
+                    dataset
+                    / subject
+                    / "anat"
+                    / f"m2m_{subject}"
+                    / "label_prep"
+                    / TARGET_BASENAME
+                )
+                destination.parent.mkdir(parents=True)
+                destination.write_bytes(f"old-roast-{roi}-{repeat}-{subject}".encode())
+    return maps_root, roi_root
+
+
+def test_installer_preflight_discovers_nested_4_roi_by_10_repeat_tree(tmp_path):
+    maps_root, roi_root = seed_install_tree(tmp_path)
+
+    plan = build_preflight_plan(
+        maps_root=maps_root,
+        roi_root=roi_root,
+        expected_subjects=2,
+    )
+
+    assert plan.ready
+    assert len(plan.datasets) == 40
+    assert len(plan.tasks) == 80
+    assert not plan.issues
+    assert plan.tasks[0].destination.name == TARGET_BASENAME
+
+
+def test_installer_preflight_blocks_before_any_change_when_target_is_missing(tmp_path):
+    maps_root, roi_root = seed_install_tree(tmp_path)
+    missing = (
+        roi_root
+        / "Left_M1_Runs"
+        / "Left_M1_Data_03"
+        / "sub-01"
+        / "anat"
+        / "m2m_sub-01"
+        / "label_prep"
+        / TARGET_BASENAME
+    )
+    before = missing.read_bytes()
+    missing.unlink()
+
+    plan = build_preflight_plan(
+        maps_root=maps_root,
+        roi_root=roi_root,
+        expected_subjects=2,
+    )
+
+    assert not plan.ready
+    assert len(plan.tasks) == 79
+    assert any(issue["kind"] == "missing_or_ambiguous_target" for issue in plan.issues)
+    assert not missing.exists()
+    assert before.startswith(b"old-roast")
+
+
+def test_installer_applies_with_backups_and_is_idempotent(tmp_path):
+    maps_root, roi_root = seed_install_tree(tmp_path)
+    plan = build_preflight_plan(
+        maps_root=maps_root,
+        roi_root=roi_root,
+        expected_subjects=2,
+    )
+    hashes = source_hashes(plan)
+    report_dir = tmp_path / "report-1"
+    backup_root = tmp_path / "backup-1"
+    write_preflight_reports(plan, report_dir, hashes)
+    first_destination = plan.tasks[0].destination
+    old_bytes = first_destination.read_bytes()
+
+    result = apply_plan(
+        plan,
+        hashes=hashes,
+        backup_root=backup_root,
+        report_dir=report_dir,
+    )
+
+    assert result["status"] == "complete"
+    assert result["installed"] == 80
+    assert result["already_current"] == 0
+    assert first_destination.read_bytes() == plan.tasks[0].source.read_bytes()
+    first_backup = backup_root / first_destination.relative_to(roi_root)
+    assert first_backup.read_bytes() == old_bytes
+    assert not (roi_root / ".charm-segmentation-install.lock").exists()
+
+    current_plan = build_preflight_plan(
+        maps_root=maps_root,
+        roi_root=roi_root,
+        expected_subjects=2,
+    )
+    current_hashes = source_hashes(current_plan)
+    second_report = tmp_path / "report-2"
+    write_preflight_reports(current_plan, second_report, current_hashes)
+    repeated = apply_plan(
+        current_plan,
+        hashes=current_hashes,
+        backup_root=tmp_path / "backup-2",
+        report_dir=second_report,
+    )
+
+    assert repeated["status"] == "complete"
+    assert repeated["installed"] == 0
+    assert repeated["already_current"] == 80
+    assert not list((tmp_path / "backup-2").rglob(TARGET_BASENAME))

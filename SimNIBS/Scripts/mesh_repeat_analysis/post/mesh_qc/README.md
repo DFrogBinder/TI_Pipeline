@@ -90,6 +90,27 @@ sbatch --export=ALL,LEFT_HIPPOCAMPUS_PILOT_STAGE=render \
   mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_pilot.slurm
 ```
 
+### Direct Gmsh Tissue-Visibility Smoke Test
+
+Before replacing extracted tissue surfaces with Gmsh physical-volume
+visibility, test the exact site Gmsh version on one mesh and one tissue:
+
+```bash
+sbatch mesh_repeat_analysis/hpc_scripts/run_gmsh_tissue_visibility_smoke.slurm
+```
+
+This job does not invoke Python, SimNIBS, or `meshio`. It loads the
+`sub-CC110056` mesh once, shows physical volume tag `5` (scalp), and asks Gmsh
+to write front and back PNGs from the same process. Results are written under:
+
+```text
+/mnt/parscratch/users/cop23bi/mesh-wall/gmsh_tissue_visibility_smoke/<job-id>/
+```
+
+The full renderer should use this path only after the job reports `PASS` and
+both PNGs are non-empty. A timeout or missing second PNG means that the site
+Gmsh cannot reliably batch multiple screenshots from one mesh load.
+
 Default command-line execution is tuned for large interactive HPC sessions:
 
 - direct Python rendering defaults to `--renderer auto`, which prefers Gmsh and then falls back,

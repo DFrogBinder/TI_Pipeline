@@ -33,6 +33,8 @@ def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     assert "PYTHON_CMD+=(--tissue-walls)" in text
     assert 'MESH_QC_PYTHON_CONFIG="python"' in text
     assert '"${MESH_QC_PYTHON}"' in text
+    assert '"${MESH_QC_PYTHON}" -E -c' in text
+    assert '"${MESH_QC_PYTHON}"\n    -E\n    -u' in text
 
 
 def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
@@ -75,6 +77,25 @@ def test_tissue_wall_requirements_pin_locally_tested_meshio():
 
     assert requirements.exists()
     assert "meshio==5.3.5" in requirements.read_text(encoding="utf-8")
+
+
+def test_gmsh_tissue_visibility_smoke_uses_one_mesh_load_for_both_views():
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "hpc_scripts" / "run_gmsh_tissue_visibility_smoke.slurm"
+
+    assert script.exists()
+    text = script.read_text(encoding="utf-8")
+
+    assert "#SBATCH --time=00:15:00" in text
+    assert 'GMSH_MODULE="gmsh/4.11.1-foss-2022b"' in text
+    assert 'XVFB_MODULE="Xvfb/21.1.6-GCCcore-12.2.0"' in text
+    assert text.count('Merge "${MESH}";') == 1
+    assert 'Recursive Show { Physical Volume{${TISSUE_TAG}}; }' in text
+    assert 'General.RotationZ = 0;' in text
+    assert 'General.RotationZ = 180;' in text
+    assert 'Print "${FRONT_PNG}";' in text
+    assert 'Print "${BACK_PNG}";' in text
+    assert "requirements-tissue-walls" not in text
 
 
 def test_mesh_qc_slurm_loads_configured_xvfb_module_for_gmsh():

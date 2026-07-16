@@ -222,9 +222,18 @@ if ! command -v "${MESH_QC_PYTHON}" >/dev/null 2>&1; then
     echo "[ERROR] Python executable not found: ${MESH_QC_PYTHON}" >&2
     exit 2
 fi
+if ! "${MESH_QC_PYTHON}" -E -c 'import numpy; from PIL import Image' >/dev/null 2>&1; then
+    echo "[ERROR] The selected Python cannot import its own NumPy/Pillow after module loading." >&2
+    echo "[ERROR] Python: ${MESH_QC_PYTHON}" >&2
+    echo "[ERROR] Module-provided Python paths must not contaminate the selected environment." >&2
+    "${MESH_QC_PYTHON}" -E -c 'import sys; print("sys.path:", *sys.path, sep="\n  "); import numpy; from PIL import Image' >&2 || true
+    exit 2
+fi
+echo "[INFO] Isolated Python imports: OK"
 
 PYTHON_CMD=(
     "${MESH_QC_PYTHON}"
+    -E
     -u
     "${PIPELINE_DIR}/mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py"
     --root "${MESH_QC_ROOT}"

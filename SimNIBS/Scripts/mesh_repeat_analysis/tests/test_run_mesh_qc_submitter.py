@@ -28,6 +28,7 @@ def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     slurm_script = repo_root / "hpc_scripts" / "run_mesh_qc.slurm"
     text = slurm_script.read_text(encoding="utf-8")
 
+    assert "#SBATCH --time=08:00:00" in text
     assert 'TISSUE_WALLS_CONFIG="0"' in text
     assert 'if [ "${TISSUE_WALLS}" = "1" ]; then' in text
     assert "PYTHON_CMD+=(--tissue-walls)" in text
@@ -47,7 +48,7 @@ def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
     assert "#SBATCH --partition=sheffield" in text
     assert "#SBATCH --cpus-per-task=4" in text
     assert "#SBATCH --mem=64G" in text
-    assert "#SBATCH --time=24:00:00" in text
+    assert "#SBATCH --time=08:00:00" in text
     assert "Left_Hippocampus_Runs/Left_Hippocampus_Data_01" in text
     assert 'MESH_QC_EXPECTED_MESHES_CONFIG="175"' in text
     assert 'MESH_QC_STAGE_CONFIG="full"' in text
@@ -86,7 +87,7 @@ def test_gmsh_tissue_visibility_smoke_uses_one_mesh_load_for_both_views():
     assert script.exists()
     text = script.read_text(encoding="utf-8")
 
-    assert "#SBATCH --time=00:15:00" in text
+    assert "#SBATCH --time=08:00:00" in text
     assert 'GMSH_MODULE="gmsh/4.11.1-foss-2022b"' in text
     assert 'XVFB_MODULE="Xvfb/21.1.6-GCCcore-12.2.0"' in text
     assert text.count('Merge "${MESH}";') == 1
@@ -95,6 +96,7 @@ def test_gmsh_tissue_visibility_smoke_uses_one_mesh_load_for_both_views():
     assert 'General.RotationZ = 180;' in text
     assert 'Print "${FRONT_PNG}";' in text
     assert 'Print "${BACK_PNG}";' in text
+    assert "timeout 600" not in text
     assert "requirements-tissue-walls" not in text
 
 

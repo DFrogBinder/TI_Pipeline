@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=mesh_lh_d01_walls_%j.out
 #SBATCH --error=mesh_lh_d01_walls_%j.err
 

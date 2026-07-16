@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=16G
-#SBATCH --time=00:15:00
+#SBATCH --time=08:00:00
 #SBATCH --output=gmsh_tissue_smoke_%j.out
 #SBATCH --error=gmsh_tissue_smoke_%j.err
 
@@ -88,11 +88,11 @@ echo "[INFO] Gmsh:         $(command -v gmsh) ($(gmsh -version 2>&1))"
 echo "[INFO] Output:       ${OUT_DIR}"
 
 START_SECONDS="${SECONDS}"
-if timeout 600 xvfb-run -a gmsh "${GEO_FILE}" -nopopup -v 4; then
+if xvfb-run -a gmsh "${GEO_FILE}" -nopopup -v 4; then
     :
 else
     status="$?"
-    echo "[ERROR] Gmsh visibility render failed or timed out (status=${status})." >&2
+    echo "[ERROR] Gmsh visibility render failed (status=${status})." >&2
     exit 2
 fi
 

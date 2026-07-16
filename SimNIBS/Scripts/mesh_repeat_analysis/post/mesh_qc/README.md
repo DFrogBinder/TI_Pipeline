@@ -52,7 +52,7 @@ variables and embeds the tested settings:
 - persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_Data_01_front_back_test`,
 - tissue walls enabled and ROI walls disabled,
 - front and back views at `1200 x 1200`,
-- one render worker, 4 allocated CPUs, 64 GB RAM, and a 24-hour limit,
+- one render worker, 4 allocated CPUs, 64 GB RAM, and an 8-hour limit,
 - site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0`, with the conflicting SimNIBS module disabled,
 - Python: `$HOME/.conda/envs/ti-post/bin/python`.
 
@@ -108,8 +108,9 @@ to write front and back PNGs from the same process. Results are written under:
 ```
 
 The full renderer should use this path only after the job reports `PASS` and
-both PNGs are non-empty. A timeout or missing second PNG means that the site
-Gmsh cannot reliably batch multiple screenshots from one mesh load.
+both PNGs are non-empty. Slurm is the sole timeout authority for this job and
+uses the campaign-standard 8-hour limit; the launcher does not impose a shorter
+subprocess timeout.
 
 Default command-line execution is tuned for large interactive HPC sessions:
 

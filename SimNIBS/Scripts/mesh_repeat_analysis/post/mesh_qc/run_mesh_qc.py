@@ -2040,6 +2040,18 @@ def _run_tissue_outputs(
         manifest_rows=manifest_rows,
         failure_rows=failure_rows,
     )
+    if not presence_rows:
+        _log_error(
+            "TISSUE_RENDER",
+            "No tagged tetrahedral tissues could be extracted",
+            meshes=len(render_records),
+            failures=len(failure_rows),
+            details_path=str(out_dir / "tissue_render_exception_details.csv"),
+        )
+        raise RuntimeError(
+            "No tagged tetrahedral tissues could be extracted from any loadable mesh. "
+            f"See {out_dir / 'tissue_render_exception_details.csv'}."
+        )
 
     images_by_tissue: dict[tuple[int, str, str], list[Path]] = defaultdict(list)
     for row in manifest_rows:

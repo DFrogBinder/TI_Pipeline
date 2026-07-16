@@ -173,6 +173,48 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
     assert rows[5]["present_meshes"] == "2"
 
 
+def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, monkeypatch):
+    record = run_mesh_qc.MeshRecord(
+        path=tmp_path / "sub-CC1.msh",
+        roi="unknown_roi",
+        subject="sub-CC1",
+        repeat="repeat_01",
+        mesh_id="m2m_sub-CC1",
+    )
+
+    def fail_tissues(path):
+        raise RuntimeError("neither SimNIBS nor meshio is available")
+        yield
+
+    monkeypatch.setattr(run_mesh_qc, "iter_tissue_surface_arrays", fail_tissues)
+    args = run_mesh_qc.build_parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out"),
+            "--workers",
+            "1",
+            "--progress",
+            "none",
+            "--renderer",
+            "pillow",
+            "--tissue-walls",
+        ]
+    )
+    out_dir = tmp_path / "out"
+
+    with pytest.raises(RuntimeError, match="No tagged tetrahedral tissues"):
+        run_mesh_qc._run_tissue_outputs([record], out_dir, args)
+
+    with (out_dir / "tissue_render_exception_details.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["stage"] == "tissue_load"
+    assert "neither SimNIBS nor meshio" in rows[0]["error_message"]
+
+
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "20")
     monkeypatch.setattr(run_mesh_qc.os, "cpu_count", lambda: 64)

@@ -25,12 +25,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Repository / environment
 REPO_DIR="/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment"
-POST_REQUIREMENTS_FILE=""  # blank -> use <REPO_DIR>/requirements-post.txt
-POST_CONDA_ENV="ti-post"
-POST_CONDA_SH=""  # set when using a personal conda install
-POST_VENV=""  # set instead of POST_CONDA_ENV when using venv
-PYTHON=""  # set to an explicit interpreter to skip activation logic
-POST_ANACONDA_MODULE="Anaconda3/2022.05"
+POST_REQUIREMENTS_FILE="${POST_REQUIREMENTS_FILE:-}"  # blank -> use <REPO_DIR>/requirements-post.txt
+POST_CONDA_ENV="${POST_CONDA_ENV:-ti-post}"
+POST_CONDA_SH="${POST_CONDA_SH:-}"  # set when using a personal conda install
+POST_VENV="${POST_VENV:-}"  # set instead of POST_CONDA_ENV when using venv
+PYTHON="${PYTHON:-}"  # set to an explicit interpreter to skip activation logic
+POST_ANACONDA_MODULE="${POST_ANACONDA_MODULE:-Anaconda3/2022.05}"
 
 # Batch discovery
 BATCH_ROOT="${BATCH_ROOT:-/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs}"
@@ -73,7 +73,7 @@ PIPELINE_FORCE="${PIPELINE_FORCE:-0}"
 PIPELINE_VERBOSE="1"
 
 # Population aggregation
-PIPELINE_POPULATION_ENABLED="1"
+PIPELINE_POPULATION_ENABLED="${PIPELINE_POPULATION_ENABLED:-1}"
 PIPELINE_POPULATION_OUT_DIR=""  # blank -> default population_analysis under each dataset
 PIPELINE_POPULATION_REGION_FILENAME="region_stats_fastsurfer.csv"
 PIPELINE_POPULATION_METRICS_FILENAME="subject_metrics.json"
@@ -194,6 +194,14 @@ export SLURM_EXPORT_ENV=ALL
 module purge
 
 activate_post_python() {
+    if [[ -n "${PYTHON:-}" ]]; then
+        if [[ ! -x "${PYTHON}" ]]; then
+            echo "[ERROR] Explicit Python interpreter is not executable: ${PYTHON}" >&2
+            exit 2
+        fi
+        return
+    fi
+
     if [[ -n "${POST_CONDA_ENV:-}" && -z "${POST_CONDA_SH:-}" ]]; then
         module load "${POST_ANACONDA_MODULE}" || true
         if ! command -v conda >/dev/null 2>&1; then

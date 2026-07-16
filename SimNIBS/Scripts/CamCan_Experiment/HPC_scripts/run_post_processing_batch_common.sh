@@ -159,6 +159,14 @@ export SLURM_EXPORT_ENV=ALL
 module purge
 
 activate_post_python() {
+    if [[ -n "${PYTHON:-}" ]]; then
+        if [[ ! -x "${PYTHON}" ]]; then
+            echo "[ERROR] Explicit Python interpreter is not executable: ${PYTHON}" >&2
+            exit 2
+        fi
+        return
+    fi
+
     if [[ -n "${POST_CONDA_ENV:-}" && -z "${POST_CONDA_SH:-}" ]]; then
         module load "${POST_ANACONDA_MODULE}" || true
         if ! command -v conda >/dev/null 2>&1; then

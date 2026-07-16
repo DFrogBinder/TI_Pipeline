@@ -217,22 +217,46 @@ After the smoke test passes, submit the remaining tasks for this ROI:
 MANIFEST="$CAMPAIGN_ROOT/remesh_manifest.tsv" \
 RESULT_DIR="$REMESH_RESULTS" \
 LOG_DIR="$CAMPAIGN_ROOT/remesh_logs" \
-MAX_CONCURRENT_TASKS=8 \
+MAX_CONCURRENT_TASKS=50 \
+MAX_ARRAY_TASKS=875 \
+MAX_SUBMITTED_CHUNKS=1 \
 TI_CHARM_REMESH_MAX_RETRIES=2 \
 bash CamCan_Experiment/HPC_scripts/submit_charm_only_remesh.sh
 ```
 
-Task 0 is idempotent and will be reported as already complete. Validate all
-1,750 Left Hippocampus meshes before starting simulations:
+This submits global tasks 0-874 as one array capped at 50 concurrent tasks.
+Task 0 is idempotent and will be reported as already complete. Stanage's
+per-user submitted-job QOS rejects two 875-element arrays in the queue at once,
+so submit the second half only after the first array terminates:
+
+```bash
+MANIFEST="$CAMPAIGN_ROOT/remesh_manifest.tsv" \
+RESULT_DIR="$REMESH_RESULTS" \
+LOG_DIR="$CAMPAIGN_ROOT/remesh_logs" \
+START_TASK_OFFSET=875 \
+MAX_CONCURRENT_TASKS=50 \
+MAX_ARRAY_TASKS=875 \
+MAX_SUBMITTED_CHUNKS=1 \
+TI_CHARM_REMESH_MAX_RETRIES=2 \
+bash CamCan_Experiment/HPC_scripts/submit_charm_only_remesh.sh
+```
+
+Validate all 1,750 Left Hippocampus meshes before starting simulations:
 
 ```bash
 python3 CamCan_Experiment/charm_only_remesh/workflow.py validate \
   --manifest "$CAMPAIGN_ROOT/remesh_manifest.tsv" \
   --result-dir "$REMESH_RESULTS" \
-  --summary "$CAMPAIGN_ROOT/remesh_full_validation.tsv"
+  --summary "$CAMPAIGN_ROOT/remesh_full_validation.tsv" \
+  --skip-mesh-load
 ```
 
-## 6. Archive old outputs and prepare simulation manifests
+Each remesh task already loads and validates its mesh before writing a complete
+result. The aggregate validation rechecks installed/source segmentation hashes,
+mesh hashes, task identities, and current mesh paths without redundantly loading
+all meshes again.
+
+## 6. Delete obsolete outputs and prepare simulation manifests
 
 Run each ROI separately. The four required mappings are:
 
@@ -249,7 +273,6 @@ For the current Left Hippocampus campaign, first run a dry audit:
 ROI_NAME=Left_Hippocampus
 ROI_PARENT="$ROI_ROOT/${ROI_NAME}_Runs"
 SIM_REPORT="$CAMPAIGN_ROOT/simulation/$ROI_NAME"
-SIM_ARCHIVE=/mnt/parscratch/users/cop23bi/pre_charm_simulation_outputs/$RUN_ID/$ROI_NAME
 mkdir -p "$SIM_REPORT"
 
 python3 CamCan_Experiment/simulation/prepare_inplace_rerun.py preflight \
@@ -257,14 +280,15 @@ python3 CamCan_Experiment/simulation/prepare_inplace_rerun.py preflight \
   --dataset-glob "${ROI_NAME}_Data_*" \
   --repeats 01 02 03 04 05 06 07 08 09 10 \
   --expected-tasks 1750 \
-  --remesh-results-dir "$REMESH_RESULTS" \
   --manifest "$SIM_REPORT/tasks.tsv" \
-  --cleanup-manifest "$SIM_REPORT/output_archive_audit.tsv"
+  --cleanup-manifest "$SIM_REPORT/output_delete_audit.tsv" \
+  --delete-generated-outputs
 ```
 
 Review the audit. When previous generated outputs exist, the dry-run task
-manifest is deliberately blocked until they are archived. Then archive the
-previous outputs atomically and rebuild the manifest:
+manifest is deliberately blocked until they are removed. Once the obsolete
+outputs are confirmed expendable, permanently delete only the allowlisted
+generated paths and rebuild the manifest:
 
 ```bash
 python3 CamCan_Experiment/simulation/prepare_inplace_rerun.py preflight \
@@ -274,13 +298,14 @@ python3 CamCan_Experiment/simulation/prepare_inplace_rerun.py preflight \
   --expected-tasks 1750 \
   --remesh-results-dir "$REMESH_RESULTS" \
   --manifest "$SIM_REPORT/tasks.tsv" \
-  --cleanup-manifest "$SIM_REPORT/output_archive_apply.tsv" \
-  --output-archive-root "$SIM_ARCHIVE" \
-  --apply
+  --cleanup-manifest "$SIM_REPORT/output_delete_apply.tsv" \
+  --delete-generated-outputs \
+  --apply \
+  --confirm-obsolete-output-deletion
 ```
 
-The archive must be on the same filesystem as the live ROI root; the operation
-refuses non-atomic cross-filesystem moves and existing destinations.
+Deletion mode never targets T1/T2 inputs, installed CHARM labels, or head
+meshes. It refuses to run without the explicit deletion confirmation.
 
 ## 7. Rerun simulations using the new meshes
 

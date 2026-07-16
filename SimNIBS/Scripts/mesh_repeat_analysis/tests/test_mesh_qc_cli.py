@@ -9,6 +9,7 @@ import pytest
 
 from mesh_repeat_analysis.post.mesh_qc import run_mesh_qc
 from mesh_repeat_analysis.post.mesh_qc.geometry_qc import SurfaceArrays
+from mesh_repeat_analysis.post.mesh_qc.loaders import TissueSurface
 
 
 class FakeTqdm:
@@ -96,7 +97,80 @@ def test_parser_defaults_to_auto_and_all_cpus():
     assert args.image_size == 1200
     assert args.qc_only is False
     assert args.render_only is False
+    assert args.tissue_walls is False
     assert gmsh_args.renderer == "gmsh"
+
+
+def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_path, monkeypatch):
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / f"sub-CC{idx}.msh",
+            roi="unknown_roi",
+            subject=f"sub-CC{idx}",
+            repeat="repeat_01",
+            mesh_id=f"m2m_sub-CC{idx}",
+        )
+        for idx in (1, 2)
+    ]
+    surface = SurfaceArrays(
+        points=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ]
+        ),
+        faces=np.array([[0, 1, 2]]),
+    )
+
+    def fake_tissues(path):
+        if path == records[0].path:
+            yield TissueSurface(1, "White Matter", "tag_01_white_matter", surface)
+        yield TissueSurface(5, "Scalp", "tag_05_scalp", surface)
+
+    rendered = []
+
+    def fake_render(surface_arg, out_png, *, label, image_size, renderer):
+        rendered.append((out_png, label))
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"tissue png")
+        return "pillow"
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"wall")
+
+    monkeypatch.setattr(run_mesh_qc, "iter_tissue_surface_arrays", fake_tissues)
+    monkeypatch.setattr(run_mesh_qc, "render_surface_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+    args = run_mesh_qc.build_parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out"),
+            "--workers",
+            "1",
+            "--progress",
+            "none",
+            "--renderer",
+            "pillow",
+            "--tissue-walls",
+        ]
+    )
+    out_dir = tmp_path / "out"
+
+    run_mesh_qc._run_tissue_outputs(records, out_dir, args)
+
+    assert len(rendered) == 3
+    assert (out_dir / "mosaics" / "tissues" / "tag_01_white_matter_wall.png").exists()
+    assert (out_dir / "mosaics" / "tissues" / "tag_05_scalp_wall.png").exists()
+    with (out_dir / "tissue_render_completeness.csv").open(newline="", encoding="utf-8") as f:
+        rows = {int(row["tissue_tag"]): row for row in csv.DictReader(f)}
+    assert rows[1]["status"] == "MISSING_TISSUE"
+    assert rows[1]["present_meshes"] == "1"
+    assert rows[5]["status"] == "OK"
+    assert rows[5]["present_meshes"] == "2"
 
 
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):

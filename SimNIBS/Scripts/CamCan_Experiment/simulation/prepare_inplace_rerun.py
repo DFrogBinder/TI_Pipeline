@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -343,19 +344,40 @@ def _archive_generated_path(path: Path, archive: Path) -> None:
         raise IOError(f"output archival verification failed for {path}")
 
 
+def _delete_generated_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    else:
+        raise FileNotFoundError(f"generated output is no longer present: {path}")
+    if path.exists() or path.is_symlink():
+        raise IOError(f"generated output deletion verification failed for {path}")
+
+
 def cleanup_generated_outputs(
     datasets: Sequence[RepeatDataset],
     subjects: Sequence[str],
     *,
     apply: bool = False,
     archive_root: str | Path | None = None,
+    delete: bool = False,
+    deletion_confirmed: bool = False,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     seen: set[Path] = set()
     dataset_roots = {dataset.name: dataset.root for dataset in datasets}
 
     archive_root_path = Path(archive_root).expanduser().resolve() if archive_root else None
-    if apply and archive_root_path is None:
+    if delete and archive_root_path is not None:
+        raise ValueError("output_archive_root cannot be used with deletion mode")
+    if deletion_confirmed and not delete:
+        raise ValueError("deletion confirmation requires delete=True")
+    if apply and delete and not deletion_confirmed:
+        raise ValueError(
+            "confirm_obsolete_output_deletion is required when applying deletion mode"
+        )
+    if apply and not delete and archive_root_path is None:
         raise ValueError("output_archive_root is required when apply=True")
 
     def record(path: Path, *, scope: str, dataset_name: str, subject: str = "") -> None:
@@ -375,14 +397,19 @@ def cleanup_generated_outputs(
             message = "path not present"
         elif apply:
             try:
-                _archive_generated_path(path, Path(archive))
-                action = "archived"
-                message = "moved generated output to archive"
+                if delete:
+                    _delete_generated_path(path)
+                    action = "deleted"
+                    message = "permanently deleted obsolete generated output"
+                else:
+                    _archive_generated_path(path, Path(archive))
+                    action = "archived"
+                    message = "moved generated output to archive"
             except Exception as exc:
                 action = "failed"
                 message = str(exc)
         else:
-            action = "would_archive"
+            action = "would_delete" if delete else "would_archive"
             message = "dry run"
         rows.append(
             {
@@ -420,6 +447,8 @@ def run_preflight(
     subject_glob: str = DEFAULT_SUBJECT_GLOB,
     remesh_results_dir: str | Path | None = None,
     output_archive_root: str | Path | None = None,
+    delete_generated_outputs: bool = False,
+    obsolete_output_deletion_confirmed: bool = False,
     expected_tasks: int | None = None,
 ) -> dict[str, int | str]:
     datasets = discover_repeat_datasets(roi_root, dataset_glob=dataset_glob, repeats=repeats)
@@ -444,17 +473,23 @@ def run_preflight(
         expected_subjects,
         apply=apply,
         archive_root=output_archive_root,
+        delete=delete_generated_outputs,
+        deletion_confirmed=obsolete_output_deletion_confirmed,
     )
 
     cleanup_failed = sum(1 for row in cleanup_rows if row["action"] == "failed")
-    cleanup_pending = sum(1 for row in cleanup_rows if row["action"] == "would_archive")
+    cleanup_pending = sum(
+        1
+        for row in cleanup_rows
+        if row["action"] in {"would_archive", "would_delete"}
+    )
     task_count_mismatch = expected_tasks is not None and len(task_rows) != expected_tasks
     if cleanup_failed or cleanup_pending or task_count_mismatch:
         reason = (
-            f"output archival failed for {cleanup_failed} path(s)"
+            f"output cleanup failed for {cleanup_failed} path(s)"
             if cleanup_failed
             else (
-                f"generated outputs require archival for {cleanup_pending} path(s); rerun with --apply"
+                f"generated outputs require cleanup for {cleanup_pending} path(s); rerun with --apply"
                 if cleanup_pending
                 else f"task count mismatch: found {len(task_rows)}, expected {expected_tasks}"
             )
@@ -471,6 +506,8 @@ def run_preflight(
     blocked = sum(1 for row in task_rows if row["status"] == "blocked")
     archived = sum(1 for row in cleanup_rows if row["action"] == "archived")
     would_archive = sum(1 for row in cleanup_rows if row["action"] == "would_archive")
+    deleted = sum(1 for row in cleanup_rows if row["action"] == "deleted")
+    would_delete = sum(1 for row in cleanup_rows if row["action"] == "would_delete")
     return {
         "status": "ready" if ready == len(task_rows) and ready > 0 else "blocked",
         "datasets": len(datasets),
@@ -480,6 +517,8 @@ def run_preflight(
         "blocked_tasks": blocked,
         "cleanup_archived": archived,
         "cleanup_would_archive": would_archive,
+        "cleanup_deleted": deleted,
+        "cleanup_would_delete": would_delete,
         "cleanup_failed": cleanup_failed,
         "manifest": str(manifest_path),
         "cleanup_manifest": str(cleanup_path),
@@ -563,7 +602,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight = subparsers.add_parser(
         "preflight",
-        help="Discover tasks and optionally delete generated outputs.",
+        help="Discover tasks and optionally archive or delete generated outputs.",
     )
     preflight.add_argument("--roi-root", required=True, help="ROI root containing *_Data_* repeat folders.")
     preflight.add_argument("--manifest", required=True, help="Path for the task manifest TSV.")
@@ -583,11 +622,24 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument(
         "--apply",
         action="store_true",
-        help="Move generated outputs to --output-archive-root. Omit for dry-run planning.",
+        help="Apply the selected cleanup mode. Omit for dry-run planning.",
     )
     preflight.add_argument(
         "--output-archive-root",
-        help="External, same-filesystem archive root; required with --apply.",
+        help="External, same-filesystem archive root; required for archival apply mode.",
+    )
+    preflight.add_argument(
+        "--delete-generated-outputs",
+        action="store_true",
+        help=(
+            "Plan permanent deletion instead of archival. Actual deletion also requires "
+            "--apply and --confirm-obsolete-output-deletion."
+        ),
+    )
+    preflight.add_argument(
+        "--confirm-obsolete-output-deletion",
+        action="store_true",
+        help="Confirm that obsolete generated outputs may be permanently deleted.",
     )
     preflight.add_argument(
         "--expected-tasks",
@@ -628,6 +680,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             subject_glob=args.subject_glob,
             remesh_results_dir=args.remesh_results_dir,
             output_archive_root=args.output_archive_root,
+            delete_generated_outputs=args.delete_generated_outputs,
+            obsolete_output_deletion_confirmed=args.confirm_obsolete_output_deletion,
             expected_tasks=args.expected_tasks,
         )
     elif args.command == "validate":

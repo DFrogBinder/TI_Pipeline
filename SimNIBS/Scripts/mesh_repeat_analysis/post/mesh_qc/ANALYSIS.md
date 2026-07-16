@@ -19,8 +19,8 @@ It does not:
 - run any electric field analysis,
 - inspect ROI-specific simulation outputs by default,
 - repair meshes,
-- classify tissue labels,
-- decide exclusion thresholds automatically beyond the implemented flags.
+- assess tissue shape automatically beyond tissue-presence and render-completeness checks,
+- decide scientific exclusion thresholds automatically beyond the implemented flags.
 
 ## Input Discovery
 
@@ -58,6 +58,15 @@ For surface-only meshes:
 
 - Stored triangle or quad cells are used directly.
 - Quads are split into triangles.
+
+When `--tissue-walls` is enabled, tissue surfaces are extracted separately from the geometry-QC surface:
+
+1. Read positive physical tags on tetrahedral elements.
+2. Select all tetrahedra belonging to one tag.
+3. Enumerate their four faces and remove faces shared by two tetrahedra of that same tissue.
+4. Render the remaining complete tissue boundary.
+
+Stored triangle elements tagged `1000 + tissue_tag` are not used for this step. On real CHARM meshes those stored interfaces can be only a subset of a tissue boundary, particularly at interfaces with other tissues.
 
 The tetrahedral-boundary path is important because stored triangle elements in a SimNIBS `.msh` can include internal tissue interfaces, which may appear non-manifold even when the exterior head surface is valid.
 
@@ -165,6 +174,7 @@ Default behavior:
 - geometry-flagged meshes are still rendered,
 - write a combined mosaic as `all_mesh_wall.png`,
 - write ROI-specific walls only if `--roi-walls` is requested.
+- write one wall per detected tetrahedral tissue only if `--tissue-walls` is requested.
 
 This means a mesh with `NONMANIFOLD_EDGES` or `DEGENERATE_FACES` is still expected to appear in the wall for visual inspection.
 
@@ -200,7 +210,7 @@ Pillow fallback details:
 
 Each mesh is checked independently.
 
-QC and per-mesh PNG rendering therefore parallelize naturally across worker processes.
+QC and per-mesh PNG rendering therefore parallelize naturally across worker processes. Tissue rendering uses the same process-level strategy across meshes. Inside a tissue worker, the mesh is loaded once and its tissue tags are processed sequentially, so workers do not repeatedly load the same large mesh or start nested pools.
 
 Current worker behavior:
 
@@ -223,7 +233,7 @@ Current resource-management behavior on top of that:
 - If a pool still fails with `BrokenProcessPool` or a similar worker-level crash, the stage automatically retries only the unfinished meshes with half as many workers.
 - If retries eventually reduce the stage to one worker after a pool crash, the remaining meshes are executed one at a time in isolated subprocesses, allowing a single native-code failure to be marked and logged instead of aborting the entire run.
 
-Mosaic assembly is still serial after per-mesh renders complete.
+Mosaic assembly is still serial after per-mesh and per-tissue renders complete.
 
 ## Outputs
 
@@ -238,6 +248,12 @@ The main outputs are:
 - `renders/meshes/*.png`: per-mesh renders for non-`READ_FAIL` meshes,
 - `mosaics/all_mesh_wall.png`: combined visual wall,
 - `render_failures.txt`: meshes that passed QC loading but failed rendering.
+- `tissue_presence.csv`: one row per mesh/tissue pair detected from tetrahedral tags,
+- `tissue_render_manifest.csv`: one row per successful or resumed tissue render,
+- `tissue_render_exception_details.csv`: tissue-load and tissue-render exceptions,
+- `tissue_render_completeness.csv`: cohort counts and status per tissue,
+- `renders/tissues/<tissue-slug>/*.png`: individual tissue tiles,
+- `mosaics/tissues/<tissue-slug>_wall.png`: one cohort wall per detected tissue,
 - `logs/mesh_qc.log`: stage-level persistent log,
 - `logs/run_context.json`: resolved runtime context including paths, arguments, CPU allocation, and key Slurm variables,
 - `logs/fatal_error.txt`: written only when the run aborts with an unhandled exception.
@@ -280,6 +296,7 @@ Behavior:
 - parallelize those per-mesh renders according to `--workers`,
 - write `render_manifest.csv` so the run can be audited for actual renderer use and resumed files,
 - rebuild mosaics from those rendered images.
+- when `--tissue-walls` is also supplied, add or resume tissue renders and rebuild tissue walls.
 
 This mode is intended for rerendering after QC has already completed, for example when changing the renderer, image size, or wall layout.
 
@@ -329,6 +346,8 @@ The presence of a flag does not by itself define the scientific exclusion rule. 
 - Gmsh rendering depends on a working `gmsh` executable and either a real `DISPLAY` or a working Xvfb setup.
 - Dense-surface Pillow renders are still frontal depth previews rather than exact full-triangle reproductions, and are mainly a fallback path.
 - `--render-only` depends on prior `found_meshes.csv` and `qc_summary.csv` outputs being present and consistent.
+- Tissue extraction requires tagged tetrahedral volume elements and a readable SimNIBS or meshio backend.
+- A tissue absent from every mesh cannot be inferred as expected; missing-tissue status is relative to tags present elsewhere in the loaded cohort.
 - The default QC does not attempt mesh repair.
 - The bounds-outlier rule is empirical and dataset-relative.
 - Disconnected-component analysis is disabled by default to keep full-batch runs practical.

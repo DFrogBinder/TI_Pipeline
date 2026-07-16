@@ -9,6 +9,7 @@ import tempfile
 
 import numpy as np
 
+from .geometry_qc import SurfaceArrays
 from .loaders import load_surface_arrays
 
 
@@ -43,6 +44,71 @@ def render_mesh_png(
                 raise
     _render_with_pillow(path, out_png, label=label, image_size=image_size, max_faces=max_faces)
     return "pillow"
+
+
+def render_surface_png(
+    surface: SurfaceArrays,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+    renderer: str = "auto",
+    max_faces: int = 12000,
+) -> str:
+    """Render an already-extracted surface without reloading its source mesh."""
+    renderer = renderer.lower()
+    if renderer not in {"auto", "gmsh", "pyvista", "pillow"}:
+        raise ValueError(f"Unsupported renderer: {renderer}")
+    if renderer in {"auto", "gmsh"}:
+        try:
+            _render_surface_with_gmsh(
+                surface,
+                out_png,
+                label=label,
+                image_size=image_size,
+            )
+            return "gmsh"
+        except Exception:
+            if renderer == "gmsh":
+                raise
+    if renderer in {"auto", "pyvista"}:
+        try:
+            _render_surface_with_pyvista(
+                surface,
+                out_png,
+                label=label,
+                image_size=image_size,
+            )
+            return "pyvista"
+        except Exception:
+            if renderer == "pyvista":
+                raise
+    _render_surface_with_pillow(
+        surface,
+        out_png,
+        label=label,
+        image_size=image_size,
+        max_faces=max_faces,
+    )
+    return "pillow"
+
+
+def _render_surface_with_gmsh(
+    surface: SurfaceArrays,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="mesh_qc_tissue_") as tmp_dir_name:
+        surface_msh = Path(tmp_dir_name) / "surface.msh"
+        _write_surface_mesh_msh2(surface, surface_msh)
+        _render_with_gmsh(
+            surface_msh,
+            out_png,
+            label=label,
+            image_size=image_size,
+        )
 
 
 def _render_with_gmsh(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
@@ -98,9 +164,19 @@ def _gmsh_timeout_seconds() -> int:
 
 
 def _render_with_pyvista(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
+    surface = load_surface_arrays(path)
+    _render_surface_with_pyvista(surface, out_png, label=label, image_size=image_size)
+
+
+def _render_surface_with_pyvista(
+    surface: SurfaceArrays,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+) -> None:
     import pyvista as pv
 
-    surface = load_surface_arrays(path)
     _, faces = _validated_surface_arrays(surface)
     pv_faces = np.hstack([np.full((faces.shape[0], 1), 3, dtype=np.int64), faces]).ravel()
     mesh = pv.PolyData(np.asarray(surface.points, dtype=float), pv_faces).triangulate()
@@ -146,9 +222,24 @@ def _render_with_pillow(
     image_size: int = 600,
     max_faces: int = 12000,
 ) -> None:
-    from PIL import ImageFilter
-
     surface = load_surface_arrays(path)
+    _render_surface_with_pillow(
+        surface,
+        out_png,
+        label=label,
+        image_size=image_size,
+        max_faces=max_faces,
+    )
+
+
+def _render_surface_with_pillow(
+    surface: SurfaceArrays,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+    max_faces: int = 12000,
+) -> None:
     points, faces = _validated_surface_arrays(surface)
     rotated = _front_view(points)
     pix = _fit_pixels(rotated[:, :2], image_size=image_size)

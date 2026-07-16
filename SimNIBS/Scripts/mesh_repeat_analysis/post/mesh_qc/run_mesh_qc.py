@@ -26,13 +26,13 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from mesh_repeat_analysis.post.mesh_qc.discovery import DiscoveryStats, MeshRecord, discover_meshes, infer_record
     from mesh_repeat_analysis.post.mesh_qc.geometry_qc import QCMetrics, compute_qc_metrics
-    from mesh_repeat_analysis.post.mesh_qc.loaders import load_surface_arrays
-    from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png
+    from mesh_repeat_analysis.post.mesh_qc.loaders import iter_tissue_surface_arrays, load_surface_arrays
+    from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png, render_surface_png
 else:
     from .discovery import DiscoveryStats, MeshRecord, discover_meshes, infer_record
     from .geometry_qc import QCMetrics, compute_qc_metrics
-    from .loaders import load_surface_arrays
-    from .rendering import make_mosaic, render_mesh_png
+    from .loaders import iter_tissue_surface_arrays, load_surface_arrays
+    from .rendering import make_mosaic, render_mesh_png, render_surface_png
 
 try:
     from tqdm import tqdm
@@ -89,6 +89,37 @@ RENDER_COMPLETENESS_FIELDS = (
     "qc_loadable_meshes",
     "rendered_meshes",
     "qc_read_failures",
+    "render_failures",
+    "missing_tiles",
+)
+TISSUE_PRESENCE_FIELDS = FOUND_FIELDS + (
+    "tissue_tag",
+    "tissue_name",
+    "tissue_slug",
+)
+TISSUE_RENDER_MANIFEST_FIELDS = FOUND_FIELDS + (
+    "tissue_tag",
+    "tissue_name",
+    "tissue_slug",
+    "output_path",
+    "requested_renderer",
+    "actual_renderer",
+    "resumed",
+)
+TISSUE_EXCEPTION_FIELDS = EXCEPTION_FIELDS + (
+    "tissue_tag",
+    "tissue_name",
+    "tissue_slug",
+)
+TISSUE_RENDER_COMPLETENESS_FIELDS = (
+    "tissue_tag",
+    "tissue_name",
+    "tissue_slug",
+    "status",
+    "qc_loadable_meshes",
+    "present_meshes",
+    "rendered_meshes",
+    "missing_from_meshes",
     "render_failures",
     "missing_tiles",
 )
@@ -520,6 +551,7 @@ def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv
         "tile_size": args.tile_size,
         "cols": args.cols,
         "roi_walls": args.roi_walls,
+        "tissue_walls": args.tissue_walls,
         "check_components": args.check_components,
         "render_only": args.render_only,
         "qc_only": args.qc_only,
@@ -1497,6 +1529,575 @@ def _run_forced_gmsh_preflight(
     return 1, (rss_bytes or None), task_specs[1:]
 
 
+def _tissue_metadata_row(record: MeshRecord, tissue) -> dict[str, object]:
+    row = _record_row(record)
+    row.update(
+        {
+            "tissue_tag": tissue.tag,
+            "tissue_name": tissue.name,
+            "tissue_slug": tissue.slug,
+        }
+    )
+    return row
+
+
+def _tissue_exception_row(
+    record: MeshRecord,
+    *,
+    stage: str,
+    exc: Exception,
+    traceback_text: str,
+    output_path: Path | None = None,
+    tissue=None,
+) -> dict[str, object]:
+    row = _exception_row(
+        record,
+        stage=stage,
+        exc=exc,
+        traceback_text=traceback_text,
+        output_path=output_path,
+    )
+    row.update(
+        {
+            "tissue_tag": "" if tissue is None else tissue.tag,
+            "tissue_name": "" if tissue is None else tissue.name,
+            "tissue_slug": "" if tissue is None else tissue.slug,
+        }
+    )
+    return row
+
+
+def _tissue_manifest_row(
+    record: MeshRecord,
+    tissue,
+    out_png: Path,
+    *,
+    requested_renderer: str,
+    actual_renderer: str,
+    resumed: bool,
+) -> dict[str, object]:
+    row = _tissue_metadata_row(record, tissue)
+    row.update(
+        {
+            "output_path": str(out_png),
+            "requested_renderer": requested_renderer,
+            "actual_renderer": actual_renderer,
+            "resumed": "1" if resumed else "0",
+        }
+    )
+    return row
+
+
+def _tissue_record_worker(
+    record: MeshRecord,
+    tile_filename: str,
+    tissue_root: Path,
+    image_size: int,
+    renderer: str,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    manifest_rows: list[dict[str, object]] = []
+    failure_rows: list[dict[str, object]] = []
+    presence_rows: list[dict[str, object]] = []
+    try:
+        for tissue in iter_tissue_surface_arrays(record.path):
+            presence_rows.append(_tissue_metadata_row(record, tissue))
+            out_png = tissue_root / tissue.slug / tile_filename
+            try:
+                if out_png.is_file() and out_png.stat().st_size > 0:
+                    manifest_rows.append(
+                        _tissue_manifest_row(
+                            record,
+                            tissue,
+                            out_png,
+                            requested_renderer=renderer,
+                            actual_renderer="unknown_existing",
+                            resumed=True,
+                        )
+                    )
+                    continue
+            except OSError:
+                pass
+
+            label = (
+                f"{record.subject}\n{record.repeat}\n{record.mesh_id}\n"
+                f"Tag {tissue.tag}: {tissue.name}"
+            )
+            try:
+                actual_renderer = render_surface_png(
+                    tissue.surface,
+                    out_png,
+                    label=label,
+                    image_size=image_size,
+                    renderer=renderer,
+                ) or renderer
+                manifest_rows.append(
+                    _tissue_manifest_row(
+                        record,
+                        tissue,
+                        out_png,
+                        requested_renderer=renderer,
+                        actual_renderer=str(actual_renderer),
+                        resumed=False,
+                    )
+                )
+            except Exception as exc:
+                failure_rows.append(
+                    _tissue_exception_row(
+                        record,
+                        stage="tissue_render",
+                        exc=exc,
+                        traceback_text=traceback.format_exc(),
+                        output_path=out_png,
+                        tissue=tissue,
+                    )
+                )
+    except Exception as exc:
+        failure_rows.append(
+            _tissue_exception_row(
+                record,
+                stage="tissue_load",
+                exc=exc,
+                traceback_text=traceback.format_exc(),
+                output_path=tissue_root,
+            )
+        )
+    return manifest_rows, failure_rows, presence_rows
+
+
+def _tissue_record_worker_profiled(
+    record: MeshRecord,
+    tile_filename: str,
+    tissue_root: Path,
+    image_size: int,
+    renderer: str,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], int]:
+    manifest_rows, failure_rows, presence_rows = _tissue_record_worker(
+        record,
+        tile_filename,
+        tissue_root,
+        image_size,
+        renderer,
+    )
+    return manifest_rows, failure_rows, presence_rows, _maxrss_bytes()
+
+
+def _tissue_worker_exit_payload(
+    record: MeshRecord,
+    tissue_root: Path,
+    exitcode: int,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], int]:
+    message = f"worker process exited before returning tissue renders (exitcode={exitcode})"
+    failure_row = _tissue_exception_row(
+        record,
+        stage="tissue_render_worker",
+        exc=RuntimeError(message),
+        traceback_text=message,
+        output_path=tissue_root,
+    )
+    return [], [failure_row], [], 0
+
+
+def _run_tissue_isolated_once(
+    task: tuple[MeshRecord, str],
+    *,
+    tissue_root: Path,
+    image_size: int,
+    renderer: str,
+):
+    record, tile_filename = task
+    payload, exitcode = _run_isolated_worker(
+        _tissue_record_worker_profiled,
+        record,
+        tile_filename,
+        tissue_root,
+        image_size,
+        renderer,
+    )
+    if exitcode != 0 or payload is None:
+        return _tissue_worker_exit_payload(record, tissue_root, exitcode)
+    return payload
+
+
+def _merge_tissue_worker_result(
+    result,
+    manifest_rows: list[dict[str, object]],
+    failure_rows: list[dict[str, object]],
+    presence_rows: list[dict[str, object]],
+) -> int:
+    result_manifest, result_failures, result_presence, rss_bytes = result
+    manifest_rows.extend(result_manifest)
+    failure_rows.extend(result_failures)
+    presence_rows.extend(result_presence)
+    return rss_bytes
+
+
+def _run_tissue_parallel_attempt(
+    task_specs: list[tuple[MeshRecord, str]],
+    args: argparse.Namespace,
+    workers: int,
+    tissue_root: Path,
+    manifest_rows: list[dict[str, object]],
+    failure_rows: list[dict[str, object]],
+    presence_rows: list[dict[str, object]],
+    progress,
+    completed: int,
+) -> tuple[int, list[tuple[MeshRecord, str]], int, Exception | None]:
+    in_flight: dict[object, tuple[MeshRecord, str]] = {}
+    next_pos = 0
+    peak_rss = 0
+    backlog = max(workers * 2, workers)
+    current_task: tuple[MeshRecord, str] | None = None
+    try:
+        with ProcessPoolExecutor(**_process_pool_executor_kwargs(workers)) as executor:
+            while next_pos < len(task_specs) and len(in_flight) < backlog:
+                task = task_specs[next_pos]
+                next_pos += 1
+                record, tile_filename = task
+                in_flight[
+                    executor.submit(
+                        _tissue_record_worker_profiled,
+                        record,
+                        tile_filename,
+                        tissue_root,
+                        args.image_size,
+                        args.renderer,
+                    )
+                ] = task
+
+            while in_flight:
+                future = next(iter(as_completed(tuple(in_flight))))
+                current_task = in_flight.pop(future)
+                record, _ = current_task
+                result = future.result()
+                peak_rss = max(
+                    peak_rss,
+                    _merge_tissue_worker_result(
+                        result,
+                        manifest_rows,
+                        failure_rows,
+                        presence_rows,
+                    ),
+                )
+                completed += 1
+                result_failures = result[1]
+                detail = f"{len(result[2])} tissue(s)"
+                if result_failures:
+                    detail += f", {len(result_failures)} failure(s)"
+                progress.update(completed, _mesh_detail(record, detail))
+                current_task = None
+
+                while next_pos < len(task_specs) and len(in_flight) < backlog:
+                    next_task = task_specs[next_pos]
+                    next_pos += 1
+                    next_record, next_tile_filename = next_task
+                    in_flight[
+                        executor.submit(
+                            _tissue_record_worker_profiled,
+                            next_record,
+                            next_tile_filename,
+                            tissue_root,
+                            args.image_size,
+                            args.renderer,
+                        )
+                    ] = next_task
+    except Exception as exc:
+        remaining = []
+        if current_task is not None:
+            remaining.append(current_task)
+        remaining.extend(in_flight.values())
+        remaining.extend(task_specs[next_pos:])
+        return completed, list(dict.fromkeys(remaining)), peak_rss, exc
+    return completed, [], peak_rss, None
+
+
+def _write_tissue_completeness(
+    out_dir: Path,
+    *,
+    render_records: list[MeshRecord],
+    presence_rows: list[dict[str, object]],
+    manifest_rows: list[dict[str, object]],
+    failure_rows: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    metadata_by_tag: dict[int, tuple[str, str]] = {}
+    present: set[tuple[int, str]] = set()
+    rendered: set[tuple[int, str]] = set()
+    failures = Counter()
+
+    for row in presence_rows:
+        tag = int(row["tissue_tag"])
+        metadata_by_tag[tag] = (str(row["tissue_name"]), str(row["tissue_slug"]))
+        present.add((tag, str(row["path"])))
+    for row in manifest_rows:
+        rendered.add((int(row["tissue_tag"]), str(row["path"])))
+    for row in failure_rows:
+        raw_tag = row.get("tissue_tag", "")
+        if raw_tag not in ("", None):
+            failures[int(raw_tag)] += 1
+
+    rows: list[dict[str, object]] = []
+    total_meshes = len(render_records)
+    for tag in sorted(metadata_by_tag):
+        name, slug = metadata_by_tag[tag]
+        present_count = sum(1 for present_tag, _ in present if present_tag == tag)
+        rendered_count = sum(1 for rendered_tag, _ in rendered if rendered_tag == tag)
+        missing_from_meshes = max(0, total_meshes - present_count)
+        missing_tiles = max(0, present_count - rendered_count)
+        if missing_from_meshes and missing_tiles:
+            status = "MISSING_TISSUE_AND_INCOMPLETE_RENDER"
+        elif missing_from_meshes:
+            status = "MISSING_TISSUE"
+        elif missing_tiles:
+            status = "INCOMPLETE_RENDER"
+        else:
+            status = "OK"
+        rows.append(
+            {
+                "tissue_tag": tag,
+                "tissue_name": name,
+                "tissue_slug": slug,
+                "status": status,
+                "qc_loadable_meshes": total_meshes,
+                "present_meshes": present_count,
+                "rendered_meshes": rendered_count,
+                "missing_from_meshes": missing_from_meshes,
+                "render_failures": failures[tag],
+                "missing_tiles": missing_tiles,
+            }
+        )
+    _write_csv(
+        out_dir / "tissue_render_completeness.csv",
+        rows,
+        TISSUE_RENDER_COMPLETENESS_FIELDS,
+    )
+    return rows
+
+
+def _run_tissue_outputs(
+    render_records: list[MeshRecord],
+    out_dir: Path,
+    args: argparse.Namespace,
+) -> None:
+    if not render_records:
+        return
+    tissue_root = out_dir / "renders" / "tissues"
+    task_specs: list[tuple[MeshRecord, str]] = []
+    for idx, record in enumerate(render_records, start=1):
+        stem = "__".join(
+            _safe_name(part)
+            for part in (record.subject, record.repeat, record.mesh_id, record.path.stem)
+        )
+        task_specs.append((record, f"{idx:05d}__{stem}.png"))
+
+    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(task_specs)))
+    memory_budget_bytes = _resolve_memory_budget_bytes(visible_workers)
+    manifest_rows: list[dict[str, object]] = []
+    failure_rows: list[dict[str, object]] = []
+    presence_rows: list[dict[str, object]] = []
+    progress = _make_progress_reporter(args, "Tissue render", len(task_specs))
+    _log_info(
+        "TISSUE_RENDER",
+        "Starting tissue wall stage",
+        meshes=len(task_specs),
+        visible_workers=visible_workers,
+        memory_budget=_format_bytes(memory_budget_bytes),
+        renderer=args.renderer,
+    )
+
+    completed = 0
+    sampled_worker_rss_bytes: int | None = None
+    remaining_specs = task_specs
+    with _render_display_context(args):
+        if visible_workers > 1 and len(task_specs) >= 4:
+            first_task = task_specs[0]
+            result = _run_tissue_isolated_once(
+                first_task,
+                tissue_root=tissue_root,
+                image_size=args.image_size,
+                renderer=args.renderer,
+            )
+            sampled_worker_rss_bytes = _merge_tissue_worker_result(
+                result,
+                manifest_rows,
+                failure_rows,
+                presence_rows,
+            ) or None
+            completed = 1
+            progress.update(completed, _mesh_detail(first_task[0], f"{len(result[2])} tissue(s)"))
+            remaining_specs = task_specs[1:]
+
+        workers, worker_details = _choose_stage_worker_count(
+            stage="TISSUE_RENDER",
+            task_count=len(remaining_specs),
+            visible_workers=visible_workers,
+            memory_budget_bytes=memory_budget_bytes,
+            sampled_worker_rss_bytes=sampled_worker_rss_bytes,
+        )
+        _log_info(
+            "TISSUE_RENDER",
+            "Selected worker count",
+            workers=workers,
+            sampled_worker_rss=_format_bytes(sampled_worker_rss_bytes),
+            memory_limited=worker_details["limited_by_memory"],
+            per_worker_budget=_format_bytes(worker_details["per_worker_budget_bytes"]),
+        )
+
+        recovery_mode = False
+        while remaining_specs:
+            if workers <= 1:
+                if recovery_mode:
+                    print(
+                        "[TISSUE RENDER] Falling back to isolated single-mesh execution for "
+                        f"{len(remaining_specs)} mesh(es)",
+                        flush=True,
+                    )
+                for task in remaining_specs:
+                    if recovery_mode:
+                        result = _run_tissue_isolated_once(
+                            task,
+                            tissue_root=tissue_root,
+                            image_size=args.image_size,
+                            renderer=args.renderer,
+                        )
+                    else:
+                        record, tile_filename = task
+                        result_manifest, result_failures, result_presence = _tissue_record_worker(
+                            record,
+                            tile_filename,
+                            tissue_root,
+                            args.image_size,
+                            args.renderer,
+                        )
+                        result = (result_manifest, result_failures, result_presence, 0)
+                    sampled_worker_rss_bytes = max(
+                        sampled_worker_rss_bytes or 0,
+                        _merge_tissue_worker_result(
+                            result,
+                            manifest_rows,
+                            failure_rows,
+                            presence_rows,
+                        ),
+                    ) or sampled_worker_rss_bytes
+                    completed += 1
+                    detail = f"{len(result[2])} tissue(s)"
+                    if result[1]:
+                        detail += f", {len(result[1])} failure(s)"
+                    progress.update(completed, _mesh_detail(task[0], detail))
+                remaining_specs = []
+                break
+
+            print(f"[TISSUE RENDER] Using {workers} worker processes", flush=True)
+            completed, remaining_specs, peak_rss, attempt_error = _run_tissue_parallel_attempt(
+                remaining_specs,
+                args,
+                workers,
+                tissue_root,
+                manifest_rows,
+                failure_rows,
+                presence_rows,
+                progress,
+                completed,
+            )
+            sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, peak_rss) or sampled_worker_rss_bytes
+            if attempt_error is None:
+                break
+            next_workers = max(1, workers // 2)
+            _log_error(
+                "TISSUE_RENDER",
+                "Parallel tissue rendering crashed; retrying with fewer workers",
+                workers=workers,
+                completed=completed,
+                remaining=len(remaining_specs),
+                next_workers=next_workers,
+                error_type=type(attempt_error).__name__,
+                error_message=str(attempt_error),
+            )
+            print(
+                f"[TISSUE RENDER] Worker pool crashed at {workers} workers; "
+                f"retrying {len(remaining_specs)} mesh(es) with {next_workers}",
+                flush=True,
+            )
+            recovery_mode = True
+            workers = next_workers
+    progress.complete()
+
+    presence_rows.sort(key=lambda row: (int(row["tissue_tag"]), str(row["path"])))
+    manifest_rows.sort(key=lambda row: (int(row["tissue_tag"]), str(row["output_path"])))
+    _write_csv(out_dir / "tissue_presence.csv", presence_rows, TISSUE_PRESENCE_FIELDS)
+    _write_csv(
+        out_dir / "tissue_render_manifest.csv",
+        manifest_rows,
+        TISSUE_RENDER_MANIFEST_FIELDS,
+    )
+    _write_csv(
+        out_dir / "tissue_render_exception_details.csv",
+        failure_rows,
+        TISSUE_EXCEPTION_FIELDS,
+    )
+    completeness_rows = _write_tissue_completeness(
+        out_dir,
+        render_records=render_records,
+        presence_rows=presence_rows,
+        manifest_rows=manifest_rows,
+        failure_rows=failure_rows,
+    )
+
+    images_by_tissue: dict[tuple[int, str, str], list[Path]] = defaultdict(list)
+    for row in manifest_rows:
+        key = (int(row["tissue_tag"]), str(row["tissue_name"]), str(row["tissue_slug"]))
+        images_by_tissue[key].append(Path(str(row["output_path"])))
+
+    mosaic_failures: list[dict[str, object]] = []
+    for (tag, name, slug), images in sorted(images_by_tissue.items()):
+        out_png = out_dir / "mosaics" / "tissues" / f"{slug}_wall.png"
+        print(f"[MOSAIC] Building tissue wall for tag {tag} {name} ({len(images)} tiles)", flush=True)
+        try:
+            make_mosaic(images, out_png, cols=args.cols, tile_size=args.tile_size)
+        except Exception as exc:
+            mosaic_failures.append(
+                {
+                    "stage": "tissue_mosaic",
+                    "subject": "",
+                    "repeat": "",
+                    "roi": "",
+                    "mesh_id": slug,
+                    "path": "",
+                    "output_path": str(out_png),
+                    "error_type": type(exc).__name__,
+                    "error_message": _short_error(exc),
+                    "traceback": traceback.format_exc(),
+                    "tissue_tag": tag,
+                    "tissue_name": name,
+                    "tissue_slug": slug,
+                }
+            )
+    _write_csv(
+        out_dir / "tissue_mosaic_exception_details.csv",
+        mosaic_failures,
+        TISSUE_EXCEPTION_FIELDS,
+    )
+    incomplete = [row for row in completeness_rows if row["status"] != "OK"]
+    if incomplete:
+        print(
+            f"[TISSUE RENDER] {len(incomplete)} tissue wall(s) are incomplete; "
+            f"see {out_dir / 'tissue_render_completeness.csv'}",
+            flush=True,
+        )
+    _log_info(
+        "TISSUE_RENDER",
+        "Completed tissue wall stage",
+        meshes=len(render_records),
+        tissues=len(images_by_tissue),
+        renders=len(manifest_rows),
+        failures=len(failure_rows),
+        incomplete_tissues=len(incomplete),
+    )
+    if mosaic_failures:
+        raise RuntimeError(
+            f"{len(mosaic_failures)} tissue mosaic(s) failed; see "
+            f"{out_dir / 'tissue_mosaic_exception_details.csv'}"
+        )
+
+
 def _render_outputs(
     records: list[MeshRecord],
     summary_rows: list[dict[str, object]],
@@ -1777,6 +2378,9 @@ def _render_outputs(
             f"{failed_names}. See {out_dir / 'mosaic_exception_details.csv'}."
         )
 
+    if args.tissue_walls:
+        _run_tissue_outputs(render_records, out_dir, args)
+
     _log_info(
         "RENDER",
         "Completed render stage",
@@ -1784,6 +2388,7 @@ def _render_outputs(
         rendered=len(all_rendered),
         failures=len(failure_rows),
         roi_walls=args.roi_walls,
+        tissue_walls=args.tissue_walls,
     )
 
 
@@ -1973,6 +2578,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--roi-walls",
         action="store_true",
         help="Also write separate ROI wall mosaics. Default writes only all_mesh_wall.png.",
+    )
+    parser.add_argument(
+        "--tissue-walls",
+        action="store_true",
+        help=(
+            "Also render each tagged tetrahedral tissue and write one cohort wall per tissue. "
+            "Each worker loads one mesh once and processes all of its tissues."
+        ),
     )
     parser.add_argument(
         "--progress",

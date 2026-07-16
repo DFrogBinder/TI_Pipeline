@@ -94,6 +94,70 @@ def test_preflight_apply_archives_generated_outputs_and_preserves_inputs(tmp_pat
     assert (archive / "post" / "old.txt").is_file()
 
 
+def test_preflight_delete_mode_requires_confirmation_and_preserves_inputs(tmp_path):
+    run_01 = tmp_path / "Left_M1_Data_01"
+    _seed_subject(run_01, "sub-01")
+    anat = run_01 / "sub-01" / "anat"
+    _write(anat / "SimNIBS" / "old.txt")
+    _write(anat / "post" / "old.txt")
+    _write(anat / "skin_mask.nii.gz")
+    _write(run_01 / "population_analysis" / "old.txt")
+
+    audit = run_preflight(
+        tmp_path,
+        manifest=tmp_path / "audit.tsv",
+        cleanup_manifest=tmp_path / "cleanup-audit.tsv",
+        delete_generated_outputs=True,
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["cleanup_would_delete"] == 4
+    assert (anat / "SimNIBS" / "old.txt").is_file()
+    assert all(
+        row["action"] in {"missing", "would_delete"}
+        for row in read_tsv(tmp_path / "cleanup-audit.tsv")
+    )
+
+    try:
+        run_preflight(
+            tmp_path,
+            manifest=tmp_path / "unconfirmed.tsv",
+            apply=True,
+            delete_generated_outputs=True,
+        )
+    except ValueError as exc:
+        assert "confirm_obsolete_output_deletion" in str(exc)
+    else:
+        raise AssertionError("permanent output deletion must require confirmation")
+
+    result = run_preflight(
+        tmp_path,
+        manifest=tmp_path / "ready.tsv",
+        cleanup_manifest=tmp_path / "cleanup-delete.tsv",
+        apply=True,
+        delete_generated_outputs=True,
+        obsolete_output_deletion_confirmed=True,
+    )
+
+    assert result["status"] == "ready"
+    assert result["cleanup_deleted"] == 4
+    assert result["cleanup_failed"] == 0
+    assert not (anat / "SimNIBS").exists()
+    assert not (anat / "post").exists()
+    assert not (anat / "skin_mask.nii.gz").exists()
+    assert not (run_01 / "population_analysis").exists()
+    assert (anat / "m2m_sub-01" / "sub-01.msh").is_file()
+    assert (anat / "sub-01_T1w.nii").is_file()
+    assert (anat / "sub-01_T2w.nii").is_file()
+    assert (
+        anat / "m2m_sub-01" / "label_prep" / "tissue_labeling_upsampled.nii.gz"
+    ).is_file()
+    assert all(
+        row["action"] in {"missing", "deleted"}
+        for row in read_tsv(tmp_path / "cleanup-delete.tsv")
+    )
+
+
 def test_preflight_blocks_live_roast_custom_segmentation(tmp_path):
     run_01 = tmp_path / "Left_M1_Data_01"
     _seed_subject(run_01, "sub-01")

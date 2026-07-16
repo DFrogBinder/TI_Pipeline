@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mesh_repeat_analysis.post.mesh_qc import rendering
 from mesh_repeat_analysis.post.mesh_qc.geometry_qc import SurfaceArrays
-from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png
+from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png, render_surface_png
 
 
 def test_make_mosaic_combines_png_tiles(tmp_path):
@@ -165,6 +165,38 @@ def test_pillow_renderer_writes_png_without_pyvista(tmp_path, monkeypatch):
     assert out.exists()
     with Image.open(out) as image:
         assert image.size == (160, 160)
+
+
+def test_surface_renderer_exports_temporary_surface_for_gmsh(tmp_path, monkeypatch):
+    out = tmp_path / "tissue.png"
+    surface = SurfaceArrays(
+        points=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ]
+        ),
+        faces=np.array([[0, 1, 2]]),
+    )
+    seen = {}
+
+    def fake_gmsh(path, out_png, *, label, image_size):
+        seen["mesh_text"] = path.read_text(encoding="utf-8")
+        seen["label"] = label
+        seen["image_size"] = image_size
+        out_png.write_bytes(b"png")
+
+    monkeypatch.setattr(rendering, "_render_with_gmsh", fake_gmsh)
+
+    actual = render_surface_png(surface, out, label="Scalp", image_size=180, renderer="gmsh")
+
+    assert actual == "gmsh"
+    assert "$MeshFormat" in seen["mesh_text"]
+    assert "$Elements\n1\n" in seen["mesh_text"]
+    assert seen["label"] == "Scalp"
+    assert seen["image_size"] == 180
+    assert out.exists()
 
 
 def test_auto_renderer_falls_back_to_pillow_when_pyvista_fails(tmp_path, monkeypatch):

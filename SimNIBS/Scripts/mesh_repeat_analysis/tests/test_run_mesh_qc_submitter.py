@@ -16,7 +16,19 @@ def test_submit_mesh_qc_helper_exports_safe_log_paths():
     assert "MESH_QC_LOG_DIR=" in text
     assert "LOG_DIR=" in text
     assert 'RENDERER_CONFIG="gmsh"' in text
+    assert 'TISSUE_WALLS_CONFIG="0"' in text
+    assert "TISSUE_WALLS=${TISSUE_WALLS}" in text
     assert "run_mesh_qc.slurm" in text
+
+
+def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
+    repo_root = Path(__file__).resolve().parents[1]
+    slurm_script = repo_root / "hpc_scripts" / "run_mesh_qc.slurm"
+    text = slurm_script.read_text(encoding="utf-8")
+
+    assert 'TISSUE_WALLS_CONFIG="0"' in text
+    assert 'if [ "${TISSUE_WALLS}" = "1" ]; then' in text
+    assert "PYTHON_CMD+=(--tissue-walls)" in text
 
 
 def test_mesh_qc_slurm_loads_configured_xvfb_module_for_gmsh():

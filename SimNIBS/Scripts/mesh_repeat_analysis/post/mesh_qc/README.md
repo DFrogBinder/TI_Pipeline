@@ -58,6 +58,12 @@ Outputs:
 - `render_manifest.csv`: per-render audit trail with requested renderer, actual renderer, output path, and whether the PNG was reused from a previous run.
 - `renders/meshes/*.png`: per-mesh render tiles for meshes that passed QC loading.
 - `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
+- `renders/tissues/<tissue-slug>/*.png`: optional per-tissue render tiles.
+- `mosaics/tissues/<tissue-slug>_wall.png`: optional cohort wall for each detected tissue tag.
+- `tissue_presence.csv`: tissue tags present in each mesh, independent of render success.
+- `tissue_render_completeness.csv`: missing-tissue and missing-tile counts per tissue.
+- `tissue_render_manifest.csv`: renderer and resume audit trail for tissue tiles.
+- `tissue_render_exception_details.csv`: tissue extraction and rendering failures.
 - `logs/mesh_qc.log`: stage-level run log.
 - `logs/run_context.json`: resolved paths, arguments, Slurm environment, and CPU context for the run.
 - `logs/fatal_error.txt`: written only if the pipeline aborts with an unhandled exception.
@@ -108,6 +114,27 @@ ROI labels are retained as optional CSV metadata when the path contains ROI run 
 --roi-walls
 ```
 
+To inspect every tissue included in the tetrahedral meshes, pass:
+
+```bash
+--tissue-walls
+```
+
+This reconstructs the complete boundary of each positive tetrahedral tissue tag and writes one wall per tag. It does not rely only on stored SimNIBS triangle interfaces, because those interfaces do not necessarily contain every side of a tissue. Known CHARM tags are given readable names; unknown positive tags are retained as `tissue_<tag>`.
+
+`tissue_render_completeness.csv` distinguishes two problems:
+
+- `MISSING_TISSUE`: a tag found elsewhere in the cohort is absent from one or more otherwise loadable meshes.
+- `INCOMPLETE_RENDER`: the tissue exists in a mesh, but its PNG was not produced.
+
+On the HPC, opt in by setting this control in the launcher being used:
+
+```bash
+TISSUE_WALLS_CONFIG="1"
+```
+
+For an existing QC output directory, `--render-only --tissue-walls` adds or resumes the tissue tiles without rerunning geometry QC.
+
 If old QC outputs contain `unknown_roi`, rerun `--render-only --roi-walls` after pulling the current code. Render-only will refresh ROI labels from the stored paths and rewrite the metadata CSVs before rebuilding mosaics. For explicit 4-ROI grouping, use:
 
 ```bash
@@ -122,7 +149,7 @@ For full HPC batches, disconnected-component analysis is disabled by default bec
 --check-components
 ```
 
-QC and per-mesh rendering are parallelized because each mesh is handled independently. By default `--workers 0` exposes all visible CPUs to the scheduler and lets the code scale down automatically if memory looks tight or a worker pool proves unstable. Use a smaller explicit count only when you want to cap CPU usage:
+QC, whole-mesh rendering, and tissue-wall rendering are parallelized because each mesh is handled independently. For tissue walls, one worker loads one mesh once and processes all of its tissues serially; this avoids loading a large mesh once per tissue and avoids nested process pools. By default `--workers 0` exposes all visible CPUs to the scheduler and lets the code scale down automatically if memory looks tight or a worker pool proves unstable. Use a smaller explicit count only when you want to cap CPU usage:
 
 ```bash
 --workers 8
@@ -152,7 +179,7 @@ In practice, the recommended mode on Slurm is now simply:
 
 That treats the detected allocation as an upper bound and avoids hand-tuning worker counts.
 
-Mosaic assembly remains serial after the per-mesh renders finish.
+Mosaic assembly remains serial after the per-mesh and per-tissue renders finish.
 
 Rendering now defaults to `--renderer auto`. The fallback order is:
 

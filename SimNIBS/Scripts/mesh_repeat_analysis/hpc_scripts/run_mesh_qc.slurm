@@ -51,6 +51,7 @@ REPEAT_REGEX_CONFIG=""
 RENDERER_CONFIG="gmsh"
 CHECK_COMPONENTS_CONFIG="0"
 ROI_WALLS_CONFIG="0"
+TISSUE_WALLS_CONFIG="0"
 PROGRESS_CONFIG="tqdm"
 WORKERS_CONFIG="0"
 MESH_QC_STAGE_CONFIG="full"
@@ -74,6 +75,7 @@ REPEAT_REGEX="${REPEAT_REGEX:-${REPEAT_REGEX_CONFIG}}"
 RENDERER="${RENDERER:-${RENDERER_CONFIG}}"
 CHECK_COMPONENTS="${CHECK_COMPONENTS:-${CHECK_COMPONENTS_CONFIG}}"
 ROI_WALLS="${ROI_WALLS:-${ROI_WALLS_CONFIG}}"
+TISSUE_WALLS="${TISSUE_WALLS:-${TISSUE_WALLS_CONFIG}}"
 PROGRESS_MODE="${PROGRESS_MODE:-${PROGRESS_CONFIG}}"
 WORKERS="${WORKERS:-${WORKERS_CONFIG}}"
 MESH_QC_STAGE="${MESH_QC_STAGE:-${MESH_QC_STAGE_CONFIG}}"
@@ -168,6 +170,7 @@ echo "[INFO] Subject regex:  ${SUBJECT_REGEX:-<none>}"
 echo "[INFO] Repeat regex:   ${REPEAT_REGEX:-<none>}"
 echo "[INFO] Check comps:    ${CHECK_COMPONENTS}"
 echo "[INFO] ROI walls:      ${ROI_WALLS}"
+echo "[INFO] Tissue walls:   ${TISSUE_WALLS}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
 echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE_EFFECTIVE:-<none>}"
 echo "[INFO] SimNIBS request: ${SIMNIBS_MODULE:-<none>}"
@@ -247,6 +250,9 @@ if [ "${CHECK_COMPONENTS}" = "1" ]; then
 fi
 if [ "${ROI_WALLS}" = "1" ]; then
     PYTHON_CMD+=(--roi-walls)
+fi
+if [ "${TISSUE_WALLS}" = "1" ]; then
+    PYTHON_CMD+=(--tissue-walls)
 fi
 case "${MESH_QC_STAGE}" in
     full)

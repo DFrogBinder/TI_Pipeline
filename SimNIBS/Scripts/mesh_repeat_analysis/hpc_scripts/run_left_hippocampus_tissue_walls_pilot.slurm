@@ -93,16 +93,26 @@ cd "${PIPELINE_DIR}"
 export PYTHONPATH="${PIPELINE_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONNOUSERSITE=1
 
+# The literal $HOME paths below are remediation commands printed on failure.
+# shellcheck disable=SC2016
 "${MESH_QC_PYTHON}" -c '
-import importlib.util
 import sys
 
-missing = [name for name in ("numpy", "PIL") if importlib.util.find_spec(name) is None]
-if importlib.util.find_spec("meshio") is None and importlib.util.find_spec("simnibs") is None:
-    missing.append("meshio-or-simnibs")
-if missing:
-    print("[ERROR] Missing ti-post Python dependencies: " + ", ".join(missing), file=sys.stderr)
+try:
+    import meshio
+    import numpy
+    from PIL import Image
+except Exception as exc:
+    print(f"[ERROR] ti-post mesh-wall dependency import failed: {exc}", file=sys.stderr)
+    print(
+        "[ERROR] Install the pinned tissue-wall dependency on the login node with:\n"
+        "[ERROR] $HOME/.conda/envs/ti-post/bin/python -m pip install --requirement "
+        "$HOME/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis/post/mesh_qc/"
+        "requirements-tissue-walls.txt",
+        file=sys.stderr,
+    )
     raise SystemExit(2)
+print(f"[INFO] meshio version: {meshio.__version__}")
 '
 
 FOUND_MESHES="$("${MESH_QC_PYTHON}" -c '
@@ -120,6 +130,27 @@ if [ "${FOUND_MESHES}" != "${MESH_QC_EXPECTED_MESHES}" ]; then
     exit 2
 fi
 
+TISSUE_PREFLIGHT="$("${MESH_QC_PYTHON}" -c '
+from pathlib import Path
+import sys
+
+from mesh_repeat_analysis.post.mesh_qc.discovery import discover_meshes
+from mesh_repeat_analysis.post.mesh_qc.loaders import iter_tissue_surface_arrays
+
+records = discover_meshes(Path(sys.argv[1]))
+if not records:
+    print("[ERROR] Tissue preflight found no meshes", file=sys.stderr)
+    raise SystemExit(2)
+
+tags = []
+for tissue in iter_tissue_surface_arrays(records[0].path):
+    tags.append(str(tissue.tag))
+if not tags:
+    print(f"[ERROR] No tissue tags extracted from {records[0].path}", file=sys.stderr)
+    raise SystemExit(2)
+print("mesh={}; tags={}".format(records[0].path, ",".join(tags)))
+' "${MESH_QC_ROOT}")"
+
 echo "[INFO] Left Hippocampus tissue-wall pilot preflight passed"
 echo "[INFO] Mesh root:       ${MESH_QC_ROOT}"
 echo "[INFO] Meshes found:    ${FOUND_MESHES}"
@@ -129,5 +160,6 @@ echo "[INFO] Python:          ${MESH_QC_PYTHON}"
 echo "[INFO] Stage:           ${MESH_QC_STAGE}"
 echo "[INFO] Tissue walls:    ${TISSUE_WALLS}"
 echo "[INFO] Workers:         ${WORKERS}"
+echo "[INFO] Tissue parser:   ${TISSUE_PREFLIGHT}"
 
 exec bash "${GENERIC_RUNNER}"

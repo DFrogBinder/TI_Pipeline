@@ -56,6 +56,19 @@ variables and embeds the tested settings:
 - site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0`, with the conflicting SimNIBS module disabled,
 - Python: `$HOME/.conda/envs/ti-post/bin/python`.
 
+Tissue walls add one dependency that whole-mesh Gmsh walls do not need: the
+tetrahedral tissue labels must be parsed before each tissue surface can be
+rendered. Install the locally tested parser once in `ti-post` from the login
+node:
+
+```bash
+$HOME/.conda/envs/ti-post/bin/python -m pip install --requirement \
+  $HOME/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis/post/mesh_qc/requirements-tissue-walls.txt
+```
+
+The pilot preflight imports this dependency and extracts every tissue tag from
+one real Data_01 mesh before starting the full QC/render pipeline.
+
 The terminal connection can be closed after `sbatch` prints the job ID. Monitor
 the scheduler and job output with:
 

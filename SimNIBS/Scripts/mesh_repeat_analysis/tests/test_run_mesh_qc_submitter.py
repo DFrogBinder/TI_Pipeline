@@ -62,7 +62,19 @@ def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
     assert 'export MESH_QC_ROOT="${MESH_QC_ROOT_CONFIG}"' in text
     assert 'LEFT_HIPPOCAMPUS_PILOT_STAGE' in text
     assert "discover_meshes" in text
+    assert "requirements-tissue-walls.txt" in text
+    assert "import meshio" in text
+    assert "iter_tissue_surface_arrays" in text
+    assert "TISSUE_PREFLIGHT" in text
     assert 'exec bash "${GENERIC_RUNNER}"' in text
+
+
+def test_tissue_wall_requirements_pin_locally_tested_meshio():
+    repo_root = Path(__file__).resolve().parents[1]
+    requirements = repo_root / "post" / "mesh_qc" / "requirements-tissue-walls.txt"
+
+    assert requirements.exists()
+    assert "meshio==5.3.5" in requirements.read_text(encoding="utf-8")
 
 
 def test_mesh_qc_slurm_loads_configured_xvfb_module_for_gmsh():

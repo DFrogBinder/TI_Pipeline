@@ -199,6 +199,57 @@ def test_surface_renderer_exports_temporary_surface_for_gmsh(tmp_path, monkeypat
     assert out.exists()
 
 
+def test_surface_renderer_rotates_back_view_around_vertical_axis(tmp_path, monkeypatch):
+    out = tmp_path / "back.png"
+    surface = SurfaceArrays(
+        points=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [4.0, 0.0, 0.0],
+                [0.0, 2.0, 3.0],
+            ]
+        ),
+        faces=np.array([[0, 1, 2]]),
+    )
+    seen = {}
+
+    def fake_pillow(surface_arg, out_png, *, label, image_size, max_faces):
+        seen["points"] = surface_arg.points.copy()
+        out_png.write_bytes(b"png")
+
+    monkeypatch.setattr(rendering, "_render_surface_with_pillow", fake_pillow)
+
+    actual = render_surface_png(
+        surface,
+        out,
+        label="Back",
+        view="back",
+        renderer="pillow",
+    )
+
+    assert actual == "pillow"
+    np.testing.assert_allclose(
+        seen["points"],
+        np.array(
+            [
+                [4.0, 2.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [4.0, 0.0, 3.0],
+            ]
+        ),
+    )
+
+
+def test_surface_renderer_rejects_unknown_view(tmp_path):
+    surface = SurfaceArrays(
+        points=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+        faces=np.array([[0, 1, 2]]),
+    )
+
+    with pytest.raises(ValueError, match="Unsupported surface view"):
+        render_surface_png(surface, tmp_path / "bad.png", label="bad", view="side")
+
+
 def test_auto_renderer_falls_back_to_pillow_when_pyvista_fails(tmp_path, monkeypatch):
     mesh_path = tmp_path / "head.msh"
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")

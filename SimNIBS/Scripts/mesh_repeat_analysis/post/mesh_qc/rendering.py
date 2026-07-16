@@ -51,6 +51,7 @@ def render_surface_png(
     out_png: Path,
     *,
     label: str,
+    view: str = "front",
     image_size: int = 600,
     renderer: str = "auto",
     max_faces: int = 12000,
@@ -59,6 +60,7 @@ def render_surface_png(
     renderer = renderer.lower()
     if renderer not in {"auto", "gmsh", "pyvista", "pillow"}:
         raise ValueError(f"Unsupported renderer: {renderer}")
+    surface = _surface_for_view(surface, view)
     if renderer in {"auto", "gmsh"}:
         try:
             _render_surface_with_gmsh(
@@ -91,6 +93,21 @@ def render_surface_png(
         max_faces=max_faces,
     )
     return "pillow"
+
+
+def _surface_for_view(surface: SurfaceArrays, view: str) -> SurfaceArrays:
+    view = view.lower()
+    if view == "front":
+        return surface
+    if view != "back":
+        raise ValueError(f"Unsupported surface view: {view}")
+
+    points, faces = _validated_surface_arrays(surface)
+    center = (points.min(axis=0) + points.max(axis=0)) * 0.5
+    rotated = points.copy()
+    rotated[:, 0] = (2.0 * center[0]) - rotated[:, 0]
+    rotated[:, 1] = (2.0 * center[1]) - rotated[:, 1]
+    return SurfaceArrays(points=rotated, faces=faces)
 
 
 def _render_surface_with_gmsh(

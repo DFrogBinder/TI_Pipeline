@@ -130,8 +130,8 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
 
     rendered = []
 
-    def fake_render(surface_arg, out_png, *, label, image_size, renderer):
-        rendered.append((out_png, label))
+    def fake_render(surface_arg, out_png, *, label, view, image_size, renderer):
+        rendered.append((out_png, label, view))
         out_png.parent.mkdir(parents=True, exist_ok=True)
         out_png.write_bytes(b"tissue png")
         return "pillow"
@@ -162,15 +162,30 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
 
     run_mesh_qc._run_tissue_outputs(records, out_dir, args)
 
-    assert len(rendered) == 3
+    assert len(rendered) == 6
     assert (out_dir / "mosaics" / "tissues" / "tag_01_white_matter_wall.png").exists()
+    assert (
+        out_dir / "mosaics" / "tissues" / "tag_01_white_matter_back_wall.png"
+    ).exists()
     assert (out_dir / "mosaics" / "tissues" / "tag_05_scalp_wall.png").exists()
+    assert (out_dir / "mosaics" / "tissues" / "tag_05_scalp_back_wall.png").exists()
+    assert {view for _, _, view in rendered} == {"front", "back"}
+    assert any("Front view" in label for _, label, _ in rendered)
+    assert any("Back view" in label for _, label, _ in rendered)
     with (out_dir / "tissue_render_completeness.csv").open(newline="", encoding="utf-8") as f:
-        rows = {int(row["tissue_tag"]): row for row in csv.DictReader(f)}
-    assert rows[1]["status"] == "MISSING_TISSUE"
-    assert rows[1]["present_meshes"] == "1"
-    assert rows[5]["status"] == "OK"
-    assert rows[5]["present_meshes"] == "2"
+        rows = {
+            (int(row["tissue_tag"]), row["view"]): row
+            for row in csv.DictReader(f)
+        }
+    assert rows[(1, "front")]["status"] == "MISSING_TISSUE"
+    assert rows[(1, "back")]["status"] == "MISSING_TISSUE"
+    assert rows[(1, "front")]["present_meshes"] == "1"
+    assert rows[(5, "front")]["status"] == "OK"
+    assert rows[(5, "back")]["status"] == "OK"
+    assert rows[(5, "back")]["present_meshes"] == "2"
+    with (out_dir / "tissue_render_manifest.csv").open(newline="", encoding="utf-8") as f:
+        manifest_rows = list(csv.DictReader(f))
+    assert {row["view"] for row in manifest_rows} == {"front", "back"}
 
 
 def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, monkeypatch):
@@ -213,6 +228,68 @@ def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, mon
         rows = list(csv.DictReader(f))
     assert rows[0]["stage"] == "tissue_load"
     assert "neither SimNIBS nor meshio" in rows[0]["error_message"]
+
+
+def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(tmp_path, monkeypatch):
+    record = run_mesh_qc.MeshRecord(
+        path=tmp_path / "sub-CC1.msh",
+        roi="unknown_roi",
+        subject="sub-CC1",
+        repeat="repeat_01",
+        mesh_id="m2m_sub-CC1",
+    )
+    surface = SurfaceArrays(
+        points=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+        faces=np.array([[0, 1, 2]]),
+    )
+    out_dir = tmp_path / "out"
+    tile_name = "00001__sub-CC1__repeat_01__m2m_sub-CC1__sub-CC1.png"
+    front_tile = out_dir / "renders" / "tissues" / "tag_05_scalp" / tile_name
+    front_tile.parent.mkdir(parents=True)
+    front_tile.write_bytes(b"existing front")
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "iter_tissue_surface_arrays",
+        lambda path: iter([TissueSurface(5, "Scalp", "tag_05_scalp", surface)]),
+    )
+    rendered_views = []
+
+    def fake_render(surface_arg, out_png, *, label, view, image_size, renderer):
+        rendered_views.append(view)
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"new back")
+        return "pillow"
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"wall")
+
+    monkeypatch.setattr(run_mesh_qc, "render_surface_png", fake_render)
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+    args = run_mesh_qc.build_parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "1",
+            "--progress",
+            "none",
+            "--renderer",
+            "pillow",
+            "--tissue-walls",
+        ]
+    )
+
+    run_mesh_qc._run_tissue_outputs([record], out_dir, args)
+
+    assert rendered_views == ["back"]
+    with (out_dir / "tissue_render_manifest.csv").open(newline="", encoding="utf-8") as f:
+        rows = {row["view"]: row for row in csv.DictReader(f)}
+    assert rows["front"]["resumed"] == "1"
+    assert rows["back"]["resumed"] == "0"
 
 
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):

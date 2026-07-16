@@ -64,7 +64,8 @@ When `--tissue-walls` is enabled, tissue surfaces are extracted separately from 
 1. Read positive physical tags on tetrahedral elements.
 2. Select all tetrahedra belonging to one tag.
 3. Enumerate their four faces and remove faces shared by two tetrahedra of that same tissue.
-4. Render the remaining complete tissue boundary.
+4. Render the remaining complete tissue boundary from the front.
+5. Rotate that same surface 180 degrees around the superior-inferior axis and render the back with identical renderer settings.
 
 Stored triangle elements tagged `1000 + tissue_tag` are not used for this step. On real CHARM meshes those stored interfaces can be only a subset of a tissue boundary, particularly at interfaces with other tissues.
 
@@ -174,7 +175,7 @@ Default behavior:
 - geometry-flagged meshes are still rendered,
 - write a combined mosaic as `all_mesh_wall.png`,
 - write ROI-specific walls only if `--roi-walls` is requested.
-- write one wall per detected tetrahedral tissue only if `--tissue-walls` is requested.
+- write front and back walls per detected tetrahedral tissue only if `--tissue-walls` is requested.
 
 This means a mesh with `NONMANIFOLD_EDGES` or `DEGENERATE_FACES` is still expected to appear in the wall for visual inspection.
 
@@ -210,7 +211,7 @@ Pillow fallback details:
 
 Each mesh is checked independently.
 
-QC and per-mesh PNG rendering therefore parallelize naturally across worker processes. Tissue rendering uses the same process-level strategy across meshes. Inside a tissue worker, the mesh is loaded once and its tissue tags are processed sequentially, so workers do not repeatedly load the same large mesh or start nested pools.
+QC and per-mesh PNG rendering therefore parallelize naturally across worker processes. Tissue rendering uses the same process-level strategy across meshes. Inside a tissue worker, the mesh is loaded once and the front and back views of its tissue tags are processed sequentially, so workers do not repeatedly load the same large mesh or start nested pools.
 
 Current worker behavior:
 
@@ -251,9 +252,11 @@ The main outputs are:
 - `tissue_presence.csv`: one row per mesh/tissue pair detected from tetrahedral tags,
 - `tissue_render_manifest.csv`: one row per successful or resumed tissue render,
 - `tissue_render_exception_details.csv`: tissue-load and tissue-render exceptions,
-- `tissue_render_completeness.csv`: cohort counts and status per tissue,
-- `renders/tissues/<tissue-slug>/*.png`: individual tissue tiles,
-- `mosaics/tissues/<tissue-slug>_wall.png`: one cohort wall per detected tissue,
+- `tissue_render_completeness.csv`: cohort counts and status per tissue and view,
+- `renders/tissues/<tissue-slug>/*.png`: individual front-view tissue tiles,
+- `renders/tissues_back/<tissue-slug>/*.png`: individual back-view tissue tiles,
+- `mosaics/tissues/<tissue-slug>_wall.png`: front-view cohort wall per detected tissue,
+- `mosaics/tissues/<tissue-slug>_back_wall.png`: back-view cohort wall per detected tissue,
 - `logs/mesh_qc.log`: stage-level persistent log,
 - `logs/run_context.json`: resolved runtime context including paths, arguments, CPU allocation, and key Slurm variables,
 - `logs/fatal_error.txt`: written only when the run aborts with an unhandled exception.

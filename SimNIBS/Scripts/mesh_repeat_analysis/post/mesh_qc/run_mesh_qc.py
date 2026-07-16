@@ -101,6 +101,7 @@ TISSUE_RENDER_MANIFEST_FIELDS = FOUND_FIELDS + (
     "tissue_tag",
     "tissue_name",
     "tissue_slug",
+    "view",
     "output_path",
     "requested_renderer",
     "actual_renderer",
@@ -110,11 +111,13 @@ TISSUE_EXCEPTION_FIELDS = EXCEPTION_FIELDS + (
     "tissue_tag",
     "tissue_name",
     "tissue_slug",
+    "view",
 )
 TISSUE_RENDER_COMPLETENESS_FIELDS = (
     "tissue_tag",
     "tissue_name",
     "tissue_slug",
+    "view",
     "status",
     "qc_loadable_meshes",
     "present_meshes",
@@ -123,6 +126,7 @@ TISSUE_RENDER_COMPLETENESS_FIELDS = (
     "render_failures",
     "missing_tiles",
 )
+TISSUE_VIEWS = ("front", "back")
 
 
 _RUN_LOGGER = None
@@ -1549,6 +1553,7 @@ def _tissue_exception_row(
     traceback_text: str,
     output_path: Path | None = None,
     tissue=None,
+    view: str = "",
 ) -> dict[str, object]:
     row = _exception_row(
         record,
@@ -1562,6 +1567,7 @@ def _tissue_exception_row(
             "tissue_tag": "" if tissue is None else tissue.tag,
             "tissue_name": "" if tissue is None else tissue.name,
             "tissue_slug": "" if tissue is None else tissue.slug,
+            "view": view,
         }
     )
     return row
@@ -1572,6 +1578,7 @@ def _tissue_manifest_row(
     tissue,
     out_png: Path,
     *,
+    view: str,
     requested_renderer: str,
     actual_renderer: str,
     resumed: bool,
@@ -1579,6 +1586,7 @@ def _tissue_manifest_row(
     row = _tissue_metadata_row(record, tissue)
     row.update(
         {
+            "view": view,
             "output_path": str(out_png),
             "requested_renderer": requested_renderer,
             "actual_renderer": actual_renderer,
@@ -1586,6 +1594,21 @@ def _tissue_manifest_row(
         }
     )
     return row
+
+
+def _tissue_render_path(
+    tissue_root: Path,
+    tissue_slug: str,
+    view: str,
+    tile_filename: str,
+) -> Path:
+    if view == "front":
+        view_root = tissue_root
+    elif view == "back":
+        view_root = tissue_root.parent / "tissues_back"
+    else:
+        raise ValueError(f"Unsupported tissue view: {view}")
+    return view_root / tissue_slug / tile_filename
 
 
 def _tissue_record_worker(
@@ -1601,56 +1624,66 @@ def _tissue_record_worker(
     try:
         for tissue in iter_tissue_surface_arrays(record.path):
             presence_rows.append(_tissue_metadata_row(record, tissue))
-            out_png = tissue_root / tissue.slug / tile_filename
-            try:
-                if out_png.is_file() and out_png.stat().st_size > 0:
+            for view in TISSUE_VIEWS:
+                out_png = _tissue_render_path(
+                    tissue_root,
+                    tissue.slug,
+                    view,
+                    tile_filename,
+                )
+                try:
+                    if out_png.is_file() and out_png.stat().st_size > 0:
+                        manifest_rows.append(
+                            _tissue_manifest_row(
+                                record,
+                                tissue,
+                                out_png,
+                                view=view,
+                                requested_renderer=renderer,
+                                actual_renderer="unknown_existing",
+                                resumed=True,
+                            )
+                        )
+                        continue
+                except OSError:
+                    pass
+
+                label = (
+                    f"{record.subject}\n{record.repeat}\n{record.mesh_id}\n"
+                    f"Tag {tissue.tag}: {tissue.name}\n{view.title()} view"
+                )
+                try:
+                    actual_renderer = render_surface_png(
+                        tissue.surface,
+                        out_png,
+                        label=label,
+                        view=view,
+                        image_size=image_size,
+                        renderer=renderer,
+                    ) or renderer
                     manifest_rows.append(
                         _tissue_manifest_row(
                             record,
                             tissue,
                             out_png,
+                            view=view,
                             requested_renderer=renderer,
-                            actual_renderer="unknown_existing",
-                            resumed=True,
+                            actual_renderer=str(actual_renderer),
+                            resumed=False,
                         )
                     )
-                    continue
-            except OSError:
-                pass
-
-            label = (
-                f"{record.subject}\n{record.repeat}\n{record.mesh_id}\n"
-                f"Tag {tissue.tag}: {tissue.name}"
-            )
-            try:
-                actual_renderer = render_surface_png(
-                    tissue.surface,
-                    out_png,
-                    label=label,
-                    image_size=image_size,
-                    renderer=renderer,
-                ) or renderer
-                manifest_rows.append(
-                    _tissue_manifest_row(
-                        record,
-                        tissue,
-                        out_png,
-                        requested_renderer=renderer,
-                        actual_renderer=str(actual_renderer),
-                        resumed=False,
+                except Exception as exc:
+                    failure_rows.append(
+                        _tissue_exception_row(
+                            record,
+                            stage="tissue_render",
+                            exc=exc,
+                            traceback_text=traceback.format_exc(),
+                            output_path=out_png,
+                            tissue=tissue,
+                            view=view,
+                        )
                     )
-                )
-            except Exception as exc:
-                failure_rows.append(
-                    _tissue_exception_row(
-                        record,
-                        stage="tissue_render",
-                        exc=exc,
-                        traceback_text=traceback.format_exc(),
-                        output_path=out_png,
-                        tissue=tissue,
-                    )
-                )
     except Exception as exc:
         failure_rows.append(
             _tissue_exception_row(
@@ -1820,7 +1853,7 @@ def _write_tissue_completeness(
 ) -> list[dict[str, object]]:
     metadata_by_tag: dict[int, tuple[str, str]] = {}
     present: set[tuple[int, str]] = set()
-    rendered: set[tuple[int, str]] = set()
+    rendered: set[tuple[int, str, str]] = set()
     failures = Counter()
 
     for row in presence_rows:
@@ -1828,42 +1861,49 @@ def _write_tissue_completeness(
         metadata_by_tag[tag] = (str(row["tissue_name"]), str(row["tissue_slug"]))
         present.add((tag, str(row["path"])))
     for row in manifest_rows:
-        rendered.add((int(row["tissue_tag"]), str(row["path"])))
+        rendered.add((int(row["tissue_tag"]), str(row["path"]), str(row["view"])))
     for row in failure_rows:
         raw_tag = row.get("tissue_tag", "")
-        if raw_tag not in ("", None):
-            failures[int(raw_tag)] += 1
+        view = str(row.get("view", ""))
+        if raw_tag not in ("", None) and view in TISSUE_VIEWS:
+            failures[(int(raw_tag), view)] += 1
 
     rows: list[dict[str, object]] = []
     total_meshes = len(render_records)
     for tag in sorted(metadata_by_tag):
         name, slug = metadata_by_tag[tag]
         present_count = sum(1 for present_tag, _ in present if present_tag == tag)
-        rendered_count = sum(1 for rendered_tag, _ in rendered if rendered_tag == tag)
-        missing_from_meshes = max(0, total_meshes - present_count)
-        missing_tiles = max(0, present_count - rendered_count)
-        if missing_from_meshes and missing_tiles:
-            status = "MISSING_TISSUE_AND_INCOMPLETE_RENDER"
-        elif missing_from_meshes:
-            status = "MISSING_TISSUE"
-        elif missing_tiles:
-            status = "INCOMPLETE_RENDER"
-        else:
-            status = "OK"
-        rows.append(
-            {
-                "tissue_tag": tag,
-                "tissue_name": name,
-                "tissue_slug": slug,
-                "status": status,
-                "qc_loadable_meshes": total_meshes,
-                "present_meshes": present_count,
-                "rendered_meshes": rendered_count,
-                "missing_from_meshes": missing_from_meshes,
-                "render_failures": failures[tag],
-                "missing_tiles": missing_tiles,
-            }
-        )
+        for view in TISSUE_VIEWS:
+            rendered_count = sum(
+                1
+                for rendered_tag, _, rendered_view in rendered
+                if rendered_tag == tag and rendered_view == view
+            )
+            missing_from_meshes = max(0, total_meshes - present_count)
+            missing_tiles = max(0, present_count - rendered_count)
+            if missing_from_meshes and missing_tiles:
+                status = "MISSING_TISSUE_AND_INCOMPLETE_RENDER"
+            elif missing_from_meshes:
+                status = "MISSING_TISSUE"
+            elif missing_tiles:
+                status = "INCOMPLETE_RENDER"
+            else:
+                status = "OK"
+            rows.append(
+                {
+                    "tissue_tag": tag,
+                    "tissue_name": name,
+                    "tissue_slug": slug,
+                    "view": view,
+                    "status": status,
+                    "qc_loadable_meshes": total_meshes,
+                    "present_meshes": present_count,
+                    "rendered_meshes": rendered_count,
+                    "missing_from_meshes": missing_from_meshes,
+                    "render_failures": failures[(tag, view)],
+                    "missing_tiles": missing_tiles,
+                }
+            )
     _write_csv(
         out_dir / "tissue_render_completeness.csv",
         rows,
@@ -2021,7 +2061,13 @@ def _run_tissue_outputs(
     progress.complete()
 
     presence_rows.sort(key=lambda row: (int(row["tissue_tag"]), str(row["path"])))
-    manifest_rows.sort(key=lambda row: (int(row["tissue_tag"]), str(row["output_path"])))
+    manifest_rows.sort(
+        key=lambda row: (
+            int(row["tissue_tag"]),
+            TISSUE_VIEWS.index(str(row["view"])),
+            str(row["output_path"]),
+        )
+    )
     _write_csv(out_dir / "tissue_presence.csv", presence_rows, TISSUE_PRESENCE_FIELDS)
     _write_csv(
         out_dir / "tissue_render_manifest.csv",
@@ -2053,15 +2099,28 @@ def _run_tissue_outputs(
             f"See {out_dir / 'tissue_render_exception_details.csv'}."
         )
 
-    images_by_tissue: dict[tuple[int, str, str], list[Path]] = defaultdict(list)
+    images_by_tissue: dict[tuple[int, str, str, str], list[Path]] = defaultdict(list)
     for row in manifest_rows:
-        key = (int(row["tissue_tag"]), str(row["tissue_name"]), str(row["tissue_slug"]))
+        key = (
+            int(row["tissue_tag"]),
+            str(row["tissue_name"]),
+            str(row["tissue_slug"]),
+            str(row["view"]),
+        )
         images_by_tissue[key].append(Path(str(row["output_path"])))
 
     mosaic_failures: list[dict[str, object]] = []
-    for (tag, name, slug), images in sorted(images_by_tissue.items()):
-        out_png = out_dir / "mosaics" / "tissues" / f"{slug}_wall.png"
-        print(f"[MOSAIC] Building tissue wall for tag {tag} {name} ({len(images)} tiles)", flush=True)
+    for (tag, name, slug, view), images in sorted(
+        images_by_tissue.items(),
+        key=lambda item: (item[0][0], TISSUE_VIEWS.index(item[0][3])),
+    ):
+        view_suffix = "" if view == "front" else "_back"
+        out_png = out_dir / "mosaics" / "tissues" / f"{slug}{view_suffix}_wall.png"
+        print(
+            f"[MOSAIC] Building {view} tissue wall for tag {tag} {name} "
+            f"({len(images)} tiles)",
+            flush=True,
+        )
         try:
             make_mosaic(images, out_png, cols=args.cols, tile_size=args.tile_size)
         except Exception as exc:
@@ -2080,6 +2139,7 @@ def _run_tissue_outputs(
                     "tissue_tag": tag,
                     "tissue_name": name,
                     "tissue_slug": slug,
+                    "view": view,
                 }
             )
     _write_csv(
@@ -2098,7 +2158,8 @@ def _run_tissue_outputs(
         "TISSUE_RENDER",
         "Completed tissue wall stage",
         meshes=len(render_records),
-        tissues=len(images_by_tissue),
+        tissues=len({key[0] for key in images_by_tissue}),
+        walls=len(images_by_tissue),
         renders=len(manifest_rows),
         failures=len(failure_rows),
         incomplete_tissues=len(incomplete),

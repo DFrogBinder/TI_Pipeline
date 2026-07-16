@@ -18,6 +18,8 @@ def test_submit_mesh_qc_helper_exports_safe_log_paths():
     assert 'RENDERER_CONFIG="gmsh"' in text
     assert 'TISSUE_WALLS_CONFIG="0"' in text
     assert "TISSUE_WALLS=${TISSUE_WALLS}" in text
+    assert 'MESH_QC_PYTHON_CONFIG="python"' in text
+    assert "MESH_QC_PYTHON=${MESH_QC_PYTHON}" in text
     assert "run_mesh_qc.slurm" in text
 
 
@@ -29,6 +31,36 @@ def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     assert 'TISSUE_WALLS_CONFIG="0"' in text
     assert 'if [ "${TISSUE_WALLS}" = "1" ]; then' in text
     assert "PYTHON_CMD+=(--tissue-walls)" in text
+    assert 'MESH_QC_PYTHON_CONFIG="python"' in text
+    assert '"${MESH_QC_PYTHON}"' in text
+
+
+def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "hpc_scripts" / "run_left_hippocampus_tissue_walls_pilot.slurm"
+
+    assert script.exists(), "the Left Hippocampus pilot launcher should exist"
+    text = script.read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=sheffield" in text
+    assert "#SBATCH --cpus-per-task=4" in text
+    assert "#SBATCH --mem=64G" in text
+    assert "#SBATCH --time=24:00:00" in text
+    assert "Left_Hippocampus_Runs/Left_Hippocampus_Data_01" in text
+    assert 'MESH_QC_EXPECTED_MESHES_CONFIG="175"' in text
+    assert 'MESH_QC_STAGE_CONFIG="full"' in text
+    assert 'TISSUE_WALLS_CONFIG="1"' in text
+    assert 'ROI_WALLS_CONFIG="0"' in text
+    assert 'WORKERS_CONFIG="1"' in text
+    assert 'RENDERER_CONFIG="gmsh"' in text
+    assert 'SIMNIBS_MODULE_CONFIG="none"' in text
+    assert 'GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"' in text
+    assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in text
+    assert '${HOME}/.conda/envs/ti-post/bin/python' in text
+    assert 'export MESH_QC_ROOT="${MESH_QC_ROOT_CONFIG}"' in text
+    assert 'LEFT_HIPPOCAMPUS_PILOT_STAGE' in text
+    assert "discover_meshes" in text
+    assert 'exec bash "${GENERIC_RUNNER}"' in text
 
 
 def test_mesh_qc_slurm_loads_configured_xvfb_module_for_gmsh():

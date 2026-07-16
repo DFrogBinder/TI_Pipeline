@@ -16,6 +16,7 @@ XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
 GMSH_MODULE_CONFIG=""
 MESH_QC_GMSH_BIN_CONFIG=""
 IMAGEMAGICK_MODULE_CONFIG=""
+MESH_QC_PYTHON_CONFIG="python"
 
 export PYTHONNOUSERSITE=1
 
@@ -89,6 +90,7 @@ XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
 GMSH_MODULE="${GMSH_MODULE:-${GMSH_MODULE_CONFIG}}"
 MESH_QC_GMSH_BIN="${MESH_QC_GMSH_BIN:-${MESH_QC_GMSH_BIN_CONFIG}}"
 IMAGEMAGICK_MODULE="${IMAGEMAGICK_MODULE:-${IMAGEMAGICK_MODULE_CONFIG}}"
+MESH_QC_PYTHON="${MESH_QC_PYTHON:-${MESH_QC_PYTHON_CONFIG}}"
 
 SIMNIBS_MODULE_EFFECTIVE="${SIMNIBS_MODULE}"
 GMSH_MODULE_EFFECTIVE="${GMSH_MODULE}"
@@ -179,6 +181,8 @@ echo "[INFO] Gmsh request:   ${GMSH_MODULE:-<none>}"
 echo "[INFO] Xvfb module:    ${XVFB_MODULE_EFFECTIVE:-<none>}"
 echo "[INFO] Xvfb request:   ${XVFB_MODULE:-<none>}"
 echo "[INFO] ImageMagick module: ${IMAGEMAGICK_MODULE:-<none>}"
+echo "[INFO] Python request:  ${MESH_QC_PYTHON}"
+echo "[INFO] Python path:     $(command -v "${MESH_QC_PYTHON}" 2>/dev/null || echo '<not found>')"
 if [ -n "${MESH_QC_GMSH_BIN}" ]; then
     export MESH_QC_GMSH_BIN
 fi
@@ -214,9 +218,13 @@ if [ "${NEEDS_GMSH_CHECK}" = "1" ] && [ "${RENDERER}" = "gmsh" ] && [ -z "${DISP
     echo "[ERROR] Load a working XVFB_MODULE or set DISPLAY and MESH_QC_USE_EXISTING_DISPLAY=1." >&2
     exit 2
 fi
+if ! command -v "${MESH_QC_PYTHON}" >/dev/null 2>&1; then
+    echo "[ERROR] Python executable not found: ${MESH_QC_PYTHON}" >&2
+    exit 2
+fi
 
 PYTHON_CMD=(
-    python
+    "${MESH_QC_PYTHON}"
     -u
     "${PIPELINE_DIR}/mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py"
     --root "${MESH_QC_ROOT}"

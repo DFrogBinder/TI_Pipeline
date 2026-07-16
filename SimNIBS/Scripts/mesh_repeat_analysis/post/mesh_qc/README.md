@@ -33,6 +33,50 @@ The raw Slurm wrapper is still available at:
 sbatch mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm
 ```
 
+## Left Hippocampus Data_01 Pilot
+
+The dedicated front/back tissue-wall pilot is a self-contained Slurm job. From
+the HPC repository root, submit it with one command:
+
+```bash
+cd ~/Repos/TI_Pipeline/SimNIBS/Scripts
+sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_pilot.slurm
+```
+
+No shell exports are required. The launcher ignores inherited generic mesh-QC
+variables and embeds the tested settings:
+
+- input: `/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs/Left_Hippocampus_Data_01`,
+- expected meshes: `175` (the job stops before rendering if this differs),
+- output: `/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_Data_01_front_back_test`,
+- persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_Data_01_front_back_test`,
+- tissue walls enabled and ROI walls disabled,
+- front and back views at `1200 x 1200`,
+- one render worker, 4 allocated CPUs, 64 GB RAM, and a 24-hour limit,
+- site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0`, with the conflicting SimNIBS module disabled,
+- Python: `$HOME/.conda/envs/ti-post/bin/python`.
+
+The terminal connection can be closed after `sbatch` prints the job ID. Monitor
+the scheduler and job output with:
+
+```bash
+squeue -j <job-id>
+tail -f mesh_lh_d01_walls_<job-id>.out
+tail -f /mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_Data_01_front_back_test/mesh_qc_<job-id>.log
+```
+
+The final tissue walls are written under `mosaics/tissues/` in the output root.
+Each tissue has `<tissue-slug>_wall.png` for the front and
+`<tissue-slug>_back_wall.png` for the back.
+
+If Slurm stops the job during rendering, resume the same output directory
+without repeating discovery or geometry QC:
+
+```bash
+sbatch --export=ALL,LEFT_HIPPOCAMPUS_PILOT_STAGE=render \
+  mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_pilot.slurm
+```
+
 Default command-line execution is tuned for large interactive HPC sessions:
 
 - direct Python rendering defaults to `--renderer auto`, which prefers Gmsh and then falls back,

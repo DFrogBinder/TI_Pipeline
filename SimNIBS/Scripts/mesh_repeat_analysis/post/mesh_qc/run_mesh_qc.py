@@ -391,6 +391,8 @@ def _write_optional_csv(path: Path, rows: list[dict[str, object]], fieldnames: t
 
 
 def _resolved_stage_name(args: argparse.Namespace) -> str:
+    if args.tissue_only:
+        return "tissue"
     if args.render_only:
         return "render"
     if args.qc_only or args.skip_renders:
@@ -555,7 +557,8 @@ def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv
         "tile_size": args.tile_size,
         "cols": args.cols,
         "roi_walls": args.roi_walls,
-        "tissue_walls": args.tissue_walls,
+        "tissue_walls": args.tissue_walls or args.tissue_only,
+        "tissue_only": args.tissue_only,
         "check_components": args.check_components,
         "render_only": args.render_only,
         "qc_only": args.qc_only,
@@ -1961,6 +1964,19 @@ def _run_tissue_outputs(
                 failure_rows,
                 presence_rows,
             ) or None
+            if args.renderer == "gmsh" and result[1]:
+                _write_csv(
+                    out_dir / "tissue_render_exception_details.csv",
+                    failure_rows,
+                    TISSUE_EXCEPTION_FIELDS,
+                )
+                first_failure = result[1][0]
+                raise RuntimeError(
+                    "Forced Gmsh tissue-render preflight failed for "
+                    f"{first_task[0].path}: {first_failure['error_type']}: "
+                    f"{first_failure['error_message']}. See "
+                    f"{out_dir / 'tissue_render_exception_details.csv'}."
+                )
             completed = 1
             progress.update(completed, _mesh_detail(first_task[0], f"{len(result[2])} tissue(s)"))
             remaining_specs = task_specs[1:]
@@ -2468,6 +2484,10 @@ def _render_outputs(
 def _validate_stage_args(args: argparse.Namespace) -> None:
     if args.render_only and (args.qc_only or args.skip_renders):
         raise ValueError("--render-only cannot be combined with --qc-only or --skip-renders")
+    if args.tissue_only and (args.render_only or args.qc_only or args.skip_renders):
+        raise ValueError(
+            "--tissue-only cannot be combined with --render-only, --qc-only, or --skip-renders"
+        )
 
 
 def _run_discovery(root: Path, args: argparse.Namespace, progress_mode: str) -> list[MeshRecord]:
@@ -2536,6 +2556,30 @@ def _run_full_or_qc_only(root: Path, out_dir: Path, args: argparse.Namespace, pr
 
     _log_info("MAIN", "Run outputs written", out=str(out_dir))
     print(f"Wrote QC outputs to {out_dir}")
+    return 0
+
+
+def _run_tissue_only(root: Path, out_dir: Path, args: argparse.Namespace, progress_mode: str) -> int:
+    records = _run_discovery(root, args, progress_mode)
+    if not records:
+        _log_warning("DISCOVERY", "No meshes found", root=str(root), mesh_glob=args.mesh_glob or "m2m_only")
+        print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
+        return 2
+
+    print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
+    _write_csv(out_dir / "found_meshes.csv", [_record_row(record) for record in records], FOUND_FIELDS)
+    _log_info(
+        "TISSUE_RENDER",
+        "Skipping geometry QC and whole-mesh rendering for tissue-only run",
+        meshes=len(records),
+    )
+    print(
+        "[TISSUE RENDER] Tissue-only mode: skipping geometry QC and whole-mesh renders",
+        flush=True,
+    )
+    _run_tissue_outputs(records, out_dir, args)
+    _log_info("MAIN", "Tissue-only outputs written", out=str(out_dir))
+    print(f"Wrote tissue-only outputs to {out_dir}")
     return 0
 
 
@@ -2648,6 +2692,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip discovery and QC, and render from existing found_meshes.csv and qc_summary.csv in --out.",
     )
     parser.add_argument(
+        "--tissue-only",
+        action="store_true",
+        help=(
+            "Discover meshes and generate tissue tiles/walls only, skipping geometry QC and all "
+            "whole-mesh renders. Existing non-empty tissue tiles are reused."
+        ),
+    )
+    parser.add_argument(
         "--roi-walls",
         action="store_true",
         help="Also write separate ROI wall mosaics. Default writes only all_mesh_wall.png.",
@@ -2713,7 +2765,9 @@ def main(argv: list[str] | None = None) -> int:
             progress_mode = "tqdm"
         else:
             progress_mode = "none"
-        if args.render_only:
+        if args.tissue_only:
+            rc = _run_tissue_only(root, out_dir, args, progress_mode)
+        elif args.render_only:
             rc = _run_render_only(out_dir, args)
         else:
             rc = _run_full_or_qc_only(root, out_dir, args, progress_mode)

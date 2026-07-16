@@ -97,8 +97,77 @@ def test_parser_defaults_to_auto_and_all_cpus():
     assert args.image_size == 1200
     assert args.qc_only is False
     assert args.render_only is False
+    assert args.tissue_only is False
     assert args.tissue_walls is False
     assert gmsh_args.renderer == "gmsh"
+
+
+def test_tissue_only_discovers_meshes_without_qc_or_whole_mesh_rendering(tmp_path, monkeypatch):
+    mesh_path = tmp_path / "sub-CC1" / "m2m_sub-CC1" / "sub-CC1.msh"
+    mesh_path.parent.mkdir(parents=True)
+    mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    captured = {}
+
+    def fake_tissue_outputs(records, actual_out_dir, args):
+        captured["records"] = records
+        captured["out"] = actual_out_dir
+        captured["workers"] = args.workers
+
+    monkeypatch.setattr(run_mesh_qc, "_run_tissue_outputs", fake_tissue_outputs)
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_run_qc_detailed",
+        lambda *args, **kwargs: pytest.fail("geometry QC must not run in tissue-only mode"),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_render_outputs",
+        lambda *args, **kwargs: pytest.fail("whole-mesh rendering must not run in tissue-only mode"),
+    )
+
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "4",
+            "--progress",
+            "none",
+            "--tissue-only",
+        ]
+    )
+
+    assert rc == 0
+    assert len(captured["records"]) == 1
+    assert captured["records"][0].path == mesh_path
+    assert captured["out"] == out_dir.resolve()
+    assert captured["workers"] == 4
+    assert (out_dir / "found_meshes.csv").exists()
+    assert not (out_dir / "qc_summary.csv").exists()
+    assert not (out_dir / "renders" / "meshes").exists()
+    context = json.loads((out_dir / "logs" / "run_context.json").read_text(encoding="utf-8"))
+    assert context["stage"] == "tissue"
+    assert context["tissue_only"] is True
+    assert context["tissue_walls"] is True
+
+
+@pytest.mark.parametrize("conflicting_flag", ["--render-only", "--qc-only", "--skip-renders"])
+def test_tissue_only_rejects_conflicting_stage_flags(tmp_path, conflicting_flag):
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out"),
+            "--tissue-only",
+            conflicting_flag,
+        ]
+    )
+
+    assert rc == 2
 
 
 def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_path, monkeypatch):
@@ -228,6 +297,66 @@ def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, mon
         rows = list(csv.DictReader(f))
     assert rows[0]["stage"] == "tissue_load"
     assert "neither SimNIBS nor meshio" in rows[0]["error_message"]
+
+
+def test_forced_gmsh_tissue_preflight_stops_before_parallel_batch(tmp_path, monkeypatch):
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=tmp_path / f"sub-CC{idx}.msh",
+            roi="unknown_roi",
+            subject=f"sub-CC{idx}",
+            repeat="repeat_01",
+            mesh_id=f"m2m_sub-CC{idx}",
+        )
+        for idx in range(1, 5)
+    ]
+    args = run_mesh_qc.build_parser().parse_args(
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out"),
+            "--workers",
+            "4",
+            "--progress",
+            "none",
+            "--renderer",
+            "gmsh",
+            "--tissue-only",
+        ]
+    )
+    out_dir = tmp_path / "out"
+    failure = run_mesh_qc._tissue_exception_row(
+        records[0],
+        stage="tissue_render",
+        exc=RuntimeError("Xvfb render failed"),
+        traceback_text="Xvfb render failed",
+        output_path=out_dir / "failed.png",
+        view="front",
+    )
+
+    monkeypatch.setattr(run_mesh_qc, "_render_display_context", lambda args: nullcontext())
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_run_tissue_isolated_once",
+        lambda *args, **kwargs: ([], [failure], [], 1024),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_run_tissue_parallel_attempt",
+        lambda *args, **kwargs: pytest.fail("parallel batch must not start after failed preflight"),
+    )
+
+    with pytest.raises(RuntimeError, match="Forced Gmsh tissue-render preflight failed"):
+        run_mesh_qc._run_tissue_outputs(records, out_dir, args)
+
+    with (out_dir / "tissue_render_exception_details.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "sub-CC1"
+    assert "Xvfb render failed" in rows[0]["error_message"]
 
 
 def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(tmp_path, monkeypatch):

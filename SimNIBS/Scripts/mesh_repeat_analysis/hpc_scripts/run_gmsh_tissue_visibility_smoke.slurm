@@ -1,4 +1,6 @@
 #!/bin/bash
+# RETIRED: job 10904815 produced no completed image after almost three hours.
+# Retained only to document the failed direct-volume visibility experiment.
 #SBATCH --job-name=gmsh_tissue_smoke
 #SBATCH --partition=sheffield
 #SBATCH --nodes=1

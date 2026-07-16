@@ -280,9 +280,12 @@ case "${MESH_QC_STAGE}" in
     render)
         PYTHON_CMD+=(--render-only)
         ;;
+    tissue)
+        PYTHON_CMD+=(--tissue-only)
+        ;;
     *)
         echo "[ERROR] Unsupported MESH_QC_STAGE: ${MESH_QC_STAGE}" >&2
-        echo "[ERROR] Use one of: full, qc, render" >&2
+        echo "[ERROR] Use one of: full, qc, render, tissue" >&2
         exit 1
         ;;
 esac

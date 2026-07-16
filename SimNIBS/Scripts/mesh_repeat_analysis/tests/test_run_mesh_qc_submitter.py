@@ -36,6 +36,8 @@ def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     assert '"${MESH_QC_PYTHON}"' in text
     assert '"${MESH_QC_PYTHON}" -E -c' in text
     assert '"${MESH_QC_PYTHON}"\n    -E\n    -u' in text
+    assert 'tissue)' in text
+    assert "PYTHON_CMD+=(--tissue-only)" in text
 
 
 def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
@@ -69,6 +71,39 @@ def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
     assert "import meshio" in text
     assert "iter_tissue_surface_arrays" in text
     assert "TISSUE_PREFLIGHT" in text
+    assert 'exec bash "${GENERIC_RUNNER}"' in text
+
+
+def test_left_hippocampus_full_tissue_array_covers_all_repeats_in_parallel():
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "hpc_scripts" / "run_left_hippocampus_tissue_walls_array.slurm"
+
+    assert script.exists(), "the full Left Hippocampus tissue-wall array launcher should exist"
+    text = script.read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=sheffield" in text
+    assert "#SBATCH --cpus-per-task=16" in text
+    assert "#SBATCH --mem=64G" in text
+    assert "#SBATCH --time=08:00:00" in text
+    assert "#SBATCH --array=1-10%10" in text
+    assert 'EXPECTED_REPEATS_CONFIG="10"' in text
+    assert 'EXPECTED_SUBJECTS_PER_REPEAT_CONFIG="175"' in text
+    assert 'EXPECTED_TOTAL_MESHES_CONFIG="1750"' in text
+    assert 'EXPECTED_TOTAL_TILES_CONFIG="31500"' in text
+    assert 'EXPECTED_TOTAL_WALLS_CONFIG="180"' in text
+    assert 'MESH_QC_STAGE_CONFIG="tissue"' in text
+    assert 'WORKERS_CONFIG="16"' in text
+    assert 'TISSUE_WALLS="1"' in text
+    assert 'ROI_WALLS="0"' in text
+    assert 'RENDERER_CONFIG="gmsh"' in text
+    assert 'SIMNIBS_MODULE_CONFIG="none"' in text
+    assert 'GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"' in text
+    assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in text
+    assert 'PIPELINE_DIR_CONFIG="${HOME}/Repos/TI_Pipeline/SimNIBS/Scripts"' in text
+    assert 'REPEAT_INDEX="${SLURM_ARRAY_TASK_ID:-}"' in text
+    assert 'REPEAT_NAME="Left_Hippocampus_Data_${REPEAT_PADDED}"' in text
+    assert 'Execution scope:      full' in text
+    assert 'Whole-mesh renders:   disabled' in text
     assert 'exec bash "${GENERIC_RUNNER}"' in text
 
 

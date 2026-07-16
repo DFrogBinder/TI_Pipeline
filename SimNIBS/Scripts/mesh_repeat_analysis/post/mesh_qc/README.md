@@ -33,28 +33,40 @@ The raw Slurm wrapper is still available at:
 sbatch mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm
 ```
 
-## Left Hippocampus Data_01 Pilot
+## Full Left Hippocampus Tissue-Wall Array
 
-The dedicated front/back tissue-wall pilot is a self-contained Slurm job. From
-the HPC repository root, submit it with one command:
+The production launcher processes all ten Left Hippocampus repeats. It is a
+ten-task Slurm array, with one independent task and output directory per
+repeat. From the HPC repository root, submit the complete scope with one
+command:
 
 ```bash
 cd ~/Repos/TI_Pipeline/SimNIBS/Scripts
-sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_pilot.slurm
+sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_array.slurm
 ```
 
-No shell exports are required. The launcher ignores inherited generic mesh-QC
-variables and embeds the tested settings:
+No shell exports are required. The production scope is:
 
-- input: `/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs/Left_Hippocampus_Data_01`,
-- expected meshes: `175` (the job stops before rendering if this differs),
-- output: `/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_Data_01_front_back_test`,
-- persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_Data_01_front_back_test`,
-- tissue walls enabled and ROI walls disabled,
+- dataset: all `Left_Hippocampus_Data_01` through `Left_Hippocampus_Data_10`,
+- subjects: 175 unique subjects,
+- tasks: 10 repeats with 175 meshes per task, 1,750 meshes total,
+- array: `1-10%10`, so all repeats may run concurrently,
+- expected CHARM output when all nine tags are present: 31,500 tissue tiles and 180 walls,
+- output: `/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_all_repeats/Left_Hippocampus_Data_XX`,
+- persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_all_repeats/Left_Hippocampus_Data_XX`,
+- tissue-only mode: geometry QC and ordinary whole-mesh rendering are skipped,
 - front and back views at `1200 x 1200`,
-- one render worker, 4 allocated CPUs, 64 GB RAM, and an 8-hour limit,
+- 16 allocated CPUs and at most 16 subject workers per repeat, 64 GB RAM per task, and an 8-hour limit,
 - site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0`, with the conflicting SimNIBS module disabled,
 - Python: `$HOME/.conda/envs/ti-post/bin/python`.
+
+The 16-worker value is an upper bound. The first subject is rendered in an
+isolated process to measure peak memory, and the existing memory guard lowers
+the active worker count if 16 real meshes would not fit safely in 64 GB.
+Parallelism is across subjects: each worker loads one large mesh once, extracts
+all tissues, and generates both views. Nested tissue pools are intentionally
+avoided because they would duplicate mesh loading or transfer large surface
+arrays between processes without increasing the allocated CPU budget.
 
 Tissue walls add one dependency that whole-mesh Gmsh walls do not need: the
 tetrahedral tissue labels must be parsed before each tissue surface can be
@@ -66,51 +78,48 @@ $HOME/.conda/envs/ti-post/bin/python -m pip install --requirement \
   $HOME/Repos/TI_Pipeline/SimNIBS/Scripts/mesh_repeat_analysis/post/mesh_qc/requirements-tissue-walls.txt
 ```
 
-The pilot preflight imports this dependency and extracts every tissue tag from
-one real Data_01 mesh before starting the full QC/render pipeline.
+Each array task imports this dependency and verifies exactly 175 discoverable
+meshes before rendering its repeat.
 
 The terminal connection can be closed after `sbatch` prints the job ID. Monitor
 the scheduler and job output with:
 
 ```bash
-squeue -j <job-id>
-tail -f mesh_lh_d01_walls_<job-id>.out
-tail -f /mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_Data_01_front_back_test/mesh_qc_<job-id>.log
+squeue -j <array-job-id>
+tail -f mesh_lh_tissues_<array-job-id>_1.out
+tail -f /mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_all_repeats/Left_Hippocampus_Data_01/mesh_qc_<array-job-id>_1.log
 ```
 
-The final tissue walls are written under `mosaics/tissues/` in the output root.
+The final tissue walls are written under `mosaics/tissues/` in each repeat's output root.
 Each tissue has `<tissue-slug>_wall.png` for the front and
 `<tissue-slug>_back_wall.png` for the back.
 
-If Slurm stops the job during rendering, resume the same output directory
-without repeating discovery or geometry QC:
+If Slurm stops one or more tasks, resubmit the same full array. Tissue-only mode
+reuses every existing non-empty tile, so completed work is not rendered again.
 
 ```bash
-sbatch --export=ALL,LEFT_HIPPOCAMPUS_PILOT_STAGE=render \
-  mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_pilot.slurm
+sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_array.slurm
 ```
 
-### Direct Gmsh Tissue-Visibility Smoke Test
+The old `run_left_hippocampus_tissue_walls_pilot.slurm` launcher remains in the
+repository for compatibility and provenance. It covers only Data_01 with one
+worker and is not the production launcher.
 
-Before replacing extracted tissue surfaces with Gmsh physical-volume
-visibility, test the exact site Gmsh version on one mesh and one tissue:
+### Retired Direct-Visibility Experiment
 
-```bash
-sbatch mesh_repeat_analysis/hpc_scripts/run_gmsh_tissue_visibility_smoke.slurm
-```
-
-This job does not invoke Python, SimNIBS, or `meshio`. It loads the
-`sub-CC110056` mesh once, shows physical volume tag `5` (scalp), and asks Gmsh
-to write front and back PNGs from the same process. Results are written under:
+The one-mesh direct Gmsh visibility experiment is retained only as failure
+provenance and must not be submitted. It loaded `sub-CC110056`, showed physical
+volume tag `5` (scalp), and attempted to write front and back PNGs from one
+Gmsh process under:
 
 ```text
 /mnt/parscratch/users/cop23bi/mesh-wall/gmsh_tissue_visibility_smoke/<job-id>/
 ```
 
-The full renderer should use this path only after the job reports `PASS` and
-both PNGs are non-empty. Slurm is the sole timeout authority for this job and
-uses the campaign-standard 8-hour limit; the launcher does not impose a shorter
-subprocess timeout.
+Stanage job `10904815` produced no non-empty image after almost three hours.
+Direct physical-volume rendering is therefore retired for cohort walls. The
+campaign policy requires full requested scope by default; reduced smoke or
+pilot runs require explicit user authorization.
 
 Default command-line execution is tuned for large interactive HPC sessions:
 
@@ -182,6 +191,23 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
 - parallelizes per-mesh PNG rendering with `--workers`.
 
 This means a Gmsh render job that hits a Slurm time limit can be submitted again with the same `--out` directory. Already completed per-mesh PNGs are kept, only missing renders are generated, and mosaics are rebuilt from the combined set.
+
+To discover meshes and generate only tissue tiles and walls, without geometry
+QC or ordinary whole-mesh renders, use:
+
+```bash
+python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
+  --root /path/to/mesh_repeat \
+  --out /path/to/tissue_wall_outputs \
+  --renderer gmsh \
+  --workers 0 \
+  --tissue-only
+```
+
+`--tissue-only` writes `found_meshes.csv`, renders front/back tissue tiles,
+builds tissue walls, and writes the tissue presence, completeness, manifest,
+and exception CSVs. It reuses existing non-empty tissue tiles on resubmission.
+It cannot be combined with `--render-only`, `--qc-only`, or `--skip-renders`.
 
 Mosaic assembly is separate from per-mesh rendering. Individual renders may be complete even if `mosaics/all_mesh_wall.png` is missing. The mosaic builder uses Pillow first and falls back to ImageMagick `magick montage` or `montage` if Pillow is unavailable. Large ImageMagick mosaics are assembled in stripes to avoid one high-memory command over thousands of PNGs. On Slurm, set `IMAGEMAGICK_MODULE=<module-name>` to load a site ImageMagick module after the wrapper's `module purge`, or set `MESH_QC_MONTAGE_BIN=/path/to/magick-or-montage`.
 

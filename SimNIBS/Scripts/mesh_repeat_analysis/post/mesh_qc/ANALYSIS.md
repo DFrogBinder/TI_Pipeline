@@ -12,7 +12,8 @@ The CLI can now be run in separate stages:
 
 - full pipeline,
 - QC-only,
-- render-only from previously written CSV outputs.
+- render-only from previously written CSV outputs,
+- tissue-only discovery and front/back tissue rendering.
 
 It does not:
 
@@ -70,6 +71,11 @@ When `--tissue-walls` is enabled, tissue surfaces are extracted separately from 
 Stored triangle elements tagged `1000 + tissue_tag` are not used for this step. On real CHARM meshes those stored interfaces can be only a subset of a tissue boundary, particularly at interfaces with other tissues.
 
 The tetrahedral-boundary path is important because stored triangle elements in a SimNIBS `.msh` can include internal tissue interfaces, which may appear non-manifold even when the exterior head surface is valid.
+
+`--tissue-only` runs input discovery and this tissue extraction/rendering path
+directly. It does not calculate geometry-QC metrics, load the generic exterior
+surface, render the ordinary whole mesh, or build `all_mesh_wall.png`. It is an
+additive mode; the default full, QC-only, and render-only paths are unchanged.
 
 ## Per-Mesh Geometry Checks
 
@@ -212,6 +218,13 @@ Pillow fallback details:
 Each mesh is checked independently.
 
 QC and per-mesh PNG rendering therefore parallelize naturally across worker processes. Tissue rendering uses the same process-level strategy across meshes. Inside a tissue worker, the mesh is loaded once and the front and back views of its tissue tags are processed sequentially, so workers do not repeatedly load the same large mesh or start nested pools.
+
+For the full Left Hippocampus campaign, the outer Slurm array parallelizes the
+ten repeat directories and each array task uses a process pool across its 175
+subjects. Tissue/view work stays serial inside each subject worker. With 16
+CPUs per array task this keeps up to 160 subject workers active across the ten
+repeats while retaining one mesh load per active subject. The sampled-memory
+guard can reduce workers independently in any repeat.
 
 Current worker behavior:
 

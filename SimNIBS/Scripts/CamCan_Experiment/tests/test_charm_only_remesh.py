@@ -1,9 +1,11 @@
 import csv
 import subprocess
+import sys
 from pathlib import Path
 
 from charm_only_remesh.workflow import (
     build_remesh_manifest,
+    main,
     read_tsv,
     remove_installation_backups,
     remove_roast_segmentations,
@@ -261,6 +263,135 @@ def test_run_task_invokes_only_mesh_mode_and_removes_old_mesh(tmp_path, monkeypa
         task_indices=[0],
     )
     assert validation["status"] == "complete"
+
+
+def test_source_free_remesh_uses_temporary_installed_label_snapshot(
+    tmp_path, monkeypatch
+):
+    roi_root, install, anat, label, mesh = _install_manifest(tmp_path)
+    source = Path(read_tsv(install)[0]["source"])
+    source.unlink()
+    manifest = tmp_path / "remesh-source-free.tsv"
+
+    blocked = build_remesh_manifest(
+        install_manifest=install,
+        roi_root=roi_root,
+        manifest=manifest,
+        summary=tmp_path / "blocked-source-free.json",
+        expected_targets=1,
+    )
+    assert blocked["status"] == "blocked"
+
+    ready = build_remesh_manifest(
+        install_manifest=install,
+        roi_root=roi_root,
+        manifest=manifest,
+        summary=tmp_path / "ready-source-free.json",
+        expected_targets=1,
+        allow_missing_source_labels=True,
+    )
+    assert ready["status"] == "ready"
+    assert ready["source_label_modes"] == {
+        "external_verified": 0,
+        "installed_snapshot": 1,
+    }
+    assert read_tsv(manifest)[0]["source_label_mode"] == "installed_snapshot"
+
+    def fake_run(command, *, cwd, capture_output, text):
+        _write(mesh, "new-source-free-mesh")
+        return subprocess.CompletedProcess(command, 0, "mesh complete\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = run_remesh_task(
+        manifest=manifest,
+        task_index=0,
+        result_dir=tmp_path / "results-source-free",
+        load_mesh=False,
+    )
+
+    assert result["source_label_mode"] == "installed_snapshot"
+    assert label.read_text(encoding="utf-8") == "charm-only-label"
+    rollback = label.parent / ".tissue_labeling_upsampled.nii.gz.charm-remesh-rollback"
+    assert not rollback.exists()
+    validation = validate_remesh_results(
+        manifest=manifest,
+        result_dir=tmp_path / "results-source-free",
+        summary=tmp_path / "validation-source-free.tsv",
+        load_mesh=False,
+    )
+    assert validation["status"] == "complete"
+
+
+def test_cli_preflight_accepts_explicit_source_free_mode(tmp_path, monkeypatch):
+    roi_root, install, _, _, _ = _install_manifest(tmp_path)
+    Path(read_tsv(install)[0]["source"]).unlink()
+    manifest = tmp_path / "cli-source-free.tsv"
+    summary = tmp_path / "cli-source-free.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "workflow.py",
+            "preflight",
+            "--install-manifest",
+            str(install),
+            "--roi-root",
+            str(roi_root),
+            "--manifest",
+            str(manifest),
+            "--summary",
+            str(summary),
+            "--expected-targets",
+            "1",
+            "--expected-repeats",
+            "1",
+            "--expected-subjects",
+            "1",
+            "--allow-missing-source-labels",
+        ],
+    )
+
+    assert main() == 0
+    assert read_tsv(manifest)[0]["source_label_mode"] == "installed_snapshot"
+
+
+def test_source_free_remesh_restores_changed_label_from_snapshot(
+    tmp_path, monkeypatch
+):
+    roi_root, install, _, label, mesh = _install_manifest(tmp_path)
+    Path(read_tsv(install)[0]["source"]).unlink()
+    manifest = tmp_path / "remesh-source-free.tsv"
+    build_remesh_manifest(
+        install_manifest=install,
+        roi_root=roi_root,
+        manifest=manifest,
+        summary=tmp_path / "summary-source-free.json",
+        expected_targets=1,
+        allow_missing_source_labels=True,
+    )
+
+    def bad_run(command, **kwargs):
+        label.write_text("unexpected-change", encoding="utf-8")
+        mesh.write_text("new-mesh", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", bad_run)
+    try:
+        run_remesh_task(
+            manifest=manifest,
+            task_index=0,
+            result_dir=tmp_path / "results-source-free",
+            load_mesh=False,
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("a changed installed label must fail the task")
+
+    assert label.read_text(encoding="utf-8") == "charm-only-label"
+    assert not mesh.exists()
+    rollback = label.parent / ".tissue_labeling_upsampled.nii.gz.charm-remesh-rollback"
+    assert not rollback.exists()
 
 
 def test_run_task_refuses_mesh_path_outside_subject(tmp_path, monkeypatch):

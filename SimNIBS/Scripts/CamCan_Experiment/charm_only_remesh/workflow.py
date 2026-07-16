@@ -29,6 +29,10 @@ from utils.camcan_dataset import (  # noqa: E402
 
 TARGET_BASENAME = "tissue_labeling_upsampled.nii.gz"
 READY_INSTALL_STATUSES = {"installed", "already_current"}
+SOURCE_MODE_EXTERNAL = "external_verified"
+SOURCE_MODE_INSTALLED_SNAPSHOT = "installed_snapshot"
+SOURCE_MODES = {SOURCE_MODE_EXTERNAL, SOURCE_MODE_INSTALLED_SNAPSHOT}
+ROLLBACK_BASENAME = f".{TARGET_BASENAME}.charm-remesh-rollback"
 REMESH_FIELDNAMES = (
     "task_id",
     "dataset_name",
@@ -44,6 +48,7 @@ REMESH_FIELDNAMES = (
     "mesh_path",
     "status",
     "message",
+    "source_label_mode",
 )
 ROAST_REMOVAL_FIELDNAMES = (
     "dataset_name",
@@ -208,6 +213,7 @@ def build_remesh_manifest(
     roi_prefix: str | None = None,
     expected_repeats: int = 10,
     expected_subjects: int = 175,
+    allow_missing_source_labels: bool = False,
 ) -> dict[str, object]:
     roi_root_path = Path(roi_root).expanduser().resolve()
     install_rows = read_tsv(install_manifest)
@@ -234,6 +240,7 @@ def build_remesh_manifest(
         m2m_dir: Path | None = None
         label_path = Path(install_row["destination"]).expanduser()
         source_label_path = Path(install_row.get("source", "")).expanduser()
+        source_label_mode = SOURCE_MODE_EXTERNAL
         expected_hash = install_row["installed_sha256"].strip()
         mesh_path: Path | str = ""
 
@@ -256,7 +263,12 @@ def build_remesh_manifest(
             source_label_path = source_label_path.resolve(strict=True)
             if sha256_file(source_label_path) != expected_hash:
                 messages.append("source CHARM label hash differs from installed_sha256")
-        except (FileNotFoundError, OSError) as exc:
+        except FileNotFoundError as exc:
+            if allow_missing_source_labels:
+                source_label_mode = SOURCE_MODE_INSTALLED_SNAPSHOT
+            else:
+                messages.append(f"source CHARM label is unavailable: {exc}")
+        except OSError as exc:
             messages.append(f"source CHARM label is unavailable: {exc}")
 
         try:
@@ -311,6 +323,7 @@ def build_remesh_manifest(
                 "mesh_path": mesh_path,
                 "status": "ready" if not messages else "blocked",
                 "message": "ready" if not messages else "; ".join(messages),
+                "source_label_mode": source_label_mode,
             }
         )
 
@@ -326,6 +339,10 @@ def build_remesh_manifest(
 
     manifest_path = write_tsv(manifest, REMESH_FIELDNAMES, rows)
     ready = sum(row["status"] == "ready" for row in rows)
+    source_label_modes = {
+        mode: sum(row["source_label_mode"] == mode for row in rows)
+        for mode in sorted(SOURCE_MODES)
+    }
     payload = {
         "status": "ready" if ready == expected_targets else "blocked",
         "install_manifest": str(Path(install_manifest).expanduser().resolve()),
@@ -336,6 +353,8 @@ def build_remesh_manifest(
         "targets_expected": expected_targets,
         "ready": ready,
         "blocked": len(rows) - ready,
+        "allow_missing_source_labels": allow_missing_source_labels,
+        "source_label_modes": source_label_modes,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     write_json_atomic(summary, payload)
@@ -697,6 +716,42 @@ def _restore_installed_label(source: Path, destination: Path, expected_hash: str
     os.replace(temporary, destination)
 
 
+def _prepare_installed_label_snapshot(label_path: Path, expected_hash: str) -> Path:
+    """Create or reuse a verified local rollback copy for source-free remeshing."""
+    snapshot = label_path.with_name(ROLLBACK_BASENAME)
+    if snapshot.is_symlink():
+        raise ValueError(f"refusing rollback snapshot symlink: {snapshot}")
+    if snapshot.exists():
+        if not snapshot.is_file():
+            raise ValueError(f"rollback snapshot is not a regular file: {snapshot}")
+        snapshot_hash = sha256_file(snapshot)
+        if snapshot_hash != expected_hash:
+            raise ValueError(
+                f"rollback snapshot hash mismatch: {snapshot_hash} != {expected_hash}"
+            )
+        if not label_path.is_file() or sha256_file(label_path) != expected_hash:
+            _restore_installed_label(snapshot, label_path, expected_hash)
+        return snapshot
+
+    live_hash = sha256_file(label_path)
+    if live_hash != expected_hash:
+        raise ValueError(
+            f"label hash mismatch before snapshot: {live_hash} != {expected_hash}"
+        )
+    temporary = snapshot.with_name(f".{snapshot.name}.tmp-{os.getpid()}")
+    try:
+        shutil.copy2(label_path, temporary)
+        copied_hash = sha256_file(temporary)
+        if copied_hash != expected_hash:
+            raise IOError(
+                f"rollback snapshot verification failed: {copied_hash} != {expected_hash}"
+            )
+        os.replace(temporary, snapshot)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return snapshot
+
+
 def run_remesh_task(
     *,
     manifest: str | Path,
@@ -726,6 +781,9 @@ def run_remesh_task(
     if not label_path.is_relative_to(anat_dir) or label_path.name != TARGET_BASENAME:
         raise ValueError(f"unexpected installed label path: {label_path}")
     source_label_path = Path(row["source_label_path"])
+    source_label_mode = (
+        row.get("source_label_mode", "").strip() or SOURCE_MODE_EXTERNAL
+    )
     expected_hash = row["expected_label_sha256"]
     result_path = result_path_for_task(result_dir, dataset_name, subject)
 
@@ -750,55 +808,92 @@ def run_remesh_task(
             "refusing remesh while ROAST/custom segmentation remains: "
             + ";".join(str(path) for path in live_roast)
         )
-    before_hash = sha256_file(label_path)
-    if before_hash != expected_hash:
-        raise ValueError(f"label hash mismatch before remesh: {before_hash} != {expected_hash}")
-    source_hash = sha256_file(source_label_path)
-    if source_hash != expected_hash:
-        raise ValueError(
-            f"source CHARM label hash mismatch before remesh: {source_hash} != {expected_hash}"
-        )
-
-    started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    command = [charm_bin, subject, "--mesh"]
     prior_mesh_path = Path(row["mesh_path"]).expanduser()
     allowed_mesh_paths = set(candidate_mesh_paths(anat_dir, subject))
     if not prior_mesh_path.is_absolute() or prior_mesh_path not in allowed_mesh_paths:
         raise ValueError(
             f"manifest mesh path is outside the allowed subject locations: {prior_mesh_path}"
         )
-    removed_mesh = _remove_existing_mesh(prior_mesh_path)
+
+    if source_label_mode not in SOURCE_MODES:
+        raise ValueError(f"unsupported source label mode: {source_label_mode!r}")
+    rollback_snapshot: Path | None = None
+    if source_label_mode == SOURCE_MODE_EXTERNAL:
+        before_hash = sha256_file(label_path)
+        if before_hash != expected_hash:
+            raise ValueError(
+                f"label hash mismatch before remesh: {before_hash} != {expected_hash}"
+            )
+        source_hash = sha256_file(source_label_path)
+        if source_hash != expected_hash:
+            raise ValueError(
+                "source CHARM label hash mismatch before remesh: "
+                f"{source_hash} != {expected_hash}"
+            )
+        rollback_source = source_label_path
+    else:
+        rollback_snapshot = _prepare_installed_label_snapshot(label_path, expected_hash)
+        before_hash = sha256_file(label_path)
+        if before_hash != expected_hash:
+            raise ValueError(
+                f"label hash mismatch before remesh: {before_hash} != {expected_hash}"
+            )
+        rollback_source = rollback_snapshot
+
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    command = [charm_bin, subject, "--mesh"]
     try:
-        print(json.dumps({"event": "charm_only_remesh_start", "command": command, "cwd": str(anat_dir)}))
-        completed = subprocess.run(command, cwd=anat_dir, capture_output=True, text=True)
-        if completed.stdout:
-            print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-        if completed.stderr:
-            print(completed.stderr, file=sys.stderr, end="" if completed.stderr.endswith("\n") else "\n")
-
-        after_hash = sha256_file(label_path)
-        if after_hash != before_hash:
-            raise RuntimeError(
-                f"CRITICAL: CHARM changed the installed segmentation map: {after_hash} != {before_hash}"
+        removed_mesh = _remove_existing_mesh(prior_mesh_path)
+        try:
+            print(
+                json.dumps(
+                    {
+                        "event": "charm_only_remesh_start",
+                        "command": command,
+                        "cwd": str(anat_dir),
+                        "source_label_mode": source_label_mode,
+                    }
+                )
             )
-        if completed.returncode != 0:
-            raise subprocess.CalledProcessError(completed.returncode, command)
-
-        mesh_path = resolve_existing_mesh(anat_dir, subject)
-        if mesh_path is None:
-            raise FileNotFoundError(
-                f"CHARM completed but no mesh was found for {subject} under {anat_dir}"
+            completed = subprocess.run(
+                command, cwd=anat_dir, capture_output=True, text=True
             )
-        if mesh_path.is_symlink() or not mesh_path.resolve(strict=True).is_relative_to(
-            anat_dir
-        ):
-            raise ValueError(f"new mesh is not a regular in-subject path: {mesh_path}")
-        mesh_payload = validate_mesh_payload(mesh_path, load_mesh=load_mesh)
-    except Exception:
-        _remove_failed_subject_meshes(anat_dir, subject)
-        if not label_path.is_file() or sha256_file(label_path) != expected_hash:
-            _restore_installed_label(source_label_path, label_path, expected_hash)
-        raise
+            if completed.stdout:
+                print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
+            if completed.stderr:
+                print(
+                    completed.stderr,
+                    file=sys.stderr,
+                    end="" if completed.stderr.endswith("\n") else "\n",
+                )
+
+            after_hash = sha256_file(label_path)
+            if after_hash != before_hash:
+                raise RuntimeError(
+                    "CRITICAL: CHARM changed the installed segmentation map: "
+                    f"{after_hash} != {before_hash}"
+                )
+            if completed.returncode != 0:
+                raise subprocess.CalledProcessError(completed.returncode, command)
+
+            mesh_path = resolve_existing_mesh(anat_dir, subject)
+            if mesh_path is None:
+                raise FileNotFoundError(
+                    f"CHARM completed but no mesh was found for {subject} under {anat_dir}"
+                )
+            if mesh_path.is_symlink() or not mesh_path.resolve(strict=True).is_relative_to(
+                anat_dir
+            ):
+                raise ValueError(f"new mesh is not a regular in-subject path: {mesh_path}")
+            mesh_payload = validate_mesh_payload(mesh_path, load_mesh=load_mesh)
+        except Exception:
+            _remove_failed_subject_meshes(anat_dir, subject)
+            if not label_path.is_file() or sha256_file(label_path) != expected_hash:
+                _restore_installed_label(rollback_source, label_path, expected_hash)
+            raise
+    finally:
+        if rollback_snapshot is not None:
+            rollback_snapshot.unlink(missing_ok=True)
     payload = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "status": "complete",
@@ -808,6 +903,7 @@ def run_remesh_task(
         "anat_dir": str(anat_dir),
         "label_path": str(label_path),
         "source_label_path": str(source_label_path),
+        "source_label_mode": source_label_mode,
         "label_sha256_before": before_hash,
         "label_sha256_after": after_hash,
         "command": command,
@@ -861,8 +957,26 @@ def validate_remesh_results(
                     messages.append("installed segmentation hash changed")
                 if result.get("label_sha256_after") != row["expected_label_sha256"]:
                     messages.append("result label hash differs from manifest")
-                if sha256_file(Path(row["source_label_path"])) != row["expected_label_sha256"]:
-                    messages.append("source CHARM segmentation hash changed")
+                source_label_mode = (
+                    row.get("source_label_mode", "").strip()
+                    or SOURCE_MODE_EXTERNAL
+                )
+                if source_label_mode == SOURCE_MODE_EXTERNAL:
+                    if (
+                        sha256_file(Path(row["source_label_path"]))
+                        != row["expected_label_sha256"]
+                    ):
+                        messages.append("source CHARM segmentation hash changed")
+                elif source_label_mode != SOURCE_MODE_INSTALLED_SNAPSHOT:
+                    messages.append(
+                        f"unsupported source label mode: {source_label_mode!r}"
+                    )
+                result_source_mode = result.get("source_label_mode")
+                if (
+                    result_source_mode is not None
+                    and result_source_mode != source_label_mode
+                ):
+                    messages.append("result source label mode differs from manifest")
                 mesh_path = Path(str(result.get("mesh_path", "")))
                 resolved_mesh = resolve_existing_mesh(Path(row["anat_dir"]), row["subject"])
                 if resolved_mesh is None or mesh_path.resolve() != resolved_mesh.resolve():
@@ -936,6 +1050,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--roi-prefix")
     preflight.add_argument("--expected-repeats", type=int, default=10)
     preflight.add_argument("--expected-subjects", type=int, default=175)
+    preflight.add_argument("--allow-missing-source-labels", action="store_true")
 
     run_task = subparsers.add_parser("run-task")
     run_task.add_argument("--manifest", required=True)
@@ -994,6 +1109,7 @@ def main() -> int:
             roi_prefix=args.roi_prefix,
             expected_repeats=args.expected_repeats,
             expected_subjects=args.expected_subjects,
+            allow_missing_source_labels=args.allow_missing_source_labels,
         )
     elif args.command == "run-task":
         result = run_remesh_task(

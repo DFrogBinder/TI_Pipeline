@@ -73,7 +73,7 @@ if ! [[ "${RETRY_COUNT}" =~ ^[0-9]+$ ]]; then
 fi
 
 TASK_LINE=$(sed -n "$((TASK_INDEX + 2))p" "${TI_CHARM_REMESH_MANIFEST}")
-IFS=$'\t' read -r TASK_ID DATASET_NAME ROI_PREFIX REPEAT_ID DATASET_ROOT SUBJECT ANAT_DIR M2M_DIR LABEL_PATH SOURCE_LABEL_PATH LABEL_HASH MESH_PATH STATUS MESSAGE <<< "${TASK_LINE}"
+IFS=$'\t' read -r TASK_ID DATASET_NAME ROI_PREFIX REPEAT_ID DATASET_ROOT SUBJECT ANAT_DIR M2M_DIR LABEL_PATH SOURCE_LABEL_PATH LABEL_HASH MESH_PATH STATUS MESSAGE SOURCE_LABEL_MODE <<< "${TASK_LINE}"
 if [ -z "${TASK_LINE}" ] || [ -z "${SUBJECT:-}" ]; then
     echo "[ERROR] No valid manifest row for task index ${TASK_INDEX}." >&2
     exit 2
@@ -87,6 +87,7 @@ echo "[INFO] Dataset:         ${DATASET_NAME}"
 echo "[INFO] Subject:         ${SUBJECT}"
 echo "[INFO] CHARM label:     ${LABEL_PATH}"
 echo "[INFO] Source label:    ${SOURCE_LABEL_PATH}"
+echo "[INFO] Source mode:     ${SOURCE_LABEL_MODE:-external_verified}"
 echo "[INFO] Label SHA-256:   ${LABEL_HASH}"
 echo "[INFO] Operation:       charm ${SUBJECT} --mesh"
 echo "[INFO] Retry:           ${RETRY_COUNT}/${MAX_RETRIES}"

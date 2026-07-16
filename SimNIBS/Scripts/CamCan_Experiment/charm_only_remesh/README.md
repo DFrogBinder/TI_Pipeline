@@ -10,10 +10,14 @@ charm <subject> --mesh
 ```
 
 The workflow fails closed if a ROAST/custom map remains in a live `anat`
-directory, if an installed CHARM label differs from the installation manifest,
-or if the original source label is unavailable. Obsolete ROAST maps and meshes
-are deleted from the HPC because their recovery copies exist outside the HPC.
-Generated simulation/post outputs remain separately archived.
+directory or if an installed CHARM label differs from the installation
+manifest. By default it also requires the original source label. Campaigns
+that deliberately removed the uploaded source directory can explicitly use
+`--allow-missing-source-labels`; each task then makes a verified, temporary
+rollback snapshot beside the installed label and deletes it after remeshing.
+Obsolete ROAST maps and meshes are deleted from the HPC because their recovery
+copies exist outside the HPC. Generated simulation/post outputs remain
+separately archived.
 
 ## 1. Set campaign paths
 
@@ -112,6 +116,19 @@ python3 CamCan_Experiment/charm_only_remesh/workflow.py preflight \
   --roi-prefix "$ROI_PREFIX" \
   --expected-targets "$EXPECTED_TARGETS"
 ```
+
+If the uploaded source-map directory was deliberately deleted after all live
+copies were hash-verified and installed, add:
+
+```text
+--allow-missing-source-labels
+```
+
+This opt-in mode still verifies every installed label against
+`installed_sha256`. Before deleting an old mesh, the task creates a local
+rollback snapshot of that verified label. The snapshot is used to restore a
+label if CHARM changes it, survives a hard task interruption for the next
+retry, and is removed after a normal success or handled failure.
 
 Do not submit unless the summary reports `status=ready`, `ready=1750`, and
 `blocked=0`.

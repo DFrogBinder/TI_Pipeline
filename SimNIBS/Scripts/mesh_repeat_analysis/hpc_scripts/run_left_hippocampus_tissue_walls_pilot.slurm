@@ -37,9 +37,10 @@ IMAGE_SIZE_CONFIG="1200"
 TILE_SIZE_CONFIG="220"
 COLS_CONFIG="10"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PIPELINE_DIR_CONFIG="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-GENERIC_RUNNER="${SCRIPT_DIR}/run_mesh_qc.slurm"
+# Slurm runs a copied script from /var/spool/slurmd, so BASH_SOURCE cannot be
+# used to locate the repository from inside an allocated job.
+PIPELINE_DIR_CONFIG="${HOME}/Repos/TI_Pipeline/SimNIBS/Scripts"
+GENERIC_RUNNER="${PIPELINE_DIR_CONFIG}/mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm"
 
 # Assign the pilot settings unconditionally so stale generic mesh-QC variables
 # in the submission shell cannot redirect this job to another dataset.

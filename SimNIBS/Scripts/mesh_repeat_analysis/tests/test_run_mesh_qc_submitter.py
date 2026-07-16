@@ -57,6 +57,8 @@ def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():
     assert 'GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"' in text
     assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in text
     assert '${HOME}/.conda/envs/ti-post/bin/python' in text
+    assert 'PIPELINE_DIR_CONFIG="${HOME}/Repos/TI_Pipeline/SimNIBS/Scripts"' in text
+    assert 'dirname "${BASH_SOURCE[0]}"' not in text
     assert 'export MESH_QC_ROOT="${MESH_QC_ROOT_CONFIG}"' in text
     assert 'LEFT_HIPPOCAMPUS_PILOT_STAGE' in text
     assert "discover_meshes" in text

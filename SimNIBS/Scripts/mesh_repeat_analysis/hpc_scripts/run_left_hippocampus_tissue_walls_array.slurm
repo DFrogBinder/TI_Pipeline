@@ -13,12 +13,12 @@
 set -euo pipefail
 
 # Full Left Hippocampus scope: ten repeats, 175 meshes per repeat. Each array
-# task writes an independent set of front/back tissue walls and can be resumed
-# safely because non-empty tissue tiles are reused.
+# task writes an independent set of anatomical orthographic front/back tissue
+# walls and can be resumed safely because marked non-empty tiles are reused.
 PIPELINE_DIR_CONFIG="${HOME}/Repos/TI_Pipeline/SimNIBS/Scripts"
 MESH_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs"
-OUTPUT_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_all_repeats"
-LOG_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_all_repeats"
+OUTPUT_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_orthographic_all_repeats"
+LOG_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_orthographic_all_repeats"
 MESH_QC_PYTHON_CONFIG="${HOME}/.conda/envs/ti-post/bin/python"
 
 EXPECTED_REPEATS_CONFIG="10"
@@ -132,6 +132,7 @@ echo "[INFO] Expected tissue PNGs: ${EXPECTED_TOTAL_TILES_CONFIG} total; ${EXPEC
 echo "[INFO] Expected walls:       ${EXPECTED_TOTAL_WALLS_CONFIG} total; ${EXPECTED_WALLS_PER_REPEAT_CONFIG} in this task"
 echo "[INFO] Current repeat/task:  ${REPEAT_NAME} / ${REPEAT_INDEX}"
 echo "[INFO] Whole-mesh renders:   disabled"
+echo "[INFO] Tissue views:         RAS +Y face / -Y posterior; +Z up; orthographic"
 echo "[INFO] Workers this task:    ${WORKERS_CONFIG} (memory-aware reduction remains enabled)"
 echo "[INFO] Output:               ${MESH_QC_OUT_CONFIG}"
 echo "[INFO] Persistent log:       ${MESH_QC_LOG_DIR_CONFIG}"

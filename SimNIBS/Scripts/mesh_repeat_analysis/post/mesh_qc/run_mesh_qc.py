@@ -127,6 +127,14 @@ TISSUE_RENDER_COMPLETENESS_FIELDS = (
     "missing_tiles",
 )
 TISSUE_VIEWS = ("front", "back")
+TISSUE_VIEW_CONVENTION = {
+    "version": "ras_anatomical_orthographic_v2",
+    "front": "camera from RAS +Y toward the origin",
+    "back": "camera from RAS -Y toward the origin",
+    "up": "RAS +Z",
+    "projection": "orthographic",
+}
+TISSUE_VIEW_CONVENTION_FILENAME = "tissue_view_convention.json"
 
 
 _RUN_LOGGER = None
@@ -1915,6 +1923,46 @@ def _write_tissue_completeness(
     return rows
 
 
+def _prepare_tissue_view_convention(out_dir: Path) -> None:
+    marker_path = out_dir / TISSUE_VIEW_CONVENTION_FILENAME
+    if marker_path.is_file():
+        try:
+            existing = json.loads(marker_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not read tissue view marker {marker_path}: {exc}"
+            ) from exc
+        if existing != TISSUE_VIEW_CONVENTION:
+            raise RuntimeError(
+                f"Tissue renders in {out_dir} use a different view convention. "
+                "Use a fresh output directory to avoid mixing incompatible tiles."
+            )
+        return
+
+    for tile_root in (
+        out_dir / "renders" / "tissues",
+        out_dir / "renders" / "tissues_back",
+    ):
+        if not tile_root.is_dir():
+            continue
+        for png_path in tile_root.rglob("*.png"):
+            try:
+                if png_path.is_file() and png_path.stat().st_size > 0:
+                    raise RuntimeError(
+                        f"Existing tissue tile {png_path} predates the current anatomical "
+                        "front/back view convention. Use a fresh output directory; these "
+                        "tiles must not be resumed."
+                    )
+            except OSError:
+                continue
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    marker_path.write_text(
+        json.dumps(TISSUE_VIEW_CONVENTION, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _run_tissue_outputs(
     render_records: list[MeshRecord],
     out_dir: Path,
@@ -1922,6 +1970,7 @@ def _run_tissue_outputs(
 ) -> None:
     if not render_records:
         return
+    _prepare_tissue_view_convention(out_dir)
     tissue_root = out_dir / "renders" / "tissues"
     task_specs: list[tuple[MeshRecord, str]] = []
     for idx, record in enumerate(render_records, start=1):

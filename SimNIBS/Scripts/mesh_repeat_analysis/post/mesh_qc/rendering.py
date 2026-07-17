@@ -60,7 +60,7 @@ def render_surface_png(
     renderer = renderer.lower()
     if renderer not in {"auto", "gmsh", "pyvista", "pillow"}:
         raise ValueError(f"Unsupported renderer: {renderer}")
-    surface = _surface_for_view(surface, view)
+    surface = _surface_for_anatomical_view(surface, view)
     if renderer in {"auto", "gmsh"}:
         try:
             _render_surface_with_gmsh(
@@ -80,6 +80,7 @@ def render_surface_png(
                 out_png,
                 label=label,
                 image_size=image_size,
+                orthographic=True,
             )
             return "pyvista"
         except Exception:
@@ -91,23 +92,35 @@ def render_surface_png(
         label=label,
         image_size=image_size,
         max_faces=max_faces,
+        camera_aligned=True,
     )
     return "pillow"
 
 
-def _surface_for_view(surface: SurfaceArrays, view: str) -> SurfaceArrays:
+def _surface_for_anatomical_view(surface: SurfaceArrays, view: str) -> SurfaceArrays:
+    """Map an RAS surface into an upright, front-facing camera frame.
+
+    Gmsh's zero-rotation camera looks down the camera-frame +Z axis. Front
+    therefore uses RAS +Y as depth, while back uses RAS -Y and mirrors X as it
+    would appear to an observer standing behind the head. RAS +Z stays upright
+    in both images.
+    """
     view = view.lower()
-    if view == "front":
-        return surface
-    if view != "back":
+    if view not in {"front", "back"}:
         raise ValueError(f"Unsupported surface view: {view}")
 
     points, faces = _validated_surface_arrays(surface)
     center = (points.min(axis=0) + points.max(axis=0)) * 0.5
-    rotated = points.copy()
-    rotated[:, 0] = (2.0 * center[0]) - rotated[:, 0]
-    rotated[:, 1] = (2.0 * center[1]) - rotated[:, 1]
-    return SurfaceArrays(points=rotated, faces=faces)
+    centered = points - center
+    if view == "front":
+        camera_points = np.column_stack(
+            (centered[:, 0], centered[:, 2], centered[:, 1])
+        )
+    else:
+        camera_points = np.column_stack(
+            (-centered[:, 0], centered[:, 2], -centered[:, 1])
+        )
+    return SurfaceArrays(points=camera_points, faces=faces)
 
 
 def _render_surface_with_gmsh(
@@ -125,17 +138,30 @@ def _render_surface_with_gmsh(
             out_png,
             label=label,
             image_size=image_size,
+            orthographic=True,
         )
 
 
-def _render_with_gmsh(path: Path, out_png: Path, *, label: str, image_size: int = 600) -> None:
+def _render_with_gmsh(
+    path: Path,
+    out_png: Path,
+    *,
+    label: str,
+    image_size: int = 600,
+    orthographic: bool = False,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="mesh_qc_gmsh_") as tmp_dir_name:
         tmp_dir = Path(tmp_dir_name)
         raw_png = tmp_dir / "render.png"
         script_path = tmp_dir / "render.geo"
 
         script_path.write_text(
-            _build_gmsh_geo_script(path, raw_png, image_size=image_size),
+            _build_gmsh_geo_script(
+                path,
+                raw_png,
+                image_size=image_size,
+                orthographic=orthographic,
+            ),
             encoding="utf-8",
         )
 
@@ -191,6 +217,7 @@ def _render_surface_with_pyvista(
     *,
     label: str,
     image_size: int = 600,
+    orthographic: bool = False,
 ) -> None:
     import pyvista as pv
 
@@ -219,10 +246,15 @@ def _render_surface_with_pyvista(
         smooth_shading=True,
     )
     plotter.add_text(label, position="upper_left", font_size=10, color="black")
-    plotter.camera.parallel_projection = False
     plotter.camera.focal_point = (0.0, 0.0, 0.0)
-    plotter.camera.position = (span * 1.35, span * 2.35, span * 0.85)
-    plotter.camera.view_up = (0.0, 0.0, 1.0)
+    if orthographic:
+        plotter.camera.parallel_projection = True
+        plotter.camera.position = (0.0, 0.0, span * 2.5)
+        plotter.camera.view_up = (0.0, 1.0, 0.0)
+    else:
+        plotter.camera.parallel_projection = False
+        plotter.camera.position = (span * 1.35, span * 2.35, span * 0.85)
+        plotter.camera.view_up = (0.0, 0.0, 1.0)
     plotter.camera.parallel_scale = span * 0.75
     plotter.reset_camera_clipping_range()
 
@@ -256,9 +288,10 @@ def _render_surface_with_pillow(
     label: str,
     image_size: int = 600,
     max_faces: int = 12000,
+    camera_aligned: bool = False,
 ) -> None:
     points, faces = _validated_surface_arrays(surface)
-    rotated = _front_view(points)
+    rotated = points if camera_aligned else _front_view(points)
     pix = _fit_pixels(rotated[:, :2], image_size=image_size)
 
     if len(faces) <= max_faces:
@@ -364,15 +397,34 @@ def _gmsh_version_timeout_seconds() -> int:
     return max(value, 1)
 
 
-def _build_gmsh_geo_script(surface_msh: Path, out_png: Path, *, image_size: int) -> str:
+def _build_gmsh_geo_script(
+    surface_msh: Path,
+    out_png: Path,
+    *,
+    image_size: int,
+    orthographic: bool = False,
+) -> str:
     mesh_path = _gmsh_string(surface_msh)
     png_path = _gmsh_string(out_png)
-    return "\n".join(
+    lines = [
+        f'Merge "{mesh_path}";',
+        "General.Terminal = 1;",
+        "General.SmallAxes = 0;",
+        "General.Axes = 0;",
+    ]
+    if orthographic:
+        lines.extend(
+            [
+                "General.Orthographic = 1;",
+                "General.Trackball = 0;",
+                "General.RotationCenterGravity = 1;",
+                "General.RotationX = 0;",
+                "General.RotationY = 0;",
+                "General.RotationZ = 0;",
+            ]
+        )
+    lines.extend(
         [
-            f'Merge "{mesh_path}";',
-            "General.Terminal = 1;",
-            "General.SmallAxes = 0;",
-            "General.Axes = 0;",
             f"General.GraphicsWidth = {int(image_size)};",
             f"General.GraphicsHeight = {int(image_size)};",
             "Mesh.Points = 0;",
@@ -393,6 +445,7 @@ def _build_gmsh_geo_script(surface_msh: Path, out_png: Path, *, image_size: int)
             "",
         ]
     )
+    return "\n".join(lines)
 
 
 def _gmsh_string(path: Path) -> str:

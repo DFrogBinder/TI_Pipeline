@@ -181,10 +181,11 @@ def test_surface_renderer_exports_temporary_surface_for_gmsh(tmp_path, monkeypat
     )
     seen = {}
 
-    def fake_gmsh(path, out_png, *, label, image_size):
+    def fake_gmsh(path, out_png, *, label, image_size, orthographic):
         seen["mesh_text"] = path.read_text(encoding="utf-8")
         seen["label"] = label
         seen["image_size"] = image_size
+        seen["orthographic"] = orthographic
         out_png.write_bytes(b"png")
 
     monkeypatch.setattr(rendering, "_render_with_gmsh", fake_gmsh)
@@ -196,11 +197,42 @@ def test_surface_renderer_exports_temporary_surface_for_gmsh(tmp_path, monkeypat
     assert "$Elements\n1\n" in seen["mesh_text"]
     assert seen["label"] == "Scalp"
     assert seen["image_size"] == 180
+    assert seen["orthographic"] is True
     assert out.exists()
 
 
-def test_surface_renderer_rotates_back_view_around_vertical_axis(tmp_path, monkeypatch):
-    out = tmp_path / "back.png"
+@pytest.mark.parametrize(
+    ("view", "expected_points"),
+    [
+        (
+            "front",
+            np.array(
+                [
+                    [-2.0, -1.5, -1.0],
+                    [2.0, -1.5, -1.0],
+                    [-2.0, 1.5, 1.0],
+                ]
+            ),
+        ),
+        (
+            "back",
+            np.array(
+                [
+                    [2.0, -1.5, 1.0],
+                    [-2.0, -1.5, 1.0],
+                    [2.0, 1.5, -1.0],
+                ]
+            ),
+        ),
+    ],
+)
+def test_surface_renderer_maps_ras_to_anatomical_orthographic_view(
+    tmp_path,
+    monkeypatch,
+    view,
+    expected_points,
+):
+    out = tmp_path / f"{view}.png"
     surface = SurfaceArrays(
         points=np.array(
             [
@@ -213,8 +245,17 @@ def test_surface_renderer_rotates_back_view_around_vertical_axis(tmp_path, monke
     )
     seen = {}
 
-    def fake_pillow(surface_arg, out_png, *, label, image_size, max_faces):
+    def fake_pillow(
+        surface_arg,
+        out_png,
+        *,
+        label,
+        image_size,
+        max_faces,
+        camera_aligned,
+    ):
         seen["points"] = surface_arg.points.copy()
+        seen["camera_aligned"] = camera_aligned
         out_png.write_bytes(b"png")
 
     monkeypatch.setattr(rendering, "_render_surface_with_pillow", fake_pillow)
@@ -222,22 +263,14 @@ def test_surface_renderer_rotates_back_view_around_vertical_axis(tmp_path, monke
     actual = render_surface_png(
         surface,
         out,
-        label="Back",
-        view="back",
+        label=view.title(),
+        view=view,
         renderer="pillow",
     )
 
     assert actual == "pillow"
-    np.testing.assert_allclose(
-        seen["points"],
-        np.array(
-            [
-                [4.0, 2.0, 0.0],
-                [0.0, 2.0, 0.0],
-                [4.0, 0.0, 3.0],
-            ]
-        ),
-    )
+    assert seen["camera_aligned"] is True
+    np.testing.assert_allclose(seen["points"], expected_points)
 
 
 def test_surface_renderer_rejects_unknown_view(tmp_path):
@@ -400,6 +433,21 @@ def test_gmsh_geo_script_hides_surface_edges(tmp_path):
 
     assert "Mesh.SurfaceFaces = 1;" in script
     assert "Mesh.SurfaceEdges = 0;" in script
+
+
+def test_gmsh_tissue_geo_script_forces_anatomical_orthographic_camera(tmp_path):
+    script = rendering._build_gmsh_geo_script(
+        tmp_path / "tissue.msh",
+        tmp_path / "render.png",
+        image_size=320,
+        orthographic=True,
+    )
+
+    assert "General.Orthographic = 1;" in script
+    assert "General.Trackball = 0;" in script
+    assert "General.RotationX = 0;" in script
+    assert "General.RotationY = 0;" in script
+    assert "General.RotationZ = 0;" in script
 
 
 def test_gmsh_renderer_reports_timeout_as_runtime_error(tmp_path, monkeypatch):

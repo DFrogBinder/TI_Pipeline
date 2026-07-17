@@ -52,13 +52,18 @@ No shell exports are required. The production scope is:
 - tasks: 10 repeats with 175 meshes per task, 1,750 meshes total,
 - array: `1-10%10`, so all repeats may run concurrently,
 - expected CHARM output when all nine tags are present: 31,500 tissue tiles and 180 walls,
-- output: `/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_all_repeats/Left_Hippocampus_Data_XX`,
-- persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_all_repeats/Left_Hippocampus_Data_XX`,
+- output: `/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_orthographic_all_repeats/Left_Hippocampus_Data_XX`,
+- persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_orthographic_all_repeats/Left_Hippocampus_Data_XX`,
 - tissue-only mode: geometry QC and ordinary whole-mesh rendering are skipped,
-- front and back views at `1200 x 1200`,
+- anatomical orthographic front (camera from RAS `+Y`) and back (camera from RAS `-Y`) views with RAS `+Z` upright at `1200 x 1200`,
 - 16 allocated CPUs and at most 16 subject workers per repeat, 64 GB RAM per task, and an 8-hour limit,
 - site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0`, with the conflicting SimNIBS module disabled,
 - Python: `$HOME/.conda/envs/ti-post/bin/python`.
+
+The earlier `Left_Hippocampus_tissue_front_back_all_repeats` output used an
+implicit Gmsh camera and produced superior/axial images for both labels. It is
+retained only as provenance and must not be used as the output root for this
+rerun.
 
 The 16-worker value is an upper bound. The first subject is rendered in an
 isolated process to measure peak memory, and the existing memory guard lowers
@@ -87,7 +92,7 @@ the scheduler and job output with:
 ```bash
 squeue -j <array-job-id>
 tail -f mesh_lh_tissues_<array-job-id>_1.out
-tail -f /mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_all_repeats/Left_Hippocampus_Data_01/mesh_qc_<array-job-id>_1.log
+tail -f /mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_orthographic_all_repeats/Left_Hippocampus_Data_01/mesh_qc_<array-job-id>_1.log
 ```
 
 The final tissue walls are written under `mosaics/tissues/` in each repeat's output root.
@@ -95,7 +100,8 @@ Each tissue has `<tissue-slug>_wall.png` for the front and
 `<tissue-slug>_back_wall.png` for the back.
 
 If Slurm stops one or more tasks, resubmit the same full array. Tissue-only mode
-reuses every existing non-empty tile, so completed work is not rendered again.
+reuses every existing non-empty tile carrying the current view-convention
+marker, so completed work is not rendered again.
 
 ```bash
 sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_array.slurm
@@ -227,7 +233,7 @@ To inspect every tissue included in the tetrahedral meshes, pass:
 --tissue-walls
 ```
 
-This reconstructs the complete boundary of each positive tetrahedral tissue tag and writes two walls per tag: the existing front view and an additional 180-degree back view. Both views use the same renderer and framing. It does not rely only on stored SimNIBS triangle interfaces, because those interfaces do not necessarily contain every side of a tissue. Known CHARM tags are given readable names; unknown positive tags are retained as `tissue_<tag>`.
+This reconstructs the complete boundary of each positive tetrahedral tissue tag and writes two walls per tag. The front is an orthographic view from RAS `+Y` toward the face, the back is an orthographic view from RAS `-Y` toward the posterior head, and RAS `+Z` is upright in both. Both views use the same renderer and framing. It does not rely only on stored SimNIBS triangle interfaces, because those interfaces do not necessarily contain every side of a tissue. Known CHARM tags are given readable names; unknown positive tags are retained as `tissue_<tag>`.
 
 `tissue_render_completeness.csv` reports front and back independently and distinguishes two problems:
 
@@ -240,7 +246,11 @@ On the HPC, opt in by setting this control in the launcher being used:
 TISSUE_WALLS_CONFIG="1"
 ```
 
-For an existing QC output directory, `--render-only --tissue-walls` reuses the existing front tiles and generates the missing back tiles without rerunning geometry QC.
+New tissue output directories contain `tissue_view_convention.json`. A rerun
+with the same convention can reuse existing tiles without rerunning geometry
+QC. An older directory containing tissue PNGs but no marker is rejected because
+those tiles may use the obsolete superior/axial camera; choose a fresh output
+directory instead of mixing old and anatomical views.
 
 If old QC outputs contain `unknown_roi`, rerun `--render-only --roi-walls` after pulling the current code. Render-only will refresh ROI labels from the stored paths and rewrite the metadata CSVs before rebuilding mosaics. For explicit 4-ROI grouping, use:
 

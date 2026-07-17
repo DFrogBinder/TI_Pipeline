@@ -65,8 +65,8 @@ When `--tissue-walls` is enabled, tissue surfaces are extracted separately from 
 1. Read positive physical tags on tetrahedral elements.
 2. Select all tetrahedra belonging to one tag.
 3. Enumerate their four faces and remove faces shared by two tetrahedra of that same tissue.
-4. Render the remaining complete tissue boundary from the front.
-5. Rotate that same surface 180 degrees around the superior-inferior axis and render the back with identical renderer settings.
+4. Map the surface from RAS into an upright front camera frame: screen axes are RAS `X-Z`, depth is RAS `+Y`, and projection is orthographic.
+5. Map the same surface into the complementary back frame: screen axes are `-X-Z`, depth is RAS `-Y`, and projection is orthographic.
 
 Stored triangle elements tagged `1000 + tissue_tag` are not used for this step. On real CHARM meshes those stored interfaces can be only a subset of a tissue boundary, particularly at interfaces with other tissues.
 
@@ -264,6 +264,7 @@ The main outputs are:
 - `render_failures.txt`: meshes that passed QC loading but failed rendering.
 - `tissue_presence.csv`: one row per mesh/tissue pair detected from tetrahedral tags,
 - `tissue_render_manifest.csv`: one row per successful or resumed tissue render,
+- `tissue_view_convention.json`: versioned anatomical camera convention required before existing tissue tiles can be resumed,
 - `tissue_render_exception_details.csv`: tissue-load and tissue-render exceptions,
 - `tissue_render_completeness.csv`: cohort counts and status per tissue and view,
 - `renders/tissues/<tissue-slug>/*.png`: individual front-view tissue tiles,

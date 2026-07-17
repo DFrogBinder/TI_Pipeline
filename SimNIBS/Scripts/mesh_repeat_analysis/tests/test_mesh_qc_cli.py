@@ -372,6 +372,7 @@ def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(tmp_path, m
         faces=np.array([[0, 1, 2]]),
     )
     out_dir = tmp_path / "out"
+    run_mesh_qc._prepare_tissue_view_convention(out_dir)
     tile_name = "00001__sub-CC1__repeat_01__m2m_sub-CC1__sub-CC1.png"
     front_tile = out_dir / "renders" / "tissues" / "tag_05_scalp" / tile_name
     front_tile.parent.mkdir(parents=True)
@@ -419,6 +420,18 @@ def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(tmp_path, m
         rows = {row["view"]: row for row in csv.DictReader(f)}
     assert rows["front"]["resumed"] == "1"
     assert rows["back"]["resumed"] == "0"
+
+
+def test_tissue_walls_reject_unversioned_existing_tiles(tmp_path):
+    out_dir = tmp_path / "old_output"
+    old_tile = out_dir / "renders" / "tissues" / "tag_05_scalp" / "old.png"
+    old_tile.parent.mkdir(parents=True)
+    old_tile.write_bytes(b"old axial render")
+
+    with pytest.raises(RuntimeError, match="predates the current anatomical"):
+        run_mesh_qc._prepare_tissue_view_convention(out_dir)
+
+    assert not (out_dir / run_mesh_qc.TISSUE_VIEW_CONVENTION_FILENAME).exists()
 
 
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):

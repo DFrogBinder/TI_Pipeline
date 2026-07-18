@@ -33,6 +33,7 @@ SIMNIBS_MODULE_CONFIG="SimNIBS/4.0.1-foss-2023a"
 XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
 GMSH_MODULE_CONFIG=""
 MESH_QC_GMSH_BIN_CONFIG=""
+MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG="900"
 IMAGEMAGICK_MODULE_CONFIG=""
 MESH_QC_PYTHON_CONFIG="python"
 CHECK_COMPONENTS_CONFIG="0"
@@ -109,6 +110,7 @@ case "${PROFILE}" in
         SIMNIBS_MODULE_CONFIG="none"
         XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"
         GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"
+        MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG="900"
         MESH_QC_PYTHON_CONFIG="${HOME}/.conda/envs/ti-post/bin/python"
         CHECK_COMPONENTS_CONFIG="0"
         ROI_WALLS_CONFIG="0"
@@ -157,6 +159,7 @@ SIMNIBS_MODULE="${SIMNIBS_MODULE:-${SIMNIBS_MODULE_CONFIG}}"
 XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
 GMSH_MODULE="${GMSH_MODULE:-${GMSH_MODULE_CONFIG}}"
 MESH_QC_GMSH_BIN="${MESH_QC_GMSH_BIN:-${MESH_QC_GMSH_BIN_CONFIG}}"
+MESH_QC_GMSH_TIMEOUT_SECONDS="${MESH_QC_GMSH_TIMEOUT_SECONDS:-${MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG}}"
 IMAGEMAGICK_MODULE="${IMAGEMAGICK_MODULE:-${IMAGEMAGICK_MODULE_CONFIG}}"
 MESH_QC_PYTHON="${MESH_QC_PYTHON:-${MESH_QC_PYTHON_CONFIG}}"
 CHECK_COMPONENTS="${CHECK_COMPONENTS:-${CHECK_COMPONENTS_CONFIG}}"
@@ -175,6 +178,15 @@ MESH_QC_EXPECTED_SUBJECTS="${MESH_QC_EXPECTED_SUBJECTS:-${MESH_QC_EXPECTED_SUBJE
 SBATCH_BIN="${SBATCH_BIN:-${SBATCH_BIN_CONFIG}}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${SLURM_SCRIPT_CONFIG}}"
 MESH_QC_LOG_DIR="${MESH_QC_LOG_DIR:-${LOG_DIR_CONFIG}}"
+
+if ! [[ "${MESH_QC_GMSH_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[ERROR] MESH_QC_GMSH_TIMEOUT_SECONDS must be a positive integer; got ${MESH_QC_GMSH_TIMEOUT_SECONDS}." >&2
+    exit 2
+fi
+if [ "${PROFILE}" = "collected-charm-tissues" ] && [ "${MESH_QC_GMSH_TIMEOUT_SECONDS}" != "900" ]; then
+    echo "[ERROR] The collected CHARM profile protects MESH_QC_GMSH_TIMEOUT_SECONDS=900; got ${MESH_QC_GMSH_TIMEOUT_SECONDS}." >&2
+    exit 2
+fi
 
 resolve_path() {
     python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$1"
@@ -273,6 +285,7 @@ print(tiles, walls, version)
     echo "  tasks: 1"
     echo "  expected outputs: ${EXPECTED_TILES} tissue tiles and 19 tissue walls under the complete nine-tag expectation"
     echo "  execution: full collected cohort; tissue-only; no smoke or reduced tasks"
+    echo "[INFO] Protected Gmsh timeout: ${MESH_QC_GMSH_TIMEOUT_SECONDS}s per render"
     echo "[INFO] Existing resumable outputs: ${EXISTING_TILES} tissue tiles, ${EXISTING_WALLS} tissue walls"
     echo "[INFO] Existing view marker: ${EXISTING_VIEW_VERSION}"
     if [ "${FOUND_MESHES}" != "${FOUND_SUBJECTS}" ]; then
@@ -314,6 +327,7 @@ EXPORT_VARS+=",SIMNIBS_MODULE=${SIMNIBS_MODULE}"
 EXPORT_VARS+=",XVFB_MODULE=${XVFB_MODULE}"
 EXPORT_VARS+=",GMSH_MODULE=${GMSH_MODULE}"
 EXPORT_VARS+=",MESH_QC_GMSH_BIN=${MESH_QC_GMSH_BIN}"
+EXPORT_VARS+=",MESH_QC_GMSH_TIMEOUT_SECONDS=${MESH_QC_GMSH_TIMEOUT_SECONDS}"
 EXPORT_VARS+=",IMAGEMAGICK_MODULE=${IMAGEMAGICK_MODULE}"
 EXPORT_VARS+=",MESH_QC_PYTHON=${MESH_QC_PYTHON}"
 EXPORT_VARS+=",CHECK_COMPONENTS=${CHECK_COMPONENTS}"
@@ -347,6 +361,7 @@ echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE:-<none>}"
 echo "[INFO] Xvfb module:    ${XVFB_MODULE:-<none>}"
 echo "[INFO] Gmsh module:    ${GMSH_MODULE:-<none>}"
 echo "[INFO] Gmsh override:  ${MESH_QC_GMSH_BIN:-<none>}"
+echo "[INFO] Gmsh timeout:   ${MESH_QC_GMSH_TIMEOUT_SECONDS}s per render"
 echo "[INFO] ImageMagick module: ${IMAGEMAGICK_MODULE:-<none>}"
 echo "[INFO] Python:          ${MESH_QC_PYTHON}"
 echo "[INFO] Tissue walls:   ${TISSUE_WALLS}"

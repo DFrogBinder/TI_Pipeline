@@ -40,6 +40,7 @@ def test_submit_mesh_qc_has_full_collected_charm_tissue_profile():
     assert 'WORKERS_CONFIG="16"' in text
     assert 'SIMNIBS_MODULE_CONFIG="none"' in text
     assert 'GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"' in text
+    assert 'MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG="900"' in text
     assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in text
     assert '${HOME}/.conda/envs/ti-post/bin/python' in text
     assert "--preflight" in text
@@ -49,6 +50,9 @@ def test_submit_mesh_qc_has_full_collected_charm_tissue_profile():
     assert "ras_anatomical_orthographic_compact_top_v3" in text
     assert 'MESH_QC_EXPECTED_MESHES=${MESH_QC_EXPECTED_MESHES}' in text
     assert 'MESH_QC_EXPECTED_SUBJECTS=${MESH_QC_EXPECTED_SUBJECTS}' in text
+    assert 'MESH_QC_GMSH_TIMEOUT_SECONDS=${MESH_QC_GMSH_TIMEOUT_SECONDS}' in text
+    assert "protects MESH_QC_GMSH_TIMEOUT_SECONDS=900" in text
+    assert "Protected Gmsh timeout:" in text
 
 
 def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
@@ -68,6 +72,8 @@ def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     assert "PYTHON_CMD+=(--tissue-only)" in text
     assert 'MESH_QC_EXPECTED_MESHES_CONFIG=""' in text
     assert 'MESH_QC_EXPECTED_SUBJECTS_CONFIG=""' in text
+    assert 'MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG="900"' in text
+    assert "MESH_QC_GMSH_TIMEOUT_SECONDS must be a positive integer" in text
     assert "Mesh-count gate failed" in text
     assert "Subject-count gate failed" in text
 

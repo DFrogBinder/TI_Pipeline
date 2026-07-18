@@ -468,12 +468,12 @@ def test_gmsh_renderer_reports_timeout_as_runtime_error(tmp_path, monkeypatch):
     monkeypatch.setattr(rendering, "_build_gmsh_command", lambda script_path: ["gmsh", str(script_path)])
 
     def fake_run(cmd, *, check, capture_output, text, env, timeout):
-        assert timeout == 120
+        assert timeout == 900
         raise subprocess.TimeoutExpired(cmd, timeout)
 
     monkeypatch.setattr(rendering.subprocess, "run", fake_run)
 
-    with pytest.raises(RuntimeError, match="timed out after 120 seconds"):
+    with pytest.raises(RuntimeError, match="timed out after 900 seconds"):
         rendering._render_with_gmsh(mesh_path, out, label="mesh", image_size=320)
 
 

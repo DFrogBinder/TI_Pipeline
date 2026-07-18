@@ -14,6 +14,7 @@ from .loaders import load_surface_arrays
 
 
 _GMSH_BIN_CACHE: str | None = None
+DEFAULT_GMSH_TIMEOUT_SECONDS = 900
 
 
 def render_mesh_png(
@@ -201,11 +202,14 @@ def _render_with_gmsh(
 
 
 def _gmsh_timeout_seconds() -> int:
-    raw = os.environ.get("MESH_QC_GMSH_TIMEOUT_SECONDS", "120")
+    raw = os.environ.get(
+        "MESH_QC_GMSH_TIMEOUT_SECONDS",
+        str(DEFAULT_GMSH_TIMEOUT_SECONDS),
+    )
     try:
         value = int(raw)
     except ValueError:
-        return 120
+        return DEFAULT_GMSH_TIMEOUT_SECONDS
     return max(value, 1)
 
 

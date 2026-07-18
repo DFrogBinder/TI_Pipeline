@@ -157,9 +157,9 @@ bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-char
 
 If preflight reports another count, use the reported value instead of `474`.
 The profile encodes the established tissue-wall settings: 16 CPUs/workers,
-64 GB, `08:00:00`, Gmsh and Xvfb site modules, `ti-post` Python, tissue-only
-mode, no whole-mesh renders, front/back for all detected tissues, and the
-compact-bone top view.
+64 GB, `08:00:00`, a protected 900-second per-render Gmsh timeout, Gmsh and
+Xvfb site modules, `ti-post` Python, tissue-only mode, no whole-mesh renders,
+front/back for all detected tissues, and the compact-bone top view.
 
 Collected-cohort outputs are written to:
 
@@ -414,8 +414,12 @@ The Gmsh path opens the original `.msh` directly, so the output is much closer t
 When `--renderer gmsh` is forced, the render stage now runs a single-mesh Gmsh preflight before starting the worker pool. If Gmsh, Xvfb, or the display backend is broken, the stage aborts immediately with one logged error instead of marking every mesh as a render failure. Gmsh subprocesses also have a bounded timeout, configurable with:
 
 ```bash
-MESH_QC_GMSH_TIMEOUT_SECONDS=120
+MESH_QC_GMSH_TIMEOUT_SECONDS=900
 ```
+
+Production Stanage launchers pin this value to 900 seconds and print it during
+preflight. The outer Slurm allocation remains bounded by the campaign-standard
+8-hour job limit.
 
 On Stanage, the SimNIBS module can put a bundled `gmsh` on `PATH` that fails on older nodes with a `GLIBC_2.23 not found` error. The renderer validates `gmsh -version` and skips unusable `gmsh` binaries. For Slurm runs, prefer loading a compatible Gmsh module or setting an explicit binary:
 

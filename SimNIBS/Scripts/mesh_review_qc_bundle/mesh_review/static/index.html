@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mesh Review</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-block">
+      <h1>Mesh Review</h1>
+      <span id="saveState" class="save-state">Loading</span>
+    </div>
+    <nav class="view-tabs" aria-label="Application views">
+      <button id="reviewTab" class="tab-button active" type="button">Review</button>
+      <button id="subjectsTab" class="tab-button" type="button">Subjects</button>
+    </nav>
+    <div class="header-actions">
+      <button id="undoButton" class="secondary-button" type="button">Undo last</button>
+      <button id="exportButton" class="secondary-button" type="button">Export</button>
+      <button id="rescanButton" class="secondary-button" type="button">Rescan folder</button>
+    </div>
+  </header>
+
+  <section class="status-strip" aria-label="Review progress">
+    <div class="target-progress">
+      <div class="target-copy">
+        <strong><span id="acceptedSubjects">0</span> / <span id="targetSubjects">200</span> accepted</strong>
+        <span id="targetStatus">Target in progress</span>
+      </div>
+      <div class="progress-track" aria-hidden="true"><div id="targetProgressBar"></div></div>
+    </div>
+    <dl class="status-counts">
+      <div><dt>Declined</dt><dd id="declinedSubjects">0</dd></div>
+      <div><dt>Maybe</dt><dd id="maybeSubjects">0</dd></div>
+      <div><dt>In review</dt><dd id="inReviewSubjects">0</dd></div>
+      <div><dt>Unreviewed</dt><dd id="unreviewedSubjects">0</dd></div>
+      <div><dt>Images left</dt><dd id="remainingImages">0</dd></div>
+    </dl>
+  </section>
+
+  <main>
+    <section id="reviewView" class="review-layout">
+      <div class="viewer-column">
+        <div class="viewer-toolbar">
+          <div class="queue-controls">
+            <label for="queueMode">Queue</label>
+            <select id="queueMode">
+              <option value="new">New images</option>
+              <option value="maybe">Revisit maybe</option>
+            </select>
+            <label for="queueOrder">Order</label>
+            <select id="queueOrder">
+              <option value="subject">Subject first</option>
+              <option value="tissue">Tissue first</option>
+            </select>
+            <button id="reloadQueueButton" class="secondary-button compact" type="button">Reload queue</button>
+          </div>
+          <div class="zoom-controls" aria-label="Image zoom">
+            <button id="zoomOut" class="icon-button" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+            <input id="zoomRange" type="range" min="50" max="250" value="100" step="10" aria-label="Image zoom percentage">
+            <output id="zoomValue" for="zoomRange">100%</output>
+            <button id="zoomIn" class="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+            <button id="zoomReset" class="secondary-button compact" type="button">Reset</button>
+            <button id="fullScreenButton" class="secondary-button compact" type="button">Full screen</button>
+          </div>
+        </div>
+
+        <div id="imageStage" class="image-stage" aria-live="polite">
+          <div id="imageLoading" class="image-message">Loading review queue…</div>
+          <img id="reviewImage" class="review-image hidden" alt="Current tissue mesh render">
+          <div id="emptyQueue" class="empty-state hidden">
+            <h2 id="emptyTitle">Queue complete</h2>
+            <p id="emptyMessage">There are no images remaining in this queue.</p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="review-panel" aria-label="Current image decision">
+        <div class="queue-position"><span id="queueRemaining">0</span> images remain in this pass</div>
+        <h2 id="currentSubject">No image selected</h2>
+        <dl class="image-metadata">
+          <div><dt>Tissue</dt><dd id="currentTissue">—</dd></div>
+          <div><dt>View</dt><dd id="currentView">—</dd></div>
+          <div><dt>File</dt><dd id="currentFile">—</dd></div>
+        </dl>
+
+        <label class="note-label" for="decisionNote">Optional note</label>
+        <textarea id="decisionNote" rows="3" placeholder="Reason for uncertainty or exclusion"></textarea>
+
+        <div class="decision-actions">
+          <button id="acceptButton" class="decision-button accept" type="button">
+            <span>Accept</span><kbd>A</kbd>
+          </button>
+          <button id="maybeButton" class="decision-button maybe" type="button">
+            <span>Maybe</span><kbd>M</kbd>
+          </button>
+          <button id="declineButton" class="decision-button decline" type="button">
+            <span>Decline subject</span><kbd>D</kbd>
+          </button>
+        </div>
+
+        <p class="rule-copy">A decline excludes every remaining image for this subject. A subject is accepted only after all of its active images are accepted.</p>
+      </aside>
+    </section>
+
+    <section id="subjectsView" class="subjects-view hidden">
+      <div class="subjects-toolbar">
+        <div>
+          <h2>Subject decisions</h2>
+          <p>Aggregated from all active render decisions.</p>
+        </div>
+        <label class="search-label" for="subjectSearch">Search subject
+          <input id="subjectSearch" type="search" placeholder="sub-CC…">
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Subject</th>
+              <th>Status</th>
+              <th>Accepted</th>
+              <th>Maybe</th>
+              <th>Declined</th>
+              <th>Unreviewed</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody id="subjectTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+
+  <dialog id="targetDialog" class="target-dialog">
+    <h2>Acceptance target reached</h2>
+    <p>You now have <strong id="dialogAcceptedCount">200</strong> fully accepted subjects.</p>
+    <div class="dialog-actions">
+      <button id="dialogExportButton" class="primary-button" type="button">Export accepted IDs</button>
+      <button id="dialogContinueButton" class="secondary-button" type="button">Continue reviewing</button>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

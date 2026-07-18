@@ -1,0 +1,6 @@
+Place the complete render directory tree in this folder before launching the tool.
+
+Subdirectories are scanned recursively. Keep the original filenames because the
+subject ID and tissue/view labels are inferred from each file path.
+
+Supported image formats: PNG, JPG, JPEG, and WebP.

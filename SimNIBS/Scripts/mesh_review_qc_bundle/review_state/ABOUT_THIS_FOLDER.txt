@@ -1,0 +1,5 @@
+The review database and exports are written here automatically.
+
+Do not remove this directory between sessions. To hand the completed review
+back to the researcher, send this whole directory or at least its exports
+subdirectory.

@@ -22,11 +22,16 @@ def test_discovery_infers_existing_layout_and_flat_filenames(tmp_path):
         "00001__sub-CC120001__unknown_repeat__mesh.png",
     )
     _image(root, "flat/sub-CC120002__tag_05_scalp__front.png")
+    _image(
+        root,
+        "Left_Hippocampus_Data_01/renders/tissues_top/tag_07_compact_bone/"
+        "00002__sub-CC120003__unknown_repeat__mesh.png",
+    )
     _image(root, "flat/no_subject__tag_05_scalp.png")
 
     result = discover_images(root)
 
-    assert len(result.images) == 2
+    assert len(result.images) == 3
     assert len(result.skipped) == 1
     by_subject = {image.subject_id: image for image in result.images}
     compact = by_subject["sub-CC120001"]
@@ -35,6 +40,9 @@ def test_discovery_infers_existing_layout_and_flat_filenames(tmp_path):
     scalp = by_subject["sub-CC120002"]
     assert scalp.tissue == "tag_05_scalp"
     assert scalp.view == "front"
+    compact_top = by_subject["sub-CC120003"]
+    assert compact_top.tissue == "tag_07_compact_bone"
+    assert compact_top.view == "top"
 
 
 def test_decline_removes_subject_from_all_remaining_queue_images(tmp_path):
@@ -159,3 +167,23 @@ def test_exports_contain_subject_and_image_decision_tables(tmp_path):
         assert image_rows[0]["note"] == "good surface"
     finally:
         store.close()
+
+
+def test_standalone_bundle_runtime_matches_canonical_tool():
+    scripts_root = Path(__file__).resolve().parents[2]
+    canonical = scripts_root / "mesh_repeat_analysis" / "post" / "mesh_review"
+    bundled = scripts_root / "mesh_review_qc_bundle" / "mesh_review"
+    runtime_files = (
+        "__init__.py",
+        "discovery.py",
+        "server.py",
+        "store.py",
+        "static/app.css",
+        "static/app.js",
+        "static/index.html",
+    )
+
+    for relative_path in runtime_files:
+        assert (bundled / relative_path).read_bytes() == (
+            canonical / relative_path
+        ).read_bytes(), f"standalone bundle is stale: {relative_path}"

@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -135,6 +136,53 @@ class FakeMesh:
             elm_type=np.array([2, 4, 4, 4]),
             tag1=np.array([1005, 1, 2, 5]),
         )
+
+
+def test_mesh_settings_match_simnibs_401_api_without_newer_keys(monkeypatch):
+    settings = {
+        "mesh": {
+            "elem_sizes": {},
+            "smooth_size_field": 2,
+            "skin_facet_size": 2.0,
+            "facet_distances": {},
+            "optimize": True,
+            "remove_spikes": True,
+            "skin_tag": 1005,
+            "hierarchy": None,
+            "smooth_steps": 5,
+            "skin_care": 20,
+        }
+    }
+
+    def create_mesh_401(
+        label_img,
+        affine,
+        elem_sizes=None,
+        smooth_size_field=2,
+        skin_facet_size=2.0,
+        facet_distances=None,
+        optimize=True,
+        remove_spikes=True,
+        skin_tag=1005,
+        hierarchy=None,
+        smooth_steps=5,
+        skin_care=20,
+        sizing_field=None,
+        DEBUG_FN=None,
+    ):
+        return None
+
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "8")
+    supported = set(inspect.signature(create_mesh_401).parameters)
+    options = workflow._mesh_settings(settings, supported)
+
+    assert options["DEBUG_FN"] is None
+    assert options["optimize"] is True
+    assert "apply_cream" not in options
+    assert "mmg_noinsert" not in options
+    assert "num_threads" not in options
+    assert "debug" not in options
+    assert "debug_path" not in options
 
 
 def test_run_task_directly_meshes_map_and_writes_provenance(tmp_path, monkeypatch):

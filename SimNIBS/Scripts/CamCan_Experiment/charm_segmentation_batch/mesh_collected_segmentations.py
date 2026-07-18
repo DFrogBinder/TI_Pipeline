@@ -274,7 +274,22 @@ def _load_meshing_api() -> dict[str, Any]:
     }
 
 
-def _mesh_settings(settings: dict[str, Any]) -> dict[str, Any]:
+def _mesh_settings(
+    settings: dict[str, Any],
+    supported_parameters: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build CHARM meshing arguments for the loaded SimNIBS API.
+
+    SimNIBS 4.0.1 predates ``apply_cream``, ``mmg_noinsert``,
+    ``num_threads``, and the newer debug arguments.  Later releases expose
+    those arguments and store the first two in ``charm.ini``.  Keep the
+    settings shared by every supported CHARM release, and enable
+    version-specific arguments only when both the installed configuration and
+    ``create_mesh`` signature support them.
+
+    ``supported_parameters=None`` represents a callable accepting arbitrary
+    keyword arguments (primarily useful for wrappers and tests).
+    """
     mesh = settings["mesh"]
     skin_facet_size = mesh["skin_facet_size"] or None
     skin_tag = mesh["skin_tag"] or None
@@ -285,20 +300,40 @@ def _mesh_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "skin_facet_size": skin_facet_size,
         "facet_distances": mesh["facet_distances"],
         "optimize": mesh["optimize"],
-        "apply_cream": mesh["apply_cream"],
         "remove_spikes": mesh["remove_spikes"],
         "skin_tag": skin_tag,
         "hierarchy": hierarchy,
         "smooth_steps": mesh["smooth_steps"],
         "skin_care": mesh["skin_care"],
-        "debug_path": None,
-        "debug": False,
     }
-    # SimNIBS added mmg_noinsert after the first CHARM releases. Use the
-    # installed module's setting when present; otherwise retain that module's
-    # native create_mesh default, matching its own charm --mesh behavior.
-    if "mmg_noinsert" in mesh:
-        options["mmg_noinsert"] = mesh["mmg_noinsert"]
+
+    def supports(name: str) -> bool:
+        return supported_parameters is None or name in supported_parameters
+
+    unsupported_common = sorted(name for name in options if not supports(name))
+    if unsupported_common:
+        raise RuntimeError(
+            "SimNIBS create_mesh does not support required CHARM options: "
+            + ", ".join(unsupported_common)
+        )
+
+    for name in ("apply_cream", "mmg_noinsert"):
+        if name in mesh and supports(name):
+            options[name] = mesh[name]
+
+    if supports("debug_path"):
+        options["debug_path"] = None
+        if supports("debug"):
+            options["debug"] = False
+    elif supports("DEBUG_FN"):
+        # SimNIBS 4.0.1 uses this legacy name. CHARM passes None when debug is
+        # disabled, which is also the mode used by this batch workflow.
+        options["DEBUG_FN"] = None
+
+    if supports("num_threads"):
+        options["num_threads"] = max(
+            1, int(os.environ.get("SLURM_CPUS_PER_TASK", "8"))
+        )
     return options
 
 
@@ -427,21 +462,13 @@ def run_mesh_task(
         else Path(api["SIMNIBSDIR"]) / "charm.ini"
     )
     settings = settings_reader.read_ini(str(resolved_settings))
-    create_kwargs = _mesh_settings(settings)
     signature = inspect.signature(create_mesh)
     supports_arbitrary_keywords = any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     )
-    supported = set(signature.parameters)
-    unsupported = (
-        [] if supports_arbitrary_keywords else sorted(set(create_kwargs) - supported)
-    )
-    if unsupported:
-        raise RuntimeError(
-            "SimNIBS create_mesh does not support required CHARM options: "
-            + ", ".join(unsupported)
-        )
+    supported = None if supports_arbitrary_keywords else set(signature.parameters)
+    create_kwargs = _mesh_settings(settings, supported)
 
     label_image = nib.load(str(label_path))
     if len(label_image.shape) != 3:
@@ -481,7 +508,6 @@ def run_mesh_task(
         final_mesh = create_mesh(
             label_buffer,
             label_affine,
-            num_threads=max(1, int(os.environ.get("SLURM_CPUS_PER_TASK", "8"))),
             **create_kwargs,
         )
         tetrahedra, tissue_tags = _validate_mesh_object(final_mesh)

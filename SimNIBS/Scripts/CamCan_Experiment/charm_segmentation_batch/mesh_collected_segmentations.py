@@ -106,12 +106,13 @@ def build_preflight_manifest(
     manifest: str | Path,
     summary: str | Path,
     expected_subjects: int,
+    excluded_subjects: Sequence[str] = (),
 ) -> dict[str, object]:
     if expected_subjects <= 0:
         raise ValueError("expected_subjects must be positive")
     collection_path = Path(collection_manifest).expanduser().resolve(strict=True)
     output_root = Path(mesh_root).expanduser().resolve()
-    rows = read_tsv(collection_path)
+    collection_rows = read_tsv(collection_path)
     expected_header = {
         "subject",
         "status",
@@ -121,8 +122,18 @@ def build_preflight_manifest(
         "bytes",
         "message",
     }
-    if rows and not expected_header.issubset(rows[0]):
+    if collection_rows and not expected_header.issubset(collection_rows[0]):
         raise ValueError(f"unexpected collection manifest header: {collection_path}")
+
+    exclusions = tuple(dict.fromkeys(_safe_subject(subject) for subject in excluded_subjects))
+    collection_subjects = [row.get("subject", "").strip() for row in collection_rows]
+    missing_exclusions = sorted(set(exclusions) - set(collection_subjects))
+    if missing_exclusions:
+        raise ValueError(
+            "excluded subject(s) are absent from the collection manifest: "
+            + ", ".join(missing_exclusions)
+        )
+    rows = [row for row in collection_rows if row.get("subject", "").strip() not in exclusions]
 
     manifest_rows: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -224,6 +235,9 @@ def build_preflight_manifest(
         "status": "ready" if ready == expected_subjects else "blocked",
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "collection_manifest": str(collection_path),
+        "collection_rows_total": len(collection_rows),
+        "excluded_subjects": list(exclusions),
+        "excluded_subjects_count": len(exclusions),
         "mesh_root": str(output_root),
         "manifest": str(manifest_path),
         "subjects_expected": expected_subjects,
@@ -604,6 +618,12 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--manifest", required=True)
     preflight.add_argument("--summary", required=True)
     preflight.add_argument("--expected-subjects", type=int, required=True)
+    preflight.add_argument(
+        "--exclude-subject",
+        action="append",
+        default=[],
+        help="Explicitly exclude this collection subject; repeat for multiple subjects.",
+    )
 
     run_task = subparsers.add_parser("run-task")
     run_task.add_argument("--manifest", required=True)
@@ -627,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest=args.manifest,
                 summary=args.summary,
                 expected_subjects=args.expected_subjects,
+                excluded_subjects=args.exclude_subject,
             )
         elif args.command == "run-task":
             payload = run_mesh_task(

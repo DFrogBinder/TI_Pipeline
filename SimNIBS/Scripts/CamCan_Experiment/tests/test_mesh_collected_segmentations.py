@@ -99,6 +99,36 @@ def test_preflight_blocks_count_mismatch(tmp_path):
     assert all(row["status"] == "blocked" for row in workflow.read_tsv(manifest))
 
 
+def test_preflight_explicitly_excludes_one_incomplete_subject(tmp_path):
+    kept = "sub-CC000001"
+    excluded = "sub-CC000002"
+    collection = write_collection(tmp_path, (kept, excluded))
+    rows = workflow.read_tsv(collection)
+    Path(rows[1]["collected_map"]).unlink()
+    rows[1]["status"] = "incomplete"
+    rows[1]["sha256"] = ""
+    rows[1]["bytes"] = ""
+    rows[1]["message"] = "missing map"
+    workflow.write_tsv(collection, tuple(rows[0]), rows)
+    mesh_root = tmp_path / "meshes"
+    manifest = mesh_root / "mesh_manifest.tsv"
+
+    payload = workflow.build_preflight_manifest(
+        collection_manifest=collection,
+        mesh_root=mesh_root,
+        manifest=manifest,
+        summary=mesh_root / "preflight.json",
+        expected_subjects=1,
+        excluded_subjects=(excluded,),
+    )
+
+    assert payload["status"] == "ready"
+    assert payload["collection_rows_total"] == 2
+    assert payload["subjects_found"] == 1
+    assert payload["excluded_subjects"] == [excluded]
+    assert [row["subject"] for row in workflow.read_tsv(manifest)] == [kept]
+
+
 class FakeMesh:
     def __init__(self):
         self.elm = SimpleNamespace(
@@ -192,8 +222,8 @@ def test_run_task_directly_meshes_map_and_writes_provenance(tmp_path, monkeypatc
     assert not list((mesh_root / ".staging").glob(f"{subject}-*"))
 
 
-def test_submitter_enforces_scope_and_submits_one_474_task_array(tmp_path):
-    subjects = tuple(f"sub-CC{index:06d}" for index in range(1, 475))
+def test_submitter_enforces_scope_and_submits_one_477_task_array(tmp_path):
+    subjects = tuple(f"sub-CC{index:06d}" for index in range(1, 478))
     manifest, mesh_root = build_manifest(tmp_path, subjects)
     sbatch_log = tmp_path / "sbatch.log"
     fake_sbatch = tmp_path / "sbatch"
@@ -209,7 +239,7 @@ def test_submitter_enforces_scope_and_submits_one_474_task_array(tmp_path):
         **os.environ,
         "MANIFEST": str(manifest),
         "LOG_DIR": str(mesh_root / "logs"),
-        "EXPECTED_TASKS": "474",
+        "EXPECTED_TASKS": "477",
         "SBATCH_BIN": str(fake_sbatch),
     }
 
@@ -221,13 +251,14 @@ def test_submitter_enforces_scope_and_submits_one_474_task_array(tmp_path):
         env=environment,
     )
 
-    assert "subjects: 474" in result.stdout
-    assert "tasks: 474" in result.stdout
-    assert "array: 0-473%50" in result.stdout
-    assert "execution: full requested 474-subject" in result.stdout
+    assert "subjects: 477" in result.stdout
+    assert "tasks: 477" in result.stdout
+    assert "array: 0-476%50" in result.stdout
+    assert "execution: full requested 477-subject" in result.stdout
     assert "Submitted full collected-CHARM mesh array: 12345" in result.stdout
     call = sbatch_log.read_text(encoding="utf-8")
-    assert "--array=0-473%50" in call
+    assert "--array=0-476%50" in call
+    assert "--job-name=mesh_charm_maps_477" in call
     assert "--cpus-per-task=8" in call
     assert "--mem=32G" in call
     assert "--time=08:00:00" in call

@@ -16,7 +16,7 @@ PARTITION="${PARTITION:-sheffield}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
 MEMORY="${MEMORY:-32G}"
 TIME_LIMIT="${TIME_LIMIT:-08:00:00}"
-JOB_NAME="${JOB_NAME:-mesh_charm_maps_474}"
+JOB_NAME="${JOB_NAME:-mesh_charm_maps_${EXPECTED_TASKS}}"
 SETTINGS_PATH="${TI_CHARM_MESH_SETTINGS:-}"
 
 resolve_path() {

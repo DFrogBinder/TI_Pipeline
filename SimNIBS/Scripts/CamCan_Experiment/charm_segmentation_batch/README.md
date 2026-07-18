@@ -110,7 +110,7 @@ the source TI dataset is never modified. To deliberately regenerate a single
 subject, invoke `run_charm_segmentation.py` with `--force` from a SimNIBS-loaded
 HPC shell.
 
-## Mesh all 474 collected segmentation maps for mesh-wall inspection
+## Mesh the collected segmentation cohort for mesh-wall inspection
 
 `mesh_collected_segmentations.py` creates one tetrahedral `.msh` directly from
 each verified flat map in `maps/`. It uses the installed SimNIBS module's
@@ -127,7 +127,8 @@ glob:
 <mesh-root>/subjects/<subject>/anat/m2m_<subject>/<subject>.msh
 ```
 
-From a fresh Stanage session, preflight the exact 474-map collection first:
+For the current Stanage collection, the user explicitly excluded the failed
+`sub-CC721107` segmentation. Preflight the remaining 477-subject cohort:
 
 ```bash
 cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts
@@ -137,31 +138,32 @@ CAMPAIGN_ROOT="$MESH_ROOT/campaign"
 MANIFEST="$CAMPAIGN_ROOT/mesh_manifest.tsv"
 LOG_DIR="$CAMPAIGN_ROOT/logs"
 mkdir -p "$CAMPAIGN_ROOT" "$LOG_DIR"
-python3 CamCan_Experiment/charm_segmentation_batch/mesh_collected_segmentations.py preflight --collection-manifest "$SEG_ROOT/collection/charm_segmentation_manifest.tsv" --mesh-root "$MESH_ROOT" --manifest "$MANIFEST" --summary "$CAMPAIGN_ROOT/preflight.json" --expected-subjects 474
+python3 CamCan_Experiment/charm_segmentation_batch/mesh_collected_segmentations.py preflight --collection-manifest "$SEG_ROOT/collection/charm_segmentation_manifest.tsv" --mesh-root "$MESH_ROOT" --manifest "$MANIFEST" --summary "$CAMPAIGN_ROOT/preflight.json" --expected-subjects 477 --exclude-subject sub-CC721107
 cat "$CAMPAIGN_ROOT/preflight.json"
 wc -l "$MANIFEST"
 ```
 
-The required gate is `status=ready`, `subjects_found=ready=474`, `blocked=0`,
-and 475 manifest lines including the header. The full submission scope is:
+The required gate is `status=ready`, `subjects_found=ready=477`, `blocked=0`,
+`excluded_subjects=["sub-CC721107"]`, and 478 manifest lines including the
+header. The explicitly authorized submission scope is:
 
 ```text
 Scope:
   dataset: CamCan collected CHARM segmentations
-  subjects: 474
-  tasks: 474
-  array: 0-473%50
-  expected outputs: 474 tetrahedral .msh files and 474 provenance JSON files
-  execution: full requested 474-subject mesh-generation run
+  subjects: 477
+  tasks: 477
+  array: 0-476%50
+  expected outputs: 477 tetrahedral .msh files and 477 provenance JSON files
+  execution: complete valid-map cohort; sub-CC721107 explicitly excluded
 ```
 
 Submit that full scope with the established Stanage CHARM resource profile:
 
 ```bash
-MANIFEST="$MANIFEST" LOG_DIR="$LOG_DIR" EXPECTED_TASKS=474 MAX_CONCURRENT_TASKS=50 TI_CHARM_MESH_MAX_RETRIES=2 bash CamCan_Experiment/charm_segmentation_batch/submit_collected_meshes.sh
+MANIFEST="$MANIFEST" LOG_DIR="$LOG_DIR" EXPECTED_TASKS=477 MAX_CONCURRENT_TASKS=50 TI_CHARM_MESH_MAX_RETRIES=2 bash CamCan_Experiment/charm_segmentation_batch/submit_collected_meshes.sh
 ```
 
-This submits one `0-473%50` array using `SimNIBS/4.0.1-foss-2023a`, the
+This submits one `0-476%50` array using `SimNIBS/4.0.1-foss-2023a`, the
 `sheffield` partition, 8 CPUs, 32 GB, and 8 hours per task. A completed task is
 hash-validated and reused on resubmission. Each successful task reloads the
 mesh, requires tetrahedral elements and tissue tags, verifies that the input

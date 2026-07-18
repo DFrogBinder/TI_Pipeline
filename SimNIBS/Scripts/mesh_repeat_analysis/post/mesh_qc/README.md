@@ -114,6 +114,94 @@ The old `run_left_hippocampus_tissue_walls_pilot.slurm` launcher remains in the
 repository for compatibility and provenance. It covers only Data_01 with one
 worker and is not the production launcher.
 
+## Original 175 Plus Collected CHARM Meshes
+
+The existing mesh-QC submission architecture has a named profile for the flat
+mesh cohort created from the collected CHARM segmentations. It uses the same
+`submit_mesh_qc.sh` to `run_mesh_qc.slurm` to `run_mesh_qc.py` path as other
+mesh-wall jobs; no separate renderer or batch architecture is involved.
+
+First resolve the exact live cohort size without submitting or rendering:
+
+```bash
+cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts
+bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-charm-tissues --preflight
+```
+
+This scans:
+
+```text
+/mnt/parscratch/users/cop23bi/charm_segmentation_meshes_474/subjects
+```
+
+It requires one mesh per unique subject and prints the exact copy-paste-safe
+submission command. The explicit count is checked once on the login node and
+again inside the Slurm job before any rendering begins. If the preflight reports
+474 meshes and 474 subjects, the full collected-cohort scope is:
+
+```text
+Scope:
+  dataset: collected CHARM segmentation meshes
+  subjects: 474
+  meshes: 474
+  tasks: 1
+  expected outputs: 9,006 tissue tiles and 19 tissue walls when all nine CHARM tags are present
+  execution: full collected cohort; tissue-only; no smoke or reduced tasks
+```
+
+Submit that exact scope with:
+
+```bash
+bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-charm-tissues --expected-meshes 474
+```
+
+If preflight reports another count, use the reported value instead of `474`.
+The profile encodes the established tissue-wall settings: 16 CPUs/workers,
+64 GB, `08:00:00`, Gmsh and Xvfb site modules, `ti-post` Python, tissue-only
+mode, no whole-mesh renders, front/back for all detected tissues, and the
+compact-bone top view.
+
+Collected-cohort outputs are written to:
+
+```text
+/mnt/parscratch/users/cop23bi/mesh-wall/charm_segmentation_meshes_474_tissue_views
+```
+
+Persistent and Slurm logs are written to:
+
+```text
+/mnt/parscratch/users/cop23bi/mesh-wall/logs/charm_segmentation_meshes_474_tissue_views
+```
+
+The original 175 subjects across all ten Left Hippocampus repeats continue to
+use the established production array without any profile or configuration
+change:
+
+```bash
+sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_array.slurm
+```
+
+That array resumes the existing validated front/back output. Its compatible v2
+view markers are upgraded in place, so the expected new work is 1,750 compact-
+bone top tiles and 10 top walls; any missing front/back tiles are also repaired.
+No mesh generation or simulation is repeated.
+
+After both jobs finish, rerun the collected profile preflight. A complete
+nine-tag 474-mesh result reports 9,006 existing collected tiles. Check the new
+top-view deliverables directly with:
+
+```bash
+find /mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_orthographic_all_repeats -path '*/renders/tissues_top/tag_07_compact_bone/*.png' -type f -size +0c | wc -l
+find /mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_orthographic_all_repeats -path '*/mosaics/tissues/tag_07_compact_bone_top_wall.png' -type f -size +0c | wc -l
+find /mnt/parscratch/users/cop23bi/mesh-wall/charm_segmentation_meshes_474_tissue_views/renders -type f -name '*.png' -size +0c | wc -l
+find /mnt/parscratch/users/cop23bi/mesh-wall/charm_segmentation_meshes_474_tissue_views/mosaics/tissues -type f -name '*_wall.png' -size +0c | wc -l
+```
+
+The corresponding complete expectations are `1750`, `10`, `9006`, and `19`
+when the collected preflight count is 474 and all nine tissue tags are present.
+Use `tissue_render_completeness.csv` to distinguish missing tissue tags from
+render failures when a faulty segmentation legitimately produces fewer tiles.
+
 ### Retired Direct-Visibility Experiment
 
 The one-mesh direct Gmsh visibility experiment is retained only as failure

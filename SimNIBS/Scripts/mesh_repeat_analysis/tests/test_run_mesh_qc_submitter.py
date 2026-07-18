@@ -23,6 +23,34 @@ def test_submit_mesh_qc_helper_exports_safe_log_paths():
     assert "run_mesh_qc.slurm" in text
 
 
+def test_submit_mesh_qc_has_full_collected_charm_tissue_profile():
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "hpc_scripts" / "submit_mesh_qc.sh"
+    text = script.read_text(encoding="utf-8")
+
+    assert "collected-charm-tissues)" in text
+    assert "charm_segmentation_meshes_474/subjects" in text
+    assert "charm_segmentation_meshes_474_tissue_views" in text
+    assert 'CPUS_PER_TASK_CONFIG="16"' in text
+    assert 'MEMORY_CONFIG="64G"' in text
+    assert 'TIME_LIMIT_CONFIG="08:00:00"' in text
+    assert 'MESH_QC_STAGE_CONFIG="tissue"' in text
+    assert 'TISSUE_WALLS_CONFIG="1"' in text
+    assert 'ROI_WALLS_CONFIG="0"' in text
+    assert 'WORKERS_CONFIG="16"' in text
+    assert 'SIMNIBS_MODULE_CONFIG="none"' in text
+    assert 'GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"' in text
+    assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in text
+    assert '${HOME}/.conda/envs/ti-post/bin/python' in text
+    assert "--preflight" in text
+    assert "--expected-meshes" in text
+    assert "full collected cohort; tissue-only; no smoke or reduced tasks" in text
+    assert "Existing resumable outputs" in text
+    assert "ras_anatomical_orthographic_compact_top_v3" in text
+    assert 'MESH_QC_EXPECTED_MESHES=${MESH_QC_EXPECTED_MESHES}' in text
+    assert 'MESH_QC_EXPECTED_SUBJECTS=${MESH_QC_EXPECTED_SUBJECTS}' in text
+
+
 def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     repo_root = Path(__file__).resolve().parents[1]
     slurm_script = repo_root / "hpc_scripts" / "run_mesh_qc.slurm"
@@ -38,6 +66,10 @@ def test_mesh_qc_slurm_exposes_opt_in_tissue_walls():
     assert '"${MESH_QC_PYTHON}"\n    -E\n    -u' in text
     assert 'tissue)' in text
     assert "PYTHON_CMD+=(--tissue-only)" in text
+    assert 'MESH_QC_EXPECTED_MESHES_CONFIG=""' in text
+    assert 'MESH_QC_EXPECTED_SUBJECTS_CONFIG=""' in text
+    assert "Mesh-count gate failed" in text
+    assert "Subject-count gate failed" in text
 
 
 def test_left_hippocampus_tissue_wall_pilot_is_self_contained_slurm_job():

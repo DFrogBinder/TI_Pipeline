@@ -61,6 +61,8 @@ TILE_SIZE_CONFIG="220"
 COLS_CONFIG=""
 DISCOVERY_PROGRESS_SECONDS_CONFIG="5"
 PROGRESS_EVERY_CONFIG="25"
+MESH_QC_EXPECTED_MESHES_CONFIG=""
+MESH_QC_EXPECTED_SUBJECTS_CONFIG=""
 
 # Logs. Leave these blank to use <pipeline>/logs.
 MESH_QC_LOG_DIR_CONFIG=""
@@ -85,6 +87,8 @@ TILE_SIZE="${TILE_SIZE:-${TILE_SIZE_CONFIG}}"
 COLS="${COLS:-${COLS_CONFIG}}"
 DISCOVERY_PROGRESS_SECONDS="${DISCOVERY_PROGRESS_SECONDS:-${DISCOVERY_PROGRESS_SECONDS_CONFIG}}"
 PROGRESS_EVERY="${PROGRESS_EVERY:-${PROGRESS_EVERY_CONFIG}}"
+MESH_QC_EXPECTED_MESHES="${MESH_QC_EXPECTED_MESHES:-${MESH_QC_EXPECTED_MESHES_CONFIG}}"
+MESH_QC_EXPECTED_SUBJECTS="${MESH_QC_EXPECTED_SUBJECTS:-${MESH_QC_EXPECTED_SUBJECTS_CONFIG}}"
 SIMNIBS_MODULE="${SIMNIBS_MODULE:-${SIMNIBS_MODULE_CONFIG}}"
 XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
 GMSH_MODULE="${GMSH_MODULE:-${GMSH_MODULE_CONFIG}}"
@@ -173,6 +177,8 @@ echo "[INFO] Repeat regex:   ${REPEAT_REGEX:-<none>}"
 echo "[INFO] Check comps:    ${CHECK_COMPONENTS}"
 echo "[INFO] ROI walls:      ${ROI_WALLS}"
 echo "[INFO] Tissue walls:   ${TISSUE_WALLS}"
+echo "[INFO] Expected meshes: ${MESH_QC_EXPECTED_MESHES:-<not enforced>}"
+echo "[INFO] Expected subjects: ${MESH_QC_EXPECTED_SUBJECTS:-<not enforced>}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
 echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE_EFFECTIVE:-<none>}"
 echo "[INFO] SimNIBS request: ${SIMNIBS_MODULE:-<none>}"
@@ -230,6 +236,39 @@ if ! "${MESH_QC_PYTHON}" -E -c 'import numpy; from PIL import Image' >/dev/null 
     exit 2
 fi
 echo "[INFO] Isolated Python imports: OK"
+
+for expected_name in MESH_QC_EXPECTED_MESHES MESH_QC_EXPECTED_SUBJECTS; do
+    expected_value="${!expected_name}"
+    if [ -n "${expected_value}" ] && ! [[ "${expected_value}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "[ERROR] ${expected_name} must be blank or a positive integer; got ${expected_value}." >&2
+        exit 2
+    fi
+done
+if [ -n "${MESH_QC_EXPECTED_MESHES}" ] || [ -n "${MESH_QC_EXPECTED_SUBJECTS}" ]; then
+    DISCOVERY_COUNTS="$("${MESH_QC_PYTHON}" -E -c '
+from pathlib import Path
+import sys
+from mesh_repeat_analysis.post.mesh_qc.discovery import discover_meshes
+records = discover_meshes(
+    Path(sys.argv[1]),
+    mesh_glob=sys.argv[2] or None,
+    roi_regex=sys.argv[3] or None,
+    subject_regex=sys.argv[4] or None,
+    repeat_regex=sys.argv[5] or None,
+)
+print(len(records), len({record.subject for record in records}))
+' "${MESH_QC_ROOT}" "${MESH_GLOB}" "${ROI_REGEX}" "${SUBJECT_REGEX}" "${REPEAT_REGEX}")"
+    read -r FOUND_MESHES FOUND_SUBJECTS <<< "${DISCOVERY_COUNTS}"
+    if [ -n "${MESH_QC_EXPECTED_MESHES}" ] && [ "${FOUND_MESHES}" != "${MESH_QC_EXPECTED_MESHES}" ]; then
+        echo "[ERROR] Mesh-count gate failed: found ${FOUND_MESHES}, expected ${MESH_QC_EXPECTED_MESHES}." >&2
+        exit 2
+    fi
+    if [ -n "${MESH_QC_EXPECTED_SUBJECTS}" ] && [ "${FOUND_SUBJECTS}" != "${MESH_QC_EXPECTED_SUBJECTS}" ]; then
+        echo "[ERROR] Subject-count gate failed: found ${FOUND_SUBJECTS}, expected ${MESH_QC_EXPECTED_SUBJECTS}." >&2
+        exit 2
+    fi
+    echo "[INFO] Discovery count gate passed: meshes=${FOUND_MESHES}, subjects=${FOUND_SUBJECTS}"
+fi
 
 PYTHON_CMD=(
     "${MESH_QC_PYTHON}"

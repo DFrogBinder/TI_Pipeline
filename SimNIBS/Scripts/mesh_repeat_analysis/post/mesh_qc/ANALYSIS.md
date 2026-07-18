@@ -13,7 +13,7 @@ The CLI can now be run in separate stages:
 - full pipeline,
 - QC-only,
 - render-only from previously written CSV outputs,
-- tissue-only discovery and front/back tissue rendering.
+- tissue-only discovery and front/back tissue rendering, with a compact-bone-only top view.
 
 It does not:
 
@@ -67,6 +67,7 @@ When `--tissue-walls` is enabled, tissue surfaces are extracted separately from 
 3. Enumerate their four faces and remove faces shared by two tetrahedra of that same tissue.
 4. Map the surface from RAS into an upright front camera frame: screen axes are RAS `X-Z`, depth is RAS `+Y`, and projection is orthographic.
 5. Map the same surface into the complementary back frame: screen axes are `-X-Z`, depth is RAS `-Y`, and projection is orthographic.
+6. For compact bone tag `7` only, map the surface into a superior frame: screen axes are RAS `X-Y`, depth is RAS `+Z`, anterior is toward image top, and projection is orthographic.
 
 Stored triangle elements tagged `1000 + tissue_tag` are not used for this step. On real CHARM meshes those stored interfaces can be only a subset of a tissue boundary, particularly at interfaces with other tissues.
 
@@ -181,7 +182,7 @@ Default behavior:
 - geometry-flagged meshes are still rendered,
 - write a combined mosaic as `all_mesh_wall.png`,
 - write ROI-specific walls only if `--roi-walls` is requested.
-- write front and back walls per detected tetrahedral tissue only if `--tissue-walls` is requested.
+- write front and back walls per detected tetrahedral tissue, plus a compact-bone top wall, only if `--tissue-walls` is requested.
 
 This means a mesh with `NONMANIFOLD_EDGES` or `DEGENERATE_FACES` is still expected to appear in the wall for visual inspection.
 
@@ -217,7 +218,7 @@ Pillow fallback details:
 
 Each mesh is checked independently.
 
-QC and per-mesh PNG rendering therefore parallelize naturally across worker processes. Tissue rendering uses the same process-level strategy across meshes. Inside a tissue worker, the mesh is loaded once and the front and back views of its tissue tags are processed sequentially, so workers do not repeatedly load the same large mesh or start nested pools.
+QC and per-mesh PNG rendering therefore parallelize naturally across worker processes. Tissue rendering uses the same process-level strategy across meshes. Inside a tissue worker, the mesh is loaded once and the configured views of its tissue tags are processed sequentially; compact bone adds the superior view. Workers therefore do not repeatedly load the same large mesh or start nested pools.
 
 For the full Left Hippocampus campaign, the outer Slurm array parallelizes the
 ten repeat directories and each array task uses a process pool across its 175
@@ -269,8 +270,10 @@ The main outputs are:
 - `tissue_render_completeness.csv`: cohort counts and status per tissue and view,
 - `renders/tissues/<tissue-slug>/*.png`: individual front-view tissue tiles,
 - `renders/tissues_back/<tissue-slug>/*.png`: individual back-view tissue tiles,
+- `renders/tissues_top/tag_07_compact_bone/*.png`: individual compact-bone top-view tiles,
 - `mosaics/tissues/<tissue-slug>_wall.png`: front-view cohort wall per detected tissue,
 - `mosaics/tissues/<tissue-slug>_back_wall.png`: back-view cohort wall per detected tissue,
+- `mosaics/tissues/tag_07_compact_bone_top_wall.png`: compact-bone cohort wall viewed from RAS `+Z`,
 - `logs/mesh_qc.log`: stage-level persistent log,
 - `logs/run_context.json`: resolved runtime context including paths, arguments, CPU allocation, and key Slurm variables,
 - `logs/fatal_error.txt`: written only when the run aborts with an unhandled exception.

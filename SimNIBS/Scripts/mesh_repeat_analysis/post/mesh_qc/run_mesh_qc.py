@@ -126,12 +126,23 @@ TISSUE_RENDER_COMPLETENESS_FIELDS = (
     "render_failures",
     "missing_tiles",
 )
-TISSUE_VIEWS = ("front", "back")
-TISSUE_VIEW_CONVENTION = {
+STANDARD_TISSUE_VIEWS = ("front", "back")
+COMPACT_BONE_TAG = 7
+COMPACT_BONE_EXTRA_VIEWS = ("top",)
+TISSUE_VIEWS = STANDARD_TISSUE_VIEWS + COMPACT_BONE_EXTRA_VIEWS
+LEGACY_TISSUE_VIEW_CONVENTION = {
     "version": "ras_anatomical_orthographic_v2",
     "front": "camera from RAS +Y toward the origin",
     "back": "camera from RAS -Y toward the origin",
     "up": "RAS +Z",
+    "projection": "orthographic",
+}
+TISSUE_VIEW_CONVENTION = {
+    "version": "ras_anatomical_orthographic_compact_top_v3",
+    "front": "camera from RAS +Y toward the origin",
+    "back": "camera from RAS -Y toward the origin",
+    "front_back_up": "RAS +Z",
+    "compact_bone_top": "camera from RAS +Z toward the origin; RAS +Y toward image top",
     "projection": "orthographic",
 }
 TISSUE_VIEW_CONVENTION_FILENAME = "tissue_view_convention.json"
@@ -1617,9 +1628,17 @@ def _tissue_render_path(
         view_root = tissue_root
     elif view == "back":
         view_root = tissue_root.parent / "tissues_back"
+    elif view == "top":
+        view_root = tissue_root.parent / "tissues_top"
     else:
         raise ValueError(f"Unsupported tissue view: {view}")
     return view_root / tissue_slug / tile_filename
+
+
+def _views_for_tissue_tag(tag: int) -> tuple[str, ...]:
+    if int(tag) == COMPACT_BONE_TAG:
+        return TISSUE_VIEWS
+    return STANDARD_TISSUE_VIEWS
 
 
 def _tissue_record_worker(
@@ -1635,7 +1654,7 @@ def _tissue_record_worker(
     try:
         for tissue in iter_tissue_surface_arrays(record.path):
             presence_rows.append(_tissue_metadata_row(record, tissue))
-            for view in TISSUE_VIEWS:
+            for view in _views_for_tissue_tag(tissue.tag):
                 out_png = _tissue_render_path(
                     tissue_root,
                     tissue.slug,
@@ -1884,7 +1903,7 @@ def _write_tissue_completeness(
     for tag in sorted(metadata_by_tag):
         name, slug = metadata_by_tag[tag]
         present_count = sum(1 for present_tag, _ in present if present_tag == tag)
-        for view in TISSUE_VIEWS:
+        for view in _views_for_tissue_tag(tag):
             rendered_count = sum(
                 1
                 for rendered_tag, _, rendered_view in rendered
@@ -1932,16 +1951,34 @@ def _prepare_tissue_view_convention(out_dir: Path) -> None:
             raise RuntimeError(
                 f"Could not read tissue view marker {marker_path}: {exc}"
             ) from exc
-        if existing != TISSUE_VIEW_CONVENTION:
-            raise RuntimeError(
-                f"Tissue renders in {out_dir} use a different view convention. "
-                "Use a fresh output directory to avoid mixing incompatible tiles."
+        if existing == TISSUE_VIEW_CONVENTION:
+            return
+        if existing == LEGACY_TISSUE_VIEW_CONVENTION:
+            top_root = out_dir / "renders" / "tissues_top"
+            if top_root.is_dir():
+                for png_path in top_root.rglob("*.png"):
+                    try:
+                        if png_path.is_file() and png_path.stat().st_size > 0:
+                            raise RuntimeError(
+                                f"Existing top-view tissue tile {png_path} is not covered by "
+                                "the legacy front/back marker. Use a fresh output directory."
+                            )
+                    except OSError:
+                        continue
+            marker_path.write_text(
+                json.dumps(TISSUE_VIEW_CONVENTION, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
             )
-        return
+            return
+        raise RuntimeError(
+            f"Tissue renders in {out_dir} use a different view convention. "
+            "Use a fresh output directory to avoid mixing incompatible tiles."
+        )
 
     for tile_root in (
         out_dir / "renders" / "tissues",
         out_dir / "renders" / "tissues_back",
+        out_dir / "renders" / "tissues_top",
     ):
         if not tile_root.is_dir():
             continue
@@ -1949,8 +1986,8 @@ def _prepare_tissue_view_convention(out_dir: Path) -> None:
             try:
                 if png_path.is_file() and png_path.stat().st_size > 0:
                     raise RuntimeError(
-                        f"Existing tissue tile {png_path} predates the current anatomical "
-                        "front/back view convention. Use a fresh output directory; these "
+                        f"Existing tissue tile {png_path} predates the current "
+                        "anatomical view convention. Use a fresh output directory; these "
                         "tiles must not be resumed."
                     )
             except OSError:
@@ -2179,7 +2216,7 @@ def _run_tissue_outputs(
         images_by_tissue.items(),
         key=lambda item: (item[0][0], TISSUE_VIEWS.index(item[0][3])),
     ):
-        view_suffix = "" if view == "front" else "_back"
+        view_suffix = {"front": "", "back": "_back", "top": "_top"}[view]
         out_png = out_dir / "mosaics" / "tissues" / f"{slug}{view_suffix}_wall.png"
         print(
             f"[MOSAIC] Building {view} tissue wall for tag {tag} {name} "
@@ -2757,8 +2794,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--tissue-walls",
         action="store_true",
         help=(
-            "Also render each tagged tetrahedral tissue and write one cohort wall per tissue. "
-            "Each worker loads one mesh once and processes all of its tissues."
+            "Also render each tagged tetrahedral tissue and write front/back cohort walls, plus "
+            "a top wall for compact bone tag 7. Each worker loads one mesh once and processes "
+            "all of its tissues."
         ),
     )
     parser.add_argument(

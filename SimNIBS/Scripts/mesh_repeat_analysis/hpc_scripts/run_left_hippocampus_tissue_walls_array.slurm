@@ -13,8 +13,8 @@
 set -euo pipefail
 
 # Full Left Hippocampus scope: ten repeats, 175 meshes per repeat. Each array
-# task writes an independent set of anatomical orthographic front/back tissue
-# walls and can be resumed safely because marked non-empty tiles are reused.
+# task writes anatomical orthographic front/back tissue walls plus a compact
+# bone top wall and can be resumed safely because marked non-empty tiles are reused.
 PIPELINE_DIR_CONFIG="${HOME}/Repos/TI_Pipeline/SimNIBS/Scripts"
 MESH_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/ZIPs/Analised-Data/Left_Hippocampus_Runs"
 OUTPUT_ROOT_CONFIG="/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_orthographic_all_repeats"
@@ -25,11 +25,12 @@ EXPECTED_REPEATS_CONFIG="10"
 EXPECTED_SUBJECTS_PER_REPEAT_CONFIG="175"
 EXPECTED_TOTAL_MESHES_CONFIG="1750"
 EXPECTED_TISSUES_CONFIG="9"
-EXPECTED_VIEWS_CONFIG="2"
-EXPECTED_TILES_PER_REPEAT_CONFIG="3150"
-EXPECTED_TOTAL_TILES_CONFIG="31500"
-EXPECTED_WALLS_PER_REPEAT_CONFIG="18"
-EXPECTED_TOTAL_WALLS_CONFIG="180"
+EXPECTED_STANDARD_VIEWS_CONFIG="2"
+EXPECTED_COMPACT_BONE_EXTRA_VIEWS_CONFIG="1"
+EXPECTED_TILES_PER_REPEAT_CONFIG="3325"
+EXPECTED_TOTAL_TILES_CONFIG="33250"
+EXPECTED_WALLS_PER_REPEAT_CONFIG="19"
+EXPECTED_TOTAL_WALLS_CONFIG="190"
 
 RENDERER_CONFIG="gmsh"
 SIMNIBS_MODULE_CONFIG="none"
@@ -127,12 +128,12 @@ echo "[INFO] Subjects:             175 unique subjects"
 echo "[INFO] Repeats/tasks:        ${EXPECTED_REPEATS_CONFIG}"
 echo "[INFO] Slurm array:          1-10%10"
 echo "[INFO] Meshes:               ${EXPECTED_TOTAL_MESHES_CONFIG} total; ${EXPECTED_SUBJECTS_PER_REPEAT_CONFIG} in this task"
-echo "[INFO] Expected tags/views:  ${EXPECTED_TISSUES_CONFIG} tissues x ${EXPECTED_VIEWS_CONFIG} views per mesh"
+echo "[INFO] Expected tags/views:  ${EXPECTED_TISSUES_CONFIG} tissues x ${EXPECTED_STANDARD_VIEWS_CONFIG} standard views; compact bone +${EXPECTED_COMPACT_BONE_EXTRA_VIEWS_CONFIG} top view"
 echo "[INFO] Expected tissue PNGs: ${EXPECTED_TOTAL_TILES_CONFIG} total; ${EXPECTED_TILES_PER_REPEAT_CONFIG} in this task"
 echo "[INFO] Expected walls:       ${EXPECTED_TOTAL_WALLS_CONFIG} total; ${EXPECTED_WALLS_PER_REPEAT_CONFIG} in this task"
 echo "[INFO] Current repeat/task:  ${REPEAT_NAME} / ${REPEAT_INDEX}"
 echo "[INFO] Whole-mesh renders:   disabled"
-echo "[INFO] Tissue views:         RAS +Y face / -Y posterior; +Z up; orthographic"
+echo "[INFO] Tissue views:         RAS +Y face / -Y posterior; compact bone also +Z superior; orthographic"
 echo "[INFO] Workers this task:    ${WORKERS_CONFIG} (memory-aware reduction remains enabled)"
 echo "[INFO] Output:               ${MESH_QC_OUT_CONFIG}"
 echo "[INFO] Persistent log:       ${MESH_QC_LOG_DIR_CONFIG}"

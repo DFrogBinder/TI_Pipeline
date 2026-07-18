@@ -110,6 +110,74 @@ the source TI dataset is never modified. To deliberately regenerate a single
 subject, invoke `run_charm_segmentation.py` with `--force` from a SimNIBS-loaded
 HPC shell.
 
+## Mesh all 474 collected segmentation maps for mesh-wall inspection
+
+`mesh_collected_segmentations.py` creates one tetrahedral `.msh` directly from
+each verified flat map in `maps/`. It uses the installed SimNIBS module's
+`charm.ini` mesh settings and the same `create_mesh` function used by CHARM's
+meshing stage. It does not repeat segmentation, alter the collected NIfTI,
+create cortical surfaces, transform EEG positions, write MNI-space labels, or
+run simulations. This deliberately narrow output is intended for mesh QC and
+mesh-wall visualization.
+
+The generated layout is discoverable by the mesh-wall tools without a custom
+glob:
+
+```text
+<mesh-root>/subjects/<subject>/anat/m2m_<subject>/<subject>.msh
+```
+
+From a fresh Stanage session, preflight the exact 474-map collection first:
+
+```bash
+cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts
+SEG_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentations
+MESH_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentation_meshes_474
+CAMPAIGN_ROOT="$MESH_ROOT/campaign"
+MANIFEST="$CAMPAIGN_ROOT/mesh_manifest.tsv"
+LOG_DIR="$CAMPAIGN_ROOT/logs"
+mkdir -p "$CAMPAIGN_ROOT" "$LOG_DIR"
+python3 CamCan_Experiment/charm_segmentation_batch/mesh_collected_segmentations.py preflight --collection-manifest "$SEG_ROOT/collection/charm_segmentation_manifest.tsv" --mesh-root "$MESH_ROOT" --manifest "$MANIFEST" --summary "$CAMPAIGN_ROOT/preflight.json" --expected-subjects 474
+cat "$CAMPAIGN_ROOT/preflight.json"
+wc -l "$MANIFEST"
+```
+
+The required gate is `status=ready`, `subjects_found=ready=474`, `blocked=0`,
+and 475 manifest lines including the header. The full submission scope is:
+
+```text
+Scope:
+  dataset: CamCan collected CHARM segmentations
+  subjects: 474
+  tasks: 474
+  array: 0-473%50
+  expected outputs: 474 tetrahedral .msh files and 474 provenance JSON files
+  execution: full requested 474-subject mesh-generation run
+```
+
+Submit that full scope with the established Stanage CHARM resource profile:
+
+```bash
+MANIFEST="$MANIFEST" LOG_DIR="$LOG_DIR" EXPECTED_TASKS=474 MAX_CONCURRENT_TASKS=50 TI_CHARM_MESH_MAX_RETRIES=2 bash CamCan_Experiment/charm_segmentation_batch/submit_collected_meshes.sh
+```
+
+This submits one `0-473%50` array using `SimNIBS/4.0.1-foss-2023a`, the
+`sheffield` partition, 8 CPUs, 32 GB, and 8 hours per task. A completed task is
+hash-validated and reused on resubmission. Each successful task reloads the
+mesh, requires tetrahedral elements and tissue tags, verifies that the input
+map hash is unchanged, atomically installs the mesh, and writes one provenance
+JSON under `<mesh-root>/results/`.
+
+After the array terminates, perform the quick aggregate gate without rehashing
+all mesh bytes:
+
+```bash
+python3 CamCan_Experiment/charm_segmentation_batch/mesh_collected_segmentations.py validate --manifest "$MANIFEST" --summary "$CAMPAIGN_ROOT/mesh_validation.tsv" --skip-hashes
+```
+
+Omit `--skip-hashes` for the slower full aggregate hash audit. Mesh loading is
+already performed inside every successful array task.
+
 ## Install the 175 CHARM maps into all 40 repeat datasets
 
 `install_charm_segmentations.py` installs the collected map for each subject as

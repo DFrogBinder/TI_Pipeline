@@ -196,6 +196,7 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
         if path == records[0].path:
             yield TissueSurface(1, "White Matter", "tag_01_white_matter", surface)
         yield TissueSurface(5, "Scalp", "tag_05_scalp", surface)
+        yield TissueSurface(7, "Compact bone", "tag_07_compact_bone", surface)
 
     rendered = []
 
@@ -231,16 +232,24 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
 
     run_mesh_qc._run_tissue_outputs(records, out_dir, args)
 
-    assert len(rendered) == 6
+    assert len(rendered) == 12
     assert (out_dir / "mosaics" / "tissues" / "tag_01_white_matter_wall.png").exists()
     assert (
         out_dir / "mosaics" / "tissues" / "tag_01_white_matter_back_wall.png"
     ).exists()
     assert (out_dir / "mosaics" / "tissues" / "tag_05_scalp_wall.png").exists()
     assert (out_dir / "mosaics" / "tissues" / "tag_05_scalp_back_wall.png").exists()
-    assert {view for _, _, view in rendered} == {"front", "back"}
+    assert (out_dir / "mosaics" / "tissues" / "tag_07_compact_bone_wall.png").exists()
+    assert (
+        out_dir / "mosaics" / "tissues" / "tag_07_compact_bone_back_wall.png"
+    ).exists()
+    assert (
+        out_dir / "mosaics" / "tissues" / "tag_07_compact_bone_top_wall.png"
+    ).exists()
+    assert {view for _, _, view in rendered} == {"front", "back", "top"}
     assert any("Front view" in label for _, label, _ in rendered)
     assert any("Back view" in label for _, label, _ in rendered)
+    assert any("Top view" in label for _, label, _ in rendered)
     with (out_dir / "tissue_render_completeness.csv").open(newline="", encoding="utf-8") as f:
         rows = {
             (int(row["tissue_tag"]), row["view"]): row
@@ -252,9 +261,19 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
     assert rows[(5, "front")]["status"] == "OK"
     assert rows[(5, "back")]["status"] == "OK"
     assert rows[(5, "back")]["present_meshes"] == "2"
+    assert rows[(7, "front")]["status"] == "OK"
+    assert rows[(7, "back")]["status"] == "OK"
+    assert rows[(7, "top")]["status"] == "OK"
     with (out_dir / "tissue_render_manifest.csv").open(newline="", encoding="utf-8") as f:
         manifest_rows = list(csv.DictReader(f))
-    assert {row["view"] for row in manifest_rows} == {"front", "back"}
+    assert {row["view"] for row in manifest_rows} == {"front", "back", "top"}
+    views_by_tag = {
+        tag: {row["view"] for row in manifest_rows if int(row["tissue_tag"]) == tag}
+        for tag in (1, 5, 7)
+    }
+    assert views_by_tag[1] == {"front", "back"}
+    assert views_by_tag[5] == {"front", "back"}
+    assert views_by_tag[7] == {"front", "back", "top"}
 
 
 def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, monkeypatch):
@@ -432,6 +451,109 @@ def test_tissue_walls_reject_unversioned_existing_tiles(tmp_path):
         run_mesh_qc._prepare_tissue_view_convention(out_dir)
 
     assert not (out_dir / run_mesh_qc.TISSUE_VIEW_CONVENTION_FILENAME).exists()
+
+
+def test_tissue_walls_upgrade_exact_front_back_marker_and_reuse_tiles(tmp_path):
+    out_dir = tmp_path / "existing_front_back_output"
+    marker = out_dir / run_mesh_qc.TISSUE_VIEW_CONVENTION_FILENAME
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps(run_mesh_qc.LEGACY_TISSUE_VIEW_CONVENTION),
+        encoding="utf-8",
+    )
+    existing_tile = out_dir / "renders" / "tissues" / "tag_07_compact_bone" / "old.png"
+    existing_tile.parent.mkdir(parents=True)
+    existing_tile.write_bytes(b"validated front")
+
+    run_mesh_qc._prepare_tissue_view_convention(out_dir)
+
+    assert json.loads(marker.read_text(encoding="utf-8")) == run_mesh_qc.TISSUE_VIEW_CONVENTION
+    assert existing_tile.read_bytes() == b"validated front"
+
+
+def test_compact_bone_v2_resume_renders_only_missing_top_tile(tmp_path, monkeypatch):
+    record = run_mesh_qc.MeshRecord(
+        path=tmp_path / "sub-CC1.msh",
+        roi="unknown_roi",
+        subject="sub-CC1",
+        repeat="repeat_01",
+        mesh_id="m2m_sub-CC1",
+    )
+    surface = SurfaceArrays(
+        points=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+        faces=np.array([[0, 1, 2]]),
+    )
+    out_dir = tmp_path / "v2_output"
+    marker = out_dir / run_mesh_qc.TISSUE_VIEW_CONVENTION_FILENAME
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps(run_mesh_qc.LEGACY_TISSUE_VIEW_CONVENTION),
+        encoding="utf-8",
+    )
+    run_mesh_qc._prepare_tissue_view_convention(out_dir)
+
+    tissue_root = out_dir / "renders" / "tissues"
+    tile_name = "compact.png"
+    for view in ("front", "back"):
+        tile = run_mesh_qc._tissue_render_path(
+            tissue_root,
+            "tag_07_compact_bone",
+            view,
+            tile_name,
+        )
+        tile.parent.mkdir(parents=True, exist_ok=True)
+        tile.write_bytes(view.encode("ascii"))
+
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "iter_tissue_surface_arrays",
+        lambda path: iter([TissueSurface(7, "Compact bone", "tag_07_compact_bone", surface)]),
+    )
+    rendered_views = []
+
+    def fake_render(surface_arg, out_png, *, label, view, image_size, renderer):
+        rendered_views.append(view)
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"new top")
+        return "pillow"
+
+    monkeypatch.setattr(run_mesh_qc, "render_surface_png", fake_render)
+
+    manifest, failures, _ = run_mesh_qc._tissue_record_worker(
+        record,
+        tile_name,
+        tissue_root,
+        1200,
+        "pillow",
+    )
+
+    assert rendered_views == ["top"]
+    assert failures == []
+    assert {row["view"]: row["resumed"] for row in manifest} == {
+        "front": "1",
+        "back": "1",
+        "top": "0",
+    }
+
+
+def test_tissue_walls_reject_unmarked_top_tiles_during_marker_upgrade(tmp_path):
+    out_dir = tmp_path / "ambiguous_top_output"
+    marker = out_dir / run_mesh_qc.TISSUE_VIEW_CONVENTION_FILENAME
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps(run_mesh_qc.LEGACY_TISSUE_VIEW_CONVENTION),
+        encoding="utf-8",
+    )
+    top_tile = out_dir / "renders" / "tissues_top" / "tag_07_compact_bone" / "old.png"
+    top_tile.parent.mkdir(parents=True)
+    top_tile.write_bytes(b"unversioned top")
+
+    with pytest.raises(RuntimeError, match="not covered by the legacy front/back marker"):
+        run_mesh_qc._prepare_tissue_view_convention(out_dir)
+
+    assert json.loads(marker.read_text(encoding="utf-8")) == (
+        run_mesh_qc.LEGACY_TISSUE_VIEW_CONVENTION
+    )
 
 
 def test_resolve_auto_workers_prefers_slurm_cpu_allocation(monkeypatch):

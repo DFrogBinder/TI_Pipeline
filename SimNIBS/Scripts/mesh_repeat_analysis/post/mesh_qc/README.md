@@ -51,11 +51,11 @@ No shell exports are required. The production scope is:
 - subjects: 175 unique subjects,
 - tasks: 10 repeats with 175 meshes per task, 1,750 meshes total,
 - array: `1-10%10`, so all repeats may run concurrently,
-- expected CHARM output when all nine tags are present: 31,500 tissue tiles and 180 walls,
+- expected CHARM output when all nine tags are present: 33,250 tissue tiles and 190 walls,
 - output: `/mnt/parscratch/users/cop23bi/mesh-wall/Left_Hippocampus_tissue_front_back_orthographic_all_repeats/Left_Hippocampus_Data_XX`,
 - persistent logs: `/mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_front_back_orthographic_all_repeats/Left_Hippocampus_Data_XX`,
 - tissue-only mode: geometry QC and ordinary whole-mesh rendering are skipped,
-- anatomical orthographic front (camera from RAS `+Y`) and back (camera from RAS `-Y`) views with RAS `+Z` upright at `1200 x 1200`,
+- anatomical orthographic front (camera from RAS `+Y`) and back (camera from RAS `-Y`) views for all tissues, plus a compact-bone-only top view from RAS `+Z`, at `1200 x 1200`,
 - 16 allocated CPUs and at most 16 subject workers per repeat, 64 GB RAM per task, and an 8-hour limit,
 - site `gmsh/4.11.1-foss-2022b` and `Xvfb/21.1.6-GCCcore-12.2.0`, with the conflicting SimNIBS module disabled,
 - Python: `$HOME/.conda/envs/ti-post/bin/python`.
@@ -69,7 +69,7 @@ The 16-worker value is an upper bound. The first subject is rendered in an
 isolated process to measure peak memory, and the existing memory guard lowers
 the active worker count if 16 real meshes would not fit safely in 64 GB.
 Parallelism is across subjects: each worker loads one large mesh once, extracts
-all tissues, and generates both views. Nested tissue pools are intentionally
+all tissues, and generates their configured views. Nested tissue pools are intentionally
 avoided because they would duplicate mesh loading or transfer large surface
 arrays between processes without increasing the allocated CPU budget.
 
@@ -97,11 +97,14 @@ tail -f /mnt/parscratch/users/cop23bi/mesh-wall/logs/Left_Hippocampus_tissue_fro
 
 The final tissue walls are written under `mosaics/tissues/` in each repeat's output root.
 Each tissue has `<tissue-slug>_wall.png` for the front and
-`<tissue-slug>_back_wall.png` for the back.
+`<tissue-slug>_back_wall.png` for the back. Compact bone tag `7` also has
+`tag_07_compact_bone_top_wall.png`, viewed from directly above the head.
 
 If Slurm stops one or more tasks, resubmit the same full array. Tissue-only mode
-reuses every existing non-empty tile carrying the current view-convention
-marker, so completed work is not rendered again.
+reuses every existing non-empty tile carrying a compatible view-convention
+marker, so completed work is not rendered again. The validated front/back v2
+marker is upgraded in place because those camera definitions are unchanged;
+only the missing compact-bone top tiles are then rendered.
 
 ```bash
 sbatch mesh_repeat_analysis/hpc_scripts/run_left_hippocampus_tissue_walls_array.slurm
@@ -154,8 +157,10 @@ Outputs:
 - `mosaics/all_mesh_wall.png`: combined wall across all loadable meshes.
 - `renders/tissues/<tissue-slug>/*.png`: optional front-view tissue render tiles.
 - `renders/tissues_back/<tissue-slug>/*.png`: optional back-view tissue render tiles.
+- `renders/tissues_top/tag_07_compact_bone/*.png`: optional compact-bone top-view render tiles.
 - `mosaics/tissues/<tissue-slug>_wall.png`: front-view cohort wall for each detected tissue tag.
 - `mosaics/tissues/<tissue-slug>_back_wall.png`: back-view cohort wall for each detected tissue tag.
+- `mosaics/tissues/tag_07_compact_bone_top_wall.png`: compact-bone cohort wall viewed from RAS `+Z`.
 - `tissue_presence.csv`: tissue tags present in each mesh, independent of render success.
 - `tissue_render_completeness.csv`: missing-tissue and missing-tile counts per tissue and view.
 - `tissue_render_manifest.csv`: renderer and resume audit trail for tissue tiles.
@@ -210,9 +215,10 @@ python mesh_repeat_analysis/post/mesh_qc/run_mesh_qc.py \
   --tissue-only
 ```
 
-`--tissue-only` writes `found_meshes.csv`, renders front/back tissue tiles,
-builds tissue walls, and writes the tissue presence, completeness, manifest,
-and exception CSVs. It reuses existing non-empty tissue tiles on resubmission.
+`--tissue-only` writes `found_meshes.csv`, renders front/back tissue tiles plus
+the compact-bone top tiles, builds tissue walls, and writes the tissue presence,
+completeness, manifest, and exception CSVs. It reuses existing non-empty tissue
+tiles on resubmission.
 It cannot be combined with `--render-only`, `--qc-only`, or `--skip-renders`.
 
 Mosaic assembly is separate from per-mesh rendering. Individual renders may be complete even if `mosaics/all_mesh_wall.png` is missing. The mosaic builder uses Pillow first and falls back to ImageMagick `magick montage` or `montage` if Pillow is unavailable. Large ImageMagick mosaics are assembled in stripes to avoid one high-memory command over thousands of PNGs. On Slurm, set `IMAGEMAGICK_MODULE=<module-name>` to load a site ImageMagick module after the wrapper's `module purge`, or set `MESH_QC_MONTAGE_BIN=/path/to/magick-or-montage`.
@@ -233,9 +239,9 @@ To inspect every tissue included in the tetrahedral meshes, pass:
 --tissue-walls
 ```
 
-This reconstructs the complete boundary of each positive tetrahedral tissue tag and writes two walls per tag. The front is an orthographic view from RAS `+Y` toward the face, the back is an orthographic view from RAS `-Y` toward the posterior head, and RAS `+Z` is upright in both. Both views use the same renderer and framing. It does not rely only on stored SimNIBS triangle interfaces, because those interfaces do not necessarily contain every side of a tissue. Known CHARM tags are given readable names; unknown positive tags are retained as `tissue_<tag>`.
+This reconstructs the complete boundary of each positive tetrahedral tissue tag and writes front and back walls per tag. The front is an orthographic view from RAS `+Y` toward the face, the back is an orthographic view from RAS `-Y` toward the posterior head, and RAS `+Z` is upright in both. Compact bone tag `7` also receives a top orthographic view from RAS `+Z`, with anterior RAS `+Y` toward the top of the image. All views use the same renderer and framing. It does not rely only on stored SimNIBS triangle interfaces, because those interfaces do not necessarily contain every side of a tissue. Known CHARM tags are given readable names; unknown positive tags are retained as `tissue_<tag>`.
 
-`tissue_render_completeness.csv` reports front and back independently and distinguishes two problems:
+`tissue_render_completeness.csv` reports each configured view independently and distinguishes two problems:
 
 - `MISSING_TISSUE`: a tag found elsewhere in the cohort is absent from one or more otherwise loadable meshes.
 - `INCOMPLETE_RENDER`: the tissue exists in a mesh, but its PNG was not produced.
@@ -248,9 +254,11 @@ TISSUE_WALLS_CONFIG="1"
 
 New tissue output directories contain `tissue_view_convention.json`. A rerun
 with the same convention can reuse existing tiles without rerunning geometry
-QC. An older directory containing tissue PNGs but no marker is rejected because
-those tiles may use the obsolete superior/axial camera; choose a fresh output
-directory instead of mixing old and anatomical views.
+QC. The exact validated front/back v2 marker is compatible with the additive
+compact-bone top view and is upgraded automatically. An older directory
+containing tissue PNGs but no marker is rejected because those tiles may use the
+obsolete superior/axial camera; choose a fresh output directory instead of
+mixing old and anatomical views.
 
 If old QC outputs contain `unknown_roi`, rerun `--render-only --roi-walls` after pulling the current code. Render-only will refresh ROI labels from the stored paths and rewrite the metadata CSVs before rebuilding mosaics. For explicit 4-ROI grouping, use:
 
@@ -266,7 +274,7 @@ For full HPC batches, disconnected-component analysis is disabled by default bec
 --check-components
 ```
 
-QC, whole-mesh rendering, and tissue-wall rendering are parallelized because each mesh is handled independently. For tissue walls, one worker loads one mesh once and processes the front and back views of all its tissues serially; this avoids loading a large mesh once per tissue or view and avoids nested process pools. By default `--workers 0` exposes all visible CPUs to the scheduler and lets the code scale down automatically if memory looks tight or a worker pool proves unstable. Use a smaller explicit count only when you want to cap CPU usage:
+QC, whole-mesh rendering, and tissue-wall rendering are parallelized because each mesh is handled independently. For tissue walls, one worker loads one mesh once and processes the configured views of all its tissues serially; compact bone has one additional top view. This avoids loading a large mesh once per tissue or view and avoids nested process pools. By default `--workers 0` exposes all visible CPUs to the scheduler and lets the code scale down automatically if memory looks tight or a worker pool proves unstable. Use a smaller explicit count only when you want to cap CPU usage:
 
 ```bash
 --workers 8

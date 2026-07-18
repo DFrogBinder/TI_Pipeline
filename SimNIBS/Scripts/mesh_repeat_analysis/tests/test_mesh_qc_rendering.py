@@ -224,6 +224,16 @@ def test_surface_renderer_exports_temporary_surface_for_gmsh(tmp_path, monkeypat
                 ]
             ),
         ),
+        (
+            "top",
+            np.array(
+                [
+                    [-2.0, -1.0, -1.5],
+                    [2.0, -1.0, -1.5],
+                    [-2.0, 1.0, 1.5],
+                ]
+            ),
+        ),
     ],
 )
 def test_surface_renderer_maps_ras_to_anatomical_orthographic_view(

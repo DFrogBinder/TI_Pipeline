@@ -89,15 +89,15 @@ def test_left_hippocampus_full_tissue_array_covers_all_repeats_in_parallel():
     assert 'EXPECTED_REPEATS_CONFIG="10"' in text
     assert 'EXPECTED_SUBJECTS_PER_REPEAT_CONFIG="175"' in text
     assert 'EXPECTED_TOTAL_MESHES_CONFIG="1750"' in text
-    assert 'EXPECTED_TOTAL_TILES_CONFIG="31500"' in text
-    assert 'EXPECTED_TOTAL_WALLS_CONFIG="180"' in text
+    assert 'EXPECTED_TOTAL_TILES_CONFIG="33250"' in text
+    assert 'EXPECTED_TOTAL_WALLS_CONFIG="190"' in text
     assert 'MESH_QC_STAGE_CONFIG="tissue"' in text
     assert 'WORKERS_CONFIG="16"' in text
     assert 'TISSUE_WALLS="1"' in text
     assert 'ROI_WALLS="0"' in text
     assert 'RENDERER_CONFIG="gmsh"' in text
     assert "Left_Hippocampus_tissue_front_back_orthographic_all_repeats" in text
-    assert "RAS +Y face / -Y posterior; +Z up; orthographic" in text
+    assert "RAS +Y face / -Y posterior; compact bone also +Z superior; orthographic" in text
     assert 'SIMNIBS_MODULE_CONFIG="none"' in text
     assert 'GMSH_MODULE_CONFIG="gmsh/4.11.1-foss-2022b"' in text
     assert 'XVFB_MODULE_CONFIG="Xvfb/21.1.6-GCCcore-12.2.0"' in text

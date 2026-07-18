@@ -98,15 +98,16 @@ def render_surface_png(
 
 
 def _surface_for_anatomical_view(surface: SurfaceArrays, view: str) -> SurfaceArrays:
-    """Map an RAS surface into an upright, front-facing camera frame.
+    """Map an RAS surface into an anatomical orthographic camera frame.
 
     Gmsh's zero-rotation camera looks down the camera-frame +Z axis. Front
     therefore uses RAS +Y as depth, while back uses RAS -Y and mirrors X as it
     would appear to an observer standing behind the head. RAS +Z stays upright
-    in both images.
+    in both images. Top uses RAS +Z as depth, with RAS +Y toward the top of the
+    image so the face is above the posterior head.
     """
     view = view.lower()
-    if view not in {"front", "back"}:
+    if view not in {"front", "back", "top"}:
         raise ValueError(f"Unsupported surface view: {view}")
 
     points, faces = _validated_surface_arrays(surface)
@@ -116,10 +117,12 @@ def _surface_for_anatomical_view(surface: SurfaceArrays, view: str) -> SurfaceAr
         camera_points = np.column_stack(
             (centered[:, 0], centered[:, 2], centered[:, 1])
         )
-    else:
+    elif view == "back":
         camera_points = np.column_stack(
             (-centered[:, 0], centered[:, 2], -centered[:, 1])
         )
+    else:
+        camera_points = centered
     return SurfaceArrays(points=camera_points, faces=faces)
 
 

@@ -342,6 +342,15 @@ The Pillow path remains available as a last-resort software fallback. For smalle
 
 Progress is shown during discovery, QC, rendering, and mosaic creation. By default, `--progress auto` uses `tqdm` progress bars when `tqdm` is installed and falls back to plain text otherwise.
 
+## Interactive Subject Selection
+
+After generating individual tissue renders, use the persistent image-review
+utility documented in
+`mesh_repeat_analysis/post/mesh_review/README.md` to classify each render as
+accept, maybe, or decline and export the final accepted-subject list. A decline
+on any tissue dynamically removes the rest of that subject's images from the
+review queue.
+
 For debugging failed HPC runs, the code now always writes a persistent run log and structured exception CSVs into `--out`, so you do not need to rely only on transient terminal output.
 
 Force a mode with:

@@ -113,7 +113,16 @@ ARRAY_END=$((EXPECTED_TASKS - 1))
 ARRAY_SPEC="0-${ARRAY_END}%${MAX_CONCURRENT_TASKS}"
 if command -v "${SCONTROL_BIN}" >/dev/null 2>&1
 then
-    MAX_ARRAY_SIZE=$("${SCONTROL_BIN}" show config | awk -F '= ' '$1 ~ /^[[:space:]]*MaxArraySize/ { gsub(/[[:space:]]/, "", $2); print $2; exit }')
+    set +e
+    SCONTROL_CONFIG=$("${SCONTROL_BIN}" show config 2>&1)
+    SCONTROL_EXIT=$?
+    set -e
+    if [ "${SCONTROL_EXIT}" -ne 0 ]; then
+        echo "[ERROR] Could not inspect the live Slurm MaxArraySize." >&2
+        echo "${SCONTROL_CONFIG}" >&2
+        exit "${SCONTROL_EXIT}"
+    fi
+    MAX_ARRAY_SIZE=$(printf '%s\n' "${SCONTROL_CONFIG}" | awk -F '=' '$1 ~ /^[[:space:]]*MaxArraySize/ && !found { gsub(/[[:space:]]/, "", $2); print $2; found=1 }')
     if [ -n "${MAX_ARRAY_SIZE}" ] && [ "${EXPECTED_TASKS}" -gt "${MAX_ARRAY_SIZE}" ]; then
         echo "[ERROR] ${EXPECTED_TASKS} tasks exceed Slurm MaxArraySize=${MAX_ARRAY_SIZE}." >&2
         exit 2

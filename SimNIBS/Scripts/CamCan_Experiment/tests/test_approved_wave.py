@@ -235,7 +235,9 @@ def test_submitter_preflights_full_requested_scope_before_fake_sbatch(tmp_path):
     fake_sbatch = _write(tmp_path / "sbatch", "#!/bin/bash\necho 12345\n")
     fake_scontrol = _write(
         tmp_path / "scontrol",
-        "#!/bin/bash\necho 'MaxArraySize = 1001'\n",
+        "#!/bin/bash\n"
+        "echo 'MaxArraySize = 1001'\n"
+        "for value in $(seq 1 20000); do echo \"OtherSetting${value} = ${value}\"; done\n",
     )
     fake_sbatch.chmod(0o755)
     fake_scontrol.chmod(0o755)

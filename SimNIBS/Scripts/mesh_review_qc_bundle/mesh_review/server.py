@@ -53,6 +53,7 @@ class MeshReviewHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     {
                         "stats": self.server.store.stats(),
+                        "tissues": self.server.store.tissues(),
                         "image_root": str(self.server.store.image_root),
                         "state_dir": str(self.server.store.state_dir),
                         "export_dir": str(self.server.store.export_dir),
@@ -63,11 +64,17 @@ class MeshReviewHandler(BaseHTTPRequestHandler):
                 query = parse_qs(parsed.query)
                 mode = query.get("mode", ["new"])[0]
                 order = query.get("order", ["subject"])[0]
+                first_tissue = query.get("first_tissue", [""])[0].strip() or None
                 self._send_json(
                     {
                         "mode": mode,
                         "order": order,
-                        "items": self.server.store.queue(mode=mode, order=order),
+                        "first_tissue": first_tissue,
+                        "items": self.server.store.queue(
+                            mode=mode,
+                            order=order,
+                            first_tissue=first_tissue,
+                        ),
                     }
                 )
                 return
@@ -120,7 +127,13 @@ class MeshReviewHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/rescan":
                 scan = self.server.store.rescan()
-                self._send_json({"scan": scan, "stats": self.server.store.stats()})
+                self._send_json(
+                    {
+                        "scan": scan,
+                        "stats": self.server.store.stats(),
+                        "tissues": self.server.store.tissues(),
+                    }
+                )
                 return
             if parsed.path == "/api/export":
                 files = self.server.store.export_all()

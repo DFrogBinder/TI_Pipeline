@@ -243,6 +243,24 @@ class ReviewStore:
         with self._lock:
             return self._subject_rows()
 
+    def tissues(self) -> list[dict[str, str]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT DISTINCT tissue
+                FROM images
+                WHERE active = 1
+                ORDER BY LOWER(tissue), tissue
+                """
+            ).fetchall()
+        return [
+            {
+                "slug": str(row["tissue"]),
+                "display": _display_tissue(str(row["tissue"])),
+            }
+            for row in rows
+        ]
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             summaries = self._subject_rows()
@@ -306,7 +324,11 @@ class ReviewStore:
             }
 
     def queue(
-        self, *, mode: str = "new", order: str = "subject"
+        self,
+        *,
+        mode: str = "new",
+        order: str = "subject",
+        first_tissue: str | None = None,
     ) -> list[dict[str, Any]]:
         if mode not in {"new", "maybe"}:
             raise ValueError(f"Unsupported queue mode: {mode}")
@@ -315,14 +337,21 @@ class ReviewStore:
         decision_clause = (
             "d.decision IS NULL" if mode == "new" else "d.decision = 'maybe'"
         )
+        priority_clause = ""
+        parameters: tuple[str, ...] = ()
+        if first_tissue:
+            priority_clause = "CASE WHEN i.tissue = ? THEN 0 ELSE 1 END, "
+            parameters = (first_tissue,)
         if order == "subject":
             order_clause = (
-                "LOWER(i.subject_id), i.subject_id, LOWER(i.tissue), "
+                "LOWER(i.subject_id), i.subject_id, "
+                f"{priority_clause}LOWER(i.tissue), "
                 "CASE i.view WHEN 'front' THEN 0 WHEN 'back' THEN 1 ELSE 2 END, i.relative_path"
             )
         else:
             order_clause = (
-                "LOWER(i.tissue), CASE i.view WHEN 'front' THEN 0 WHEN 'back' THEN 1 ELSE 2 END, "
+                f"{priority_clause}LOWER(i.tissue), "
+                "CASE i.view WHEN 'front' THEN 0 WHEN 'back' THEN 1 ELSE 2 END, "
                 "LOWER(i.subject_id), i.subject_id, i.relative_path"
             )
         sql = f"""
@@ -344,7 +373,7 @@ class ReviewStore:
             ORDER BY {order_clause}
         """
         with self._lock:
-            rows = self._connection.execute(sql).fetchall()
+            rows = self._connection.execute(sql, parameters).fetchall()
         return [
             {
                 "id": int(row["id"]),

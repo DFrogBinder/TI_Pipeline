@@ -15,7 +15,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     "saveState", "reviewTab", "subjectsTab", "undoButton", "exportButton", "rescanButton",
     "acceptedSubjects", "targetSubjects", "targetStatus", "targetProgressBar",
     "declinedSubjects", "maybeSubjects", "inReviewSubjects", "unreviewedSubjects",
-    "remainingImages", "reviewView", "subjectsView", "queueMode", "queueOrder",
+    "remainingImages", "reviewView", "subjectsView", "queueMode", "queueOrder", "firstTissue",
     "reloadQueueButton", "zoomOut", "zoomIn", "zoomReset", "zoomRange", "zoomValue",
     "fullScreenButton", "imageStage", "imageLoading", "reviewImage", "emptyQueue",
     "emptyTitle", "emptyMessage", "queueRemaining", "currentSubject", "currentTissue",
@@ -30,6 +30,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     const bootstrap = await api("/api/bootstrap");
     updateStats(bootstrap.stats);
+    populateTissueOptions(bootstrap.tissues || []);
     elements.saveState.textContent = "Saved to SQLite";
     await loadQueue();
   } catch (error) {
@@ -42,6 +43,7 @@ function bindEvents() {
   elements.subjectsTab.addEventListener("click", () => showView("subjects"));
   elements.queueMode.addEventListener("change", loadQueue);
   elements.queueOrder.addEventListener("change", loadQueue);
+  elements.firstTissue.addEventListener("change", loadQueue);
   elements.reloadQueueButton.addEventListener("click", loadQueue);
   elements.acceptButton.addEventListener("click", () => decide("accept"));
   elements.maybeButton.addEventListener("click", () => decide("maybe"));
@@ -96,7 +98,11 @@ async function loadQueue() {
   try {
     const mode = elements.queueMode.value;
     const order = elements.queueOrder.value;
-    const payload = await api(`/api/queue?mode=${encodeURIComponent(mode)}&order=${encodeURIComponent(order)}`);
+    const parameters = new URLSearchParams({ mode, order });
+    if (elements.firstTissue.value) {
+      parameters.set("first_tissue", elements.firstTissue.value);
+    }
+    const payload = await api(`/api/queue?${parameters.toString()}`);
     state.queue = payload.items;
     renderCurrent();
   } catch (error) {
@@ -198,6 +204,7 @@ async function rescanFolder() {
   try {
     const result = await api("/api/rescan", { method: "POST", body: "{}" });
     updateStats(result.stats);
+    populateTissueOptions(result.tissues || []);
     elements.saveState.textContent = "Saved to SQLite";
     showToast(`Found ${result.scan.images} images across ${result.scan.subjects} subjects; skipped ${result.scan.skipped}.`);
     await loadQueue();
@@ -239,6 +246,23 @@ function updateStats(stats) {
   elements.targetStatus.textContent = stats.target_reached ? "Target reached" : "Target in progress";
   const progress = Math.min(100, (stats.accepted_subjects / stats.target) * 100);
   elements.targetProgressBar.style.width = `${progress}%`;
+}
+
+function populateTissueOptions(tissues) {
+  const selected = elements.firstTissue.value;
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "Default tag order";
+  const tissueOptions = tissues.map((tissue) => {
+    const option = document.createElement("option");
+    option.value = tissue.slug;
+    option.textContent = tissue.display;
+    return option;
+  });
+  elements.firstTissue.replaceChildren(defaultOption, ...tissueOptions);
+  if (tissues.some((tissue) => tissue.slug === selected)) {
+    elements.firstTissue.value = selected;
+  }
 }
 
 function setBusy(busy) {

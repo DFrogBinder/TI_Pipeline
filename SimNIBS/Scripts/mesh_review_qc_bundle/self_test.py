@@ -63,9 +63,14 @@ class BundleSelfTest(unittest.TestCase):
                 with urlopen(f"http://127.0.0.1:{port}/api/bootstrap", timeout=5) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 self.assertEqual(payload["stats"]["accepted_subjects"], 1)
+                self.assertEqual(
+                    {tissue["slug"] for tissue in payload["tissues"]},
+                    {"tag_05_scalp", "tag_07_compact_bone"},
+                )
                 with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
                     page = response.read().decode("utf-8")
                 self.assertIn("<title>Mesh Review</title>", page)
+                self.assertIn('id="firstTissue"', page)
             finally:
                 if server is not None:
                     server.shutdown()

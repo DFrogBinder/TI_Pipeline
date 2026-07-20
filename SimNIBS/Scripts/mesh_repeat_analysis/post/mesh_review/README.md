@@ -74,12 +74,16 @@ capturing group is used when the expression contains one.
 1. Keep `Queue: New images` selected for the initial pass.
 2. Choose subject-first ordering to inspect all tissues for one subject together,
    or tissue-first ordering to compare the same tissue across subjects.
-3. Click Accept, Maybe, or Decline subject. Keyboard shortcuts `A`, `M`, and `D`
+3. Use `First tissue` to place a high-failure tissue, such as compact bone,
+   before the normal tag order. With subject-first ordering it is shown first
+   within every subject; with tissue-first ordering it is shown first across
+   the cohort. `Default tag order` preserves the original behaviour.
+4. Click Accept, Maybe, or Decline subject. Keyboard shortcuts `A`, `M`, and `D`
    are available when the note field is not focused.
-4. Use `Revisit maybe` for deferred images.
-5. Use the Subjects view to inspect aggregate state and search for a subject ID.
-6. Click Rescan folder after adding new renders.
-7. Click Export when the cohort is ready.
+5. Use `Revisit maybe` for deferred images.
+6. Use the Subjects view to inspect aggregate state and search for a subject ID.
+7. Click Rescan folder after adding new renders.
+8. Click Export when the cohort is ready.
 
 Undo restores the immediately preceding decision. If that decision declined a
 subject, undo makes its remaining images eligible again.

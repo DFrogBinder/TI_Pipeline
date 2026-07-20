@@ -52,6 +52,12 @@ Use **Subject first** to inspect all tissues/views for one subject together. Use
 **Tissue first** to compare the same tissue across subjects. The Subjects tab
 shows aggregate progress and supports subject-ID search.
 
+Use **First tissue** to choose a tissue that should be inspected before the
+normal tag order. For example, selecting **Compact Bone** makes it the first
+tissue for every subject in Subject-first mode, or the first cohort-wide tissue
+in Tissue-first mode. This changes only the queue order; it does not change or
+remove any saved decisions.
+
 ## Saving And Resuming
 
 Every decision is written immediately to:

@@ -91,6 +91,49 @@ def test_subject_is_accepted_only_after_every_active_image_is_accepted(tmp_path)
         store.close()
 
 
+def test_queue_can_prioritize_a_selected_tissue_in_both_order_modes(tmp_path):
+    root = tmp_path / "images"
+    for subject in ("sub-CC1", "sub-CC2"):
+        _image(root, f"tag_01_white_matter/{subject}__front.png")
+        _image(root, f"tag_02_gray_matter/{subject}__front.png")
+        _image(root, f"tag_07_compact_bone/{subject}__front.png")
+    store = ReviewStore(root, tmp_path / "state", target=1)
+    try:
+        store.rescan()
+
+        assert store.queue(order="subject")[0]["tissue"] == "tag_01_white_matter"
+
+        subject_first = store.queue(
+            order="subject", first_tissue="tag_07_compact_bone"
+        )
+        assert [item["tissue"] for item in subject_first[:3]] == [
+            "tag_07_compact_bone",
+            "tag_01_white_matter",
+            "tag_02_gray_matter",
+        ]
+        assert {item["subject_id"] for item in subject_first[:3]} == {"sub-CC1"}
+
+        tissue_first = store.queue(
+            order="tissue", first_tissue="tag_07_compact_bone"
+        )
+        assert [item["tissue"] for item in tissue_first[:2]] == [
+            "tag_07_compact_bone",
+            "tag_07_compact_bone",
+        ]
+        assert [item["subject_id"] for item in tissue_first[:2]] == [
+            "sub-CC1",
+            "sub-CC2",
+        ]
+
+        assert store.tissues() == [
+            {"slug": "tag_01_white_matter", "display": "White Matter"},
+            {"slug": "tag_02_gray_matter", "display": "Gray Matter"},
+            {"slug": "tag_07_compact_bone", "display": "Compact Bone"},
+        ]
+    finally:
+        store.close()
+
+
 def test_maybe_queue_and_undo_restore_review_state(tmp_path):
     root = tmp_path / "images"
     _image(root, "tag_04_bone/001__sub-CC1__front.png")

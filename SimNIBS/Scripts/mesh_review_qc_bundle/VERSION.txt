@@ -1,4 +1,4 @@
-Mesh QC Review Tool 1.0
-Bundle date: 2026-07-18
+Mesh QC Review Tool 1.1
+Bundle date: 2026-07-19
 Python requirement: 3.10 or newer
 Runtime dependencies: Python standard library only

@@ -8,21 +8,31 @@
 #SBATCH --output=approved-wave-lhip-%A_%a.out
 #SBATCH --requeue
 
-set -uo pipefail
+set -euo pipefail
 
 if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
     echo "[ERROR] Submit this script as a Slurm array." >&2
     exit 2
 fi
 
+: "${TI_APPROVED_WAVE_STAGE:?Missing TI_APPROVED_WAVE_STAGE.}"
 : "${TI_APPROVED_WAVE_MANIFEST:?Missing TI_APPROVED_WAVE_MANIFEST.}"
 : "${TI_APPROVED_WAVE_WORKFLOW_PY:?Missing TI_APPROVED_WAVE_WORKFLOW_PY.}"
 : "${TI_APPROVED_WAVE_RESULT_DIR:?Missing TI_APPROVED_WAVE_RESULT_DIR.}"
 : "${TI_APPROVED_WAVE_LOG_DIR:?Missing TI_APPROVED_WAVE_LOG_DIR.}"
-: "${TI_SIM_RUNNER_PY:?Missing TI_SIM_RUNNER_PY.}"
-: "${TI_COMPLETION_CHECK_PY:?Missing TI_COMPLETION_CHECK_PY.}"
 : "${TI_TARGETS_CSV:?Missing TI_TARGETS_CSV.}"
 : "${TI_EXPECTED_TARGETS_SHA256:?Missing TI_EXPECTED_TARGETS_SHA256.}"
+
+if [ "${TI_APPROVED_WAVE_STAGE}" != "prepare" ] && \
+   [ "${TI_APPROVED_WAVE_STAGE}" != "simulate" ]
+then
+    echo "[ERROR] TI_APPROVED_WAVE_STAGE must be prepare or simulate." >&2
+    exit 2
+fi
+if [ "${TI_APPROVED_WAVE_STAGE}" = "simulate" ]; then
+    : "${TI_SIM_RUNNER_PY:?Missing TI_SIM_RUNNER_PY.}"
+    : "${TI_COMPLETION_CHECK_PY:?Missing TI_COMPLETION_CHECK_PY.}"
+fi
 
 TASK_OFFSET="${TASK_OFFSET:-0}"
 MAX_RETRIES="${TI_APPROVED_WAVE_MAX_RETRIES:-2}"
@@ -34,16 +44,19 @@ if ! [[ "${TASK_OFFSET}" =~ ^[0-9]+$ ]]; then
     exit 2
 fi
 if ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]]; then
-    echo "[ERROR] TI_APPROVED_WAVE_MAX_RETRIES must be a non-negative integer." >&2
+    echo "[ERROR] TI_APPROVED_WAVE_MAX_RETRIES must be non-negative." >&2
     exit 2
 fi
-for required in \
-    "${TI_APPROVED_WAVE_MANIFEST}" \
-    "${TI_APPROVED_WAVE_WORKFLOW_PY}" \
-    "${TI_SIM_RUNNER_PY}" \
-    "${TI_COMPLETION_CHECK_PY}" \
+
+REQUIRED_FILES=(
+    "${TI_APPROVED_WAVE_MANIFEST}"
+    "${TI_APPROVED_WAVE_WORKFLOW_PY}"
     "${TI_TARGETS_CSV}"
-do
+)
+if [ "${TI_APPROVED_WAVE_STAGE}" = "simulate" ]; then
+    REQUIRED_FILES+=("${TI_SIM_RUNNER_PY}" "${TI_COMPLETION_CHECK_PY}")
+fi
+for required in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "${required}" ]; then
         echo "[ERROR] Required file is missing: ${required}" >&2
         exit 2
@@ -52,14 +65,27 @@ done
 
 TASK_INDEX=$((TASK_OFFSET + SLURM_ARRAY_TASK_ID))
 TASK_LINE=$(sed -n "$((TASK_INDEX + 2))p" "${TI_APPROVED_WAVE_MANIFEST}")
-IFS=$'\t' read -r \
-    TASK_ID DATASET_NAME REPEAT_ID DATASET_ROOT SUBJECT SOURCE_ANAT \
-    SOURCE_T1 SOURCE_T1_HASH SOURCE_T2 SOURCE_T2_HASH APPROVED_LABEL \
-    APPROVED_LABEL_HASH ANAT_DIR M2M_DIR MESH_PATH MESH_RESULT_PATH \
-    RESULT_PATH STATUS MESSAGE <<< "${TASK_LINE}"
+if [ -z "${TASK_LINE}" ]; then
+    echo "[ERROR] No manifest row for global task index ${TASK_INDEX}." >&2
+    exit 2
+fi
 
-if [ -z "${TASK_LINE}" ] || [ -z "${SUBJECT:-}" ]; then
-    echo "[ERROR] No valid manifest row for task index ${TASK_INDEX}." >&2
+if [ "${TI_APPROVED_WAVE_STAGE}" = "prepare" ]; then
+    IFS=$'\t' read -r \
+        TASK_ID DATASET_NAME SUBJECT SOURCE_ANAT SOURCE_T1 SOURCE_T1_HASH \
+        SOURCE_T2 SOURCE_T2_HASH APPROVED_LABEL APPROVED_LABEL_HASH \
+        DATASET_ROOT ANAT_DIR M2M_DIR MESH_PATH RESULT_PATH STATUS MESSAGE \
+        <<< "${TASK_LINE}"
+    REPEAT_ID=01
+else
+    IFS=$'\t' read -r \
+        TASK_ID DATASET_NAME REPEAT_ID DATASET_ROOT SUBJECT ANAT_DIR \
+        CANONICAL_ANAT_DIR CANONICAL_M2M_DIR PREP_RESULT_PATH RESULT_PATH \
+        STATUS MESSAGE <<< "${TASK_LINE}"
+fi
+
+if [ -z "${SUBJECT:-}" ] || [ "${TASK_ID:-}" != "${TASK_INDEX}" ]; then
+    echo "[ERROR] Malformed or misindexed task row: ${TASK_LINE}" >&2
     exit 2
 fi
 if [ "${STATUS}" != "ready" ]; then
@@ -69,7 +95,7 @@ fi
 
 mkdir -p "${TI_APPROVED_WAVE_LOG_DIR}" "${STATE_DIR}" "${TI_APPROVED_WAVE_RESULT_DIR}"
 SAFE_DATASET="${DATASET_NAME//[^A-Za-z0-9_.-]/_}"
-TASK_LOG="${TI_APPROVED_WAVE_LOG_DIR}/${SAFE_DATASET}__${SUBJECT}.log"
+TASK_LOG="${TI_APPROVED_WAVE_LOG_DIR}/${TI_APPROVED_WAVE_STAGE}__${SAFE_DATASET}__${SUBJECT}.log"
 TASK_KEY="${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}"
 RETRY_FILE="${STATE_DIR}/${TASK_KEY}.retry"
 if [ -f "${RETRY_FILE}" ]; then
@@ -127,37 +153,65 @@ export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
 echo "[INFO] Job ID:          ${SLURM_JOB_ID}"
+echo "[INFO] Stage:           ${TI_APPROVED_WAVE_STAGE}"
 echo "[INFO] Global index:    ${TASK_INDEX}"
 echo "[INFO] Task ID:         ${TASK_ID}"
 echo "[INFO] Dataset:         ${DATASET_NAME}"
 echo "[INFO] Repeat:          ${REPEAT_ID}"
 echo "[INFO] Subject:         ${SUBJECT}"
-echo "[INFO] Dataset root:    ${DATASET_ROOT}"
-echo "[INFO] Source anat:     ${SOURCE_ANAT}"
-echo "[INFO] Source T1:       ${SOURCE_T1}"
-echo "[INFO] Source T1 hash:  ${SOURCE_T1_HASH}"
-echo "[INFO] Source T2:       ${SOURCE_T2}"
-echo "[INFO] Source T2 hash:  ${SOURCE_T2_HASH}"
-echo "[INFO] Approved label:  ${APPROVED_LABEL}"
-echo "[INFO] Label SHA-256:   ${APPROVED_LABEL_HASH}"
-echo "[INFO] Anat directory:  ${ANAT_DIR}"
-echo "[INFO] m2m directory:   ${M2M_DIR}"
-echo "[INFO] Target mesh:     ${MESH_PATH}"
-echo "[INFO] Mesh marker:     ${MESH_RESULT_PATH}"
 echo "[INFO] Task marker:     ${RESULT_PATH}"
 echo "[INFO] Montage:         ${MONTAGE_PRESET}"
 echo "[INFO] Retry:           ${RETRY_COUNT}/${MAX_RETRIES}"
-echo "[INFO] Operation:       CHARM prerequisites -> exact approved label -> mesh -> simulation -> validation"
+if [ "${TI_APPROVED_WAVE_STAGE}" = "prepare" ]; then
+    echo "[INFO] Operation:       one CHARM support build -> exact approved label -> one mesh"
+    echo "[INFO] Source anat:     ${SOURCE_ANAT}"
+    echo "[INFO] Source T1:       ${SOURCE_T1}"
+    echo "[INFO] Source T1 hash:  ${SOURCE_T1_HASH}"
+    echo "[INFO] Source T2:       ${SOURCE_T2}"
+    echo "[INFO] Source T2 hash:  ${SOURCE_T2_HASH}"
+    echo "[INFO] Approved label:  ${APPROVED_LABEL}"
+    echo "[INFO] Label hash:      ${APPROVED_LABEL_HASH}"
+    echo "[INFO] Dataset root:    ${DATASET_ROOT}"
+    echo "[INFO] Anat directory:  ${ANAT_DIR}"
+    echo "[INFO] m2m directory:   ${M2M_DIR}"
+    echo "[INFO] Mesh path:       ${MESH_PATH}"
+else
+    echo "[INFO] Operation:       reuse canonical m2m/mesh -> FEM simulation -> validation"
+    echo "[INFO] Dataset root:    ${DATASET_ROOT}"
+    echo "[INFO] Anat directory:  ${ANAT_DIR}"
+    echo "[INFO] Canonical anat:  ${CANONICAL_ANAT_DIR}"
+    echo "[INFO] Canonical m2m:   ${CANONICAL_M2M_DIR}"
+    echo "[INFO] Prep marker:     ${PREP_RESULT_PATH}"
+fi
+
+COMMAND=(
+    python -u "${TI_APPROVED_WAVE_WORKFLOW_PY}"
+)
+if [ "${TI_APPROVED_WAVE_STAGE}" = "prepare" ]; then
+    COMMAND+=(
+        prep-task
+        --manifest "${TI_APPROVED_WAVE_MANIFEST}"
+        --task-index "${TASK_INDEX}"
+        --montage-preset "${MONTAGE_PRESET}"
+        --targets-csv "${TI_TARGETS_CSV}"
+        --expected-targets-sha256 "${TI_EXPECTED_TARGETS_SHA256}"
+    )
+else
+    COMMAND+=(
+        simulation-task
+        --manifest "${TI_APPROVED_WAVE_MANIFEST}"
+        --task-index "${TASK_INDEX}"
+        --montage-preset "${MONTAGE_PRESET}"
+        --targets-csv "${TI_TARGETS_CSV}"
+        --expected-targets-sha256 "${TI_EXPECTED_TARGETS_SHA256}"
+        --simulation-runner "${TI_SIM_RUNNER_PY}"
+        --simulation-validator "${TI_COMPLETION_CHECK_PY}"
+        --python-bin python
+    )
+fi
 
 set +e
-python -u "${TI_APPROVED_WAVE_WORKFLOW_PY}" run-task \
-    --manifest "${TI_APPROVED_WAVE_MANIFEST}" \
-    --task-index "${TASK_INDEX}" \
-    --montage-preset "${MONTAGE_PRESET}" \
-    --targets-csv "${TI_TARGETS_CSV}" \
-    --expected-targets-sha256 "${TI_EXPECTED_TARGETS_SHA256}" \
-    --simulation-runner "${TI_SIM_RUNNER_PY}" \
-    --simulation-validator "${TI_COMPLETION_CHECK_PY}" 2>&1 | tee -a "${TASK_LOG}"
+"${COMMAND[@]}" 2>&1 | tee -a "${TASK_LOG}"
 RUN_EXIT=${PIPESTATUS[0]}
 set -e
 
@@ -165,7 +219,6 @@ if [ "${RUN_EXIT}" -eq 0 ]; then
     rm -f "${RETRY_FILE}"
     exit 0
 fi
-
 if [ "${RETRY_COUNT}" -lt "${MAX_RETRIES}" ]; then
     NEXT_RETRY=$((RETRY_COUNT + 1))
     printf '%s\n' "${NEXT_RETRY}" > "${RETRY_FILE}"

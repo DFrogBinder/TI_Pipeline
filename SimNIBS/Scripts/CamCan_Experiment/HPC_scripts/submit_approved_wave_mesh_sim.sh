@@ -106,7 +106,7 @@ PREP_TOTAL=$(awk 'NR > 1 && NF > 0 { count++ } END { print count + 0 }' "${PREP_
 PREP_READY=$(awk -F '\t' 'NR > 1 && $16 == "ready" { count++ } END { print count + 0 }' "${PREP_MANIFEST}")
 PREP_SUBJECTS=$(awk -F '\t' 'NR > 1 { seen[$3]=1 } END { for (subject in seen) count++; print count + 0 }' "${PREP_MANIFEST}")
 SIM_TOTAL=$(awk 'NR > 1 && NF > 0 { count++ } END { print count + 0 }' "${SIMULATION_MANIFEST}")
-SIM_READY=$(awk -F '\t' 'NR > 1 && $11 == "ready" { count++ } END { print count + 0 }' "${SIMULATION_MANIFEST}")
+SIM_READY=$(awk -F '\t' 'NR > 1 && $12 == "ready" { count++ } END { print count + 0 }' "${SIMULATION_MANIFEST}")
 SIM_SUBJECTS=$(awk -F '\t' 'NR > 1 { seen[$5]=1 } END { for (subject in seen) count++; print count + 0 }' "${SIMULATION_MANIFEST}")
 SIM_REPEATS=$(awk -F '\t' 'NR > 1 { seen[$3]=1 } END { for (repeat in seen) count++; print count + 0 }' "${SIMULATION_MANIFEST}")
 if [ "${PREP_TOTAL}" -ne "${EXPECTED_PREP_TASKS}" ] || \
@@ -176,10 +176,10 @@ printf '%s\n' \
     "  preparation array: ${PREP_ARRAY}" \
     "  simulation array: ${SIMULATION_ARRAY} (afterok preparation)" \
     "  expected CHARM support builds: ${EXPECTED_SUBJECTS}" \
-    "  expected meshes: ${EXPECTED_SUBJECTS}" \
+    "  expected independent meshes: ${EXPECTED_SIMULATION_TASKS}" \
     "  expected validated FEM simulations: ${EXPECTED_SIMULATION_TASKS}" \
     '  execution: full requested wave; not a smoke or subset' \
-    '  architecture: bootstrap repeat 01 once per subject, then reuse its m2m/mesh for all repeats'
+    '  architecture: repeat 01 builds the scaffold/first mesh; repeats 02-10 copy the scaffold and remesh independently'
 
 echo "[INFO] Preparation manifest: ${PREP_MANIFEST}"
 echo "[INFO] Simulation manifest:  ${SIMULATION_MANIFEST}"

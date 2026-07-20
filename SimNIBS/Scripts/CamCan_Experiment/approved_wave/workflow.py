@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Bootstrap CHARM once per approved subject, then simulate all repeats.
+"""Bootstrap CHARM once, then independently remesh and simulate every repeat.
 
 The bootstrap stage reconstructs one complete ``m2m_*`` tree per subject,
 replaces CHARM's generated tissue map with the exact supervisor-reviewed map,
-and meshes that map once.  The simulation stage reuses this immutable subject
-support for every requested repeat.  No repeat simulation runs segmentation or
-meshing, and ROAST/custom segmentation is never accepted.
+and creates the first experimental mesh and transformed EEG cap. Repeats 02-10
+receive physical copies of that subject scaffold, discard the copied mesh, run
+their own ``charm --mesh``, restore the repeat-01 EEG cap, and then simulate.
+ROAST/custom segmentation is never accepted.
 """
 
 from __future__ import annotations
@@ -69,6 +70,7 @@ SIMULATION_FIELDS = (
     "canonical_anat_dir",
     "canonical_m2m_dir",
     "prep_result_path",
+    "mesh_result_path",
     "result_path",
     "status",
     "message",
@@ -265,9 +267,14 @@ def build_manifests(
                     "canonical_anat_dir": prep["anat_dir"],
                     "canonical_m2m_dir": prep["m2m_dir"],
                     "prep_result_path": prep["result_path"],
-                    "result_path": simulation_results
-                    / dataset_name
-                    / f"{subject}.json",
+                    "mesh_result_path": (
+                        prep["result_path"]
+                        if repeat == first_repeat
+                        else simulation_results
+                        / dataset_name
+                        / f"{subject}.mesh.json"
+                    ),
+                    "result_path": simulation_results / dataset_name / f"{subject}.json",
                     "status": prep["status"],
                     "message": prep["message"],
                 }
@@ -317,11 +324,18 @@ def build_manifests(
         "simulation_tasks_expected": expected_simulation_tasks,
         "simulation_ready": simulation_ready,
         "charm_segmentation_runs_expected": expected_subjects,
-        "meshes_expected": expected_subjects,
+        "meshes_expected": expected_simulation_tasks,
+        "mesh_runs_in_preparation_expected": expected_subjects,
+        "mesh_runs_in_repeat_stage_expected": expected_simulation_tasks
+        - expected_subjects,
+        "repeat_scaffold_copies_expected": expected_simulation_tasks
+        - expected_subjects,
         "fem_simulations_expected": expected_simulation_tasks,
         "segmentation_used_for_mesh": "exact supervisor-reviewed CHARM label",
         "roast_involvement": False,
-        "execution": "one CHARM bootstrap and mesh per subject; FEM for all repeats",
+        "execution": (
+            "one CHARM bootstrap per subject; independent mesh and FEM for every repeat"
+        ),
     }
     write_tsv(Path(prep_manifest).expanduser().resolve(), PREP_FIELDS, prep_rows)
     write_tsv(
@@ -533,6 +547,8 @@ def run_prep_task(
         "segmentation_command": segment_command,
         "mesh_command": mesh_command,
         "segmentation_runs_for_subject": 1,
+        "repeat_id": "01",
+        "independent_repeat_mesh": True,
         "roast_involvement": False,
         "started_at": started_at,
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -556,21 +572,167 @@ def _ensure_relative_symlink(source: Path, destination: Path) -> None:
     destination.symlink_to(relative, target_is_directory=resolved_source.is_dir())
 
 
-def materialize_repeat_subject(row: dict[str, str]) -> None:
+def repeat_mesh_result_is_current(
+    row: dict[str, str],
+    prep_payload: dict[str, object],
+    required_electrodes: Sequence[str],
+) -> dict[str, object] | None:
+    if Path(row["anat_dir"]).resolve() == Path(row["canonical_anat_dir"]).resolve():
+        return prep_payload
+    payload = _load_json(Path(row["mesh_result_path"]))
+    if payload is None or payload.get("status") != "complete":
+        return None
+    m2m_dir = Path(row["anat_dir"]) / f"m2m_{row['subject']}"
+    mesh = m2m_dir / f"{row['subject']}.msh"
+    label = m2m_dir / "label_prep" / MAP_BASENAME
+    cap = m2m_dir / "eeg_positions" / CAP_BASENAME
+    canonical_mesh = Path(row["canonical_m2m_dir"]) / f"{row['subject']}.msh"
+    try:
+        checks = (
+            payload.get("dataset_name") == row["dataset_name"],
+            payload.get("repeat_id") == row["repeat_id"],
+            payload.get("subject") == row["subject"],
+            payload.get("scaffold_copy_mode") == "physical",
+            payload.get("independent_repeat_mesh") is True,
+            payload.get("approved_label_sha256")
+            == prep_payload.get("approved_label_sha256"),
+            payload.get("eeg_cap_sha256") == prep_payload.get("eeg_cap_sha256"),
+            not m2m_dir.is_symlink(),
+            mesh.resolve(strict=True) != canonical_mesh.resolve(strict=True),
+            sha256_file(mesh) == payload.get("mesh_sha256"),
+            sha256_file(label) == prep_payload.get("approved_label_sha256"),
+            sha256_file(cap) == prep_payload.get("eeg_cap_sha256"),
+            set(required_electrodes).issubset(_cap_names(cap)),
+        )
+        if not all(checks):
+            return None
+    except (FileNotFoundError, OSError, UnicodeError, csv.Error):
+        return None
+    return payload
+
+
+def _clear_repeat_subject(row: dict[str, str]) -> None:
+    subject_root = Path(row["anat_dir"]).parent
+    if not subject_root.exists() and not subject_root.is_symlink():
+        return
+    if subject_root.is_symlink():
+        raise ValueError(f"refusing symlinked repeat subject root: {subject_root}")
+    dataset_root = Path(row["dataset_root"]).resolve()
+    if not subject_root.resolve().is_relative_to(dataset_root):
+        raise ValueError(f"refusing to clear repeat subject root: {subject_root}")
+    shutil.rmtree(subject_root)
+
+
+def build_repeat_mesh(
+    *,
+    row: dict[str, str],
+    prep_payload: dict[str, object],
+    required_electrodes: Sequence[str],
+    charm_bin: str,
+    command_runner: Callable[..., None],
+    mesh_validator: Callable[[Path], dict[str, object]],
+) -> dict[str, object]:
+    current = repeat_mesh_result_is_current(row, prep_payload, required_electrodes)
+    if current is not None:
+        return current
+
     anat_dir = Path(row["anat_dir"])
     canonical_anat = Path(row["canonical_anat_dir"])
-    if anat_dir.resolve() == canonical_anat.resolve():
-        return
+    canonical_m2m = Path(row["canonical_m2m_dir"])
+    canonical_cap = canonical_m2m / "eeg_positions" / CAP_BASENAME
+    canonical_cap_hash = str(prep_payload["eeg_cap_sha256"])
     subject = row["subject"]
+    _clear_repeat_subject(row)
+    Path(row["mesh_result_path"]).unlink(missing_ok=True)
+    anat_dir.mkdir(parents=True, exist_ok=True)
+
     t1_candidates = sorted(canonical_anat.glob(f"{subject}_T1w.nii*"))
     t2_candidates = sorted(canonical_anat.glob(f"{subject}_T2w.nii*"))
     if len(t1_candidates) != 1 or len(t2_candidates) != 1:
         raise FileNotFoundError("canonical T1/T2 inputs are missing or ambiguous")
     _ensure_relative_symlink(t1_candidates[0], anat_dir / t1_candidates[0].name)
     _ensure_relative_symlink(t2_candidates[0], anat_dir / t2_candidates[0].name)
-    _ensure_relative_symlink(
-        Path(row["canonical_m2m_dir"]), anat_dir / f"m2m_{subject}"
+
+    m2m_dir = anat_dir / f"m2m_{subject}"
+    staging_m2m = anat_dir / f".m2m_{subject}.scaffold-{os.getpid()}"
+    if staging_m2m.is_symlink():
+        staging_m2m.unlink()
+    elif staging_m2m.exists():
+        shutil.rmtree(staging_m2m)
+    try:
+        def ignore_canonical_mesh(directory: str, names: list[str]) -> set[str]:
+            if Path(directory).resolve() == canonical_m2m.resolve():
+                return {f"{subject}.msh"}.intersection(names)
+            return set()
+
+        shutil.copytree(
+            canonical_m2m,
+            staging_m2m,
+            symlinks=False,
+            ignore=ignore_canonical_mesh,
+        )
+        copied_mesh = staging_m2m / f"{subject}.msh"
+        copied_mesh.unlink(missing_ok=True)
+        if copied_mesh.exists():
+            raise IOError(f"could not remove copied scaffold mesh: {copied_mesh}")
+        os.replace(staging_m2m, m2m_dir)
+    finally:
+        if staging_m2m.exists():
+            shutil.rmtree(staging_m2m)
+    if m2m_dir.is_symlink():
+        raise ValueError(f"repeat m2m must be a physical copy: {m2m_dir}")
+
+    installed_label = m2m_dir / "label_prep" / MAP_BASENAME
+    if sha256_file(installed_label) != prep_payload["approved_label_sha256"]:
+        raise ValueError("copied scaffold does not contain the approved label")
+    mesh_path = m2m_dir / f"{subject}.msh"
+    mesh_command = [charm_bin, subject, "--mesh"]
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    command_runner(mesh_command, cwd=anat_dir)
+    if sha256_file(installed_label) != prep_payload["approved_label_sha256"]:
+        mesh_path.unlink(missing_ok=True)
+        raise RuntimeError("repeat meshing changed the approved label")
+
+    repeat_cap = m2m_dir / "eeg_positions" / CAP_BASENAME
+    generated_cap_hash = sha256_file(repeat_cap)
+    _copy_verified(
+        canonical_cap,
+        repeat_cap,
+        canonical_cap_hash,
+        replace_existing=True,
     )
+    if sha256_file(repeat_cap) != canonical_cap_hash:
+        mesh_path.unlink(missing_ok=True)
+        raise RuntimeError("repeat-01 EEG cap restoration failed")
+    missing = sorted(set(required_electrodes) - _cap_names(repeat_cap))
+    if missing:
+        mesh_path.unlink(missing_ok=True)
+        raise ValueError("repeat EEG cap lacks: " + ",".join(missing))
+
+    mesh_payload = mesh_validator(mesh_path)
+    payload: dict[str, object] = {
+        "schema_version": 3,
+        "status": "complete",
+        "task_index": int(row["task_id"]),
+        "dataset_name": row["dataset_name"],
+        "repeat_id": row["repeat_id"],
+        "subject": subject,
+        "scaffold_source": str(canonical_m2m),
+        "scaffold_copy_mode": "physical",
+        "approved_label_sha256": prep_payload["approved_label_sha256"],
+        "eeg_cap_path": str(repeat_cap),
+        "eeg_cap_sha256": canonical_cap_hash,
+        "generated_eeg_cap_sha256_before_repeat01_restore": generated_cap_hash,
+        "mesh_command": mesh_command,
+        "independent_repeat_mesh": True,
+        "roast_involvement": False,
+        "started_at": started_at,
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        **mesh_payload,
+    }
+    write_json_atomic(Path(row["mesh_result_path"]), payload)
+    print(json.dumps({"event": "approved_repeat_mesh_complete", **payload}), flush=True)
+    return payload
 
 
 def run_simulation_task(
@@ -583,7 +745,9 @@ def run_simulation_task(
     simulation_runner: str | Path,
     simulation_validator: str | Path,
     python_bin: str = "python",
+    charm_bin: str = "charm",
     command_runner: Callable[..., None] = _run_command,
+    mesh_validator: Callable[[Path], dict[str, object]] = _default_mesh_validator,
 ) -> dict[str, object]:
     rows = read_tsv(manifest)
     if task_index < 0 or task_index >= len(rows):
@@ -617,7 +781,14 @@ def run_simulation_task(
         raise ValueError(
             f"bootstrap result is absent or invalid: {row['prep_result_path']}"
         )
-    materialize_repeat_subject(row)
+    repeat_mesh_payload = build_repeat_mesh(
+        row=row,
+        prep_payload=prep_payload,
+        required_electrodes=required_electrodes,
+        charm_bin=charm_bin,
+        command_runner=command_runner,
+        mesh_validator=mesh_validator,
+    )
 
     result_path = Path(row["result_path"])
     simulation_env = os.environ.copy()
@@ -638,7 +809,7 @@ def run_simulation_task(
         and existing.get("dataset_name") == row["dataset_name"]
         and existing.get("repeat_id") == row["repeat_id"]
         and existing.get("subject") == row["subject"]
-        and existing.get("mesh_sha256") == prep_payload.get("mesh_sha256")
+        and existing.get("mesh_sha256") == repeat_mesh_payload.get("mesh_sha256")
         and existing.get("approved_label_sha256")
         == prep_payload.get("approved_label_sha256")
         and existing.get("montage_preset") == montage_preset
@@ -679,15 +850,16 @@ def run_simulation_task(
         "dataset_name": row["dataset_name"],
         "repeat_id": row["repeat_id"],
         "subject": row["subject"],
-        "mesh_path": prep_payload["mesh_path"],
-        "mesh_sha256": prep_payload["mesh_sha256"],
+        "mesh_path": repeat_mesh_payload["mesh_path"],
+        "mesh_sha256": repeat_mesh_payload["mesh_sha256"],
         "approved_label_sha256": prep_payload["approved_label_sha256"],
         "montage_preset": montage_preset,
         "targets_csv": str(targets),
         "targets_csv_sha256": actual_targets_hash,
         "simulation_command": simulation_command,
         "validation_command": validation_command,
-        "segmentation_or_meshing_in_simulation_task": False,
+        "segmentation_in_simulation_task": False,
+        "independent_repeat_mesh": True,
         "started_at": started_at,
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -738,6 +910,7 @@ def build_parser() -> argparse.ArgumentParser:
     simulation.add_argument("--simulation-runner", required=True)
     simulation.add_argument("--simulation-validator", required=True)
     simulation.add_argument("--python-bin", default="python")
+    simulation.add_argument("--charm-bin", default="charm")
     return parser
 
 
@@ -781,6 +954,7 @@ def main() -> int:
             simulation_runner=args.simulation_runner,
             simulation_validator=args.simulation_validator,
             python_bin=args.python_bin,
+            charm_bin=args.charm_bin,
         )
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0

@@ -80,8 +80,8 @@ if [ "${TI_APPROVED_WAVE_STAGE}" = "prepare" ]; then
 else
     IFS=$'\t' read -r \
         TASK_ID DATASET_NAME REPEAT_ID DATASET_ROOT SUBJECT ANAT_DIR \
-        CANONICAL_ANAT_DIR CANONICAL_M2M_DIR PREP_RESULT_PATH RESULT_PATH \
-        STATUS MESSAGE <<< "${TASK_LINE}"
+        CANONICAL_ANAT_DIR CANONICAL_M2M_DIR PREP_RESULT_PATH \
+        MESH_RESULT_PATH RESULT_PATH STATUS MESSAGE <<< "${TASK_LINE}"
 fi
 
 if [ -z "${SUBJECT:-}" ] || [ "${TASK_ID:-}" != "${TASK_INDEX}" ]; then
@@ -176,12 +176,13 @@ if [ "${TI_APPROVED_WAVE_STAGE}" = "prepare" ]; then
     echo "[INFO] m2m directory:   ${M2M_DIR}"
     echo "[INFO] Mesh path:       ${MESH_PATH}"
 else
-    echo "[INFO] Operation:       reuse canonical m2m/mesh -> FEM simulation -> validation"
+    echo "[INFO] Operation:       physical scaffold copy -> independent mesh -> fixed cap -> FEM"
     echo "[INFO] Dataset root:    ${DATASET_ROOT}"
     echo "[INFO] Anat directory:  ${ANAT_DIR}"
     echo "[INFO] Canonical anat:  ${CANONICAL_ANAT_DIR}"
     echo "[INFO] Canonical m2m:   ${CANONICAL_M2M_DIR}"
     echo "[INFO] Prep marker:     ${PREP_RESULT_PATH}"
+    echo "[INFO] Mesh marker:     ${MESH_RESULT_PATH}"
 fi
 
 COMMAND=(

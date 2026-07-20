@@ -106,7 +106,8 @@ def test_preflight_builds_one_prep_and_all_repeat_simulation_tasks(tmp_path):
     assert payload["prep_tasks_found"] == 1
     assert payload["simulation_tasks_found"] == 2
     assert payload["charm_segmentation_runs_expected"] == 1
-    assert payload["meshes_expected"] == 1
+    assert payload["meshes_expected"] == 2
+    assert payload["repeat_scaffold_copies_expected"] == 1
     assert payload["fem_simulations_expected"] == 2
     assert payload["roast_involvement"] is False
     assert prep["task_id"] == "0"
@@ -173,7 +174,7 @@ def test_prep_runs_charm_once_then_meshes_the_exact_approved_label(tmp_path):
     assert payload["roast_involvement"] is False
 
 
-def test_simulation_reuses_canonical_m2m_without_segmenting_or_meshing(tmp_path):
+def test_later_repeat_physically_copies_scaffold_remeshes_and_restores_cap(tmp_path):
     campaign, prep_payload, _ = _run_preparation(tmp_path)
     subject, _, simulation_manifest, prep, simulations, _ = campaign
     targets_csv = Path(__file__).resolve().parents[2] / "utils" / "targets.csv"
@@ -183,6 +184,22 @@ def test_simulation_reuses_canonical_m2m_without_segmenting_or_meshing(tmp_path)
 
     def fake_command(command, *, cwd, env=None):
         commands.append((list(command), Path(cwd), env))
+        if command[-1:] == ["--mesh"]:
+            m2m = Path(cwd) / f"m2m_{subject}"
+            _write(m2m / f"{subject}.msh", "repeat-02-mesh")
+            _write(
+                m2m / "eeg_positions" / workflow.CAP_BASENAME,
+                "generated-cap-that-must-be-replaced\n",
+            )
+
+    def fake_mesh_validator(mesh_path):
+        return {
+            "mesh_path": str(mesh_path),
+            "mesh_sha256": sha256_file(mesh_path),
+            "mesh_bytes": mesh_path.stat().st_size,
+            "tetrahedra": 456,
+            "tissue_tags": [1, 2, 3, 5],
+        }
 
     payload = workflow.run_simulation_task(
         manifest=simulation_manifest,
@@ -193,19 +210,28 @@ def test_simulation_reuses_canonical_m2m_without_segmenting_or_meshing(tmp_path)
         simulation_runner=runner,
         simulation_validator=validator,
         command_runner=fake_command,
+        mesh_validator=fake_mesh_validator,
     )
 
     assert payload["status"] == "complete"
-    assert payload["mesh_sha256"] == prep_payload["mesh_sha256"]
-    assert payload["segmentation_or_meshing_in_simulation_task"] is False
-    assert len(commands) == 2
-    assert "--reuse-existing-mesh" in commands[0][0]
-    assert "charm" not in commands[0][0]
+    assert payload["mesh_sha256"] != prep_payload["mesh_sha256"]
+    assert payload["segmentation_in_simulation_task"] is False
+    assert payload["independent_repeat_mesh"] is True
+    assert len(commands) == 3
+    assert commands[0][0] == ["charm", subject, "--mesh"]
+    assert "--reuse-existing-mesh" in commands[1][0]
     assert "--segment" not in commands[0][0]
     repeat_m2m = Path(simulations[1]["anat_dir"]) / f"m2m_{subject}"
-    assert repeat_m2m.is_symlink()
-    assert repeat_m2m.resolve() == Path(prep["m2m_dir"]).resolve()
-    assert commands[0][2]["TI_SIM_ROOT"] == simulations[1]["dataset_root"]
+    assert repeat_m2m.is_dir()
+    assert not repeat_m2m.is_symlink()
+    assert repeat_m2m.resolve() != Path(prep["m2m_dir"]).resolve()
+    canonical_cap = Path(prep["m2m_dir"]) / "eeg_positions" / workflow.CAP_BASENAME
+    repeat_cap = repeat_m2m / "eeg_positions" / workflow.CAP_BASENAME
+    assert repeat_cap.read_bytes() == canonical_cap.read_bytes()
+    assert commands[1][2]["TI_SIM_ROOT"] == simulations[1]["dataset_root"]
+    mesh_marker = workflow._load_json(Path(simulations[1]["mesh_result_path"]))
+    assert mesh_marker["scaffold_copy_mode"] == "physical"
+    assert mesh_marker["independent_repeat_mesh"] is True
 
 
 def test_completed_simulation_marker_is_validated_and_reused(tmp_path):
@@ -236,6 +262,53 @@ def test_completed_simulation_marker_is_validated_and_reused(tmp_path):
     assert reused["status"] == "already_complete"
     assert len(commands) == 1
     assert commands[0][-2:] == ["--subject", "sub-CC000001"]
+
+
+def test_later_repeat_reuses_completed_repeat_mesh_after_simulation_retry(tmp_path):
+    campaign, _, _ = _run_preparation(tmp_path)
+    subject, _, simulation_manifest, _, simulations, _ = campaign
+    targets_csv = Path(__file__).resolve().parents[2] / "utils" / "targets.csv"
+    runner = _write(tmp_path / "runner.py", "# runner")
+    validator = _write(tmp_path / "validator.py", "# validator")
+    commands = []
+
+    def fake_command(command, *, cwd, env=None):
+        commands.append(list(command))
+        if command[-1:] == ["--mesh"]:
+            _write(
+                Path(cwd) / f"m2m_{subject}" / f"{subject}.msh",
+                "repeat-02-mesh",
+            )
+
+    def fake_mesh_validator(mesh_path):
+        return {
+            "mesh_path": str(mesh_path),
+            "mesh_sha256": sha256_file(mesh_path),
+            "mesh_bytes": mesh_path.stat().st_size,
+            "tetrahedra": 456,
+            "tissue_tags": [1, 2, 3, 5],
+        }
+
+    kwargs = {
+        "manifest": simulation_manifest,
+        "task_index": 1,
+        "montage_preset": "left-hippocampus",
+        "targets_csv": targets_csv,
+        "expected_targets_sha256": sha256_file(targets_csv),
+        "simulation_runner": runner,
+        "simulation_validator": validator,
+        "command_runner": fake_command,
+        "mesh_validator": fake_mesh_validator,
+    }
+    workflow.run_simulation_task(**kwargs)
+    Path(simulations[1]["result_path"]).unlink()
+    commands.clear()
+
+    workflow.run_simulation_task(**kwargs)
+
+    assert len(commands) == 2
+    assert all(command[-1:] != ["--mesh"] for command in commands)
+    assert "--reuse-existing-mesh" in commands[0]
 
 
 def test_submitter_submits_dependent_full_scope_arrays(tmp_path):
@@ -308,7 +381,7 @@ def test_submitter_submits_dependent_full_scope_arrays(tmp_path):
     assert "simulation tasks: 10" in completed.stdout
     assert "preparation array: 0-0%10" in completed.stdout
     assert "simulation array: 0-9%10 (afterok preparation)" in completed.stdout
-    assert "expected meshes: 1" in completed.stdout
+    assert "expected independent meshes: 10" in completed.stdout
     assert "expected validated FEM simulations: 10" in completed.stdout
     assert "execution: full requested wave; not a smoke or subset" in completed.stdout
     assert "Submitted preparation array job: 12001" in completed.stdout

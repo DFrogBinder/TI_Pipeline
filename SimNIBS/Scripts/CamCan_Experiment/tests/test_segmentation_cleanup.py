@@ -77,6 +77,9 @@ def test_cumulative_cleanup_closes_holes_filters_fragments_and_preserves_labels(
 
     assert np.array_equal(source, untouched)
     assert metrics["changed_voxels"] > 0
+    assert metrics["parameters"]["algorithm"] == workflow.ALGORITHM
+    assert "csf_component_policy" not in metrics["parameters"]
+    assert "csf_cumulative_components" not in metrics
     assert metrics["wm_components"]["components_removed"] >= 1
     assert metrics["gm_cumulative_components"]["components_removed"] >= 1
     assert corrected[13, 13, 20] == 2
@@ -86,6 +89,35 @@ def test_cumulative_cleanup_closes_holes_filters_fragments_and_preserves_labels(
     assert corrected[14, 20, 20] == 3
     for label in (6, 8, 9, 10, 11):
         assert np.any(corrected == label)
+
+
+def test_csf_largest_component_filter_removes_detached_cumulative_island():
+    source = _synthetic_labels()
+    detached = (36, 36, 36)
+    source[detached] = 3
+
+    unfiltered, _ = workflow.correct_label_array(
+        source,
+        csf_radius=0,
+        skin_radius=0,
+        csf_component_policy="none",
+    )
+    filtered, metrics = workflow.correct_label_array(
+        source,
+        csf_radius=0,
+        skin_radius=0,
+        csf_component_policy="largest",
+    )
+
+    assert unfiltered[detached] == 3
+    assert filtered[detached] == 7
+    assert metrics["parameters"]["algorithm"] == workflow.CSF_COMPONENT_ALGORITHM
+    assert metrics["parameters"]["csf_component_policy"] == "largest"
+    assert metrics["csf_cumulative_components"]["components_removed"] >= 1
+    assert metrics["csf_cumulative_voxels_after_component_filter"] < metrics[
+        "csf_cumulative_voxels_before"
+    ]
+    assert np.count_nonzero(filtered == 9) == np.count_nonzero(source == 9)
 
 
 def test_min_size_policy_requires_explicit_positive_thresholds():
@@ -214,6 +246,8 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
             "OUTPUT_ROOT": str(tmp_path / "corrected"),
             "EXPECTED_SUBJECTS": "1",
             "MAX_CONCURRENT_TASKS": "1",
+            "TI_CHARM_CLEANUP_CSF_RADIUS": "7",
+            "TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY": "largest",
             "SBATCH_BIN": str(fake_sbatch),
             "SCONTROL_BIN": str(fake_scontrol),
             "LOAD_SIMNIBS_MODULE": "0",
@@ -234,7 +268,8 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
     assert "subjects: 1" in completed.stdout
     assert "correction tasks: 1" in completed.stdout
     assert "array: 0-0%1" in completed.stdout
-    assert "CSF closing: 5 voxels" in completed.stdout
+    assert "CSF closing: 7 voxels" in completed.stdout
+    assert "CSF components: largest, connectivity 26" in completed.stdout
     assert "skin closing: 10 voxels" in completed.stdout
     assert "Preflight Python:" in completed.stdout
     assert "Module bootstrap:  0" in completed.stdout
@@ -243,8 +278,11 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
     submissions = sbatch_log.read_text(encoding="utf-8").splitlines()
     assert len(submissions) == 2
     assert "--array=0-0%1" in submissions[0]
+    assert "TI_CHARM_CLEANUP_CSF_RADIUS=7" in submissions[0]
+    assert "TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=largest" in submissions[0]
     assert "TI_CHARM_CLEANUP_COMPONENT_POLICY=largest" in submissions[0]
     assert "--dependency=afterany:15001" in submissions[1]
+    assert "--mem=16G" in submissions[1]
 
 
 def test_preflight_blocks_source_output_alias(tmp_path):

@@ -26,6 +26,15 @@ The default is suitable for generating a reversible corrected-map candidate
 and new tissue walls. It must not be treated as a final accepted cohort until
 the corrected walls and ambiguous anatomical overlays have been reviewed.
 
+An opt-in second candidate can also filter the cumulative
+WM + GM + CSF + blood envelope to its largest 26-connected component before
+closing it. This is enabled with `--csf-component-policy largest` (or the
+matching launcher environment variable). The v1 default remains `none`, so
+existing v1 behavior is unchanged. Filtering the cumulative envelope removes
+fully disconnected islands; it does not remove bumps that remain connected to
+the main envelope. Increasing the closing radius fills larger grooves and
+concavities but is not equivalent to erosion-based removal of outward bumps.
+
 ## Label reconstruction
 
 The algorithm uses CHARM tissue IDs:
@@ -119,7 +128,9 @@ changes that count. Defaults are a candidate profile:
 - `SimNIBS/4.0.1-foss-2023a` on `sheffield`;
 - 4 CPUs, 16 GB, 2 hours per correction task;
 - 50 concurrent tasks and 2 retries;
-- 2 CPUs, 8 GB, 2 hours for full collection validation.
+- 2 CPUs, 16 GB, 2 hours for full collection validation. The previous 8 GB
+  collector reached 8,390,296 KB MaxRSS, so the additional headroom is based
+  on completed-run evidence.
 
 From the repository `Scripts` directory:
 
@@ -135,6 +146,19 @@ Scope:
 ```
 
 ```bash
+bash CamCan_Experiment/segmentation_cleanup/submit_charm_segmentation_cleanup.sh
+```
+
+For the separate CSF-radius-7/largest-component candidate, use a fresh output
+root and opt in explicitly:
+
+```bash
+OUTPUT_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentations_corrected_v2_csf7_lcc \
+TI_CHARM_CLEANUP_CSF_RADIUS=7 \
+TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=largest \
+COLLECTOR_MEMORY=16G \
+JOB_NAME=charm_seg_cleanup_v2_csf7_lcc \
+COLLECTOR_JOB_NAME=collect_charm_seg_cleanup_v2_csf7_lcc \
 bash CamCan_Experiment/segmentation_cleanup/submit_charm_segmentation_cleanup.sh
 ```
 

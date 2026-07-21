@@ -2,7 +2,7 @@
 #SBATCH --job-name=collect_charm_cleanup
 #SBATCH --partition=sheffield
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=8G
+#SBATCH --mem=16G
 #SBATCH --time=02:00:00
 #SBATCH --output=collect-charm-cleanup-%j.out
 
@@ -33,4 +33,3 @@ if [ "${TI_CHARM_CLEANUP_SKIP_NIFTI_LOAD:-0}" = "1" ]; then
     COMMAND+=(--skip-nifti-load)
 fi
 "${COMMAND[@]}"
-

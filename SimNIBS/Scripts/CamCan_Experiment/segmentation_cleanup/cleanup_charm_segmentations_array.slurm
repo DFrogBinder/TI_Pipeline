@@ -22,6 +22,7 @@ MAX_RETRIES="${TI_CHARM_CLEANUP_MAX_RETRIES:-2}"
 STATE_DIR="${TI_CHARM_CLEANUP_STATE_DIR:-${TI_CHARM_CLEANUP_LOG_DIR}/retry_state}"
 CSF_RADIUS="${TI_CHARM_CLEANUP_CSF_RADIUS:-5}"
 SKIN_RADIUS="${TI_CHARM_CLEANUP_SKIN_RADIUS:-10}"
+CSF_COMPONENT_POLICY="${TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY:-none}"
 COMPONENT_POLICY="${TI_CHARM_CLEANUP_COMPONENT_POLICY:-largest}"
 WM_MIN_COMPONENT_VOXELS="${TI_CHARM_CLEANUP_WM_MIN_COMPONENT_VOXELS:-0}"
 GM_MIN_COMPONENT_VOXELS="${TI_CHARM_CLEANUP_GM_MIN_COMPONENT_VOXELS:-0}"
@@ -36,6 +37,10 @@ for value_name in MAX_RETRIES CSF_RADIUS SKIN_RADIUS WM_MIN_COMPONENT_VOXELS GM_
 done
 if [ "${COMPONENT_POLICY}" != "largest" ] && [ "${COMPONENT_POLICY}" != "min-size" ]; then
     echo "[ERROR] COMPONENT_POLICY must be largest or min-size." >&2
+    exit 2
+fi
+if [ "${CSF_COMPONENT_POLICY}" != "none" ] && [ "${CSF_COMPONENT_POLICY}" != "largest" ]; then
+    echo "[ERROR] CSF_COMPONENT_POLICY must be none or largest." >&2
     exit 2
 fi
 if [ "${CONNECTIVITY}" != "6" ] && [ "${CONNECTIVITY}" != "18" ] && [ "${CONNECTIVITY}" != "26" ]; then
@@ -92,6 +97,7 @@ echo "[INFO] Source bytes:    ${SOURCE_BYTES}"
 echo "[INFO] Corrected map:   ${CORRECTED_MAP}"
 echo "[INFO] Result marker:   ${RESULT_PATH}"
 echo "[INFO] CSF radius:      ${CSF_RADIUS} voxels"
+echo "[INFO] CSF components:  ${CSF_COMPONENT_POLICY}"
 echo "[INFO] Skin radius:     ${SKIN_RADIUS} voxels"
 echo "[INFO] Component mode:  ${COMPONENT_POLICY}"
 echo "[INFO] Connectivity:    ${CONNECTIVITY}"
@@ -105,6 +111,7 @@ COMMAND=(
     --task-index "${TASK_INDEX}"
     --csf-radius "${CSF_RADIUS}"
     --skin-radius "${SKIN_RADIUS}"
+    --csf-component-policy "${CSF_COMPONENT_POLICY}"
     --component-policy "${COMPONENT_POLICY}"
     --wm-min-component-voxels "${WM_MIN_COMPONENT_VOXELS}"
     --gm-min-component-voxels "${GM_MIN_COMPONENT_VOXELS}"

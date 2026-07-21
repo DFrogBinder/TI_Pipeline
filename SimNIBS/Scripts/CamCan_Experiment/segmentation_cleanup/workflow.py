@@ -37,6 +37,7 @@ from scipy import ndimage
 MAP_SUFFIX = "_CHARM_tissue_labeling_upsampled.nii.gz"
 SUBJECT_PATTERN = re.compile(r"^sub-[A-Za-z0-9][A-Za-z0-9._-]*$")
 ALGORITHM = "cumulative-charm-cleanup-v1"
+CSF_COMPONENT_ALGORITHM = "cumulative-charm-cleanup-v2-csf-components"
 KNOWN_LABELS = frozenset((0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11))
 REQUIRED_LABELS = frozenset((1, 2, 3, 5))
 MANIFEST_FIELDS = (
@@ -122,6 +123,7 @@ def correction_parameters(
     *,
     csf_radius: int,
     skin_radius: int,
+    csf_component_policy: str,
     component_policy: str,
     wm_min_component_voxels: int,
     gm_min_component_voxels: int,
@@ -129,6 +131,8 @@ def correction_parameters(
 ) -> dict[str, object]:
     if csf_radius < 0 or skin_radius < 0:
         raise ValueError("CSF and skin radii must be non-negative")
+    if csf_component_policy not in {"none", "largest"}:
+        raise ValueError("csf_component_policy must be 'none' or 'largest'")
     if component_policy not in {"largest", "min-size"}:
         raise ValueError("component_policy must be 'largest' or 'min-size'")
     if connectivity not in {6, 18, 26}:
@@ -141,8 +145,12 @@ def correction_parameters(
         raise ValueError(
             "min-size policy requires positive WM and GM component thresholds"
         )
-    return {
-        "algorithm": ALGORITHM,
+    parameters: dict[str, object] = {
+        "algorithm": (
+            CSF_COMPONENT_ALGORITHM
+            if csf_component_policy != "none"
+            else ALGORITHM
+        ),
         "csf_closing_radius_voxels": int(csf_radius),
         "skin_closing_radius_voxels": int(skin_radius),
         "component_policy": component_policy,
@@ -150,6 +158,9 @@ def correction_parameters(
         "gm_min_component_voxels": int(gm_min_component_voxels),
         "connectivity": int(connectivity),
     }
+    if csf_component_policy != "none":
+        parameters["csf_component_policy"] = csf_component_policy
+    return parameters
 
 
 def _connectivity_structure(connectivity: int) -> np.ndarray:
@@ -234,6 +245,7 @@ def correct_label_array(
     *,
     csf_radius: int = 5,
     skin_radius: int = 10,
+    csf_component_policy: str = "none",
     component_policy: str = "largest",
     wm_min_component_voxels: int = 0,
     gm_min_component_voxels: int = 0,
@@ -244,6 +256,7 @@ def correct_label_array(
     parameters = correction_parameters(
         csf_radius=csf_radius,
         skin_radius=skin_radius,
+        csf_component_policy=csf_component_policy,
         component_policy=component_policy,
         wm_min_component_voxels=wm_min_component_voxels,
         gm_min_component_voxels=gm_min_component_voxels,
@@ -282,7 +295,16 @@ def correct_label_array(
         min_voxels=gm_min_component_voxels,
         connectivity=connectivity,
     )
-    csf_closed = _ball_closing(csf_envelope, csf_radius)
+    csf_for_closing = csf_envelope
+    csf_component_metrics: dict[str, object] | None = None
+    if csf_component_policy == "largest":
+        csf_for_closing, csf_component_metrics = _filter_components(
+            csf_envelope,
+            policy="largest",
+            min_voxels=0,
+            connectivity=connectivity,
+        )
+    csf_closed = _ball_closing(csf_for_closing, csf_radius)
     head_closed = _ball_closing(head_envelope, skin_radius)
 
     # Reconstruct using the supplied low-to-high priority order. Masks are
@@ -324,6 +346,11 @@ def correct_label_array(
         "skin_cumulative_voxels_after": int(head_closed.sum()),
         "unknown_labels_preserved": sorted(labels_present - KNOWN_LABELS),
     }
+    if csf_component_metrics is not None:
+        metrics["csf_cumulative_voxels_after_component_filter"] = int(
+            csf_for_closing.sum()
+        )
+        metrics["csf_cumulative_components"] = csf_component_metrics
     return corrected, metrics
 
 
@@ -490,6 +517,7 @@ def run_task(
     task_index: int,
     csf_radius: int = 5,
     skin_radius: int = 10,
+    csf_component_policy: str = "none",
     component_policy: str = "largest",
     wm_min_component_voxels: int = 0,
     gm_min_component_voxels: int = 0,
@@ -499,6 +527,7 @@ def run_task(
     parameters = correction_parameters(
         csf_radius=csf_radius,
         skin_radius=skin_radius,
+        csf_component_policy=csf_component_policy,
         component_policy=component_policy,
         wm_min_component_voxels=wm_min_component_voxels,
         gm_min_component_voxels=gm_min_component_voxels,
@@ -546,6 +575,7 @@ def run_task(
         raw,
         csf_radius=csf_radius,
         skin_radius=skin_radius,
+        csf_component_policy=csf_component_policy,
         component_policy=component_policy,
         wm_min_component_voxels=wm_min_component_voxels,
         gm_min_component_voxels=gm_min_component_voxels,
@@ -766,6 +796,9 @@ def _add_parameter_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--csf-radius", type=int, default=5)
     parser.add_argument("--skin-radius", type=int, default=10)
     parser.add_argument(
+        "--csf-component-policy", choices=("none", "largest"), default="none"
+    )
+    parser.add_argument(
         "--component-policy", choices=("largest", "min-size"), default="largest"
     )
     parser.add_argument("--wm-min-component-voxels", type=int, default=0)
@@ -808,6 +841,7 @@ def _parameter_kwargs(args: argparse.Namespace) -> dict[str, object]:
     return {
         "csf_radius": args.csf_radius,
         "skin_radius": args.skin_radius,
+        "csf_component_policy": args.csf_component_policy,
         "component_policy": args.component_policy,
         "wm_min_component_voxels": args.wm_min_component_voxels,
         "gm_min_component_voxels": args.gm_min_component_voxels,

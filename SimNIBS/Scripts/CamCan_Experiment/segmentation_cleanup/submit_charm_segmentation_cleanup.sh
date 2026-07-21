@@ -19,6 +19,8 @@ ARRAY_SCRIPT="${ARRAY_SCRIPT:-${SCRIPT_DIR}/cleanup_charm_segmentations_array.sl
 COLLECTOR_SCRIPT="${COLLECTOR_SCRIPT:-${SCRIPT_DIR}/collect_corrected_segmentations.slurm}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 SCONTROL_BIN="${SCONTROL_BIN:-scontrol}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+LOAD_SIMNIBS_MODULE="${LOAD_SIMNIBS_MODULE:-1}"
 
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-50}"
 MAX_RETRIES="${TI_CHARM_CLEANUP_MAX_RETRIES:-2}"
@@ -73,6 +75,19 @@ if [ "${CONNECTIVITY}" != "6" ] && [ "${CONNECTIVITY}" != "18" ] && [ "${CONNECT
     echo "[ERROR] CONNECTIVITY must be 6, 18, or 26." >&2
     exit 2
 fi
+if [ "${LOAD_SIMNIBS_MODULE}" = "1" ]; then
+    module purge
+    module use "$HOME/modules"
+    module load SimNIBS/4.0.1-foss-2023a
+    export PYTHONNOUSERSITE=1
+elif [ "${LOAD_SIMNIBS_MODULE}" != "0" ]; then
+    echo "[ERROR] LOAD_SIMNIBS_MODULE must be 0 or 1." >&2
+    exit 2
+fi
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+    echo "[ERROR] Python executable is unavailable: ${PYTHON_BIN}" >&2
+    exit 2
+fi
 
 DISCOVERED_SUBJECTS=$(find "${MAPS_ROOT}" -maxdepth 1 -type f -name 'sub-*_CHARM_tissue_labeling_upsampled.nii.gz' | wc -l)
 EXPECTED_SUBJECTS="${EXPECTED_SUBJECTS:-652}"
@@ -85,7 +100,7 @@ if [ "${DISCOVERED_SUBJECTS}" -ne "${EXPECTED_SUBJECTS}" ]; then
     exit 2
 fi
 
-python3 "${WORKFLOW_PY}" preflight \
+"${PYTHON_BIN}" "${WORKFLOW_PY}" preflight \
     --maps-root "${MAPS_ROOT}" \
     --output-root "${OUTPUT_ROOT}" \
     --manifest "${MANIFEST}" \
@@ -128,6 +143,8 @@ echo "[INFO] Source maps:       ${MAPS_ROOT}"
 echo "[INFO] Corrected root:    ${OUTPUT_ROOT}"
 echo "[INFO] Manifest:          ${MANIFEST}"
 echo "[INFO] Logs:              ${LOG_DIR}"
+echo "[INFO] Preflight Python:  $("${PYTHON_BIN}" --version 2>&1)"
+echo "[INFO] Module bootstrap:  ${LOAD_SIMNIBS_MODULE} (SimNIBS/4.0.1-foss-2023a when enabled)"
 echo "[INFO] Resource profile:  SimNIBS/4.0.1-foss-2023a, ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
 echo "[INFO] Concurrency:       ${MAX_CONCURRENT_TASKS}"
 echo "[INFO] Retries:           ${MAX_RETRIES}"

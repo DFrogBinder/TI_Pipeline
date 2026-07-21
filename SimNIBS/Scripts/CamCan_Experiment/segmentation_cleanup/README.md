@@ -108,6 +108,11 @@ python3 CamCan_Experiment/segmentation_cleanup/workflow.py validate \
 The guarded submitter discovers the flat-map cohort and requires the current
 expected count of 652, hashes every source during preflight, states the
 numerical scope, and submits one `%50` array plus an `afterany` collector.
+No new conda environment or package installation is required on the HPC. The
+submitter, correction tasks, and collector all load the existing
+`SimNIBS/4.0.1-foss-2023a` module, which provides Python, NumPy, SciPy, and
+NiBabel. Run the launcher from the normal base shell; do not install these
+packages into the base environment.
 Set `EXPECTED_SUBJECTS` explicitly only if a later audited cohort deliberately
 changes that count. Defaults are a candidate profile:
 

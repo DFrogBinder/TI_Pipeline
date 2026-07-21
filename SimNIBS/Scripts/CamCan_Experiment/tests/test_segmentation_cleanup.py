@@ -216,6 +216,7 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
             "MAX_CONCURRENT_TASKS": "1",
             "SBATCH_BIN": str(fake_sbatch),
             "SCONTROL_BIN": str(fake_scontrol),
+            "LOAD_SIMNIBS_MODULE": "0",
             "FAKE_SBATCH_LOG": str(sbatch_log),
             "FAKE_SBATCH_COUNT": str(sbatch_count),
         }
@@ -235,6 +236,8 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
     assert "array: 0-0%1" in completed.stdout
     assert "CSF closing: 5 voxels" in completed.stdout
     assert "skin closing: 10 voxels" in completed.stdout
+    assert "Preflight Python:" in completed.stdout
+    assert "Module bootstrap:  0" in completed.stdout
     assert "Submitted cleanup array job: 15001" in completed.stdout
     assert "Submitted afterany collector job: 15002" in completed.stdout
     submissions = sbatch_log.read_text(encoding="utf-8").splitlines()

@@ -1,4 +1,4 @@
-# Approved wave-1 Left Hippocampus campaign
+# Approved wave-1 four-ROI campaign
 
 This opt-in workflow starts a fresh experiment for the 89 subjects in
 `accepted_wave_1_subjects.txt`, across all ten repeats. It does not read,
@@ -48,3 +48,46 @@ bash CamCan_Experiment/HPC_scripts/submit_approved_wave_mesh_sim.sh
 The launcher preflights the complete 89-subject preparation scope and complete
 890-repeat scope before either `sbatch` call. The second array uses an `afterok`
 dependency and therefore cannot start unless all 89 preparation tasks succeed.
+
+## Remaining ROIs from the validated scaffold
+
+After the Left Hippocampus campaign has finished, the validated repeat-01 m2m
+folders are the canonical subject scaffolds for the other three ROIs. No new
+CHARM segmentation is needed. The external-scaffold launcher accepts exactly
+one of these established dataset prefixes:
+
+| Dataset prefix | Montage preset |
+|---|---|
+| `Left_M1` | `left-m1` |
+| `Right_DLPC` | `right-dlpfc` |
+| `Right_Thalamus` | `right-thalamus` |
+
+The historical directory spelling is `Right_DLPC`; do not change it to
+`Right_DLPFC`.
+
+For an additional ROI, all ten repeats are external-scaffold tasks. This means
+each 89-subject ROI submits one `0-889%50` array with:
+
+- zero CHARM segmentation runs;
+- 890 physical m2m scaffold copies;
+- 890 independent `charm <subject> --mesh` runs;
+- repeat-01 EEG-cap restoration before every FEM run;
+- 890 ROI-specific FEM simulations and output validations; and
+- no ROAST/custom-segmentation involvement.
+
+Repeat 01 of the new ROI does not reuse the Left Hippocampus mesh. It copies
+the canonical scaffold without that mesh and generates a new independent mesh,
+exactly like repeats 02 through 10.
+
+Submit one ROI from the repository root on Stanage only after the current live
+array has finished and the updated repository has been pulled:
+
+```bash
+bash CamCan_Experiment/HPC_scripts/submit_approved_wave_roi_from_scaffold.sh Left_M1
+```
+
+Replace `Left_M1` with `Right_DLPC` or `Right_Thalamus` for the later ROI.
+The launcher validates the 89 accepted subjects, 89 canonical scaffold
+markers, reviewed-label and EEG-cap hashes, montage-specific electrode names,
+the confirmed `targets.csv` hash, and the complete 890-task scope before its
+single `sbatch` call.

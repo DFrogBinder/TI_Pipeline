@@ -347,6 +347,300 @@ def build_manifests(
     return payload
 
 
+def build_scaffold_reuse_manifest(
+    *,
+    subjects_file: str | Path,
+    canonical_prep_manifest: str | Path,
+    canonical_dataset_name: str,
+    output_root: str | Path,
+    simulation_result_dir: str | Path,
+    simulation_manifest: str | Path,
+    summary: str | Path,
+    dataset_prefix: str,
+    montage_preset: str,
+    targets_csv: str | Path,
+    expected_targets_sha256: str,
+    repeats: Sequence[str],
+    expected_subjects: int,
+    expected_simulation_tasks: int,
+) -> dict[str, object]:
+    """Build an all-repeat campaign from validated external m2m scaffolds.
+
+    The canonical scaffold is never used as an experimental mesh for the new
+    ROI. Every target row, including repeat 01, points to a distinct anatomy
+    directory so :func:`build_repeat_mesh` must physically copy the scaffold,
+    omit its mesh, and remesh independently before FEM.
+    """
+
+    if not repeats or len(repeats) != len(set(repeats)):
+        raise ValueError("repeat identifiers must be non-empty and unique")
+
+    subjects = read_subjects(subjects_file)
+    canonical_manifest = Path(canonical_prep_manifest).expanduser().resolve(
+        strict=True
+    )
+    canonical_rows = read_tsv(canonical_manifest)
+    output = Path(output_root).expanduser().resolve()
+    simulation_results = Path(simulation_result_dir).expanduser().resolve()
+    targets = Path(targets_csv).expanduser().resolve(strict=True)
+    actual_targets_hash = sha256_file(targets)
+
+    dataset_names = [f"{dataset_prefix}_Data_{repeat}" for repeat in repeats]
+    config = validate_dataset_montage(dataset_names, montage_preset)
+    required_electrodes = electrode_names_for_config(config, targets)
+
+    global_messages: list[str] = []
+    if actual_targets_hash != expected_targets_sha256:
+        global_messages.append(
+            "targets.csv hash mismatch: "
+            f"{actual_targets_hash} != {expected_targets_sha256}"
+        )
+    if len(subjects) != expected_subjects:
+        global_messages.append(
+            f"subject count mismatch: found {len(subjects)}, "
+            f"expected {expected_subjects}"
+        )
+    if len(canonical_rows) != expected_subjects:
+        global_messages.append(
+            f"canonical scaffold count mismatch: found {len(canonical_rows)}, "
+            f"expected {expected_subjects}"
+        )
+
+    canonical_by_subject: dict[str, dict[str, str]] = {}
+    duplicate_subjects: set[str] = set()
+    for row in canonical_rows:
+        subject = row.get("subject", "")
+        if subject in canonical_by_subject:
+            duplicate_subjects.add(subject)
+        else:
+            canonical_by_subject[subject] = row
+    if duplicate_subjects:
+        global_messages.append(
+            "duplicate canonical scaffold subjects: "
+            + ",".join(sorted(duplicate_subjects))
+        )
+
+    expected_set = set(subjects)
+    canonical_set = set(canonical_by_subject)
+    missing_subjects = sorted(expected_set - canonical_set)
+    unexpected_subjects = sorted(canonical_set - expected_set)
+    if missing_subjects:
+        global_messages.append(
+            "canonical scaffolds missing subjects: " + ",".join(missing_subjects)
+        )
+    if unexpected_subjects:
+        global_messages.append(
+            "canonical scaffolds contain unexpected subjects: "
+            + ",".join(unexpected_subjects)
+        )
+
+    canonical_details: dict[str, dict[str, str]] = {}
+    blocked_subjects: dict[str, str] = {}
+    for expected_task_id, subject in enumerate(subjects):
+        messages = list(global_messages)
+        prep = canonical_by_subject.get(subject)
+        if prep is None:
+            messages.append("canonical preparation row is absent")
+            blocked_subjects[subject] = "; ".join(messages)
+            continue
+
+        if prep.get("dataset_name") != canonical_dataset_name:
+            messages.append(
+                "canonical dataset mismatch: "
+                f"{prep.get('dataset_name')!r} != {canonical_dataset_name!r}"
+            )
+        if prep.get("status") != "ready":
+            messages.append(
+                "canonical preparation row is not ready: "
+                + prep.get("message", "")
+            )
+        try:
+            if int(prep.get("task_id", "")) != expected_task_id:
+                messages.append("canonical preparation task order changed")
+        except ValueError:
+            messages.append("canonical preparation task id is invalid")
+
+        canonical_anat = Path(prep.get("anat_dir", ""))
+        canonical_m2m = Path(prep.get("m2m_dir", ""))
+        prep_result_path = Path(prep.get("result_path", ""))
+        marker = _load_json(prep_result_path)
+        label = canonical_m2m / "label_prep" / MAP_BASENAME
+        mesh = canonical_m2m / f"{subject}.msh"
+        cap = canonical_m2m / "eeg_positions" / CAP_BASENAME
+
+        if not canonical_anat.is_dir() or canonical_anat.is_symlink():
+            messages.append("canonical anatomy directory is absent or symlinked")
+        if not canonical_m2m.is_dir() or canonical_m2m.is_symlink():
+            messages.append("canonical m2m directory is absent or symlinked")
+        if marker is None:
+            messages.append("canonical preparation marker is absent or invalid")
+        else:
+            marker_checks = (
+                (marker.get("status") == "complete", "marker status is not complete"),
+                (marker.get("subject") == subject, "marker subject mismatch"),
+                (
+                    marker.get("dataset_name") == canonical_dataset_name,
+                    "marker dataset mismatch",
+                ),
+                (marker.get("repeat_id") == "01", "marker repeat is not 01"),
+                (
+                    marker.get("segmentation_runs_for_subject") == 1,
+                    "marker does not record exactly one segmentation run",
+                ),
+                (
+                    marker.get("independent_repeat_mesh") is True,
+                    "marker does not identify an independent mesh",
+                ),
+                (
+                    marker.get("roast_involvement") is False,
+                    "marker does not exclude ROAST",
+                ),
+                (
+                    marker.get("approved_label_sha256")
+                    == prep.get("approved_label_sha256"),
+                    "approved-label hash differs from canonical manifest",
+                ),
+                (
+                    marker.get("installed_label_sha256")
+                    == prep.get("approved_label_sha256"),
+                    "installed-label hash differs from canonical manifest",
+                ),
+            )
+            messages.extend(message for passed, message in marker_checks if not passed)
+
+        try:
+            if sha256_file(label) != prep.get("approved_label_sha256"):
+                messages.append("canonical installed label hash mismatch")
+        except OSError as exc:
+            messages.append(f"canonical installed label is unavailable: {exc}")
+        try:
+            if marker is None or sha256_file(cap) != marker.get("eeg_cap_sha256"):
+                messages.append("canonical EEG cap hash mismatch")
+            elif not set(required_electrodes).issubset(_cap_names(cap)):
+                messages.append(
+                    "canonical EEG cap lacks required electrodes: "
+                    + ",".join(required_electrodes)
+                )
+        except (OSError, UnicodeError, csv.Error) as exc:
+            messages.append(f"canonical EEG cap is unavailable: {exc}")
+        if not mesh.is_file() or mesh.stat().st_size <= 0:
+            messages.append("canonical repeat-01 mesh is absent or empty")
+        if marker is not None:
+            for key, label_name in (
+                ("task_t1_path", "T1"),
+                ("task_t2_path", "T2"),
+            ):
+                source = Path(str(marker.get(key, "")))
+                if not source.is_file() or source.stat().st_size <= 0:
+                    messages.append(f"canonical {label_name} is absent or empty")
+
+        first_target_anat = (
+            output
+            / f"{dataset_prefix}_Data_{repeats[0]}"
+            / subject
+            / "anat"
+        )
+        try:
+            if first_target_anat.resolve() == canonical_anat.resolve(strict=True):
+                messages.append("target anatomy directory equals canonical scaffold")
+        except OSError as exc:
+            messages.append(f"canonical anatomy directory cannot be resolved: {exc}")
+
+        if messages:
+            blocked_subjects[subject] = "; ".join(dict.fromkeys(messages))
+        canonical_details[subject] = {
+            "canonical_anat_dir": str(canonical_anat),
+            "canonical_m2m_dir": str(canonical_m2m),
+            "prep_result_path": str(prep_result_path),
+        }
+
+    simulation_rows: list[dict[str, object]] = []
+    for repeat in repeats:
+        dataset_name = f"{dataset_prefix}_Data_{repeat}"
+        dataset_root = output / dataset_name
+        for subject in subjects:
+            details = canonical_details.get(subject, {})
+            message = blocked_subjects.get(subject, "ready")
+            anat_dir = dataset_root / subject / "anat"
+            simulation_rows.append(
+                {
+                    "task_id": len(simulation_rows),
+                    "dataset_name": dataset_name,
+                    "repeat_id": repeat,
+                    "dataset_root": dataset_root,
+                    "subject": subject,
+                    "anat_dir": anat_dir,
+                    "canonical_anat_dir": details.get("canonical_anat_dir", ""),
+                    "canonical_m2m_dir": details.get("canonical_m2m_dir", ""),
+                    "prep_result_path": details.get("prep_result_path", ""),
+                    "mesh_result_path": (
+                        simulation_results / dataset_name / f"{subject}.mesh.json"
+                    ),
+                    "result_path": (
+                        simulation_results / dataset_name / f"{subject}.json"
+                    ),
+                    "status": "blocked" if subject in blocked_subjects else "ready",
+                    "message": message,
+                }
+            )
+
+    if len(simulation_rows) != expected_simulation_tasks:
+        count_message = (
+            f"simulation task count mismatch: found {len(simulation_rows)}, "
+            f"expected {expected_simulation_tasks}"
+        )
+        for row in simulation_rows:
+            row["status"] = "blocked"
+            row["message"] = "; ".join((str(row["message"]), count_message))
+
+    simulation_ready = sum(row["status"] == "ready" for row in simulation_rows)
+    ready = (
+        len(subjects) == expected_subjects
+        and len(simulation_rows) == expected_simulation_tasks
+        and simulation_ready == expected_simulation_tasks
+    )
+    payload: dict[str, object] = {
+        "status": "ready" if ready else "blocked",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "subjects_file": str(Path(subjects_file).expanduser().resolve(strict=True)),
+        "canonical_prep_manifest": str(canonical_manifest),
+        "canonical_dataset_name": canonical_dataset_name,
+        "canonical_scaffolds_found": len(canonical_rows),
+        "output_root": str(output),
+        "simulation_manifest": str(Path(simulation_manifest).expanduser().resolve()),
+        "simulation_result_dir": str(simulation_results),
+        "dataset_prefix": dataset_prefix,
+        "montage_preset": config.montage_preset,
+        "targets_roi": config.targets_roi,
+        "targets_csv": str(targets),
+        "targets_csv_sha256": actual_targets_hash,
+        "required_electrodes": list(required_electrodes),
+        "subjects_found": len(subjects),
+        "subjects_expected": expected_subjects,
+        "repeats": list(repeats),
+        "simulation_tasks_found": len(simulation_rows),
+        "simulation_tasks_expected": expected_simulation_tasks,
+        "simulation_ready": simulation_ready,
+        "blocked_subjects": len(blocked_subjects),
+        "charm_segmentation_runs_expected": 0,
+        "physical_scaffold_copies_expected": expected_simulation_tasks,
+        "independent_meshes_expected": expected_simulation_tasks,
+        "fem_simulations_expected": expected_simulation_tasks,
+        "roast_involvement": False,
+        "execution": (
+            "validated external scaffold -> independent mesh -> fixed cap -> FEM "
+            "for every repeat"
+        ),
+    }
+    write_tsv(
+        Path(simulation_manifest).expanduser().resolve(),
+        SIMULATION_FIELDS,
+        simulation_rows,
+    )
+    write_json_atomic(Path(summary).expanduser().resolve(), payload)
+    return payload
+
+
 def _copy_verified(
     source: Path,
     destination: Path,
@@ -889,6 +1183,28 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--expected-prep-tasks", type=int, default=89)
     preflight.add_argument("--expected-simulation-tasks", type=int, default=890)
 
+    scaffold = subparsers.add_parser("scaffold-preflight")
+    scaffold.add_argument("--subjects-file", required=True)
+    scaffold.add_argument("--canonical-prep-manifest", required=True)
+    scaffold.add_argument(
+        "--canonical-dataset-name", default="Left_Hippocampus_Data_01"
+    )
+    scaffold.add_argument("--output-root", required=True)
+    scaffold.add_argument("--simulation-result-dir", required=True)
+    scaffold.add_argument("--simulation-manifest", required=True)
+    scaffold.add_argument("--summary", required=True)
+    scaffold.add_argument("--dataset-prefix", required=True)
+    scaffold.add_argument("--montage-preset", required=True)
+    scaffold.add_argument("--targets-csv", required=True)
+    scaffold.add_argument(
+        "--expected-targets-sha256", default=CONFIRMED_TARGETS_SHA256
+    )
+    scaffold.add_argument(
+        "--repeats", nargs="+", default=[f"{i:02d}" for i in range(1, 11)]
+    )
+    scaffold.add_argument("--expected-subjects", type=int, default=89)
+    scaffold.add_argument("--expected-simulation-tasks", type=int, default=890)
+
     prep = subparsers.add_parser("prep-task")
     prep.add_argument("--manifest", required=True)
     prep.add_argument("--task-index", type=int, required=True)
@@ -931,6 +1247,25 @@ def main() -> int:
             repeats=args.repeats,
             expected_subjects=args.expected_subjects,
             expected_prep_tasks=args.expected_prep_tasks,
+            expected_simulation_tasks=args.expected_simulation_tasks,
+        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["status"] == "ready" else 2
+    if args.command == "scaffold-preflight":
+        payload = build_scaffold_reuse_manifest(
+            subjects_file=args.subjects_file,
+            canonical_prep_manifest=args.canonical_prep_manifest,
+            canonical_dataset_name=args.canonical_dataset_name,
+            output_root=args.output_root,
+            simulation_result_dir=args.simulation_result_dir,
+            simulation_manifest=args.simulation_manifest,
+            summary=args.summary,
+            dataset_prefix=args.dataset_prefix,
+            montage_preset=args.montage_preset,
+            targets_csv=args.targets_csv,
+            expected_targets_sha256=args.expected_targets_sha256,
+            repeats=args.repeats,
+            expected_subjects=args.expected_subjects,
             expected_simulation_tasks=args.expected_simulation_tasks,
         )
         print(json.dumps(payload, indent=2, sort_keys=True))

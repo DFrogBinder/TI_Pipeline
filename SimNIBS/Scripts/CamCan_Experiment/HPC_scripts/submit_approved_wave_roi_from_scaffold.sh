@@ -53,7 +53,7 @@ EXPECTED_TARGETS_SHA256="${TI_EXPECTED_TARGETS_SHA256:-97a8c7a72faf88d9af9e4facb
 EXPECTED_SUBJECTS="${EXPECTED_SUBJECTS:-89}"
 EXPECTED_SIMULATION_TASKS="${EXPECTED_SIMULATION_TASKS:-890}"
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-50}"
-MAX_RETRIES="${TI_APPROVED_WAVE_MAX_RETRIES:-2}"
+MAX_RETRIES="${TI_APPROVED_WAVE_MAX_RETRIES:-unlimited}"
 PARTITION="${PARTITION:-sheffield}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
 MEMORY="${MEMORY:-32G}"
@@ -90,8 +90,8 @@ do
         exit 2
     fi
 done
-if ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]]; then
-    echo "[ERROR] MAX_RETRIES must be a non-negative integer." >&2
+if [ "${MAX_RETRIES}" != "unlimited" ] && ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] MAX_RETRIES must be 'unlimited' or a non-negative integer." >&2
     exit 2
 fi
 

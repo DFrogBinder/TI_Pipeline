@@ -624,9 +624,26 @@ def test_external_scaffold_submitter_submits_one_full_roi_array(tmp_path):
     assert "expected physical scaffold copies: 10" in completed.stdout
     assert "expected independent meshes: 10" in completed.stdout
     assert "expected validated FEM simulations: 10" in completed.stdout
+    assert "Retry limit:          unlimited" in completed.stdout
     assert "Submitted Left_M1 independent-remesh/FEM array job: 13001" in completed.stdout
     submission = sbatch_log.read_text(encoding="utf-8").strip()
     assert "--array=0-9%10" in submission
     assert "--dependency" not in submission
     assert "TI_APPROVED_WAVE_STAGE=simulate" in submission
     assert "TI_MONTAGE_PRESET=left-m1" in submission
+    assert "TI_APPROVED_WAVE_MAX_RETRIES=unlimited" in submission
+
+
+def test_external_scaffold_retry_policy_accepts_unlimited_and_finite_override():
+    scripts = Path(__file__).resolve().parents[1] / "HPC_scripts"
+    submitter = (scripts / "submit_approved_wave_roi_from_scaffold.sh").read_text(
+        encoding="utf-8"
+    )
+    worker = (scripts / "approved_wave_mesh_sim_array.slurm").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'MAX_RETRIES="${TI_APPROVED_WAVE_MAX_RETRIES:-unlimited}"' in submitter
+    assert '[ "${MAX_RETRIES}" != "unlimited" ]' in submitter
+    assert '[ "${MAX_RETRIES}" != "unlimited" ]' in worker
+    assert '[ "${MAX_RETRIES}" = "unlimited" ] ||' in worker

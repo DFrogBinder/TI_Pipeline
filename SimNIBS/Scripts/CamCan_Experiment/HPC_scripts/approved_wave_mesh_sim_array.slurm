@@ -43,8 +43,8 @@ if ! [[ "${TASK_OFFSET}" =~ ^[0-9]+$ ]]; then
     echo "[ERROR] TASK_OFFSET must be a non-negative integer." >&2
     exit 2
 fi
-if ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]]; then
-    echo "[ERROR] TI_APPROVED_WAVE_MAX_RETRIES must be non-negative." >&2
+if [ "${MAX_RETRIES}" != "unlimited" ] && ! [[ "${MAX_RETRIES}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] TI_APPROVED_WAVE_MAX_RETRIES must be 'unlimited' or a non-negative integer." >&2
     exit 2
 fi
 
@@ -220,7 +220,7 @@ if [ "${RUN_EXIT}" -eq 0 ]; then
     rm -f "${RETRY_FILE}"
     exit 0
 fi
-if [ "${RETRY_COUNT}" -lt "${MAX_RETRIES}" ]; then
+if [ "${MAX_RETRIES}" = "unlimited" ] || [ "${RETRY_COUNT}" -lt "${MAX_RETRIES}" ]; then
     NEXT_RETRY=$((RETRY_COUNT + 1))
     printf '%s\n' "${NEXT_RETRY}" > "${RETRY_FILE}"
     echo "[WARN] Task failed with exit ${RUN_EXIT}; requeueing (${NEXT_RETRY}/${MAX_RETRIES})."

@@ -75,6 +75,12 @@ each 89-subject ROI submits one `0-889%50` array with:
 - 890 ROI-specific FEM simulations and output validations; and
 - no ROAST/custom-segmentation involvement.
 
+These remaining-ROI arrays default to unlimited task requeues. A failed task
+keeps its completed mesh marker, reuses that mesh on FEM-only retries, and is
+requeued until it validates successfully or the job is manually cancelled.
+Set `TI_APPROVED_WAVE_MAX_RETRIES` to a non-negative integer before submission
+only when a finite retry cap is deliberately required.
+
 Repeat 01 of the new ROI does not reuse the Left Hippocampus mesh. It copies
 the canonical scaffold without that mesh and generates a new independent mesh,
 exactly like repeats 02 through 10.

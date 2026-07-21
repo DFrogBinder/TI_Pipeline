@@ -281,8 +281,10 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
     assert "TI_CHARM_CLEANUP_CSF_RADIUS=7" in submissions[0]
     assert "TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=largest" in submissions[0]
     assert "TI_CHARM_CLEANUP_COMPONENT_POLICY=largest" in submissions[0]
+    assert "--time=08:00:00" in submissions[0]
     assert "--dependency=afterany:15001" in submissions[1]
     assert "--mem=16G" in submissions[1]
+    assert "--time=08:00:00" in submissions[1]
 
 
 def test_preflight_blocks_source_output_alias(tmp_path):

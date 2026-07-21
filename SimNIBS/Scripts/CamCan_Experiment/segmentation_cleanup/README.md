@@ -126,9 +126,9 @@ Set `EXPECTED_SUBJECTS` explicitly only if a later audited cohort deliberately
 changes that count. Defaults are a candidate profile:
 
 - `SimNIBS/4.0.1-foss-2023a` on `sheffield`;
-- 4 CPUs, 16 GB, 2 hours per correction task;
+- 4 CPUs, 16 GB, 8 hours per correction task;
 - 50 concurrent tasks and 2 retries;
-- 2 CPUs, 16 GB, 2 hours for full collection validation. The previous 8 GB
+- 2 CPUs, 16 GB, 8 hours for full collection validation. The previous 8 GB
   collector reached 8,390,296 KB MaxRSS, so the additional headroom is based
   on completed-run evidence.
 
@@ -156,7 +156,9 @@ root and opt in explicitly:
 OUTPUT_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentations_corrected_v2_csf7_lcc \
 TI_CHARM_CLEANUP_CSF_RADIUS=7 \
 TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=largest \
+TIME_LIMIT=08:00:00 \
 COLLECTOR_MEMORY=16G \
+COLLECTOR_TIME=08:00:00 \
 JOB_NAME=charm_seg_cleanup_v2_csf7_lcc \
 COLLECTOR_JOB_NAME=collect_charm_seg_cleanup_v2_csf7_lcc \
 bash CamCan_Experiment/segmentation_cleanup/submit_charm_segmentation_cleanup.sh

@@ -4,7 +4,7 @@
 The correction mirrors the cumulative-mask hierarchy supplied by the study
 supervisor:
 
-* close the cumulative WM+GM+CSF+blood envelope with a 5-voxel radius;
+* close the cumulative WM+GM+CSF envelope with a 5-voxel radius;
 * close the cumulative whole-head tissue envelope with a 10-voxel radius;
 * remove disconnected WM and cumulative GM/brain components; and
 * reconstruct one non-overlapping CHARM label image using the supplied tissue
@@ -38,6 +38,7 @@ MAP_SUFFIX = "_CHARM_tissue_labeling_upsampled.nii.gz"
 SUBJECT_PATTERN = re.compile(r"^sub-[A-Za-z0-9][A-Za-z0-9._-]*$")
 ALGORITHM = "cumulative-charm-cleanup-v1"
 CSF_COMPONENT_ALGORITHM = "cumulative-charm-cleanup-v2-csf-components"
+CSF_EXCLUDES_BLOOD_ALGORITHM = "cumulative-charm-cleanup-v3-csf-excludes-blood"
 KNOWN_LABELS = frozenset((0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11))
 REQUIRED_LABELS = frozenset((1, 2, 3, 5))
 MANIFEST_FIELDS = (
@@ -123,6 +124,7 @@ def correction_parameters(
     *,
     csf_radius: int,
     skin_radius: int,
+    include_blood_in_csf: bool,
     csf_component_policy: str,
     component_policy: str,
     wm_min_component_voxels: int,
@@ -145,12 +147,16 @@ def correction_parameters(
         raise ValueError(
             "min-size policy requires positive WM and GM component thresholds"
         )
-    parameters: dict[str, object] = {
-        "algorithm": (
+    if include_blood_in_csf:
+        algorithm = (
             CSF_COMPONENT_ALGORITHM
             if csf_component_policy != "none"
             else ALGORITHM
-        ),
+        )
+    else:
+        algorithm = CSF_EXCLUDES_BLOOD_ALGORITHM
+    parameters: dict[str, object] = {
+        "algorithm": algorithm,
         "csf_closing_radius_voxels": int(csf_radius),
         "skin_closing_radius_voxels": int(skin_radius),
         "component_policy": component_policy,
@@ -160,6 +166,9 @@ def correction_parameters(
     }
     if csf_component_policy != "none":
         parameters["csf_component_policy"] = csf_component_policy
+    if not include_blood_in_csf:
+        parameters["csf_source_labels"] = [1, 2, 3]
+        parameters["blood_restored_after_csf"] = True
     return parameters
 
 
@@ -245,6 +254,7 @@ def correct_label_array(
     *,
     csf_radius: int = 5,
     skin_radius: int = 10,
+    include_blood_in_csf: bool = False,
     csf_component_policy: str = "none",
     component_policy: str = "largest",
     wm_min_component_voxels: int = 0,
@@ -256,6 +266,7 @@ def correct_label_array(
     parameters = correction_parameters(
         csf_radius=csf_radius,
         skin_radius=skin_radius,
+        include_blood_in_csf=include_blood_in_csf,
         csf_component_policy=csf_component_policy,
         component_policy=component_policy,
         wm_min_component_voxels=wm_min_component_voxels,
@@ -280,7 +291,8 @@ def correct_label_array(
 
     wm = original == 1
     gm_envelope = np.isin(original, (1, 2))
-    csf_envelope = np.isin(original, (1, 2, 3, 9))
+    csf_source_labels = (1, 2, 3, 9) if include_blood_in_csf else (1, 2, 3)
+    csf_envelope = np.isin(original, csf_source_labels)
     head_envelope = (original >= 1) & (original <= 10)
 
     wm_clean, wm_metrics = _filter_components(
@@ -517,6 +529,7 @@ def run_task(
     task_index: int,
     csf_radius: int = 5,
     skin_radius: int = 10,
+    include_blood_in_csf: bool = False,
     csf_component_policy: str = "none",
     component_policy: str = "largest",
     wm_min_component_voxels: int = 0,
@@ -527,6 +540,7 @@ def run_task(
     parameters = correction_parameters(
         csf_radius=csf_radius,
         skin_radius=skin_radius,
+        include_blood_in_csf=include_blood_in_csf,
         csf_component_policy=csf_component_policy,
         component_policy=component_policy,
         wm_min_component_voxels=wm_min_component_voxels,
@@ -575,6 +589,7 @@ def run_task(
         raw,
         csf_radius=csf_radius,
         skin_radius=skin_radius,
+        include_blood_in_csf=include_blood_in_csf,
         csf_component_policy=csf_component_policy,
         component_policy=component_policy,
         wm_min_component_voxels=wm_min_component_voxels,
@@ -796,6 +811,11 @@ def _add_parameter_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--csf-radius", type=int, default=5)
     parser.add_argument("--skin-radius", type=int, default=10)
     parser.add_argument(
+        "--include-blood-in-csf",
+        action="store_true",
+        help="Reproduce the legacy CSF mask that included label 9 before closing.",
+    )
+    parser.add_argument(
         "--csf-component-policy", choices=("none", "largest"), default="none"
     )
     parser.add_argument(
@@ -841,6 +861,7 @@ def _parameter_kwargs(args: argparse.Namespace) -> dict[str, object]:
     return {
         "csf_radius": args.csf_radius,
         "skin_radius": args.skin_radius,
+        "include_blood_in_csf": args.include_blood_in_csf,
         "csf_component_policy": args.csf_component_policy,
         "component_policy": args.component_policy,
         "wm_min_component_voxels": args.wm_min_component_voxels,

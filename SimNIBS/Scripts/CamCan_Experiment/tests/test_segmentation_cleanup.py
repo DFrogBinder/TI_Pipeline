@@ -77,7 +77,12 @@ def test_cumulative_cleanup_closes_holes_filters_fragments_and_preserves_labels(
 
     assert np.array_equal(source, untouched)
     assert metrics["changed_voxels"] > 0
-    assert metrics["parameters"]["algorithm"] == workflow.ALGORITHM
+    assert (
+        metrics["parameters"]["algorithm"]
+        == workflow.CSF_EXCLUDES_BLOOD_ALGORITHM
+    )
+    assert metrics["parameters"]["csf_source_labels"] == [1, 2, 3]
+    assert metrics["parameters"]["blood_restored_after_csf"] is True
     assert "csf_component_policy" not in metrics["parameters"]
     assert "csf_cumulative_components" not in metrics
     assert metrics["wm_components"]["components_removed"] >= 1
@@ -111,13 +116,46 @@ def test_csf_largest_component_filter_removes_detached_cumulative_island():
 
     assert unfiltered[detached] == 3
     assert filtered[detached] == 7
-    assert metrics["parameters"]["algorithm"] == workflow.CSF_COMPONENT_ALGORITHM
+    assert (
+        metrics["parameters"]["algorithm"]
+        == workflow.CSF_EXCLUDES_BLOOD_ALGORITHM
+    )
     assert metrics["parameters"]["csf_component_policy"] == "largest"
     assert metrics["csf_cumulative_components"]["components_removed"] >= 1
     assert metrics["csf_cumulative_voxels_after_component_filter"] < metrics[
         "csf_cumulative_voxels_before"
     ]
     assert np.count_nonzero(filtered == 9) == np.count_nonzero(source == 9)
+
+
+def test_csf_excludes_blood_before_closing_and_restores_blood_afterward():
+    source = _synthetic_labels()
+    source[6:8, 18:23, 18:23] = 9
+
+    corrected, metrics = workflow.correct_label_array(
+        source,
+        csf_radius=2,
+        skin_radius=0,
+    )
+    legacy, legacy_metrics = workflow.correct_label_array(
+        source,
+        csf_radius=2,
+        skin_radius=0,
+        include_blood_in_csf=True,
+    )
+
+    # Legacy inclusion grows a CSF bridge toward the nearby blood mask.
+    assert corrected[8, 19, 19] == source[8, 19, 19]
+    assert legacy[8, 19, 19] == 3
+    assert np.count_nonzero((legacy == 3) & (corrected != 3)) > 0
+
+    # Both modes restore every original blood voxel after CSF reconstruction.
+    original_blood = source == 9
+    assert np.all(corrected[original_blood] == 9)
+    assert np.all(legacy[original_blood] == 9)
+    assert metrics["parameters"]["csf_source_labels"] == [1, 2, 3]
+    assert "csf_source_labels" not in legacy_metrics["parameters"]
+    assert legacy_metrics["parameters"]["algorithm"] == workflow.ALGORITHM
 
 
 def test_min_size_policy_requires_explicit_positive_thresholds():
@@ -269,6 +307,10 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
     assert "correction tasks: 1" in completed.stdout
     assert "array: 0-0%1" in completed.stdout
     assert "CSF closing: 7 voxels" in completed.stdout
+    assert (
+        "CSF source labels: 1,2,3 (blood excluded and restored afterward)"
+        in completed.stdout
+    )
     assert "CSF components: largest, connectivity 26" in completed.stdout
     assert "skin closing: 10 voxels" in completed.stdout
     assert "Preflight Python:" in completed.stdout
@@ -279,6 +321,7 @@ def test_full_submitter_uses_discovered_scope_and_afterany_collector(tmp_path):
     assert len(submissions) == 2
     assert "--array=0-0%1" in submissions[0]
     assert "TI_CHARM_CLEANUP_CSF_RADIUS=7" in submissions[0]
+    assert "TI_CHARM_CLEANUP_CSF_INCLUDE_BLOOD=0" in submissions[0]
     assert "TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=largest" in submissions[0]
     assert "TI_CHARM_CLEANUP_COMPONENT_POLICY=largest" in submissions[0]
     assert "--time=08:00:00" in submissions[0]

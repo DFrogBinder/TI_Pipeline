@@ -78,10 +78,12 @@ def compare_subject(
     if not np.allclose(original_image.affine, corrected_image.affine, atol=1e-6, rtol=0):
         raise ValueError(f"affine mismatch for {subject}")
 
-    # Reproduce the production correction, then make blood the final label
-    # assignment. This is equivalent to moving the blood assignment to the
-    # end of the reconstruction block without modifying production code.
-    rerun_current, _ = workflow.correct_label_array(original)
+    # Reproduce the historical v1 correction used by this comparison, then
+    # make blood the final label assignment. The explicit legacy switch keeps
+    # this experiment stable after production stopped including blood in CSF.
+    rerun_current, _ = workflow.correct_label_array(
+        original, include_blood_in_csf=True
+    )
     rerun_blood_last = rerun_current.copy()
     original_blood = original == 9
     rerun_blood_last[original_blood] = 9

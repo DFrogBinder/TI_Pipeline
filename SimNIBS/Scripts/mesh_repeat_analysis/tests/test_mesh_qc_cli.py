@@ -87,7 +87,9 @@ def test_cli_writes_csv_reports_in_skip_render_mode(tmp_path, monkeypatch):
 
 
 def test_parser_defaults_to_auto_and_all_cpus():
-    args = run_mesh_qc.build_parser().parse_args(["--root", "/tmp/in", "--out", "/tmp/out"])
+    args = run_mesh_qc.build_parser().parse_args(
+        ["--root", "/tmp/in", "--out", "/tmp/out"]
+    )
     gmsh_args = run_mesh_qc.build_parser().parse_args(
         ["--root", "/tmp/in", "--out", "/tmp/out", "--renderer", "gmsh"]
     )
@@ -102,7 +104,9 @@ def test_parser_defaults_to_auto_and_all_cpus():
     assert gmsh_args.renderer == "gmsh"
 
 
-def test_tissue_only_discovers_meshes_without_qc_or_whole_mesh_rendering(tmp_path, monkeypatch):
+def test_tissue_only_discovers_meshes_without_qc_or_whole_mesh_rendering(
+    tmp_path, monkeypatch
+):
     mesh_path = tmp_path / "sub-CC1" / "m2m_sub-CC1" / "sub-CC1.msh"
     mesh_path.parent.mkdir(parents=True)
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
@@ -118,12 +122,16 @@ def test_tissue_only_discovers_meshes_without_qc_or_whole_mesh_rendering(tmp_pat
     monkeypatch.setattr(
         run_mesh_qc,
         "_run_qc_detailed",
-        lambda *args, **kwargs: pytest.fail("geometry QC must not run in tissue-only mode"),
+        lambda *args, **kwargs: pytest.fail(
+            "geometry QC must not run in tissue-only mode"
+        ),
     )
     monkeypatch.setattr(
         run_mesh_qc,
         "_render_outputs",
-        lambda *args, **kwargs: pytest.fail("whole-mesh rendering must not run in tissue-only mode"),
+        lambda *args, **kwargs: pytest.fail(
+            "whole-mesh rendering must not run in tissue-only mode"
+        ),
     )
 
     rc = run_mesh_qc.main(
@@ -148,13 +156,17 @@ def test_tissue_only_discovers_meshes_without_qc_or_whole_mesh_rendering(tmp_pat
     assert (out_dir / "found_meshes.csv").exists()
     assert not (out_dir / "qc_summary.csv").exists()
     assert not (out_dir / "renders" / "meshes").exists()
-    context = json.loads((out_dir / "logs" / "run_context.json").read_text(encoding="utf-8"))
+    context = json.loads(
+        (out_dir / "logs" / "run_context.json").read_text(encoding="utf-8")
+    )
     assert context["stage"] == "tissue"
     assert context["tissue_only"] is True
     assert context["tissue_walls"] is True
 
 
-@pytest.mark.parametrize("conflicting_flag", ["--render-only", "--qc-only", "--skip-renders"])
+@pytest.mark.parametrize(
+    "conflicting_flag", ["--render-only", "--qc-only", "--skip-renders"]
+)
 def test_tissue_only_rejects_conflicting_stage_flags(tmp_path, conflicting_flag):
     rc = run_mesh_qc.main(
         [
@@ -170,7 +182,9 @@ def test_tissue_only_rejects_conflicting_stage_flags(tmp_path, conflicting_flag)
     assert rc == 2
 
 
-def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_path, monkeypatch):
+def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(
+    tmp_path, monkeypatch
+):
     records = [
         run_mesh_qc.MeshRecord(
             path=tmp_path / f"sub-CC{idx}.msh",
@@ -250,11 +264,10 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
     assert any("Front view" in label for _, label, _ in rendered)
     assert any("Back view" in label for _, label, _ in rendered)
     assert any("Top view" in label for _, label, _ in rendered)
-    with (out_dir / "tissue_render_completeness.csv").open(newline="", encoding="utf-8") as f:
-        rows = {
-            (int(row["tissue_tag"]), row["view"]): row
-            for row in csv.DictReader(f)
-        }
+    with (out_dir / "tissue_render_completeness.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
+        rows = {(int(row["tissue_tag"]), row["view"]): row for row in csv.DictReader(f)}
     assert rows[(1, "front")]["status"] == "MISSING_TISSUE"
     assert rows[(1, "back")]["status"] == "MISSING_TISSUE"
     assert rows[(1, "front")]["present_meshes"] == "1"
@@ -264,7 +277,9 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
     assert rows[(7, "front")]["status"] == "OK"
     assert rows[(7, "back")]["status"] == "OK"
     assert rows[(7, "top")]["status"] == "OK"
-    with (out_dir / "tissue_render_manifest.csv").open(newline="", encoding="utf-8") as f:
+    with (out_dir / "tissue_render_manifest.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
         manifest_rows = list(csv.DictReader(f))
     assert {row["view"] for row in manifest_rows} == {"front", "back", "top"}
     views_by_tag = {
@@ -276,7 +291,9 @@ def test_tissue_walls_render_each_present_tissue_and_report_missing_labels(tmp_p
     assert views_by_tag[7] == {"front", "back", "top"}
 
 
-def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, monkeypatch):
+def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(
+    tmp_path, monkeypatch
+):
     record = run_mesh_qc.MeshRecord(
         path=tmp_path / "sub-CC1.msh",
         roi="unknown_roi",
@@ -318,7 +335,9 @@ def test_tissue_walls_fail_clearly_when_no_tissue_can_be_extracted(tmp_path, mon
     assert "neither SimNIBS nor meshio" in rows[0]["error_message"]
 
 
-def test_forced_gmsh_tissue_preflight_stops_before_parallel_batch(tmp_path, monkeypatch):
+def test_forced_gmsh_tissue_preflight_stops_before_parallel_batch(
+    tmp_path, monkeypatch
+):
     records = [
         run_mesh_qc.MeshRecord(
             path=tmp_path / f"sub-CC{idx}.msh",
@@ -354,7 +373,9 @@ def test_forced_gmsh_tissue_preflight_stops_before_parallel_batch(tmp_path, monk
         view="front",
     )
 
-    monkeypatch.setattr(run_mesh_qc, "_render_display_context", lambda args: nullcontext())
+    monkeypatch.setattr(
+        run_mesh_qc, "_render_display_context", lambda args: nullcontext()
+    )
     monkeypatch.setattr(
         run_mesh_qc,
         "_run_tissue_isolated_once",
@@ -363,10 +384,14 @@ def test_forced_gmsh_tissue_preflight_stops_before_parallel_batch(tmp_path, monk
     monkeypatch.setattr(
         run_mesh_qc,
         "_run_tissue_parallel_attempt",
-        lambda *args, **kwargs: pytest.fail("parallel batch must not start after failed preflight"),
+        lambda *args, **kwargs: pytest.fail(
+            "parallel batch must not start after failed preflight"
+        ),
     )
 
-    with pytest.raises(RuntimeError, match="Forced Gmsh tissue-render preflight failed"):
+    with pytest.raises(
+        RuntimeError, match="Forced Gmsh tissue-render preflight failed"
+    ):
         run_mesh_qc._run_tissue_outputs(records, out_dir, args)
 
     with (out_dir / "tissue_render_exception_details.csv").open(
@@ -378,7 +403,9 @@ def test_forced_gmsh_tissue_preflight_stops_before_parallel_batch(tmp_path, monk
     assert "Xvfb render failed" in rows[0]["error_message"]
 
 
-def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(tmp_path, monkeypatch):
+def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(
+    tmp_path, monkeypatch
+):
     record = run_mesh_qc.MeshRecord(
         path=tmp_path / "sub-CC1.msh",
         roi="unknown_roi",
@@ -435,7 +462,9 @@ def test_tissue_walls_reuse_existing_front_tile_and_render_only_back(tmp_path, m
     run_mesh_qc._run_tissue_outputs([record], out_dir, args)
 
     assert rendered_views == ["back"]
-    with (out_dir / "tissue_render_manifest.csv").open(newline="", encoding="utf-8") as f:
+    with (out_dir / "tissue_render_manifest.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
         rows = {row["view"]: row for row in csv.DictReader(f)}
     assert rows["front"]["resumed"] == "1"
     assert rows["back"]["resumed"] == "0"
@@ -467,7 +496,10 @@ def test_tissue_walls_upgrade_exact_front_back_marker_and_reuse_tiles(tmp_path):
 
     run_mesh_qc._prepare_tissue_view_convention(out_dir)
 
-    assert json.loads(marker.read_text(encoding="utf-8")) == run_mesh_qc.TISSUE_VIEW_CONVENTION
+    assert (
+        json.loads(marker.read_text(encoding="utf-8"))
+        == run_mesh_qc.TISSUE_VIEW_CONVENTION
+    )
     assert existing_tile.read_bytes() == b"validated front"
 
 
@@ -507,7 +539,9 @@ def test_compact_bone_v2_resume_renders_only_missing_top_tile(tmp_path, monkeypa
     monkeypatch.setattr(
         run_mesh_qc,
         "iter_tissue_surface_arrays",
-        lambda path: iter([TissueSurface(7, "Compact bone", "tag_07_compact_bone", surface)]),
+        lambda path: iter(
+            [TissueSurface(7, "Compact bone", "tag_07_compact_bone", surface)]
+        ),
     )
     rendered_views = []
 
@@ -548,7 +582,9 @@ def test_tissue_walls_reject_unmarked_top_tiles_during_marker_upgrade(tmp_path):
     top_tile.parent.mkdir(parents=True)
     top_tile.write_bytes(b"unversioned top")
 
-    with pytest.raises(RuntimeError, match="not covered by the legacy front/back marker"):
+    with pytest.raises(
+        RuntimeError, match="not covered by the legacy front/back marker"
+    ):
         run_mesh_qc._prepare_tissue_view_convention(out_dir)
 
     assert json.loads(marker.read_text(encoding="utf-8")) == (
@@ -600,7 +636,9 @@ def test_process_pool_executor_kwargs_skip_recycling_when_unsupported(monkeypatc
 
 
 def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
-    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path = (
+        tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    )
     mesh_path.parent.mkdir(parents=True)
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
     out_dir = tmp_path / "qc"
@@ -653,7 +691,9 @@ def test_cli_emits_progress_messages(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_progress_shows_geometry_flag_names(tmp_path, monkeypatch, capsys):
-    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path = (
+        tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    )
     mesh_path.parent.mkdir(parents=True)
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
     out_dir = tmp_path / "qc"
@@ -698,7 +738,9 @@ def test_cli_progress_shows_geometry_flag_names(tmp_path, monkeypatch, capsys):
 
 def test_cli_uses_tqdm_when_requested(tmp_path, monkeypatch):
     FakeTqdm.instances = []
-    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path = (
+        tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    )
     mesh_path.parent.mkdir(parents=True)
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
     out_dir = tmp_path / "qc"
@@ -759,7 +801,16 @@ def test_run_qc_preserves_order_with_parallel_workers(tmp_path):
         for idx in (2, 1)
     ]
     args = run_mesh_qc.build_parser().parse_args(
-        ["--root", str(tmp_path), "--out", str(tmp_path / "out"), "--workers", "2", "--progress", "none"]
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out"),
+            "--workers",
+            "2",
+            "--progress",
+            "none",
+        ]
     )
 
     rows = run_mesh_qc._run_qc(records, args)
@@ -768,7 +819,9 @@ def test_run_qc_preserves_order_with_parallel_workers(tmp_path):
     assert all(str(row["flags"]).startswith("READ_FAIL") for row in rows)
 
 
-def test_run_qc_detailed_retries_with_fewer_workers_after_pool_crash(tmp_path, monkeypatch):
+def test_run_qc_detailed_retries_with_fewer_workers_after_pool_crash(
+    tmp_path, monkeypatch
+):
     records = [
         run_mesh_qc.MeshRecord(
             path=tmp_path / f"mesh_{idx}.msh",
@@ -780,15 +833,30 @@ def test_run_qc_detailed_retries_with_fewer_workers_after_pool_crash(tmp_path, m
         for idx in range(4)
     ]
     args = run_mesh_qc.build_parser().parse_args(
-        ["--root", str(tmp_path), "--out", str(tmp_path / "out"), "--workers", "0", "--progress", "none"]
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "out"),
+            "--workers",
+            "0",
+            "--progress",
+            "none",
+        ]
     )
 
     monkeypatch.setattr(run_mesh_qc, "_resolve_worker_count", lambda requested: 4)
-    monkeypatch.setattr(run_mesh_qc, "_resolve_memory_budget_bytes", lambda visible_workers: None)
+    monkeypatch.setattr(
+        run_mesh_qc, "_resolve_memory_budget_bytes", lambda visible_workers: None
+    )
     monkeypatch.setattr(
         run_mesh_qc,
         "_run_qc_warmup_samples",
-        lambda records, args, summary_rows, exception_rows, progress: (0, None, list(range(len(records)))),
+        lambda records, args, summary_rows, exception_rows, progress: (
+            0,
+            None,
+            list(range(len(records))),
+        ),
     )
     monkeypatch.setattr(
         run_mesh_qc,
@@ -847,7 +915,9 @@ def test_run_qc_detailed_retries_with_fewer_workers_after_pool_crash(tmp_path, m
     assert [row["subject"] for row in rows] == [f"sub-CC{idx}" for idx in range(4)]
 
 
-def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch, capsys):
+def test_cli_skips_rendering_meshes_that_failed_qc_loading(
+    tmp_path, monkeypatch, capsys
+):
     ok_mesh = tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
     bad_mesh = tmp_path / "Runs" / "sub-CC2" / "repeat_01" / "m2m_sub-CC2" / "head.msh"
     ok_mesh.parent.mkdir(parents=True)
@@ -917,7 +987,9 @@ def test_cli_skips_rendering_meshes_that_failed_qc_loading(tmp_path, monkeypatch
 
 
 def test_cli_renders_meshes_with_geometry_qc_flags(tmp_path, monkeypatch):
-    flagged_mesh = tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    flagged_mesh = (
+        tmp_path / "Runs" / "sub-CC1" / "repeat_01" / "m2m_sub-CC1" / "head.msh"
+    )
     flagged_mesh.parent.mkdir(parents=True)
     flagged_mesh.write_text("$MeshFormat\n", encoding="utf-8")
     out_dir = tmp_path / "qc"
@@ -945,20 +1017,25 @@ def test_cli_renders_meshes_with_geometry_qc_flags(tmp_path, monkeypatch):
         out_png.write_bytes(b"fake png")
 
     monkeypatch.setattr(run_mesh_qc, "render_mesh_png", fake_render)
+
     def fake_mosaic(image_paths, out_png, *, cols, tile_size):
         out_png.parent.mkdir(parents=True)
         out_png.write_bytes(b"fake mosaic")
 
     monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
 
-    rc = run_mesh_qc.main(["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1"])
+    rc = run_mesh_qc.main(
+        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1"]
+    )
 
     assert rc == 0
     assert rendered == [flagged_mesh]
 
 
 def test_cli_qc_only_runs_qc_without_rendering(tmp_path, monkeypatch):
-    mesh_path = tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    mesh_path = (
+        tmp_path / "M1" / "sub-CC110056" / "repeat_01" / "m2m_sub-CC110056" / "head.msh"
+    )
     mesh_path.parent.mkdir(parents=True)
     mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
     out_dir = tmp_path / "qc"
@@ -985,7 +1062,11 @@ def test_cli_qc_only_runs_qc_without_rendering(tmp_path, monkeypatch):
             ),
         ),
     )
-    monkeypatch.setattr(run_mesh_qc, "render_mesh_png", lambda *args, **kwargs: pytest.fail("render should not run"))
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "render_mesh_png",
+        lambda *args, **kwargs: pytest.fail("render should not run"),
+    )
 
     rc = run_mesh_qc.main(
         [
@@ -1076,8 +1157,14 @@ def test_cli_render_only_uses_existing_qc_outputs(tmp_path, monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(run_mesh_qc, "discover_meshes", lambda *args, **kwargs: pytest.fail("discovery should not run"))
-    monkeypatch.setattr(run_mesh_qc, "_run_qc", lambda *args, **kwargs: pytest.fail("qc should not run"))
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "discover_meshes",
+        lambda *args, **kwargs: pytest.fail("discovery should not run"),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc, "_run_qc", lambda *args, **kwargs: pytest.fail("qc should not run")
+    )
 
     rendered = []
 
@@ -1160,8 +1247,14 @@ def test_render_only_refreshes_unknown_roi_metadata_from_paths(tmp_path, monkeyp
         run_mesh_qc.SUMMARY_FIELDS,
     )
 
-    monkeypatch.setattr(run_mesh_qc, "discover_meshes", lambda *args, **kwargs: pytest.fail("discovery should not run"))
-    monkeypatch.setattr(run_mesh_qc, "_run_qc", lambda *args, **kwargs: pytest.fail("qc should not run"))
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "discover_meshes",
+        lambda *args, **kwargs: pytest.fail("discovery should not run"),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc, "_run_qc", lambda *args, **kwargs: pytest.fail("qc should not run")
+    )
 
     def fake_render(path, out_png, *, label, image_size, renderer):
         out_png.parent.mkdir(parents=True)
@@ -1227,9 +1320,23 @@ def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
         for record in records
     ]
     args = run_mesh_qc.build_parser().parse_args(
-        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1", "--progress", "none"]
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "1",
+            "--progress",
+            "none",
+        ]
     )
-    existing_png = out_dir / "renders" / "meshes" / "00001__sub-CC1__repeat_01__m2m_sub-CC1__sub-CC1.png"
+    existing_png = (
+        out_dir
+        / "renders"
+        / "meshes"
+        / "00001__sub-CC1__repeat_01__m2m_sub-CC1__sub-CC1.png"
+    )
     existing_png.parent.mkdir(parents=True)
     existing_png.write_bytes(b"already rendered")
     rendered = []
@@ -1257,7 +1364,10 @@ def test_render_outputs_resumes_from_existing_pngs(tmp_path, monkeypatch):
     with (out_dir / "render_manifest.csv").open(newline="", encoding="utf-8") as f:
         manifest_rows = list(csv.DictReader(f))
     assert [row["subject"] for row in manifest_rows] == ["sub-CC1", "sub-CC2"]
-    assert [row["actual_renderer"] for row in manifest_rows] == ["unknown_existing", "gmsh"]
+    assert [row["actual_renderer"] for row in manifest_rows] == [
+        "unknown_existing",
+        "gmsh",
+    ]
     assert [row["requested_renderer"] for row in manifest_rows] == ["auto", "auto"]
     assert [row["resumed"] for row in manifest_rows] == ["1", "0"]
 
@@ -1283,7 +1393,16 @@ def test_render_manifest_is_written_before_mosaic_failure(tmp_path, monkeypatch)
         }
     ]
     args = run_mesh_qc.build_parser().parse_args(
-        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "1", "--progress", "none"]
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "1",
+            "--progress",
+            "none",
+        ]
     )
 
     def fake_render(path, out_png, *, label, image_size, renderer):
@@ -1305,7 +1424,9 @@ def test_render_manifest_is_written_before_mosaic_failure(tmp_path, monkeypatch)
     assert manifest_rows[0]["subject"] == "sub-CC1"
     assert manifest_rows[0]["actual_renderer"] == "gmsh"
 
-    with (out_dir / "mosaic_exception_details.csv").open(newline="", encoding="utf-8") as f:
+    with (out_dir / "mosaic_exception_details.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
         mosaic_rows = list(csv.DictReader(f))
     assert mosaic_rows[0]["stage"] == "mosaic"
     assert mosaic_rows[0]["roi"] == "all"
@@ -1405,7 +1526,9 @@ def test_render_display_context_prefers_managed_xvfb_for_gmsh(monkeypatch):
     assert calls == [("init", 1200, 1200), ("start",), ("stop",)]
 
 
-def test_render_display_context_does_not_fallback_to_stale_display_for_forced_gmsh(monkeypatch):
+def test_render_display_context_does_not_fallback_to_stale_display_for_forced_gmsh(
+    monkeypatch,
+):
     args = run_mesh_qc.build_parser().parse_args(
         ["--root", "/tmp/in", "--out", "/tmp/out", "--renderer", "gmsh"]
     )
@@ -1430,7 +1553,9 @@ def test_render_display_context_does_not_fallback_to_stale_display_for_forced_gm
 
 def test_virtual_display_start_times_out_waiting_for_displayfd(monkeypatch):
     monkeypatch.setattr(run_mesh_qc.shutil, "which", lambda name: "/fake/Xvfb")
-    monkeypatch.setattr(run_mesh_qc.select, "select", lambda read, write, err, timeout: ([], [], []))
+    monkeypatch.setattr(
+        run_mesh_qc.select, "select", lambda read, write, err, timeout: ([], [], [])
+    )
 
     class FakeProc:
         def communicate(self, timeout=None):
@@ -1442,7 +1567,9 @@ def test_virtual_display_start_times_out_waiting_for_displayfd(monkeypatch):
         def wait(self, timeout=None):
             return 1
 
-    monkeypatch.setattr(run_mesh_qc.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(
+        run_mesh_qc.subprocess, "Popen", lambda *args, **kwargs: FakeProc()
+    )
 
     with pytest.raises(RuntimeError, match="did not report a display"):
         run_mesh_qc.VirtualDisplaySession().start()
@@ -1508,16 +1635,28 @@ def test_forced_gmsh_render_aborts_after_preflight_failure(tmp_path, monkeypatch
             0,
         )
 
-    monkeypatch.setattr(run_mesh_qc, "_render_display_context", lambda args: nullcontext())
+    monkeypatch.setattr(
+        run_mesh_qc, "_render_display_context", lambda args: nullcontext()
+    )
     monkeypatch.setattr(run_mesh_qc, "_run_render_isolated_once", fake_preflight)
-    monkeypatch.setattr(run_mesh_qc, "_run_render_parallel_attempt", lambda *args, **kwargs: pytest.fail("parallel render should not start"))
-    monkeypatch.setattr(run_mesh_qc, "make_mosaic", lambda *args, **kwargs: pytest.fail("mosaic should not run"))
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_run_render_parallel_attempt",
+        lambda *args, **kwargs: pytest.fail("parallel render should not start"),
+    )
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "make_mosaic",
+        lambda *args, **kwargs: pytest.fail("mosaic should not run"),
+    )
 
     with pytest.raises(RuntimeError, match="Forced Gmsh render preflight failed"):
         run_mesh_qc._render_outputs(records, summary_rows, out_dir, args)
 
     assert calls == ["sub-CC1"]
-    with (out_dir / "render_exception_details.csv").open(newline="", encoding="utf-8") as f:
+    with (out_dir / "render_exception_details.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1
     assert rows[0]["subject"] == "sub-CC1"
@@ -1555,7 +1694,16 @@ def test_render_outputs_uses_parallel_workers_when_requested(tmp_path, monkeypat
         for record in records
     ]
     args = run_mesh_qc.build_parser().parse_args(
-        ["--root", str(tmp_path), "--out", str(out_dir), "--workers", "2", "--progress", "none"]
+        [
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--workers",
+            "2",
+            "--progress",
+            "none",
+        ]
     )
 
     used_parallel = {"value": False}
@@ -1662,7 +1810,9 @@ def test_cli_writes_qc_exception_details_and_run_context(tmp_path, monkeypatch):
     assert "not a readable mesh" in rows[0]["error_message"]
     assert "RuntimeError: not a readable mesh" in rows[0]["traceback"]
 
-    context = json.loads((out_dir / "logs" / "run_context.json").read_text(encoding="utf-8"))
+    context = json.loads(
+        (out_dir / "logs" / "run_context.json").read_text(encoding="utf-8")
+    )
     assert context["root"] == str(tmp_path.resolve())
     assert context["out"] == str(out_dir.resolve())
 
@@ -1715,7 +1865,9 @@ def test_cli_writes_render_exception_details(tmp_path, monkeypatch):
     )
 
     assert rc == 0
-    with (out_dir / "render_exception_details.csv").open(newline="", encoding="utf-8") as f:
+    with (out_dir / "render_exception_details.csv").open(
+        newline="", encoding="utf-8"
+    ) as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1
     assert rows[0]["stage"] == "render"
@@ -1728,9 +1880,15 @@ def test_cli_writes_render_exception_details(tmp_path, monkeypatch):
 
 def test_main_writes_fatal_error_log_and_returns_nonzero(tmp_path, monkeypatch):
     out_dir = tmp_path / "qc"
-    monkeypatch.setattr(run_mesh_qc, "_run_full_or_qc_only", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad root config")))
+    monkeypatch.setattr(
+        run_mesh_qc,
+        "_run_full_or_qc_only",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad root config")),
+    )
 
-    rc = run_mesh_qc.main(["--root", str(tmp_path), "--out", str(out_dir), "--progress", "none"])
+    rc = run_mesh_qc.main(
+        ["--root", str(tmp_path), "--out", str(out_dir), "--progress", "none"]
+    )
 
     assert rc == 1
     fatal_text = (out_dir / "logs" / "fatal_error.txt").read_text(encoding="utf-8")
@@ -1738,3 +1896,189 @@ def test_main_writes_fatal_error_log_and_returns_nonzero(tmp_path, monkeypatch):
     assert "Traceback" in fatal_text
     run_log = (out_dir / "logs" / "mesh_qc.log").read_text(encoding="utf-8")
     assert "Fatal pipeline error" in run_log
+
+
+def test_tissue_shards_preserve_global_tile_indices():
+    records = [
+        run_mesh_qc.MeshRecord(
+            path=run_mesh_qc.Path(f"/tmp/sub-CC{idx}/m2m_sub-CC{idx}/sub-CC{idx}.msh"),
+            roi="unknown_roi",
+            subject=f"sub-CC{idx}",
+            repeat="unknown_repeat",
+            mesh_id=f"sub-CC{idx}",
+        )
+        for idx in range(1, 5)
+    ]
+
+    specs = run_mesh_qc._build_tissue_task_specs(records)
+    shard_zero = [spec for idx, spec in enumerate(specs) if idx % 2 == 0]
+    shard_one = [spec for idx, spec in enumerate(specs) if idx % 2 == 1]
+
+    assert [filename[:5] for _, filename in shard_zero] == ["00001", "00003"]
+    assert [filename[:5] for _, filename in shard_one] == ["00002", "00004"]
+
+
+def test_tissue_shard_writes_isolated_reports_and_completion_marker(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "meshes"
+    out_dir = tmp_path / "out"
+    for idx in range(1, 5):
+        subject = f"sub-CC{idx}"
+        mesh_path = root / subject / f"m2m_{subject}" / f"{subject}.msh"
+        mesh_path.parent.mkdir(parents=True)
+        mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+    captured = {}
+
+    def fake_tissue_outputs(records, actual_out_dir, args, **kwargs):
+        captured["records"] = records
+        captured.update(kwargs)
+        return {"meshes": 2, "renders": 38, "failures": 0, "walls": 0, "incomplete": 0}
+
+    monkeypatch.setattr(run_mesh_qc, "_run_tissue_outputs", fake_tissue_outputs)
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(root),
+            "--out",
+            str(out_dir),
+            "--progress",
+            "none",
+            "--tissue-only",
+            "--tissue-shard-count",
+            "2",
+            "--tissue-shard-index",
+            "1",
+        ]
+    )
+
+    assert rc == 0
+    assert [filename[:5] for _, filename in captured["task_specs"]] == [
+        "00002",
+        "00004",
+    ]
+    assert captured["build_mosaics"] is False
+    report_dir = run_mesh_qc._tissue_shard_report_dir(
+        out_dir,
+        shard_count=2,
+        shard_index=1,
+    )
+    marker = json.loads(
+        (report_dir / "shard_complete.json").read_text(encoding="utf-8")
+    )
+    assert marker["status"] == "complete"
+    assert marker["shard_index"] == 1
+    with (report_dir / "found_meshes.csv").open(newline="", encoding="utf-8") as f:
+        found = list(csv.DictReader(f))
+    assert [row["subject"] for row in found] == ["sub-CC2", "sub-CC4"]
+
+
+def test_accelerated_tissue_collector_merges_shards_and_builds_complete_walls(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "meshes"
+    out_dir = tmp_path / "out"
+    for subject in ("sub-CC1", "sub-CC2"):
+        mesh_path = root / subject / f"m2m_{subject}" / f"{subject}.msh"
+        mesh_path.parent.mkdir(parents=True)
+        mesh_path.write_text("$MeshFormat\n", encoding="utf-8")
+
+    records = run_mesh_qc.discover_meshes(root)
+    assert len(records) == 2
+    tissue_tags = (1, 2, 3, 5, 6, 7, 8, 9, 10)
+    for shard_index, record in enumerate(records):
+        report_dir = run_mesh_qc._tissue_shard_report_dir(
+            out_dir,
+            shard_count=2,
+            shard_index=shard_index,
+        )
+        presence_rows = []
+        manifest_rows = []
+        for tag in tissue_tags:
+            slug = f"tag_{tag:02d}_tissue_{tag}"
+            base = run_mesh_qc._record_row(record)
+            presence_rows.append(
+                {
+                    **base,
+                    "tissue_tag": tag,
+                    "tissue_name": f"Tissue {tag}",
+                    "tissue_slug": slug,
+                }
+            )
+            for view in run_mesh_qc._views_for_tissue_tag(tag):
+                tile_path = out_dir / "renders" / view / slug / f"{record.subject}.png"
+                tile_path.parent.mkdir(parents=True, exist_ok=True)
+                tile_path.write_bytes(b"png")
+                manifest_rows.append(
+                    {
+                        **base,
+                        "tissue_tag": tag,
+                        "tissue_name": f"Tissue {tag}",
+                        "tissue_slug": slug,
+                        "view": view,
+                        "output_path": str(tile_path),
+                        "requested_renderer": "gmsh",
+                        "actual_renderer": "unknown_existing",
+                        "resumed": "1",
+                    }
+                )
+
+        run_mesh_qc._write_csv(
+            report_dir / "found_meshes.csv",
+            [run_mesh_qc._record_row(record)],
+            run_mesh_qc.FOUND_FIELDS,
+        )
+        run_mesh_qc._write_csv(
+            report_dir / "tissue_presence.csv",
+            presence_rows,
+            run_mesh_qc.TISSUE_PRESENCE_FIELDS,
+        )
+        run_mesh_qc._write_csv(
+            report_dir / "tissue_render_manifest.csv",
+            manifest_rows,
+            run_mesh_qc.TISSUE_RENDER_MANIFEST_FIELDS,
+        )
+        run_mesh_qc._write_csv(
+            report_dir / "tissue_render_exception_details.csv",
+            [],
+            run_mesh_qc.TISSUE_EXCEPTION_FIELDS,
+        )
+        run_mesh_qc._write_json_atomic(
+            report_dir / "shard_complete.json",
+            {
+                "status": "complete",
+                "shard_count": 2,
+                "shard_index": shard_index,
+                "view_version": run_mesh_qc.TISSUE_VIEW_CONVENTION["version"],
+            },
+        )
+
+    def fake_mosaic(image_paths, out_png, *, cols, tile_size):
+        assert len(image_paths) == 2
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(b"wall")
+
+    monkeypatch.setattr(run_mesh_qc, "make_mosaic", fake_mosaic)
+    rc = run_mesh_qc.main(
+        [
+            "--root",
+            str(root),
+            "--out",
+            str(out_dir),
+            "--progress",
+            "none",
+            "--tissue-collect-only",
+            "--tissue-shard-count",
+            "2",
+        ]
+    )
+
+    assert rc == 0
+    summary = json.loads(
+        (out_dir / "accelerated_tissue_wall_summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["status"] == "complete"
+    assert summary["meshes"] == 2
+    assert summary["tissue_tiles"] == 38
+    assert summary["tissue_walls"] == 19

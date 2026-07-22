@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import inspect
 import json
 import os
@@ -24,10 +25,25 @@ from statistics import median
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from mesh_repeat_analysis.post.mesh_qc.discovery import DiscoveryStats, MeshRecord, discover_meshes, infer_record
-    from mesh_repeat_analysis.post.mesh_qc.geometry_qc import QCMetrics, compute_qc_metrics
-    from mesh_repeat_analysis.post.mesh_qc.loaders import iter_tissue_surface_arrays, load_surface_arrays
-    from mesh_repeat_analysis.post.mesh_qc.rendering import make_mosaic, render_mesh_png, render_surface_png
+    from mesh_repeat_analysis.post.mesh_qc.discovery import (
+        DiscoveryStats,
+        MeshRecord,
+        discover_meshes,
+        infer_record,
+    )
+    from mesh_repeat_analysis.post.mesh_qc.geometry_qc import (
+        QCMetrics,
+        compute_qc_metrics,
+    )
+    from mesh_repeat_analysis.post.mesh_qc.loaders import (
+        iter_tissue_surface_arrays,
+        load_surface_arrays,
+    )
+    from mesh_repeat_analysis.post.mesh_qc.rendering import (
+        make_mosaic,
+        render_mesh_png,
+        render_surface_png,
+    )
 else:
     from .discovery import DiscoveryStats, MeshRecord, discover_meshes, infer_record
     from .geometry_qc import QCMetrics, compute_qc_metrics
@@ -152,18 +168,23 @@ _RUN_LOGGER = None
 
 
 class RunLogger:
-    def __init__(self, out_dir: Path) -> None:
+    def __init__(self, out_dir: Path, *, run_label: str = "") -> None:
         self.out_dir = Path(out_dir)
         self.log_dir = self.out_dir / "logs"
-        self.text_path = self.log_dir / "mesh_qc.log"
-        self.context_path = self.log_dir / "run_context.json"
-        self.fatal_path = self.log_dir / "fatal_error.txt"
+        suffix = f"_{_safe_name(run_label)}" if run_label else ""
+        self.text_path = self.log_dir / f"mesh_qc{suffix}.log"
+        self.context_path = self.log_dir / f"run_context{suffix}.json"
+        self.fatal_path = self.log_dir / f"fatal_error{suffix}.txt"
         self.available = True
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
             self.available = False
-            print(f"[LOG] Could not create log directory {self.log_dir}: {exc}", file=sys.stderr, flush=True)
+            print(
+                f"[LOG] Could not create log directory {self.log_dir}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def log(self, level: str, stage: str, message: str, **fields) -> None:
         if not self.available:
@@ -282,7 +303,14 @@ class TqdmDiscoveryReporter:
 
 
 class VirtualDisplaySession:
-    def __init__(self, *, width: int = 1600, height: int = 1600, depth: int = 24, startup_timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        *,
+        width: int = 1600,
+        height: int = 1600,
+        depth: int = 24,
+        startup_timeout: float = 10.0,
+    ) -> None:
         self.width = max(width, 800)
         self.height = max(height, 800)
         self.depth = max(depth, 24)
@@ -399,7 +427,9 @@ def _short_error(exc: Exception | str, *, limit: int = 1200) -> str:
     return text[:limit].rstrip() + " ... [truncated]"
 
 
-def _write_optional_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]) -> None:
+def _write_optional_csv(
+    path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]
+) -> None:
     if rows:
         _write_csv(path, rows, fieldnames)
         return
@@ -410,7 +440,11 @@ def _write_optional_csv(path: Path, rows: list[dict[str, object]], fieldnames: t
 
 
 def _resolved_stage_name(args: argparse.Namespace) -> str:
+    if args.tissue_collect_only:
+        return "tissue_collect"
     if args.tissue_only:
+        if args.tissue_shard_count > 1:
+            return "tissue_shard"
         return "tissue"
     if args.render_only:
         return "render"
@@ -450,7 +484,9 @@ def _format_bytes(value: int | None) -> str:
     return f"{int(value)}B"
 
 
-def _parse_memory_value_to_bytes(value: str | None, *, default_unit: str = "M") -> int | None:
+def _parse_memory_value_to_bytes(
+    value: str | None, *, default_unit: str = "M"
+) -> int | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -481,11 +517,15 @@ def _parse_memory_value_to_bytes(value: str | None, *, default_unit: str = "M") 
 
 
 def _resolve_memory_budget_bytes(visible_workers: int) -> int | None:
-    per_node = _parse_memory_value_to_bytes(os.environ.get("SLURM_MEM_PER_NODE"), default_unit="M")
+    per_node = _parse_memory_value_to_bytes(
+        os.environ.get("SLURM_MEM_PER_NODE"), default_unit="M"
+    )
     if per_node:
         return per_node
 
-    per_cpu = _parse_memory_value_to_bytes(os.environ.get("SLURM_MEM_PER_CPU"), default_unit="M")
+    per_cpu = _parse_memory_value_to_bytes(
+        os.environ.get("SLURM_MEM_PER_CPU"), default_unit="M"
+    )
     if per_cpu:
         return per_cpu * max(visible_workers, 1)
 
@@ -519,9 +559,15 @@ def _choose_stage_worker_count(
     limited_by_memory = False
     usable_memory_bytes = None
     per_worker_budget_bytes = None
-    if memory_budget_bytes and sampled_worker_rss_bytes and sampled_worker_rss_bytes > 0:
+    if (
+        memory_budget_bytes
+        and sampled_worker_rss_bytes
+        and sampled_worker_rss_bytes > 0
+    ):
         usable_memory_bytes = int(memory_budget_bytes * 0.70)
-        per_worker_budget_bytes = max(int(sampled_worker_rss_bytes * 1.40), 256 * 1024**2)
+        per_worker_budget_bytes = max(
+            int(sampled_worker_rss_bytes * 1.40), 256 * 1024**2
+        )
         chosen = max(1, min(chosen, usable_memory_bytes // per_worker_budget_bytes))
         limited_by_memory = chosen < upper
     details = {
@@ -542,7 +588,9 @@ def _process_pool_executor_kwargs(workers: int) -> dict[str, object]:
         "mp_context": mp.get_context("spawn"),
     }
     try:
-        supports_recycling = "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters
+        supports_recycling = (
+            "max_tasks_per_child" in inspect.signature(ProcessPoolExecutor).parameters
+        )
     except (TypeError, ValueError):
         supports_recycling = True
     if supports_recycling:
@@ -550,7 +598,9 @@ def _process_pool_executor_kwargs(workers: int) -> dict[str, object]:
     return kwargs
 
 
-def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv: list[str] | None) -> dict[str, object]:
+def _build_run_context(
+    root: Path, out_dir: Path, args: argparse.Namespace, argv: list[str] | None
+) -> dict[str, object]:
     visible_workers = _resolve_worker_count(args.workers)
     return {
         "time_utc": _utc_now(),
@@ -578,6 +628,10 @@ def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv
         "roi_walls": args.roi_walls,
         "tissue_walls": args.tissue_walls or args.tissue_only,
         "tissue_only": args.tissue_only,
+        "tissue_collect_only": args.tissue_collect_only,
+        "tissue_shard_count": args.tissue_shard_count,
+        "tissue_shard_index": args.tissue_shard_index,
+        "run_label": args.run_label,
         "check_components": args.check_components,
         "render_only": args.render_only,
         "qc_only": args.qc_only,
@@ -592,7 +646,10 @@ def _build_run_context(root: Path, out_dir: Path, args: argparse.Namespace, argv
 def _use_tqdm_progress(args: argparse.Namespace) -> bool:
     if args.progress == "tqdm":
         if tqdm is None:
-            print("[PROGRESS] tqdm requested but not installed; using text progress", flush=True)
+            print(
+                "[PROGRESS] tqdm requested but not installed; using text progress",
+                flush=True,
+            )
             return False
         return True
     if args.progress == "auto":
@@ -637,7 +694,9 @@ def _make_discovery_callback(args: argparse.Namespace):
     return _print_discovery_progress, None
 
 
-def _write_csv(path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]) -> None:
+def _write_csv(
+    path: Path, rows: list[dict[str, object]], fieldnames: tuple[str, ...]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -724,7 +783,9 @@ def _append_flag(row: dict[str, object], flag: str) -> None:
     row["status"] = "FAIL"
 
 
-def _apply_bounds_outlier_flags(rows: list[dict[str, object]], *, multiplier: float = 4.0) -> None:
+def _apply_bounds_outlier_flags(
+    rows: list[dict[str, object]], *, multiplier: float = 4.0
+) -> None:
     ok_rows = [row for row in rows if row.get("status") == "OK"]
     if len(ok_rows) < 4:
         return
@@ -752,7 +813,9 @@ def _safe_name(value: str) -> str:
 
 def _mesh_detail(record: MeshRecord, status: str | None = None) -> str:
     prefix = f"{status} " if status else ""
-    return f"{prefix}{record.subject} {record.repeat} {record.mesh_id} {record.path.name}"
+    return (
+        f"{prefix}{record.subject} {record.repeat} {record.mesh_id} {record.path.name}"
+    )
 
 
 def _resolve_worker_count(requested_workers: int) -> int:
@@ -838,7 +901,9 @@ def _qc_worker_exit_payload(
     record: MeshRecord,
     exitcode: int,
 ) -> tuple[dict[str, object], dict[str, object], int]:
-    message = f"worker process exited before returning a QC result (exitcode={exitcode})"
+    message = (
+        f"worker process exited before returning a QC result (exitcode={exitcode})"
+    )
     row = _record_row(record)
     row.update(
         {
@@ -868,7 +933,9 @@ def _run_qc_isolated_once(
     record: MeshRecord,
     check_components: bool,
 ) -> tuple[dict[str, object], dict[str, object] | None, int]:
-    payload, exitcode = _run_isolated_worker(_qc_record_worker_profiled, record, check_components)
+    payload, exitcode = _run_isolated_worker(
+        _qc_record_worker_profiled, record, check_components
+    )
     if exitcode != 0 or payload is None:
         return _qc_worker_exit_payload(record, exitcode)
     return payload
@@ -897,7 +964,9 @@ def _run_qc_warmup_samples(
     peak_rss = 0
     for idx in range(warmup_count):
         record = records[idx]
-        row, exception_row, rss_bytes = _run_qc_isolated_once(record, args.check_components)
+        row, exception_row, rss_bytes = _run_qc_isolated_once(
+            record, args.check_components
+        )
         summary_rows[idx] = row
         if exception_row is not None:
             exception_rows.append(exception_row)
@@ -928,7 +997,11 @@ def _run_qc_parallel_attempt(
             while next_pos < len(indices) and len(in_flight) < backlog:
                 idx = indices[next_pos]
                 next_pos += 1
-                in_flight[executor.submit(_qc_record_worker_profiled, records[idx], args.check_components)] = idx
+                in_flight[
+                    executor.submit(
+                        _qc_record_worker_profiled, records[idx], args.check_components
+                    )
+                ] = idx
 
             while in_flight:
                 future = next(iter(as_completed(tuple(in_flight))))
@@ -939,13 +1012,21 @@ def _run_qc_parallel_attempt(
                     exception_rows.append(exception_row)
                 peak_rss = max(peak_rss, rss_bytes)
                 completed += 1
-                progress.update(completed, _mesh_detail(records[current_idx], _status_label(row)))
+                progress.update(
+                    completed, _mesh_detail(records[current_idx], _status_label(row))
+                )
                 current_idx = None
 
                 while next_pos < len(indices) and len(in_flight) < backlog:
                     next_idx = indices[next_pos]
                     next_pos += 1
-                    in_flight[executor.submit(_qc_record_worker_profiled, records[next_idx], args.check_components)] = next_idx
+                    in_flight[
+                        executor.submit(
+                            _qc_record_worker_profiled,
+                            records[next_idx],
+                            args.check_components,
+                        )
+                    ] = next_idx
     except Exception as exc:
         remaining = []
         if current_idx is not None:
@@ -965,7 +1046,9 @@ def _run_qc_detailed(
     summary_rows: list[dict[str, object] | None] = [None] * len(records)
     exception_rows: list[dict[str, object]] = []
     progress = _make_progress_reporter(args, "QC", len(records))
-    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(records) or 1))
+    visible_workers = max(
+        1, min(_resolve_worker_count(args.workers), len(records) or 1)
+    )
     memory_budget_bytes = _resolve_memory_budget_bytes(visible_workers)
     _log_info(
         "QC",
@@ -1002,37 +1085,55 @@ def _run_qc_detailed(
     while remaining_indices:
         if workers <= 1:
             if recovery_mode:
-                _log_warning("QC", "Falling back to isolated single-mesh execution", remaining=len(remaining_indices))
+                _log_warning(
+                    "QC",
+                    "Falling back to isolated single-mesh execution",
+                    remaining=len(remaining_indices),
+                )
                 print(
                     f"[QC] Falling back to isolated single-mesh execution for {len(remaining_indices)} mesh(es)",
                     flush=True,
                 )
             for idx in remaining_indices:
                 if recovery_mode:
-                    row, exception_row, rss_bytes = _run_qc_isolated_once(records[idx], args.check_components)
+                    row, exception_row, rss_bytes = _run_qc_isolated_once(
+                        records[idx], args.check_components
+                    )
                 else:
-                    row, exception_row, rss_bytes = _run_qc_direct_once(records[idx], args.check_components)
+                    row, exception_row, rss_bytes = _run_qc_direct_once(
+                        records[idx], args.check_components
+                    )
                 summary_rows[idx] = row
                 if exception_row is not None:
                     exception_rows.append(exception_row)
                 completed += 1
-                sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, rss_bytes) or sampled_worker_rss_bytes
-                progress.update(completed, _mesh_detail(records[idx], _status_label(row)))
+                sampled_worker_rss_bytes = (
+                    max(sampled_worker_rss_bytes or 0, rss_bytes)
+                    or sampled_worker_rss_bytes
+                )
+                progress.update(
+                    completed, _mesh_detail(records[idx], _status_label(row))
+                )
             remaining_indices = []
             break
 
         print(f"[QC] Using {workers} worker processes", flush=True)
-        completed, remaining_indices, attempt_peak_rss, attempt_error = _run_qc_parallel_attempt(
-            records,
-            remaining_indices,
-            args,
-            workers,
-            summary_rows,
-            exception_rows,
-            progress,
-            completed,
+        completed, remaining_indices, attempt_peak_rss, attempt_error = (
+            _run_qc_parallel_attempt(
+                records,
+                remaining_indices,
+                args,
+                workers,
+                summary_rows,
+                exception_rows,
+                progress,
+                completed,
+            )
         )
-        sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, attempt_peak_rss) or sampled_worker_rss_bytes
+        sampled_worker_rss_bytes = (
+            max(sampled_worker_rss_bytes or 0, attempt_peak_rss)
+            or sampled_worker_rss_bytes
+        )
         if attempt_error is None:
             break
 
@@ -1069,7 +1170,9 @@ def _run_qc_detailed(
     return final_rows, exception_rows
 
 
-def _run_qc(records: list[MeshRecord], args: argparse.Namespace) -> list[dict[str, object]]:
+def _run_qc(
+    records: list[MeshRecord], args: argparse.Namespace
+) -> list[dict[str, object]]:
     rows, _ = _run_qc_detailed(records, args)
     return rows
 
@@ -1111,7 +1214,11 @@ def _refresh_loaded_metadata(
             subject_regex=args.subject_regex,
             repeat_regex=args.repeat_regex,
         )
-        roi = inferred.roi if force_roi or record.roi in {"", "unknown_roi"} else record.roi
+        roi = (
+            inferred.roi
+            if force_roi or record.roi in {"", "unknown_roi"}
+            else record.roi
+        )
         subject = (
             inferred.subject
             if force_subject or record.subject in {"", "unknown_subject"}
@@ -1122,7 +1229,11 @@ def _refresh_loaded_metadata(
             if force_repeat or record.repeat in {"", "unknown_repeat"}
             else record.repeat
         )
-        mesh_id = inferred.mesh_id if record.mesh_id in {"", "unknown_mesh"} else record.mesh_id
+        mesh_id = (
+            inferred.mesh_id
+            if record.mesh_id in {"", "unknown_mesh"}
+            else record.mesh_id
+        )
         refreshed = MeshRecord(
             path=record.path,
             roi=roi,
@@ -1156,13 +1267,16 @@ def _render_record_worker(
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     label = f"{record.subject}\n{record.repeat}\n{record.mesh_id}"
     try:
-        actual_renderer = render_mesh_png(
-            record.path,
-            out_png,
-            label=label,
-            image_size=image_size,
-            renderer=renderer,
-        ) or renderer
+        actual_renderer = (
+            render_mesh_png(
+                record.path,
+                out_png,
+                label=label,
+                image_size=image_size,
+                renderer=renderer,
+            )
+            or renderer
+        )
         return None, _render_manifest_row(
             record,
             out_png,
@@ -1223,7 +1337,9 @@ def _render_worker_exit_payload(
     out_png: Path,
     exitcode: int,
 ) -> tuple[dict[str, object], None, int]:
-    message = f"worker process exited before returning a render result (exitcode={exitcode})"
+    message = (
+        f"worker process exited before returning a render result (exitcode={exitcode})"
+    )
     return (
         _exception_row(
             record,
@@ -1384,7 +1500,9 @@ def _render_display_context(args: argparse.Namespace):
         yield
         return
 
-    if os.environ.get("MESH_QC_USE_EXISTING_DISPLAY") == "1" and os.environ.get("DISPLAY"):
+    if os.environ.get("MESH_QC_USE_EXISTING_DISPLAY") == "1" and os.environ.get(
+        "DISPLAY"
+    ):
         yield
         return
 
@@ -1397,7 +1515,11 @@ def _render_display_context(args: argparse.Namespace):
     except Exception as exc:
         error_message = _short_error(exc)
         if args.renderer == "gmsh":
-            _log_error("RENDER", "Failed to start Xvfb for gmsh renderer", error_message=error_message)
+            _log_error(
+                "RENDER",
+                "Failed to start Xvfb for gmsh renderer",
+                error_message=error_message,
+            )
             raise RuntimeError(
                 "Gmsh rendering requires a DISPLAY or a working Xvfb installation. "
                 f"Automatic Xvfb startup failed: {error_message}"
@@ -1417,7 +1539,11 @@ def _render_display_context(args: argparse.Namespace):
             )
             yield
             return
-        _log_warning("RENDER", "Could not start Xvfb for auto renderer", error_message=error_message)
+        _log_warning(
+            "RENDER",
+            "Could not start Xvfb for auto renderer",
+            error_message=error_message,
+        )
         print(
             "[RENDER] Could not start Xvfb for auto renderer; "
             f"Gmsh may be skipped and auto will fall back ({error_message})",
@@ -1436,8 +1562,12 @@ def _render_display_context(args: argparse.Namespace):
         _log_info("RENDER", "Stopped virtual display")
 
 
-def _write_render_failure_outputs(out_dir: Path, failure_rows: list[dict[str, object]]) -> None:
-    _write_optional_csv(out_dir / "render_exception_details.csv", failure_rows, EXCEPTION_FIELDS)
+def _write_render_failure_outputs(
+    out_dir: Path, failure_rows: list[dict[str, object]]
+) -> None:
+    _write_optional_csv(
+        out_dir / "render_exception_details.csv", failure_rows, EXCEPTION_FIELDS
+    )
     if failure_rows:
         fail_path = out_dir / "render_failures.txt"
         fail_lines = [
@@ -1462,10 +1592,16 @@ def _write_render_completeness_outputs(
 ) -> list[dict[str, object]]:
     discovered = Counter(record.roi for record in records)
     qc_loadable = Counter(record.roi for record in render_records)
-    rendered = Counter(record.roi for record, out_png in successful if out_png is not None)
-    render_failures = Counter(str(row.get("roi", "unknown_roi")) for row in failure_rows)
+    rendered = Counter(
+        record.roi for record, out_png in successful if out_png is not None
+    )
+    render_failures = Counter(
+        str(row.get("roi", "unknown_roi")) for row in failure_rows
+    )
 
-    rois = sorted(set(discovered) | set(qc_loadable) | set(rendered) | set(render_failures))
+    rois = sorted(
+        set(discovered) | set(qc_loadable) | set(rendered) | set(render_failures)
+    )
     rows = []
     for roi in rois:
         discovered_count = discovered[roi]
@@ -1523,7 +1659,9 @@ def _run_forced_gmsh_preflight(
         return 0, None, task_specs
 
     slot_idx, record, out_png = task_specs[0]
-    print(f"[RENDER] Running forced-Gmsh preflight on {_mesh_detail(record)}", flush=True)
+    print(
+        f"[RENDER] Running forced-Gmsh preflight on {_mesh_detail(record)}", flush=True
+    )
     failure_row, manifest_row, rss_bytes = _run_render_isolated_once(
         record,
         out_png,
@@ -1683,14 +1821,17 @@ def _tissue_record_worker(
                     f"Tag {tissue.tag}: {tissue.name}\n{view.title()} view"
                 )
                 try:
-                    actual_renderer = render_surface_png(
-                        tissue.surface,
-                        out_png,
-                        label=label,
-                        view=view,
-                        image_size=image_size,
-                        renderer=renderer,
-                    ) or renderer
+                    actual_renderer = (
+                        render_surface_png(
+                            tissue.surface,
+                            out_png,
+                            label=label,
+                            view=view,
+                            image_size=image_size,
+                            renderer=renderer,
+                        )
+                        or renderer
+                    )
                     manifest_rows.append(
                         _tissue_manifest_row(
                             record,
@@ -1733,7 +1874,9 @@ def _tissue_record_worker_profiled(
     tissue_root: Path,
     image_size: int,
     renderer: str,
-) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], int]:
+) -> tuple[
+    list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], int
+]:
     manifest_rows, failure_rows, presence_rows = _tissue_record_worker(
         record,
         tile_filename,
@@ -1748,8 +1891,12 @@ def _tissue_worker_exit_payload(
     record: MeshRecord,
     tissue_root: Path,
     exitcode: int,
-) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], int]:
-    message = f"worker process exited before returning tissue renders (exitcode={exitcode})"
+) -> tuple[
+    list[dict[str, object]], list[dict[str, object]], list[dict[str, object]], int
+]:
+    message = (
+        f"worker process exited before returning tissue renders (exitcode={exitcode})"
+    )
     failure_row = _tissue_exception_row(
         record,
         stage="tissue_render_worker",
@@ -1942,7 +2089,7 @@ def _write_tissue_completeness(
     return rows
 
 
-def _prepare_tissue_view_convention(out_dir: Path) -> None:
+def _prepare_tissue_view_convention_unlocked(out_dir: Path) -> None:
     marker_path = out_dir / TISSUE_VIEW_CONVENTION_FILENAME
     if marker_path.is_file():
         try:
@@ -2000,22 +2147,86 @@ def _prepare_tissue_view_convention(out_dir: Path) -> None:
     )
 
 
+def _prepare_tissue_view_convention(out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = out_dir / ".tissue_view_convention.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            _prepare_tissue_view_convention_unlocked(out_dir)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _build_tissue_task_specs(
+    records: list[MeshRecord],
+) -> list[tuple[MeshRecord, str]]:
+    task_specs: list[tuple[MeshRecord, str]] = []
+    for idx, record in enumerate(records, start=1):
+        stem = "__".join(
+            _safe_name(part)
+            for part in (
+                record.subject,
+                record.repeat,
+                record.mesh_id,
+                record.path.stem,
+            )
+        )
+        task_specs.append((record, f"{idx:05d}__{stem}.png"))
+    return task_specs
+
+
+def _tissue_shard_report_dir(
+    out_dir: Path,
+    *,
+    shard_count: int,
+    shard_index: int,
+) -> Path:
+    return (
+        out_dir
+        / "shards"
+        / "tissue_render"
+        / f"shard_{shard_index:05d}_of_{shard_count:05d}"
+    )
+
+
+def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.partial-{os.getpid()}")
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _run_tissue_outputs(
     render_records: list[MeshRecord],
     out_dir: Path,
     args: argparse.Namespace,
-) -> None:
+    *,
+    task_specs: list[tuple[MeshRecord, str]] | None = None,
+    report_dir: Path | None = None,
+    build_mosaics: bool = True,
+) -> dict[str, int]:
     if not render_records:
-        return
+        return {"meshes": 0, "renders": 0, "failures": 0, "walls": 0, "incomplete": 0}
     _prepare_tissue_view_convention(out_dir)
+    report_dir = out_dir if report_dir is None else report_dir
+    report_dir.mkdir(parents=True, exist_ok=True)
     tissue_root = out_dir / "renders" / "tissues"
-    task_specs: list[tuple[MeshRecord, str]] = []
-    for idx, record in enumerate(render_records, start=1):
-        stem = "__".join(
-            _safe_name(part)
-            for part in (record.subject, record.repeat, record.mesh_id, record.path.stem)
+    if task_specs is None:
+        task_specs = _build_tissue_task_specs(render_records)
+    if len(task_specs) != len(render_records):
+        raise ValueError(
+            "tissue task specification count differs from render record count"
         )
-        task_specs.append((record, f"{idx:05d}__{stem}.png"))
 
     visible_workers = max(1, min(_resolve_worker_count(args.workers), len(task_specs)))
     memory_budget_bytes = _resolve_memory_budget_bytes(visible_workers)
@@ -2044,15 +2255,18 @@ def _run_tissue_outputs(
                 image_size=args.image_size,
                 renderer=args.renderer,
             )
-            sampled_worker_rss_bytes = _merge_tissue_worker_result(
-                result,
-                manifest_rows,
-                failure_rows,
-                presence_rows,
-            ) or None
+            sampled_worker_rss_bytes = (
+                _merge_tissue_worker_result(
+                    result,
+                    manifest_rows,
+                    failure_rows,
+                    presence_rows,
+                )
+                or None
+            )
             if args.renderer == "gmsh" and result[1]:
                 _write_csv(
-                    out_dir / "tissue_render_exception_details.csv",
+                    report_dir / "tissue_render_exception_details.csv",
                     failure_rows,
                     TISSUE_EXCEPTION_FIELDS,
                 )
@@ -2061,10 +2275,12 @@ def _run_tissue_outputs(
                     "Forced Gmsh tissue-render preflight failed for "
                     f"{first_task[0].path}: {first_failure['error_type']}: "
                     f"{first_failure['error_message']}. See "
-                    f"{out_dir / 'tissue_render_exception_details.csv'}."
+                    f"{report_dir / 'tissue_render_exception_details.csv'}."
                 )
             completed = 1
-            progress.update(completed, _mesh_detail(first_task[0], f"{len(result[2])} tissue(s)"))
+            progress.update(
+                completed, _mesh_detail(first_task[0], f"{len(result[2])} tissue(s)")
+            )
             remaining_specs = task_specs[1:]
 
         workers, worker_details = _choose_stage_worker_count(
@@ -2102,23 +2318,28 @@ def _run_tissue_outputs(
                         )
                     else:
                         record, tile_filename = task
-                        result_manifest, result_failures, result_presence = _tissue_record_worker(
-                            record,
-                            tile_filename,
-                            tissue_root,
-                            args.image_size,
-                            args.renderer,
+                        result_manifest, result_failures, result_presence = (
+                            _tissue_record_worker(
+                                record,
+                                tile_filename,
+                                tissue_root,
+                                args.image_size,
+                                args.renderer,
+                            )
                         )
                         result = (result_manifest, result_failures, result_presence, 0)
-                    sampled_worker_rss_bytes = max(
-                        sampled_worker_rss_bytes or 0,
-                        _merge_tissue_worker_result(
-                            result,
-                            manifest_rows,
-                            failure_rows,
-                            presence_rows,
-                        ),
-                    ) or sampled_worker_rss_bytes
+                    sampled_worker_rss_bytes = (
+                        max(
+                            sampled_worker_rss_bytes or 0,
+                            _merge_tissue_worker_result(
+                                result,
+                                manifest_rows,
+                                failure_rows,
+                                presence_rows,
+                            ),
+                        )
+                        or sampled_worker_rss_bytes
+                    )
                     completed += 1
                     detail = f"{len(result[2])} tissue(s)"
                     if result[1]:
@@ -2128,18 +2349,22 @@ def _run_tissue_outputs(
                 break
 
             print(f"[TISSUE RENDER] Using {workers} worker processes", flush=True)
-            completed, remaining_specs, peak_rss, attempt_error = _run_tissue_parallel_attempt(
-                remaining_specs,
-                args,
-                workers,
-                tissue_root,
-                manifest_rows,
-                failure_rows,
-                presence_rows,
-                progress,
-                completed,
+            completed, remaining_specs, peak_rss, attempt_error = (
+                _run_tissue_parallel_attempt(
+                    remaining_specs,
+                    args,
+                    workers,
+                    tissue_root,
+                    manifest_rows,
+                    failure_rows,
+                    presence_rows,
+                    progress,
+                    completed,
+                )
             )
-            sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, peak_rss) or sampled_worker_rss_bytes
+            sampled_worker_rss_bytes = (
+                max(sampled_worker_rss_bytes or 0, peak_rss) or sampled_worker_rss_bytes
+            )
             if attempt_error is None:
                 break
             next_workers = max(1, workers // 2)
@@ -2170,19 +2395,21 @@ def _run_tissue_outputs(
             str(row["output_path"]),
         )
     )
-    _write_csv(out_dir / "tissue_presence.csv", presence_rows, TISSUE_PRESENCE_FIELDS)
     _write_csv(
-        out_dir / "tissue_render_manifest.csv",
+        report_dir / "tissue_presence.csv", presence_rows, TISSUE_PRESENCE_FIELDS
+    )
+    _write_csv(
+        report_dir / "tissue_render_manifest.csv",
         manifest_rows,
         TISSUE_RENDER_MANIFEST_FIELDS,
     )
     _write_csv(
-        out_dir / "tissue_render_exception_details.csv",
+        report_dir / "tissue_render_exception_details.csv",
         failure_rows,
         TISSUE_EXCEPTION_FIELDS,
     )
     completeness_rows = _write_tissue_completeness(
-        out_dir,
+        report_dir,
         render_records=render_records,
         presence_rows=presence_rows,
         manifest_rows=manifest_rows,
@@ -2194,11 +2421,11 @@ def _run_tissue_outputs(
             "No tagged tetrahedral tissues could be extracted",
             meshes=len(render_records),
             failures=len(failure_rows),
-            details_path=str(out_dir / "tissue_render_exception_details.csv"),
+            details_path=str(report_dir / "tissue_render_exception_details.csv"),
         )
         raise RuntimeError(
             "No tagged tetrahedral tissues could be extracted from any loadable mesh. "
-            f"See {out_dir / 'tissue_render_exception_details.csv'}."
+            f"See {report_dir / 'tissue_render_exception_details.csv'}."
         )
 
     images_by_tissue: dict[tuple[int, str, str, str], list[Path]] = defaultdict(list)
@@ -2212,48 +2439,49 @@ def _run_tissue_outputs(
         images_by_tissue[key].append(Path(str(row["output_path"])))
 
     mosaic_failures: list[dict[str, object]] = []
-    for (tag, name, slug, view), images in sorted(
-        images_by_tissue.items(),
-        key=lambda item: (item[0][0], TISSUE_VIEWS.index(item[0][3])),
-    ):
-        view_suffix = {"front": "", "back": "_back", "top": "_top"}[view]
-        out_png = out_dir / "mosaics" / "tissues" / f"{slug}{view_suffix}_wall.png"
-        print(
-            f"[MOSAIC] Building {view} tissue wall for tag {tag} {name} "
-            f"({len(images)} tiles)",
-            flush=True,
-        )
-        try:
-            make_mosaic(images, out_png, cols=args.cols, tile_size=args.tile_size)
-        except Exception as exc:
-            mosaic_failures.append(
-                {
-                    "stage": "tissue_mosaic",
-                    "subject": "",
-                    "repeat": "",
-                    "roi": "",
-                    "mesh_id": slug,
-                    "path": "",
-                    "output_path": str(out_png),
-                    "error_type": type(exc).__name__,
-                    "error_message": _short_error(exc),
-                    "traceback": traceback.format_exc(),
-                    "tissue_tag": tag,
-                    "tissue_name": name,
-                    "tissue_slug": slug,
-                    "view": view,
-                }
+    if build_mosaics:
+        for (tag, name, slug, view), images in sorted(
+            images_by_tissue.items(),
+            key=lambda item: (item[0][0], TISSUE_VIEWS.index(item[0][3])),
+        ):
+            view_suffix = {"front": "", "back": "_back", "top": "_top"}[view]
+            out_png = out_dir / "mosaics" / "tissues" / f"{slug}{view_suffix}_wall.png"
+            print(
+                f"[MOSAIC] Building {view} tissue wall for tag {tag} {name} "
+                f"({len(images)} tiles)",
+                flush=True,
             )
-    _write_csv(
-        out_dir / "tissue_mosaic_exception_details.csv",
-        mosaic_failures,
-        TISSUE_EXCEPTION_FIELDS,
-    )
+            try:
+                make_mosaic(images, out_png, cols=args.cols, tile_size=args.tile_size)
+            except Exception as exc:
+                mosaic_failures.append(
+                    {
+                        "stage": "tissue_mosaic",
+                        "subject": "",
+                        "repeat": "",
+                        "roi": "",
+                        "mesh_id": slug,
+                        "path": "",
+                        "output_path": str(out_png),
+                        "error_type": type(exc).__name__,
+                        "error_message": _short_error(exc),
+                        "traceback": traceback.format_exc(),
+                        "tissue_tag": tag,
+                        "tissue_name": name,
+                        "tissue_slug": slug,
+                        "view": view,
+                    }
+                )
+        _write_csv(
+            out_dir / "tissue_mosaic_exception_details.csv",
+            mosaic_failures,
+            TISSUE_EXCEPTION_FIELDS,
+        )
     incomplete = [row for row in completeness_rows if row["status"] != "OK"]
     if incomplete:
         print(
             f"[TISSUE RENDER] {len(incomplete)} tissue wall(s) are incomplete; "
-            f"see {out_dir / 'tissue_render_completeness.csv'}",
+            f"see {report_dir / 'tissue_render_completeness.csv'}",
             flush=True,
         )
     _log_info(
@@ -2261,7 +2489,7 @@ def _run_tissue_outputs(
         "Completed tissue wall stage",
         meshes=len(render_records),
         tissues=len({key[0] for key in images_by_tissue}),
-        walls=len(images_by_tissue),
+        walls=len(images_by_tissue) if build_mosaics else 0,
         renders=len(manifest_rows),
         failures=len(failure_rows),
         incomplete_tissues=len(incomplete),
@@ -2271,6 +2499,13 @@ def _run_tissue_outputs(
             f"{len(mosaic_failures)} tissue mosaic(s) failed; see "
             f"{out_dir / 'tissue_mosaic_exception_details.csv'}"
         )
+    return {
+        "meshes": len(render_records),
+        "renders": len(manifest_rows),
+        "failures": len(failure_rows),
+        "walls": len(images_by_tissue) if build_mosaics else 0,
+        "incomplete": len(incomplete),
+    }
 
 
 def _render_outputs(
@@ -2283,23 +2518,36 @@ def _render_outputs(
     render_records = [
         record
         for record in records
-        if not str(rows_by_path.get(str(record.path), {}).get("flags", "")).startswith("READ_FAIL")
+        if not str(rows_by_path.get(str(record.path), {}).get("flags", "")).startswith(
+            "READ_FAIL"
+        )
     ]
     skipped = len(records) - len(render_records)
     if skipped:
-        print(f"[RENDER] Skipping {skipped} mesh(es) that failed QC loading", flush=True)
+        print(
+            f"[RENDER] Skipping {skipped} mesh(es) that failed QC loading", flush=True
+        )
     if not render_records:
         print("[RENDER] No QC-loadable meshes to render", flush=True)
-        _write_optional_csv(out_dir / "render_exception_details.csv", [], EXCEPTION_FIELDS)
+        _write_optional_csv(
+            out_dir / "render_exception_details.csv", [], EXCEPTION_FIELDS
+        )
         return
 
-    visible_workers = max(1, min(_resolve_worker_count(args.workers), len(render_records)))
+    visible_workers = max(
+        1, min(_resolve_worker_count(args.workers), len(render_records))
+    )
     memory_budget_bytes = _resolve_memory_budget_bytes(visible_workers)
     task_specs = []
     for idx, record in enumerate(render_records, start=1):
         stem = "__".join(
             _safe_name(part)
-            for part in (record.subject, record.repeat, record.mesh_id, record.path.stem)
+            for part in (
+                record.subject,
+                record.repeat,
+                record.mesh_id,
+                record.path.stem,
+            )
         )
         out_png = out_dir / "renders" / "meshes" / f"{idx:05d}__{stem}.png"
         task_specs.append((idx - 1, record, out_png))
@@ -2347,27 +2595,33 @@ def _render_outputs(
         if resumed_count:
             progress.update(completed, f"reused {resumed_count} existing render(s)")
 
-        preflight_completed, preflight_rss_bytes, remaining_after_preflight = _run_forced_gmsh_preflight(
-            remaining_task_specs,
-            args,
-            rendered_slots,
-            failure_rows,
-            manifest_rows,
-            progress,
-            out_dir,
+        preflight_completed, preflight_rss_bytes, remaining_after_preflight = (
+            _run_forced_gmsh_preflight(
+                remaining_task_specs,
+                args,
+                rendered_slots,
+                failure_rows,
+                manifest_rows,
+                progress,
+                out_dir,
+            )
         )
         completed += preflight_completed
 
-        warmup_completed, sampled_worker_rss_bytes, remaining_specs = _run_render_warmup_samples(
-            remaining_after_preflight,
-            args,
-            rendered_slots,
-            failure_rows,
-            manifest_rows,
-            progress,
+        warmup_completed, sampled_worker_rss_bytes, remaining_specs = (
+            _run_render_warmup_samples(
+                remaining_after_preflight,
+                args,
+                rendered_slots,
+                failure_rows,
+                manifest_rows,
+                progress,
+            )
         )
         completed += warmup_completed
-        sampled_worker_rss_bytes = max(preflight_rss_bytes or 0, sampled_worker_rss_bytes or 0) or None
+        sampled_worker_rss_bytes = (
+            max(preflight_rss_bytes or 0, sampled_worker_rss_bytes or 0) or None
+        )
         workers, worker_details = _choose_stage_worker_count(
             stage="RENDER",
             task_count=len(remaining_specs),
@@ -2388,18 +2642,24 @@ def _render_outputs(
         while remaining_specs:
             if workers <= 1:
                 if recovery_mode:
-                    _log_warning("RENDER", "Falling back to isolated single-mesh execution", remaining=len(remaining_specs))
+                    _log_warning(
+                        "RENDER",
+                        "Falling back to isolated single-mesh execution",
+                        remaining=len(remaining_specs),
+                    )
                     print(
                         f"[RENDER] Falling back to isolated single-mesh execution for {len(remaining_specs)} mesh(es)",
                         flush=True,
                     )
                 for slot_idx, record, out_png in remaining_specs:
                     if recovery_mode:
-                        failure_row, manifest_row, rss_bytes = _run_render_isolated_once(
-                            record,
-                            out_png,
-                            image_size=args.image_size,
-                            renderer=args.renderer,
+                        failure_row, manifest_row, rss_bytes = (
+                            _run_render_isolated_once(
+                                record,
+                                out_png,
+                                image_size=args.image_size,
+                                renderer=args.renderer,
+                            )
                         )
                     else:
                         failure_row, manifest_row, rss_bytes = _run_render_direct_once(
@@ -2408,7 +2668,10 @@ def _render_outputs(
                             image_size=args.image_size,
                             renderer=args.renderer,
                         )
-                    sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, rss_bytes) or sampled_worker_rss_bytes
+                    sampled_worker_rss_bytes = (
+                        max(sampled_worker_rss_bytes or 0, rss_bytes)
+                        or sampled_worker_rss_bytes
+                    )
                     completed += 1
                     if failure_row is not None:
                         failure_rows.append(failure_row)
@@ -2422,17 +2685,22 @@ def _render_outputs(
                 break
 
             print(f"[RENDER] Using {workers} worker processes", flush=True)
-            completed, remaining_specs, attempt_peak_rss, attempt_error = _run_render_parallel_attempt(
-                remaining_specs,
-                args,
-                workers,
-                rendered_slots,
-                failure_rows,
-                manifest_rows,
-                progress,
-                completed,
+            completed, remaining_specs, attempt_peak_rss, attempt_error = (
+                _run_render_parallel_attempt(
+                    remaining_specs,
+                    args,
+                    workers,
+                    rendered_slots,
+                    failure_rows,
+                    manifest_rows,
+                    progress,
+                    completed,
+                )
             )
-            sampled_worker_rss_bytes = max(sampled_worker_rss_bytes or 0, attempt_peak_rss) or sampled_worker_rss_bytes
+            sampled_worker_rss_bytes = (
+                max(sampled_worker_rss_bytes or 0, attempt_peak_rss)
+                or sampled_worker_rss_bytes
+            )
             if attempt_error is None:
                 break
 
@@ -2479,14 +2747,18 @@ def _render_outputs(
 
     manifest_rows = sorted(manifest_rows, key=lambda row: str(row["output_path"]))
     _write_render_failure_outputs(out_dir, failure_rows)
-    _write_optional_csv(out_dir / "render_manifest.csv", manifest_rows, RENDER_MANIFEST_FIELDS)
+    _write_optional_csv(
+        out_dir / "render_manifest.csv", manifest_rows, RENDER_MANIFEST_FIELDS
+    )
     renderer_counts = Counter(str(row["actual_renderer"]) for row in manifest_rows)
     if renderer_counts:
         _log_info(
             "RENDER",
             "Render manifest written",
             path=str(out_dir / "render_manifest.csv"),
-            renderer_counts=" ".join(f"{key}:{renderer_counts[key]}" for key in sorted(renderer_counts)),
+            renderer_counts=" ".join(
+                f"{key}:{renderer_counts[key]}" for key in sorted(renderer_counts)
+            ),
         )
 
     mosaic_exception_rows: list[dict[str, object]] = []
@@ -2528,7 +2800,10 @@ def _render_outputs(
 
     if args.roi_walls:
         for roi, images in sorted(rendered_by_roi.items()):
-            print(f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)", flush=True)
+            print(
+                f"[MOSAIC] Building ROI wall for {roi} ({len(images)} tiles)",
+                flush=True,
+            )
             build_mosaic(
                 roi,
                 images,
@@ -2536,14 +2811,21 @@ def _render_outputs(
             )
 
     if all_rendered:
-        print(f"[MOSAIC] Building combined mesh wall ({len(all_rendered)} tiles)", flush=True)
+        print(
+            f"[MOSAIC] Building combined mesh wall ({len(all_rendered)} tiles)",
+            flush=True,
+        )
         build_mosaic(
             "all",
             all_rendered,
             out_dir / "mosaics" / "all_mesh_wall.png",
         )
 
-    _write_optional_csv(out_dir / "mosaic_exception_details.csv", mosaic_exception_rows, EXCEPTION_FIELDS)
+    _write_optional_csv(
+        out_dir / "mosaic_exception_details.csv",
+        mosaic_exception_rows,
+        EXCEPTION_FIELDS,
+    )
     if mosaic_exception_rows:
         failed_names = ", ".join(str(row["roi"]) for row in mosaic_exception_rows[:8])
         if len(mosaic_exception_rows) > 8:
@@ -2569,14 +2851,44 @@ def _render_outputs(
 
 def _validate_stage_args(args: argparse.Namespace) -> None:
     if args.render_only and (args.qc_only or args.skip_renders):
-        raise ValueError("--render-only cannot be combined with --qc-only or --skip-renders")
+        raise ValueError(
+            "--render-only cannot be combined with --qc-only or --skip-renders"
+        )
     if args.tissue_only and (args.render_only or args.qc_only or args.skip_renders):
         raise ValueError(
             "--tissue-only cannot be combined with --render-only, --qc-only, or --skip-renders"
         )
+    if args.tissue_collect_only and (
+        args.tissue_only or args.render_only or args.qc_only or args.skip_renders
+    ):
+        raise ValueError(
+            "--tissue-collect-only cannot be combined with another stage selector"
+        )
+    if args.tissue_shard_count < 1:
+        raise ValueError("--tissue-shard-count must be at least 1")
+    if args.tissue_shard_index is not None and not (
+        0 <= args.tissue_shard_index < args.tissue_shard_count
+    ):
+        raise ValueError(
+            "--tissue-shard-index must be in the range 0..tissue-shard-count-1"
+        )
+    if (
+        args.tissue_only
+        and args.tissue_shard_count > 1
+        and args.tissue_shard_index is None
+    ):
+        raise ValueError(
+            "sharded --tissue-only execution requires --tissue-shard-index"
+        )
+    if args.tissue_collect_only and args.tissue_shard_count <= 1:
+        raise ValueError(
+            "--tissue-collect-only requires --tissue-shard-count greater than 1"
+        )
 
 
-def _run_discovery(root: Path, args: argparse.Namespace, progress_mode: str) -> list[MeshRecord]:
+def _run_discovery(
+    root: Path, args: argparse.Namespace, progress_mode: str
+) -> list[MeshRecord]:
     _log_info(
         "DISCOVERY",
         "Starting discovery",
@@ -2612,15 +2924,26 @@ def _run_discovery(root: Path, args: argparse.Namespace, progress_mode: str) -> 
     return records
 
 
-def _run_full_or_qc_only(root: Path, out_dir: Path, args: argparse.Namespace, progress_mode: str) -> int:
+def _run_full_or_qc_only(
+    root: Path, out_dir: Path, args: argparse.Namespace, progress_mode: str
+) -> int:
     records = _run_discovery(root, args, progress_mode)
     if not records:
-        _log_warning("DISCOVERY", "No meshes found", root=str(root), mesh_glob=args.mesh_glob or "m2m_only")
-        print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
+        _log_warning(
+            "DISCOVERY",
+            "No meshes found",
+            root=str(root),
+            mesh_glob=args.mesh_glob or "m2m_only",
+        )
+        print(
+            f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr
+        )
         return 2
 
     print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
-    _write_csv(out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS)
+    _write_csv(
+        out_dir / "found_meshes.csv", [_record_row(r) for r in records], FOUND_FIELDS
+    )
 
     summary_rows, qc_exception_rows = _run_qc_detailed(records, args)
 
@@ -2628,7 +2951,9 @@ def _run_full_or_qc_only(root: Path, out_dir: Path, args: argparse.Namespace, pr
     _write_csv(out_dir / "qc_summary.csv", summary_rows, SUMMARY_FIELDS)
     flag_rows = [row for row in summary_rows if row["status"] != "OK"]
     _write_csv(out_dir / "qc_flags.csv", flag_rows, SUMMARY_FIELDS)
-    _write_optional_csv(out_dir / "qc_exception_details.csv", qc_exception_rows, EXCEPTION_FIELDS)
+    _write_optional_csv(
+        out_dir / "qc_exception_details.csv", qc_exception_rows, EXCEPTION_FIELDS
+    )
     _log_info(
         "QC",
         "Wrote QC outputs",
@@ -2645,15 +2970,58 @@ def _run_full_or_qc_only(root: Path, out_dir: Path, args: argparse.Namespace, pr
     return 0
 
 
-def _run_tissue_only(root: Path, out_dir: Path, args: argparse.Namespace, progress_mode: str) -> int:
+def _run_tissue_only(
+    root: Path, out_dir: Path, args: argparse.Namespace, progress_mode: str
+) -> int:
     records = _run_discovery(root, args, progress_mode)
     if not records:
-        _log_warning("DISCOVERY", "No meshes found", root=str(root), mesh_glob=args.mesh_glob or "m2m_only")
-        print(f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr)
+        _log_warning(
+            "DISCOVERY",
+            "No meshes found",
+            root=str(root),
+            mesh_glob=args.mesh_glob or "m2m_only",
+        )
+        print(
+            f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr
+        )
         return 2
 
     print(f"[DISCOVERY] Found {len(records)} mesh(es) under {root}", flush=True)
-    _write_csv(out_dir / "found_meshes.csv", [_record_row(record) for record in records], FOUND_FIELDS)
+    task_specs = _build_tissue_task_specs(records)
+    if args.tissue_shard_count > 1:
+        shard_index = int(args.tissue_shard_index)
+        task_specs = [
+            spec
+            for global_index, spec in enumerate(task_specs)
+            if global_index % args.tissue_shard_count == shard_index
+        ]
+        records = [record for record, _ in task_specs]
+        report_dir = _tissue_shard_report_dir(
+            out_dir,
+            shard_count=args.tissue_shard_count,
+            shard_index=shard_index,
+        )
+        report_dir.mkdir(parents=True, exist_ok=True)
+        completion_marker = report_dir / "shard_complete.json"
+        completion_marker.unlink(missing_ok=True)
+        _write_csv(
+            report_dir / "found_meshes.csv",
+            [_record_row(record) for record in records],
+            FOUND_FIELDS,
+        )
+        print(
+            f"[TISSUE SHARD] Rendering shard {shard_index}/{args.tissue_shard_count - 1} "
+            f"with {len(records)} mesh(es)",
+            flush=True,
+        )
+    else:
+        report_dir = out_dir
+        completion_marker = None
+        _write_csv(
+            out_dir / "found_meshes.csv",
+            [_record_row(record) for record in records],
+            FOUND_FIELDS,
+        )
     _log_info(
         "TISSUE_RENDER",
         "Skipping geometry QC and whole-mesh rendering for tissue-only run",
@@ -2663,9 +3031,251 @@ def _run_tissue_only(root: Path, out_dir: Path, args: argparse.Namespace, progre
         "[TISSUE RENDER] Tissue-only mode: skipping geometry QC and whole-mesh renders",
         flush=True,
     )
-    _run_tissue_outputs(records, out_dir, args)
+    if args.tissue_shard_count > 1:
+        result = _run_tissue_outputs(
+            records,
+            out_dir,
+            args,
+            task_specs=task_specs,
+            report_dir=report_dir,
+            build_mosaics=False,
+        )
+    else:
+        result = _run_tissue_outputs(records, out_dir, args)
+    if completion_marker is not None:
+        _write_json_atomic(
+            completion_marker,
+            {
+                "status": "complete",
+                "shard_count": args.tissue_shard_count,
+                "shard_index": int(args.tissue_shard_index),
+                "meshes": len(records),
+                "renders": result["renders"],
+                "render_failures": result["failures"],
+                "incomplete_tissue_views": result["incomplete"],
+                "view_version": TISSUE_VIEW_CONVENTION["version"],
+                "completed_at": _utc_now(),
+            },
+        )
+        print(f"[TISSUE SHARD] Completion marker: {completion_marker}", flush=True)
     _log_info("MAIN", "Tissue-only outputs written", out=str(out_dir))
     print(f"Wrote tissue-only outputs to {out_dir}")
+    return 0
+
+
+def _deduplicate_rows(
+    rows: list[dict[str, str]],
+    *,
+    keys: tuple[str, ...],
+) -> list[dict[str, str]]:
+    deduplicated: dict[tuple[str, ...], dict[str, str]] = {}
+    for row in rows:
+        deduplicated[tuple(str(row[key]) for key in keys)] = row
+    return list(deduplicated.values())
+
+
+def _run_tissue_collect_only(
+    root: Path,
+    out_dir: Path,
+    args: argparse.Namespace,
+    progress_mode: str,
+) -> int:
+    records = _run_discovery(root, args, progress_mode)
+    if not records:
+        print(
+            f"No meshes found under {root} matching {args.mesh_glob}", file=sys.stderr
+        )
+        return 2
+
+    _prepare_tissue_view_convention(out_dir)
+    expected_specs = _build_tissue_task_specs(records)
+    expected_paths = {str(record.path) for record, _ in expected_specs}
+    all_presence: list[dict[str, str]] = []
+    all_manifest: list[dict[str, str]] = []
+    all_failures: list[dict[str, str]] = []
+    covered_paths: set[str] = set()
+
+    print(
+        f"[TISSUE COLLECT] Validating {args.tissue_shard_count} shard(s) for "
+        f"{len(records)} mesh(es)",
+        flush=True,
+    )
+    for shard_index in range(args.tissue_shard_count):
+        report_dir = _tissue_shard_report_dir(
+            out_dir,
+            shard_count=args.tissue_shard_count,
+            shard_index=shard_index,
+        )
+        marker_path = report_dir / "shard_complete.json"
+        if not marker_path.is_file():
+            raise RuntimeError(f"Missing tissue-render shard marker: {marker_path}")
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        if (
+            marker.get("status") != "complete"
+            or marker.get("shard_count") != args.tissue_shard_count
+            or marker.get("shard_index") != shard_index
+            or marker.get("view_version") != TISSUE_VIEW_CONVENTION["version"]
+        ):
+            raise RuntimeError(f"Invalid tissue-render shard marker: {marker_path}")
+
+        shard_found = _read_csv(report_dir / "found_meshes.csv")
+        shard_paths = {row["path"] for row in shard_found}
+        expected_shard_paths = {
+            str(record.path)
+            for global_index, (record, _) in enumerate(expected_specs)
+            if global_index % args.tissue_shard_count == shard_index
+        }
+        if shard_paths != expected_shard_paths:
+            missing = sorted(expected_shard_paths - shard_paths)
+            unexpected = sorted(shard_paths - expected_shard_paths)
+            raise RuntimeError(
+                f"Tissue shard {shard_index} coverage mismatch: "
+                f"missing={missing[:3]} unexpected={unexpected[:3]}"
+            )
+        covered_paths.update(shard_paths)
+        all_presence.extend(_read_csv(report_dir / "tissue_presence.csv"))
+        all_manifest.extend(_read_csv(report_dir / "tissue_render_manifest.csv"))
+        all_failures.extend(
+            _read_csv(report_dir / "tissue_render_exception_details.csv")
+        )
+
+    if covered_paths != expected_paths:
+        raise RuntimeError(
+            "Combined tissue-render shard coverage differs from the discovered cohort"
+        )
+
+    presence_rows = _deduplicate_rows(
+        all_presence,
+        keys=("path", "tissue_tag"),
+    )
+    manifest_rows = _deduplicate_rows(
+        all_manifest,
+        keys=("path", "tissue_tag", "view"),
+    )
+    failure_rows = _deduplicate_rows(
+        all_failures,
+        keys=("path", "tissue_tag", "view", "error_type", "error_message"),
+    )
+    presence_rows.sort(key=lambda row: (int(row["tissue_tag"]), row["path"]))
+    manifest_rows.sort(
+        key=lambda row: (
+            int(row["tissue_tag"]),
+            TISSUE_VIEWS.index(row["view"]),
+            row["output_path"],
+        )
+    )
+    missing_tile_paths = []
+    for row in manifest_rows:
+        tile_path = Path(row["output_path"])
+        try:
+            valid = tile_path.is_file() and tile_path.stat().st_size > 0
+        except OSError:
+            valid = False
+        if not valid:
+            missing_tile_paths.append(str(tile_path))
+    if missing_tile_paths:
+        raise RuntimeError(
+            f"Shard manifests reference {len(missing_tile_paths)} missing/empty tile(s): "
+            f"{missing_tile_paths[:3]}"
+        )
+
+    _write_csv(
+        out_dir / "found_meshes.csv",
+        [_record_row(record) for record in records],
+        FOUND_FIELDS,
+    )
+    _write_csv(out_dir / "tissue_presence.csv", presence_rows, TISSUE_PRESENCE_FIELDS)
+    _write_csv(
+        out_dir / "tissue_render_manifest.csv",
+        manifest_rows,
+        TISSUE_RENDER_MANIFEST_FIELDS,
+    )
+    _write_csv(
+        out_dir / "tissue_render_exception_details.csv",
+        failure_rows,
+        TISSUE_EXCEPTION_FIELDS,
+    )
+    completeness_rows = _write_tissue_completeness(
+        out_dir,
+        render_records=records,
+        presence_rows=presence_rows,
+        manifest_rows=manifest_rows,
+        failure_rows=failure_rows,
+    )
+
+    images_by_tissue: dict[tuple[int, str, str, str], list[Path]] = defaultdict(list)
+    for row in manifest_rows:
+        key = (
+            int(row["tissue_tag"]),
+            row["tissue_name"],
+            row["tissue_slug"],
+            row["view"],
+        )
+        images_by_tissue[key].append(Path(row["output_path"]))
+
+    mosaic_failures: list[dict[str, object]] = []
+    for (tag, name, slug, view), images in sorted(
+        images_by_tissue.items(),
+        key=lambda item: (item[0][0], TISSUE_VIEWS.index(item[0][3])),
+    ):
+        view_suffix = {"front": "", "back": "_back", "top": "_top"}[view]
+        out_png = out_dir / "mosaics" / "tissues" / f"{slug}{view_suffix}_wall.png"
+        print(
+            f"[MOSAIC] Building {view} tissue wall for tag {tag} {name} "
+            f"({len(images)} tiles)",
+            flush=True,
+        )
+        try:
+            make_mosaic(images, out_png, cols=args.cols, tile_size=args.tile_size)
+        except Exception as exc:
+            mosaic_failures.append(
+                {
+                    "stage": "tissue_mosaic",
+                    "subject": "",
+                    "repeat": "",
+                    "roi": "",
+                    "mesh_id": slug,
+                    "path": "",
+                    "output_path": str(out_png),
+                    "error_type": type(exc).__name__,
+                    "error_message": _short_error(exc),
+                    "traceback": traceback.format_exc(),
+                    "tissue_tag": tag,
+                    "tissue_name": name,
+                    "tissue_slug": slug,
+                    "view": view,
+                }
+            )
+    _write_csv(
+        out_dir / "tissue_mosaic_exception_details.csv",
+        mosaic_failures,
+        TISSUE_EXCEPTION_FIELDS,
+    )
+    incomplete = [row for row in completeness_rows if row["status"] != "OK"]
+    summary = {
+        "status": (
+            "complete"
+            if not incomplete and not mosaic_failures and len(images_by_tissue) == 19
+            else "incomplete"
+        ),
+        "meshes": len(records),
+        "shards": args.tissue_shard_count,
+        "tissue_tiles": len(manifest_rows),
+        "tissue_walls": len(images_by_tissue),
+        "render_failures": len(failure_rows),
+        "incomplete_tissue_views": len(incomplete),
+        "mosaic_failures": len(mosaic_failures),
+        "view_version": TISSUE_VIEW_CONVENTION["version"],
+        "completed_at": _utc_now(),
+    }
+    _write_json_atomic(out_dir / "accelerated_tissue_wall_summary.json", summary)
+    print(json.dumps(summary, indent=2, sort_keys=True), flush=True)
+    if summary["status"] != "complete":
+        raise RuntimeError(
+            "Accelerated tissue-wall collection is incomplete; see "
+            f"{out_dir / 'accelerated_tissue_wall_summary.json'}"
+        )
+    print(f"Wrote accelerated tissue walls to {out_dir}", flush=True)
     return 0
 
 
@@ -2696,9 +3306,15 @@ def _run_render_only(out_dir: Path, args: argparse.Namespace) -> int:
         args=args,
     )
     if refreshed_metadata:
-        _write_csv(found_path, [_record_row(record) for record in records], FOUND_FIELDS)
+        _write_csv(
+            found_path, [_record_row(record) for record in records], FOUND_FIELDS
+        )
         _write_csv(summary_path, summary_rows, SUMMARY_FIELDS)
-        _write_csv(out_dir / "qc_flags.csv", [row for row in summary_rows if row["status"] != "OK"], SUMMARY_FIELDS)
+        _write_csv(
+            out_dir / "qc_flags.csv",
+            [row for row in summary_rows if row["status"] != "OK"],
+            SUMMARY_FIELDS,
+        )
         print(
             f"[RENDER] Refreshed path-derived metadata for {refreshed_metadata} mesh(es)",
             flush=True,
@@ -2730,8 +3346,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Scan generated m2m .msh files for geometry QC flags and render mesh mosaic walls."
     )
-    parser.add_argument("--root", required=True, help="Root containing ROI/subject/repeat mesh outputs.")
-    parser.add_argument("--out", required=True, help="Output directory for CSV reports, renders, and mosaics.")
+    parser.add_argument(
+        "--root", required=True, help="Root containing ROI/subject/repeat mesh outputs."
+    )
+    parser.add_argument(
+        "--out",
+        required=True,
+        help="Output directory for CSV reports, renders, and mosaics.",
+    )
     parser.add_argument(
         "--mesh-glob",
         default=None,
@@ -2740,12 +3362,33 @@ def build_parser() -> argparse.ArgumentParser:
             "directories are scanned. Pass '*.msh' to scan all meshes."
         ),
     )
-    parser.add_argument("--roi-regex", default=None, help="Optional regex for ROI inference; first group is used.")
-    parser.add_argument("--subject-regex", default=None, help="Optional regex for subject inference; first group is used.")
-    parser.add_argument("--repeat-regex", default=None, help="Optional regex for repeat inference; first group is used.")
-    parser.add_argument("--image-size", type=int, default=1200, help="Individual render size in pixels.")
-    parser.add_argument("--tile-size", type=int, default=220, help="Mosaic tile size in pixels.")
-    parser.add_argument("--cols", type=int, default=None, help="Mosaic columns; default uses square-ish grid.")
+    parser.add_argument(
+        "--roi-regex",
+        default=None,
+        help="Optional regex for ROI inference; first group is used.",
+    )
+    parser.add_argument(
+        "--subject-regex",
+        default=None,
+        help="Optional regex for subject inference; first group is used.",
+    )
+    parser.add_argument(
+        "--repeat-regex",
+        default=None,
+        help="Optional regex for repeat inference; first group is used.",
+    )
+    parser.add_argument(
+        "--image-size", type=int, default=1200, help="Individual render size in pixels."
+    )
+    parser.add_argument(
+        "--tile-size", type=int, default=220, help="Mosaic tile size in pixels."
+    )
+    parser.add_argument(
+        "--cols",
+        type=int,
+        default=None,
+        help="Mosaic columns; default uses square-ish grid.",
+    )
     parser.add_argument(
         "--renderer",
         choices=("auto", "gmsh", "pyvista", "pillow"),
@@ -2766,7 +3409,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Number of parallel worker processes for QC and rendering. Default 0 uses all visible CPUs.",
     )
-    parser.add_argument("--skip-renders", action="store_true", help="Write CSV QC reports without PNG rendering.")
+    parser.add_argument(
+        "--skip-renders",
+        action="store_true",
+        help="Write CSV QC reports without PNG rendering.",
+    )
     parser.add_argument(
         "--qc-only",
         action="store_true",
@@ -2784,6 +3431,31 @@ def build_parser() -> argparse.ArgumentParser:
             "Discover meshes and generate tissue tiles/walls only, skipping geometry QC and all "
             "whole-mesh renders. Existing non-empty tissue tiles are reused."
         ),
+    )
+    parser.add_argument(
+        "--tissue-collect-only",
+        action="store_true",
+        help=(
+            "Merge completed tissue-render shard reports, validate full-cohort coverage, "
+            "and build tissue walls without running Gmsh."
+        ),
+    )
+    parser.add_argument(
+        "--tissue-shard-count",
+        type=int,
+        default=1,
+        help="Total number of disjoint tissue-render shards. Default 1 disables sharding.",
+    )
+    parser.add_argument(
+        "--tissue-shard-index",
+        type=int,
+        default=None,
+        help="Zero-based tissue-render shard index assigned to this process.",
+    )
+    parser.add_argument(
+        "--run-label",
+        default="",
+        help="Optional suffix for run logs so concurrent shards never overwrite one another.",
     )
     parser.add_argument(
         "--roi-walls",
@@ -2825,7 +3497,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = Path(args.root).expanduser().resolve()
     out_dir = Path(args.out).expanduser().resolve()
-    _RUN_LOGGER = RunLogger(out_dir)
+    _RUN_LOGGER = RunLogger(out_dir, run_label=args.run_label)
     _RUN_LOGGER.write_context(_build_run_context(root, out_dir, args, argv))
     _log_info(
         "MAIN",
@@ -2852,7 +3524,9 @@ def main(argv: list[str] | None = None) -> int:
             progress_mode = "tqdm"
         else:
             progress_mode = "none"
-        if args.tissue_only:
+        if args.tissue_collect_only:
+            rc = _run_tissue_collect_only(root, out_dir, args, progress_mode)
+        elif args.tissue_only:
             rc = _run_tissue_only(root, out_dir, args, progress_mode)
         elif args.render_only:
             rc = _run_render_only(out_dir, args)

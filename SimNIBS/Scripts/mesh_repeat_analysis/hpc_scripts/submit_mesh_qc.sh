@@ -49,6 +49,11 @@ DISCOVERY_PROGRESS_SECONDS_CONFIG="5"
 PROGRESS_EVERY_CONFIG="25"
 MESH_QC_EXPECTED_MESHES_CONFIG=""
 MESH_QC_EXPECTED_SUBJECTS_CONFIG=""
+MESH_QC_ARRAY_SHARDS_CONFIG="1"
+MESH_QC_ARRAY_CONCURRENCY_CONFIG=""
+MESH_QC_COLLECTOR_CPUS_CONFIG="2"
+MESH_QC_COLLECTOR_MEMORY_CONFIG="16G"
+MESH_QC_COLLECTOR_TIME_CONFIG="08:00:00"
 
 SBATCH_BIN_CONFIG="sbatch"
 SLURM_SCRIPT_CONFIG="${PIPELINE_DIR_CONFIG}/mesh_repeat_analysis/hpc_scripts/run_mesh_qc.slurm"
@@ -57,6 +62,7 @@ LOG_DIR_CONFIG="${PIPELINE_DIR_CONFIG}/logs"
 PROFILE="${MESH_QC_PROFILE:-default}"
 PREFLIGHT_ONLY="0"
 EXPECTED_MESHES_ARGUMENT=""
+ARRAY_SHARDS_ARGUMENT=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -80,6 +86,14 @@ while [ "$#" -gt 0 ]; do
             EXPECTED_MESHES_ARGUMENT="$2"
             shift 2
             ;;
+        --array-shards)
+            if [ "$#" -lt 2 ]; then
+                echo "[ERROR] --array-shards requires an integer greater than 1." >&2
+                exit 2
+            fi
+            ARRAY_SHARDS_ARGUMENT="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh [options]"
             echo ""
@@ -87,6 +101,7 @@ while [ "$#" -gt 0 ]; do
             echo "  --profile default|collected-charm-tissues"
             echo "  --preflight                    Discover and report scope without submitting"
             echo "  --expected-meshes N            Require exactly N meshes and unique subjects"
+            echo "  --array-shards N               Use N resumable render-array shards plus one collector"
             exit 0
             ;;
         *)
@@ -139,6 +154,13 @@ if [ -n "${EXPECTED_MESHES_ARGUMENT}" ]; then
     MESH_QC_EXPECTED_MESHES_CONFIG="${EXPECTED_MESHES_ARGUMENT}"
     MESH_QC_EXPECTED_SUBJECTS_CONFIG="${EXPECTED_MESHES_ARGUMENT}"
 fi
+if [ -n "${ARRAY_SHARDS_ARGUMENT}" ]; then
+    if ! [[ "${ARRAY_SHARDS_ARGUMENT}" =~ ^[2-9][0-9]*$ ]]; then
+        echo "[ERROR] --array-shards must be an integer greater than 1." >&2
+        exit 2
+    fi
+    MESH_QC_ARRAY_SHARDS_CONFIG="${ARRAY_SHARDS_ARGUMENT}"
+fi
 
 PIPELINE_DIR="${PIPELINE_DIR:-${PIPELINE_DIR_CONFIG}}"
 MESH_QC_ROOT="${MESH_QC_ROOT:-${MESH_QC_ROOT_CONFIG}}"
@@ -175,6 +197,11 @@ DISCOVERY_PROGRESS_SECONDS="${DISCOVERY_PROGRESS_SECONDS:-${DISCOVERY_PROGRESS_S
 PROGRESS_EVERY="${PROGRESS_EVERY:-${PROGRESS_EVERY_CONFIG}}"
 MESH_QC_EXPECTED_MESHES="${MESH_QC_EXPECTED_MESHES:-${MESH_QC_EXPECTED_MESHES_CONFIG}}"
 MESH_QC_EXPECTED_SUBJECTS="${MESH_QC_EXPECTED_SUBJECTS:-${MESH_QC_EXPECTED_SUBJECTS_CONFIG}}"
+MESH_QC_ARRAY_SHARDS="${MESH_QC_ARRAY_SHARDS:-${MESH_QC_ARRAY_SHARDS_CONFIG}}"
+MESH_QC_ARRAY_CONCURRENCY="${MESH_QC_ARRAY_CONCURRENCY:-${MESH_QC_ARRAY_CONCURRENCY_CONFIG:-${MESH_QC_ARRAY_SHARDS}}}"
+MESH_QC_COLLECTOR_CPUS="${MESH_QC_COLLECTOR_CPUS:-${MESH_QC_COLLECTOR_CPUS_CONFIG}}"
+MESH_QC_COLLECTOR_MEMORY="${MESH_QC_COLLECTOR_MEMORY:-${MESH_QC_COLLECTOR_MEMORY_CONFIG}}"
+MESH_QC_COLLECTOR_TIME="${MESH_QC_COLLECTOR_TIME:-${MESH_QC_COLLECTOR_TIME_CONFIG}}"
 SBATCH_BIN="${SBATCH_BIN:-${SBATCH_BIN_CONFIG}}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${SLURM_SCRIPT_CONFIG}}"
 MESH_QC_LOG_DIR="${MESH_QC_LOG_DIR:-${LOG_DIR_CONFIG}}"
@@ -185,6 +212,22 @@ if ! [[ "${MESH_QC_GMSH_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [ "${PROFILE}" = "collected-charm-tissues" ] && [ "${MESH_QC_GMSH_TIMEOUT_SECONDS}" != "900" ]; then
     echo "[ERROR] The collected CHARM profile protects MESH_QC_GMSH_TIMEOUT_SECONDS=900; got ${MESH_QC_GMSH_TIMEOUT_SECONDS}." >&2
+    exit 2
+fi
+if ! [[ "${MESH_QC_ARRAY_SHARDS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[ERROR] MESH_QC_ARRAY_SHARDS must be a positive integer." >&2
+    exit 2
+fi
+if ! [[ "${MESH_QC_ARRAY_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]] || [ "${MESH_QC_ARRAY_CONCURRENCY}" -gt "${MESH_QC_ARRAY_SHARDS}" ]; then
+    echo "[ERROR] MESH_QC_ARRAY_CONCURRENCY must be between 1 and MESH_QC_ARRAY_SHARDS." >&2
+    exit 2
+fi
+if [ "${MESH_QC_ARRAY_SHARDS}" -gt 1 ] && [ "${PROFILE}" != "collected-charm-tissues" ]; then
+    echo "[ERROR] Accelerated tissue sharding currently requires --profile collected-charm-tissues." >&2
+    exit 2
+fi
+if [ "${MESH_QC_ARRAY_SHARDS}" -gt 1 ] && [ "${MESH_QC_STAGE}" != "tissue" ]; then
+    echo "[ERROR] Accelerated sharding requires the tissue-only stage." >&2
     exit 2
 fi
 
@@ -282,7 +325,15 @@ print(tiles, walls, version)
     echo "  dataset: collected CHARM segmentation meshes"
     echo "  subjects: ${FOUND_SUBJECTS}"
     echo "  meshes: ${FOUND_MESHES}"
-    echo "  tasks: 1"
+    if [ "${MESH_QC_ARRAY_SHARDS}" -gt 1 ]; then
+        echo "  render array elements: ${MESH_QC_ARRAY_SHARDS}"
+        echo "  render array: 0-$((MESH_QC_ARRAY_SHARDS - 1))%${MESH_QC_ARRAY_CONCURRENCY}"
+        echo "  collector tasks: 1"
+        echo "  scheduler tasks total: $((MESH_QC_ARRAY_SHARDS + 1))"
+        echo "  architecture: disjoint resumable render shards, then one afterany collector"
+    else
+        echo "  tasks: 1"
+    fi
     echo "  expected outputs: ${EXPECTED_TILES} tissue tiles and 19 tissue walls under the complete nine-tag expectation"
     echo "  execution: full collected cohort; tissue-only; no smoke or reduced tasks"
     echo "[INFO] Protected Gmsh timeout: ${MESH_QC_GMSH_TIMEOUT_SECONDS}s per render"
@@ -302,7 +353,11 @@ print(tiles, walls, version)
     fi
     if [ "${PREFLIGHT_ONLY}" = "1" ]; then
         echo "[INFO] Preflight passed without submitting a job."
-        echo "[INFO] Submit this exact scope with: bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-charm-tissues --expected-meshes ${FOUND_MESHES}"
+        if [ "${MESH_QC_ARRAY_SHARDS}" -gt 1 ]; then
+            echo "[INFO] Submit this exact scope with: bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-charm-tissues --expected-meshes ${FOUND_MESHES} --array-shards ${MESH_QC_ARRAY_SHARDS}"
+        else
+            echo "[INFO] Submit this exact scope with: bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-charm-tissues --expected-meshes ${FOUND_MESHES}"
+        fi
         exit 0
     fi
     if [ -z "${MESH_QC_EXPECTED_MESHES}" ]; then
@@ -343,6 +398,7 @@ EXPORT_VARS+=",DISCOVERY_PROGRESS_SECONDS=${DISCOVERY_PROGRESS_SECONDS}"
 EXPORT_VARS+=",PROGRESS_EVERY=${PROGRESS_EVERY}"
 EXPORT_VARS+=",MESH_QC_EXPECTED_MESHES=${MESH_QC_EXPECTED_MESHES}"
 EXPORT_VARS+=",MESH_QC_EXPECTED_SUBJECTS=${MESH_QC_EXPECTED_SUBJECTS}"
+EXPORT_VARS+=",MESH_QC_SHARD_COUNT=${MESH_QC_ARRAY_SHARDS}"
 EXPORT_VARS+=",MESH_QC_LOG_DIR=${MESH_QC_LOG_DIR}"
 EXPORT_VARS+=",LOG_DIR=${MESH_QC_LOG_DIR}"
 
@@ -371,26 +427,87 @@ echo "[INFO] Memory:         ${MEMORY}"
 echo "[INFO] Time limit:     ${TIME_LIMIT}"
 echo "[INFO] Expected meshes: ${MESH_QC_EXPECTED_MESHES:-<not enforced>}"
 echo "[INFO] Expected subjects: ${MESH_QC_EXPECTED_SUBJECTS:-<not enforced>}"
+echo "[INFO] Render shards:   ${MESH_QC_ARRAY_SHARDS}"
+echo "[INFO] Array concurrency: ${MESH_QC_ARRAY_CONCURRENCY}"
 echo "[INFO] Slurm output:   ${SLURM_OUTPUT}"
 echo "[INFO] Slurm error:    ${SLURM_ERROR}"
 
-SBATCH_CMD=(
-    "${SBATCH_BIN}"
-    --job-name="${JOB_NAME}"
-    --cpus-per-task="${CPUS_PER_TASK}"
-    --mem="${MEMORY}"
-    --time="${TIME_LIMIT}"
-    --export="${EXPORT_VARS}"
-)
-if [ -n "${PARTITION}" ]; then
-    SBATCH_CMD+=(--partition="${PARTITION}")
-fi
-if [ -n "${SLURM_OUTPUT}" ]; then
-    SBATCH_CMD+=(--output="${SLURM_OUTPUT}")
-fi
-if [ -n "${SLURM_ERROR}" ]; then
-    SBATCH_CMD+=(--error="${SLURM_ERROR}")
-fi
-SBATCH_CMD+=("${SLURM_SCRIPT}")
+if [ "${MESH_QC_ARRAY_SHARDS}" -gt 1 ]; then
+    RENDER_EXPORT_VARS="${EXPORT_VARS/,MESH_QC_STAGE=${MESH_QC_STAGE}/,MESH_QC_STAGE=tissue-shard}"
+    COLLECTOR_EXPORT_VARS="${EXPORT_VARS/,MESH_QC_STAGE=${MESH_QC_STAGE}/,MESH_QC_STAGE=tissue-collect}"
+    RENDER_OUTPUT="${MESH_QC_LOG_DIR}/render-%A_%a.out"
+    RENDER_ERROR="${MESH_QC_LOG_DIR}/render-%A_%a.err"
+    COLLECTOR_OUTPUT="${MESH_QC_LOG_DIR}/collector-%j.out"
+    COLLECTOR_ERROR="${MESH_QC_LOG_DIR}/collector-%j.err"
 
-"${SBATCH_CMD[@]}"
+    RENDER_CMD=(
+        "${SBATCH_BIN}"
+        --parsable
+        --job-name="${JOB_NAME}_render"
+        --array="0-$((MESH_QC_ARRAY_SHARDS - 1))%${MESH_QC_ARRAY_CONCURRENCY}"
+        --cpus-per-task="${CPUS_PER_TASK}"
+        --mem="${MEMORY}"
+        --time="${TIME_LIMIT}"
+        --export="${RENDER_EXPORT_VARS}"
+        --output="${RENDER_OUTPUT}"
+        --error="${RENDER_ERROR}"
+    )
+    if [ -n "${PARTITION}" ]; then
+        RENDER_CMD+=(--partition="${PARTITION}")
+    fi
+    RENDER_CMD+=("${SLURM_SCRIPT}")
+    RENDER_SUBMISSION="$("${RENDER_CMD[@]}")"
+    RENDER_JOB_ID="${RENDER_SUBMISSION%%;*}"
+    RENDER_JOB_ID="${RENDER_JOB_ID##* }"
+    if ! [[ "${RENDER_JOB_ID}" =~ ^[0-9]+$ ]]; then
+        echo "[ERROR] Could not parse render-array job ID from: ${RENDER_SUBMISSION}" >&2
+        exit 2
+    fi
+
+    COLLECTOR_CMD=(
+        "${SBATCH_BIN}"
+        --parsable
+        --job-name="${JOB_NAME}_collect"
+        --dependency="afterany:${RENDER_JOB_ID}"
+        --cpus-per-task="${MESH_QC_COLLECTOR_CPUS}"
+        --mem="${MESH_QC_COLLECTOR_MEMORY}"
+        --time="${MESH_QC_COLLECTOR_TIME}"
+        --export="${COLLECTOR_EXPORT_VARS}"
+        --output="${COLLECTOR_OUTPUT}"
+        --error="${COLLECTOR_ERROR}"
+    )
+    if [ -n "${PARTITION}" ]; then
+        COLLECTOR_CMD+=(--partition="${PARTITION}")
+    fi
+    COLLECTOR_CMD+=("${SLURM_SCRIPT}")
+    COLLECTOR_SUBMISSION="$("${COLLECTOR_CMD[@]}")"
+    COLLECTOR_JOB_ID="${COLLECTOR_SUBMISSION%%;*}"
+    COLLECTOR_JOB_ID="${COLLECTOR_JOB_ID##* }"
+    if ! [[ "${COLLECTOR_JOB_ID}" =~ ^[0-9]+$ ]]; then
+        echo "[ERROR] Could not parse collector job ID from: ${COLLECTOR_SUBMISSION}" >&2
+        exit 2
+    fi
+    echo "[INFO] Submitted tissue-render array job: ${RENDER_JOB_ID}"
+    echo "[INFO] Submitted afterany collector job: ${COLLECTOR_JOB_ID}"
+    echo "[INFO] Existing compatible tissue tiles are resumed in place."
+else
+    SBATCH_CMD=(
+        "${SBATCH_BIN}"
+        --job-name="${JOB_NAME}"
+        --cpus-per-task="${CPUS_PER_TASK}"
+        --mem="${MEMORY}"
+        --time="${TIME_LIMIT}"
+        --export="${EXPORT_VARS}"
+    )
+    if [ -n "${PARTITION}" ]; then
+        SBATCH_CMD+=(--partition="${PARTITION}")
+    fi
+    if [ -n "${SLURM_OUTPUT}" ]; then
+        SBATCH_CMD+=(--output="${SLURM_OUTPUT}")
+    fi
+    if [ -n "${SLURM_ERROR}" ]; then
+        SBATCH_CMD+=(--error="${SLURM_ERROR}")
+    fi
+    SBATCH_CMD+=("${SLURM_SCRIPT}")
+    "${SBATCH_CMD[@]}"
+fi

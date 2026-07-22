@@ -155,6 +155,41 @@ Submit that exact scope with:
 bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh --profile collected-charm-tissues --expected-meshes 474
 ```
 
+For a large single cohort, the same profile also has an opt-in accelerated
+architecture. It divides the globally ordered subject list across disjoint
+Slurm array elements. Each element retains the established 16-worker, 16-CPU,
+64-GB renderer and protected 900-second Gmsh timeout. One lightweight
+`afterany` collector validates every shard marker, merges the shard reports,
+requires complete cohort coverage, and is the only job allowed to build the 19
+wall mosaics:
+
+```bash
+bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh \
+  --profile collected-charm-tissues \
+  --preflight \
+  --expected-meshes 652 \
+  --array-shards 8
+
+bash mesh_repeat_analysis/hpc_scripts/submit_mesh_qc.sh \
+  --profile collected-charm-tissues \
+  --expected-meshes 652 \
+  --array-shards 8
+```
+
+This remains the full 652-mesh scope: eight render array elements plus one
+collector produce 12,388 tissue tiles and 19 walls. It is not a reduced test.
+Tile filenames retain their full-cohort indices, so compatible non-empty tiles
+from the original single-job mode are resumed in place. Before switching a
+live output directory from single-job mode to accelerated mode, cancel the old
+job and wait for it to disappear from `squeue`; the two modes must never write
+to the same tile tree concurrently.
+
+Shard reports and completion markers are isolated under
+`shards/tissue_render/shard_XXXXX_of_XXXXX/`. The collector writes
+`accelerated_tissue_wall_summary.json`. If a render shard or collector fails,
+resubmit the same full command. Finished tiles are reused, while incomplete
+shards are regenerated and the walls are rebuilt only by the collector.
+
 If preflight reports another count, use the reported value instead of `474`.
 The profile encodes the established tissue-wall settings: 16 CPUs/workers,
 64 GB, `08:00:00`, a protected 900-second per-render Gmsh timeout, Gmsh and

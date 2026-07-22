@@ -64,6 +64,9 @@ PROGRESS_EVERY_CONFIG="25"
 MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG="900"
 MESH_QC_EXPECTED_MESHES_CONFIG=""
 MESH_QC_EXPECTED_SUBJECTS_CONFIG=""
+MESH_QC_SHARD_COUNT_CONFIG="1"
+MESH_QC_SHARD_INDEX_CONFIG=""
+MESH_QC_RUN_LABEL_CONFIG=""
 
 # Logs. Leave these blank to use <pipeline>/logs.
 MESH_QC_LOG_DIR_CONFIG=""
@@ -91,12 +94,19 @@ PROGRESS_EVERY="${PROGRESS_EVERY:-${PROGRESS_EVERY_CONFIG}}"
 MESH_QC_GMSH_TIMEOUT_SECONDS="${MESH_QC_GMSH_TIMEOUT_SECONDS:-${MESH_QC_GMSH_TIMEOUT_SECONDS_CONFIG}}"
 MESH_QC_EXPECTED_MESHES="${MESH_QC_EXPECTED_MESHES:-${MESH_QC_EXPECTED_MESHES_CONFIG}}"
 MESH_QC_EXPECTED_SUBJECTS="${MESH_QC_EXPECTED_SUBJECTS:-${MESH_QC_EXPECTED_SUBJECTS_CONFIG}}"
+MESH_QC_SHARD_COUNT="${MESH_QC_SHARD_COUNT:-${MESH_QC_SHARD_COUNT_CONFIG}}"
+MESH_QC_SHARD_INDEX="${MESH_QC_SHARD_INDEX:-${MESH_QC_SHARD_INDEX_CONFIG}}"
+MESH_QC_RUN_LABEL="${MESH_QC_RUN_LABEL:-${MESH_QC_RUN_LABEL_CONFIG}}"
 SIMNIBS_MODULE="${SIMNIBS_MODULE:-${SIMNIBS_MODULE_CONFIG}}"
 XVFB_MODULE="${XVFB_MODULE:-${XVFB_MODULE_CONFIG}}"
 GMSH_MODULE="${GMSH_MODULE:-${GMSH_MODULE_CONFIG}}"
 MESH_QC_GMSH_BIN="${MESH_QC_GMSH_BIN:-${MESH_QC_GMSH_BIN_CONFIG}}"
 IMAGEMAGICK_MODULE="${IMAGEMAGICK_MODULE:-${IMAGEMAGICK_MODULE_CONFIG}}"
 MESH_QC_PYTHON="${MESH_QC_PYTHON:-${MESH_QC_PYTHON_CONFIG}}"
+
+if [ "${MESH_QC_STAGE}" = "tissue-shard" ]; then
+    MESH_QC_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-${MESH_QC_SHARD_INDEX}}"
+fi
 
 if ! [[ "${MESH_QC_GMSH_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] MESH_QC_GMSH_TIMEOUT_SECONDS must be a positive integer; got ${MESH_QC_GMSH_TIMEOUT_SECONDS}." >&2
@@ -112,7 +122,7 @@ if [ "${MESH_QC_STAGE}" = "render" ] && [ "${RENDERER}" = "gmsh" ] && [ "${MESH_
     # gmsh on Stanage. Skip it only when a separate gmsh source is configured.
     SIMNIBS_MODULE_EFFECTIVE=""
 fi
-if [ "${MESH_QC_STAGE}" = "qc" ]; then
+if [ "${MESH_QC_STAGE}" = "qc" ] || [ "${MESH_QC_STAGE}" = "tissue-collect" ]; then
     GMSH_MODULE_EFFECTIVE=""
     XVFB_MODULE_EFFECTIVE=""
 fi
@@ -188,6 +198,8 @@ echo "[INFO] Tissue walls:   ${TISSUE_WALLS}"
 echo "[INFO] Gmsh timeout:   ${MESH_QC_GMSH_TIMEOUT_SECONDS}s per render"
 echo "[INFO] Expected meshes: ${MESH_QC_EXPECTED_MESHES:-<not enforced>}"
 echo "[INFO] Expected subjects: ${MESH_QC_EXPECTED_SUBJECTS:-<not enforced>}"
+echo "[INFO] Shard count:     ${MESH_QC_SHARD_COUNT}"
+echo "[INFO] Shard index:     ${MESH_QC_SHARD_INDEX:-<none>}"
 echo "[INFO] Log file:       ${MESH_QC_LOG_FILE}"
 echo "[INFO] SimNIBS module: ${SIMNIBS_MODULE_EFFECTIVE:-<none>}"
 echo "[INFO] SimNIBS request: ${SIMNIBS_MODULE:-<none>}"
@@ -202,7 +214,7 @@ if [ -n "${MESH_QC_GMSH_BIN}" ]; then
     export MESH_QC_GMSH_BIN
 fi
 NEEDS_GMSH_CHECK=0
-if [ "${MESH_QC_STAGE}" != "qc" ] && { [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; }; then
+if [ "${MESH_QC_STAGE}" != "qc" ] && [ "${MESH_QC_STAGE}" != "tissue-collect" ] && { [ "${RENDERER}" = "gmsh" ] || [ "${RENDERER}" = "auto" ]; }; then
     NEEDS_GMSH_CHECK=1
 fi
 GMSH_CHECK_BIN=""
@@ -295,6 +307,10 @@ PYTHON_CMD=(
     --progress-every "${PROGRESS_EVERY}"
 )
 
+if [ -n "${MESH_QC_RUN_LABEL}" ] && [ "${MESH_QC_STAGE}" != "tissue-shard" ] && [ "${MESH_QC_STAGE}" != "tissue-collect" ]; then
+    PYTHON_CMD+=(--run-label "${MESH_QC_RUN_LABEL}")
+fi
+
 if [ -n "${MESH_GLOB}" ]; then
     PYTHON_CMD+=(--mesh-glob "${MESH_GLOB}")
 fi
@@ -331,9 +347,37 @@ case "${MESH_QC_STAGE}" in
     tissue)
         PYTHON_CMD+=(--tissue-only)
         ;;
+    tissue-shard)
+        if ! [[ "${MESH_QC_SHARD_COUNT}" =~ ^[2-9][0-9]*$ ]]; then
+            echo "[ERROR] tissue-shard requires MESH_QC_SHARD_COUNT greater than 1." >&2
+            exit 2
+        fi
+        MESH_QC_SHARD_INDEX="${SLURM_ARRAY_TASK_ID:-${MESH_QC_SHARD_INDEX}}"
+        if ! [[ "${MESH_QC_SHARD_INDEX}" =~ ^[0-9]+$ ]] || [ "${MESH_QC_SHARD_INDEX}" -ge "${MESH_QC_SHARD_COUNT}" ]; then
+            echo "[ERROR] Invalid tissue shard index: ${MESH_QC_SHARD_INDEX:-<empty>}." >&2
+            exit 2
+        fi
+        PYTHON_CMD+=(
+            --tissue-only
+            --tissue-shard-count "${MESH_QC_SHARD_COUNT}"
+            --tissue-shard-index "${MESH_QC_SHARD_INDEX}"
+            --run-label "shard_${MESH_QC_SHARD_INDEX}_of_${MESH_QC_SHARD_COUNT}"
+        )
+        ;;
+    tissue-collect)
+        if ! [[ "${MESH_QC_SHARD_COUNT}" =~ ^[2-9][0-9]*$ ]]; then
+            echo "[ERROR] tissue-collect requires MESH_QC_SHARD_COUNT greater than 1." >&2
+            exit 2
+        fi
+        PYTHON_CMD+=(
+            --tissue-collect-only
+            --tissue-shard-count "${MESH_QC_SHARD_COUNT}"
+            --run-label "collector_${MESH_QC_SHARD_COUNT}_shards"
+        )
+        ;;
     *)
         echo "[ERROR] Unsupported MESH_QC_STAGE: ${MESH_QC_STAGE}" >&2
-        echo "[ERROR] Use one of: full, qc, render, tissue" >&2
+        echo "[ERROR] Use one of: full, qc, render, tissue, tissue-shard, tissue-collect" >&2
         exit 1
         ;;
 esac

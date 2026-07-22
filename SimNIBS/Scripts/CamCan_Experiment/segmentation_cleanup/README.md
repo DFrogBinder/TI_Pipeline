@@ -9,6 +9,8 @@ and never modifies them in place.
 The corrected CSF and skin operations reproduce the supplied Seg3D intent:
 
 - close the cumulative WM + GM + CSF envelope by 5 voxels;
+- optionally open that closed envelope with a smaller Euclidean ball to remove
+  narrow outward bumps that closing alone cannot remove;
 - close the cumulative whole-head tissue envelope by 10 voxels; and
 - rebuild the exclusive CHARM label map with the supplied tissue hierarchy.
 
@@ -40,6 +42,13 @@ matching launcher environment variable). The component-filter default remains
 fully disconnected islands; it does not remove bumps that remain connected to
 the main envelope. Increasing the closing radius fills larger grooves and
 concavities but is not equivalent to erosion-based removal of outward bumps.
+The opt-in `--csf-opening-radius` performs erosion followed by dilation after
+closing. The v4 tuning candidate uses closing radius 7 and opening radius 3.
+When the CSF component policy is `largest`, v4 enforces it both before closing
+and again after opening because opening can sever thin bridges and create tiny
+detached fragments.
+Opening can remove genuine narrow CSF anatomy, so this candidate must be
+reviewed as isolated before/after CSF masks before cohort-wide use.
 
 ## Label reconstruction
 
@@ -118,6 +127,23 @@ python3 CamCan_Experiment/segmentation_cleanup/workflow.py validate \
     --checksums /path/to/corrected_v3_no_blood/collection/sha256sums.txt
 ```
 
+For a deliberately bounded local visual check, the comparison utility applies
+the complete correction but writes only binary before/after CSF masks and a
+signed difference image. It enforces the stated subject count and never edits
+the source maps:
+
+```bash
+python3 CamCan_Experiment/segmentation_cleanup/compare_csf_smoothing.py \
+    --maps-root /path/to/original/maps \
+    --output-root /path/to/csf_smoothing_comparison \
+    --subject sub-CC110056 \
+    --subject sub-CC412021 \
+    --subject sub-CC723197 \
+    --expected-subjects 3 \
+    --csf-closing-radius 7 \
+    --csf-opening-radius 3
+```
+
 ## HPC execution
 
 The guarded submitter discovers the flat-map cohort and requires the current
@@ -128,6 +154,15 @@ submitter, correction tasks, and collector all load the existing
 `SimNIBS/4.0.1-foss-2023a` module, which provides Python, NumPy, SciPy, and
 NiBabel. Run the launcher from the normal base shell; do not install these
 packages into the base environment.
+
+The default remains one subject process per array element. An opt-in packed
+mode sets `TI_CHARM_CLEANUP_WORKERS_PER_ARRAY_TASK=2`. Each element then owns a
+two-row manifest shard and launches two single-threaded Python processes. For
+652 subjects this produces 326 array elements; `%50` permits at most 100
+simultaneous subjects. A full-resolution v4 worker measured 7.6 GB peak RSS,
+so the two-worker profile uses 24 GB rather than the unsafe 16 GB allocation.
+If one worker fails, the shard requeues; a completed companion result is
+recognized and skipped on the retry.
 Set `EXPECTED_SUBJECTS` explicitly only if a later audited cohort deliberately
 changes that count. Defaults are a candidate profile:
 
@@ -169,6 +204,28 @@ COLLECTOR_MEMORY=16G \
 COLLECTOR_TIME=08:00:00 \
 JOB_NAME=charm_seg_cleanup_v3_csf7_lcc_no_blood \
 COLLECTOR_JOB_NAME=collect_charm_seg_cleanup_v3_csf7_lcc_no_blood \
+bash CamCan_Experiment/segmentation_cleanup/submit_charm_segmentation_cleanup.sh
+```
+
+Do not launch v4 cohort processing until its three-subject CSF masks have been
+reviewed. Once accepted, v4 adds this explicit setting to the v3 profile and
+uses another fresh output root:
+
+```bash
+OUTPUT_ROOT=/mnt/parscratch/users/cop23bi/charm_segmentations_corrected_v4_csf7_open3_lcc_no_blood \
+TI_CHARM_CLEANUP_CSF_RADIUS=7 \
+TI_CHARM_CLEANUP_CSF_OPENING_RADIUS=3 \
+TI_CHARM_CLEANUP_CSF_INCLUDE_BLOOD=0 \
+TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=largest \
+TI_CHARM_CLEANUP_WORKERS_PER_ARRAY_TASK=2 \
+MAX_CONCURRENT_TASKS=50 \
+CPUS_PER_TASK=2 \
+MEMORY=24G \
+TIME_LIMIT=08:00:00 \
+COLLECTOR_MEMORY=16G \
+COLLECTOR_TIME=08:00:00 \
+JOB_NAME=charm_seg_cleanup_v4_csf7_open3_lcc_no_blood \
+COLLECTOR_JOB_NAME=collect_charm_seg_cleanup_v4_csf7_open3_lcc_no_blood \
 bash CamCan_Experiment/segmentation_cleanup/submit_charm_segmentation_cleanup.sh
 ```
 

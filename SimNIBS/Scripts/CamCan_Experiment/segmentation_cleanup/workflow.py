@@ -39,6 +39,7 @@ SUBJECT_PATTERN = re.compile(r"^sub-[A-Za-z0-9][A-Za-z0-9._-]*$")
 ALGORITHM = "cumulative-charm-cleanup-v1"
 CSF_COMPONENT_ALGORITHM = "cumulative-charm-cleanup-v2-csf-components"
 CSF_EXCLUDES_BLOOD_ALGORITHM = "cumulative-charm-cleanup-v3-csf-excludes-blood"
+CSF_CLOSE_OPEN_ALGORITHM = "cumulative-charm-cleanup-v4-csf-close-open"
 KNOWN_LABELS = frozenset((0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11))
 REQUIRED_LABELS = frozenset((1, 2, 3, 5))
 MANIFEST_FIELDS = (
@@ -123,6 +124,7 @@ def subject_from_map(path: Path) -> str:
 def correction_parameters(
     *,
     csf_radius: int,
+    csf_opening_radius: int,
     skin_radius: int,
     include_blood_in_csf: bool,
     csf_component_policy: str,
@@ -131,8 +133,8 @@ def correction_parameters(
     gm_min_component_voxels: int,
     connectivity: int,
 ) -> dict[str, object]:
-    if csf_radius < 0 or skin_radius < 0:
-        raise ValueError("CSF and skin radii must be non-negative")
+    if csf_radius < 0 or csf_opening_radius < 0 or skin_radius < 0:
+        raise ValueError("CSF closing, CSF opening, and skin radii must be non-negative")
     if csf_component_policy not in {"none", "largest"}:
         raise ValueError("csf_component_policy must be 'none' or 'largest'")
     if component_policy not in {"largest", "min-size"}:
@@ -147,12 +149,18 @@ def correction_parameters(
         raise ValueError(
             "min-size policy requires positive WM and GM component thresholds"
         )
+    if include_blood_in_csf and csf_opening_radius > 0:
+        raise ValueError(
+            "CSF opening cannot be combined with legacy blood inclusion"
+        )
     if include_blood_in_csf:
         algorithm = (
             CSF_COMPONENT_ALGORITHM
             if csf_component_policy != "none"
             else ALGORITHM
         )
+    elif csf_opening_radius > 0:
+        algorithm = CSF_CLOSE_OPEN_ALGORITHM
     else:
         algorithm = CSF_EXCLUDES_BLOOD_ALGORITHM
     parameters: dict[str, object] = {
@@ -166,6 +174,8 @@ def correction_parameters(
     }
     if csf_component_policy != "none":
         parameters["csf_component_policy"] = csf_component_policy
+    if csf_opening_radius > 0:
+        parameters["csf_opening_radius_voxels"] = int(csf_opening_radius)
     if not include_blood_in_csf:
         parameters["csf_source_labels"] = [1, 2, 3]
         parameters["blood_restored_after_csf"] = True
@@ -214,6 +224,18 @@ def _filter_components(
     }
 
 
+def _component_summary(mask: np.ndarray, connectivity: int) -> dict[str, int]:
+    labeled, component_count = ndimage.label(
+        mask, structure=_connectivity_structure(connectivity)
+    )
+    sizes = np.bincount(labeled.ravel())[1:]
+    return {
+        "components": int(component_count),
+        "largest_component_voxels": int(sizes.max()) if sizes.size else 0,
+        "voxels": int(mask.sum()),
+    }
+
+
 def _ball_closing(mask: np.ndarray, radius: int) -> np.ndarray:
     """Binary closing with an isotropic Euclidean ball measured in voxels.
 
@@ -230,6 +252,19 @@ def _ball_closing(mask: np.ndarray, radius: int) -> np.ndarray:
     closed = ndimage.distance_transform_edt(dilated) > float(radius)
     crop = tuple(slice(padding, -padding) for _ in range(3))
     return np.asarray(closed[crop], dtype=bool)
+
+
+def _ball_opening(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Binary opening with an isotropic Euclidean ball measured in voxels."""
+
+    if radius == 0:
+        return np.array(mask, dtype=bool, copy=True)
+    padding = radius + 1
+    padded = np.pad(mask.astype(bool, copy=False), padding, constant_values=False)
+    eroded = ndimage.distance_transform_edt(padded) > float(radius)
+    opened = ndimage.distance_transform_edt(~eroded) <= float(radius)
+    crop = tuple(slice(padding, -padding) for _ in range(3))
+    return np.asarray(opened[crop], dtype=bool)
 
 
 def _label_counts(labels: np.ndarray) -> dict[str, int]:
@@ -253,6 +288,7 @@ def correct_label_array(
     labels: np.ndarray,
     *,
     csf_radius: int = 5,
+    csf_opening_radius: int = 0,
     skin_radius: int = 10,
     include_blood_in_csf: bool = False,
     csf_component_policy: str = "none",
@@ -265,6 +301,7 @@ def correct_label_array(
 
     parameters = correction_parameters(
         csf_radius=csf_radius,
+        csf_opening_radius=csf_opening_radius,
         skin_radius=skin_radius,
         include_blood_in_csf=include_blood_in_csf,
         csf_component_policy=csf_component_policy,
@@ -317,6 +354,28 @@ def correct_label_array(
             connectivity=connectivity,
         )
     csf_closed = _ball_closing(csf_for_closing, csf_radius)
+    csf_opened = _ball_opening(csf_closed, csf_opening_radius)
+    csf_closed_voxels = int(csf_closed.sum())
+    csf_opened_voxels = int(csf_opened.sum())
+    csf_opening_removed_voxels = csf_closed_voxels - csf_opened_voxels
+    csf_opening_component_summary = (
+        _component_summary(csf_opened, connectivity)
+        if csf_opening_radius > 0
+        else None
+    )
+    csf_smoothed = csf_opened
+    csf_post_opening_component_metrics: dict[str, object] | None = None
+    if csf_opening_radius > 0 and csf_component_policy == "largest":
+        csf_smoothed, csf_post_opening_component_metrics = _filter_components(
+            csf_opened,
+            policy="largest",
+            min_voxels=0,
+            connectivity=connectivity,
+        )
+    csf_smoothed_voxels = int(csf_smoothed.sum())
+    del csf_closed
+    if csf_smoothed is not csf_opened:
+        del csf_opened
     head_closed = _ball_closing(head_envelope, skin_radius)
 
     # Reconstruct using the supplied low-to-high priority order. Masks are
@@ -328,7 +387,7 @@ def correct_label_array(
     corrected[original == 6] = 6
     corrected[np.isin(original, (1, 2, 3, 7, 8))] = 7
     corrected[original == 8] = 8
-    corrected[csf_closed] = 3
+    corrected[csf_smoothed] = 3
     corrected[original == 9] = 9
     corrected[gm_clean] = 2
     corrected[wm_clean] = 1
@@ -353,7 +412,10 @@ def correct_label_array(
         "wm_components": wm_metrics,
         "gm_cumulative_components": gm_metrics,
         "csf_cumulative_voxels_before": int(csf_envelope.sum()),
-        "csf_cumulative_voxels_after": int(csf_closed.sum()),
+        "csf_cumulative_voxels_after_closing": csf_closed_voxels,
+        "csf_cumulative_voxels_after_opening": csf_opened_voxels,
+        "csf_cumulative_voxels_after": csf_smoothed_voxels,
+        "csf_opening_removed_voxels": csf_opening_removed_voxels,
         "skin_cumulative_voxels_before": int(head_envelope.sum()),
         "skin_cumulative_voxels_after": int(head_closed.sum()),
         "unknown_labels_preserved": sorted(labels_present - KNOWN_LABELS),
@@ -363,6 +425,17 @@ def correct_label_array(
             csf_for_closing.sum()
         )
         metrics["csf_cumulative_components"] = csf_component_metrics
+    if csf_opening_component_summary is not None:
+        metrics["csf_cumulative_components_after_opening"] = (
+            csf_opening_component_summary
+        )
+    if csf_post_opening_component_metrics is not None:
+        metrics["csf_post_opening_component_filter"] = (
+            csf_post_opening_component_metrics
+        )
+        metrics["csf_cumulative_components_final"] = _component_summary(
+            csf_smoothed, connectivity
+        )
     return corrected, metrics
 
 
@@ -528,6 +601,7 @@ def run_task(
     manifest: str | Path,
     task_index: int,
     csf_radius: int = 5,
+    csf_opening_radius: int = 0,
     skin_radius: int = 10,
     include_blood_in_csf: bool = False,
     csf_component_policy: str = "none",
@@ -539,6 +613,7 @@ def run_task(
     row = _row_for_task(manifest, task_index)
     parameters = correction_parameters(
         csf_radius=csf_radius,
+        csf_opening_radius=csf_opening_radius,
         skin_radius=skin_radius,
         include_blood_in_csf=include_blood_in_csf,
         csf_component_policy=csf_component_policy,
@@ -588,6 +663,7 @@ def run_task(
     corrected, metrics = correct_label_array(
         raw,
         csf_radius=csf_radius,
+        csf_opening_radius=csf_opening_radius,
         skin_radius=skin_radius,
         include_blood_in_csf=include_blood_in_csf,
         csf_component_policy=csf_component_policy,
@@ -809,6 +885,7 @@ def validate_results(
 
 def _add_parameter_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--csf-radius", type=int, default=5)
+    parser.add_argument("--csf-opening-radius", type=int, default=0)
     parser.add_argument("--skin-radius", type=int, default=10)
     parser.add_argument(
         "--include-blood-in-csf",
@@ -860,6 +937,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def _parameter_kwargs(args: argparse.Namespace) -> dict[str, object]:
     return {
         "csf_radius": args.csf_radius,
+        "csf_opening_radius": args.csf_opening_radius,
         "skin_radius": args.skin_radius,
         "include_blood_in_csf": args.include_blood_in_csf,
         "csf_component_policy": args.csf_component_policy,

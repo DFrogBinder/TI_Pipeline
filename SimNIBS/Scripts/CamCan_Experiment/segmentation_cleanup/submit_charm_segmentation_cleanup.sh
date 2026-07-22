@@ -24,7 +24,9 @@ LOAD_SIMNIBS_MODULE="${LOAD_SIMNIBS_MODULE:-1}"
 
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-50}"
 MAX_RETRIES="${TI_CHARM_CLEANUP_MAX_RETRIES:-2}"
+WORKERS_PER_ARRAY_TASK="${TI_CHARM_CLEANUP_WORKERS_PER_ARRAY_TASK:-1}"
 CSF_RADIUS="${TI_CHARM_CLEANUP_CSF_RADIUS:-5}"
+CSF_OPENING_RADIUS="${TI_CHARM_CLEANUP_CSF_OPENING_RADIUS:-0}"
 SKIN_RADIUS="${TI_CHARM_CLEANUP_SKIN_RADIUS:-10}"
 CSF_INCLUDE_BLOOD="${TI_CHARM_CLEANUP_CSF_INCLUDE_BLOOD:-0}"
 CSF_COMPONENT_POLICY="${TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY:-none}"
@@ -55,15 +57,19 @@ if [ "$(realpath -m "${MAPS_ROOT}")" = "$(realpath -m "${OUTPUT_ROOT}/maps")" ];
     exit 2
 fi
 
-for value_name in MAX_CONCURRENT_TASKS MAX_RETRIES CSF_RADIUS SKIN_RADIUS WM_MIN_COMPONENT_VOXELS GM_MIN_COMPONENT_VOXELS CPUS_PER_TASK COLLECTOR_CPUS; do
+for value_name in MAX_CONCURRENT_TASKS MAX_RETRIES WORKERS_PER_ARRAY_TASK CSF_RADIUS CSF_OPENING_RADIUS SKIN_RADIUS WM_MIN_COMPONENT_VOXELS GM_MIN_COMPONENT_VOXELS CPUS_PER_TASK COLLECTOR_CPUS; do
     value="${!value_name}"
     if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
         echo "[ERROR] ${value_name} must be a non-negative integer." >&2
         exit 2
     fi
 done
-if [ "${MAX_CONCURRENT_TASKS}" -lt 1 ] || [ "${CPUS_PER_TASK}" -lt 1 ] || [ "${COLLECTOR_CPUS}" -lt 1 ]; then
+if [ "${MAX_CONCURRENT_TASKS}" -lt 1 ] || [ "${WORKERS_PER_ARRAY_TASK}" -lt 1 ] || [ "${CPUS_PER_TASK}" -lt 1 ] || [ "${COLLECTOR_CPUS}" -lt 1 ]; then
     echo "[ERROR] Concurrency and CPU counts must be positive." >&2
+    exit 2
+fi
+if [ "${CPUS_PER_TASK}" -lt "${WORKERS_PER_ARRAY_TASK}" ]; then
+    echo "[ERROR] CPUS_PER_TASK=${CPUS_PER_TASK} is smaller than workers per array task ${WORKERS_PER_ARRAY_TASK}." >&2
     exit 2
 fi
 if [ "${COMPONENT_POLICY}" != "largest" ] && [ "${COMPONENT_POLICY}" != "min-size" ]; then
@@ -82,6 +88,10 @@ if [ "${CSF_INCLUDE_BLOOD}" = "1" ]; then
     CSF_SOURCE_DESCRIPTION="1,2,3,9 (legacy blood inclusion)"
 else
     CSF_SOURCE_DESCRIPTION="1,2,3 (blood excluded and restored afterward)"
+fi
+if [ "${CSF_INCLUDE_BLOOD}" = "1" ] && [ "${CSF_OPENING_RADIUS}" -gt 0 ]; then
+    echo "[ERROR] CSF opening cannot be combined with legacy blood inclusion." >&2
+    exit 2
 fi
 if [ "${COMPONENT_POLICY}" = "min-size" ] && { [ "${WM_MIN_COMPONENT_VOXELS}" -lt 1 ] || [ "${GM_MIN_COMPONENT_VOXELS}" -lt 1 ]; }; then
     echo "[ERROR] min-size policy requires positive WM and GM thresholds." >&2
@@ -131,27 +141,33 @@ if [ "${TOTAL_TASKS}" -ne "${EXPECTED_SUBJECTS}" ] || [ "${READY_TASKS}" -ne "${
     exit 2
 fi
 
+ARRAY_TASKS=$(( (EXPECTED_SUBJECTS + WORKERS_PER_ARRAY_TASK - 1) / WORKERS_PER_ARRAY_TASK ))
 if command -v "${SCONTROL_BIN}" >/dev/null 2>&1; then
     MAX_ARRAY_SIZE=$("${SCONTROL_BIN}" show config | awk -F '=' '$1 ~ /^[[:space:]]*MaxArraySize/ && !found { gsub(/[[:space:]]/, "", $2); print $2; found=1 }')
-    if [ -n "${MAX_ARRAY_SIZE}" ] && [ "${EXPECTED_SUBJECTS}" -gt "${MAX_ARRAY_SIZE}" ]; then
-        echo "[ERROR] ${EXPECTED_SUBJECTS} tasks exceed Slurm MaxArraySize=${MAX_ARRAY_SIZE}." >&2
+    if [ -n "${MAX_ARRAY_SIZE}" ] && [ "${ARRAY_TASKS}" -gt "${MAX_ARRAY_SIZE}" ]; then
+        echo "[ERROR] ${ARRAY_TASKS} array elements exceed Slurm MaxArraySize=${MAX_ARRAY_SIZE}." >&2
         exit 2
     fi
 fi
 
-ARRAY_SPEC="0-$((EXPECTED_SUBJECTS - 1))%${MAX_CONCURRENT_TASKS}"
+ARRAY_SPEC="0-$((ARRAY_TASKS - 1))%${MAX_CONCURRENT_TASKS}"
+MAX_SUBJECT_CONCURRENCY=$((MAX_CONCURRENT_TASKS * WORKERS_PER_ARRAY_TASK))
 printf '%s\n' \
     'Scope:' \
     '  dataset: complete collected CamCan CHARM segmentation cohort' \
     "  subjects: ${EXPECTED_SUBJECTS}" \
     "  correction tasks: ${EXPECTED_SUBJECTS}" \
+    "  array elements: ${ARRAY_TASKS}" \
     "  array: ${ARRAY_SPEC}" \
+    "  workers per element: ${WORKERS_PER_ARRAY_TASK}" \
+    "  maximum simultaneous subjects: ${MAX_SUBJECT_CONCURRENCY}" \
     "  expected corrected maps: ${EXPECTED_SUBJECTS}" \
     "  expected provenance JSON files: ${EXPECTED_SUBJECTS}" \
     '  expected collection manifests: 1' \
     '  execution: full discovered cohort; not a smoke or subset' \
     '  source-map mutation: forbidden' \
     "  CSF closing: ${CSF_RADIUS} voxels" \
+    "  CSF opening: ${CSF_OPENING_RADIUS} voxels" \
     "  CSF source labels: ${CSF_SOURCE_DESCRIPTION}" \
     "  CSF components: ${CSF_COMPONENT_POLICY}, connectivity ${CONNECTIVITY}" \
     "  skin closing: ${SKIN_RADIUS} voxels" \
@@ -164,10 +180,12 @@ echo "[INFO] Logs:              ${LOG_DIR}"
 echo "[INFO] Preflight Python:  $("${PYTHON_BIN}" --version 2>&1)"
 echo "[INFO] Module bootstrap:  ${LOAD_SIMNIBS_MODULE} (SimNIBS/4.0.1-foss-2023a when enabled)"
 echo "[INFO] Resource profile:  SimNIBS/4.0.1-foss-2023a, ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
-echo "[INFO] Concurrency:       ${MAX_CONCURRENT_TASKS}"
+echo "[INFO] Array concurrency: ${MAX_CONCURRENT_TASKS}"
+echo "[INFO] Worker processes:  ${WORKERS_PER_ARRAY_TASK} per array element"
+echo "[INFO] Subject slots:     ${MAX_SUBJECT_CONCURRENCY}"
 echo "[INFO] Retries:           ${MAX_RETRIES}"
 
-EXPORTS="ALL,TI_CHARM_CLEANUP_MANIFEST=${MANIFEST},TI_CHARM_CLEANUP_WORKFLOW_PY=${WORKFLOW_PY},TI_CHARM_CLEANUP_LOG_DIR=${LOG_DIR},TI_CHARM_CLEANUP_MAX_RETRIES=${MAX_RETRIES},TI_CHARM_CLEANUP_CSF_RADIUS=${CSF_RADIUS},TI_CHARM_CLEANUP_SKIN_RADIUS=${SKIN_RADIUS},TI_CHARM_CLEANUP_CSF_INCLUDE_BLOOD=${CSF_INCLUDE_BLOOD},TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=${CSF_COMPONENT_POLICY},TI_CHARM_CLEANUP_COMPONENT_POLICY=${COMPONENT_POLICY},TI_CHARM_CLEANUP_WM_MIN_COMPONENT_VOXELS=${WM_MIN_COMPONENT_VOXELS},TI_CHARM_CLEANUP_GM_MIN_COMPONENT_VOXELS=${GM_MIN_COMPONENT_VOXELS},TI_CHARM_CLEANUP_CONNECTIVITY=${CONNECTIVITY}"
+EXPORTS="ALL,TI_CHARM_CLEANUP_MANIFEST=${MANIFEST},TI_CHARM_CLEANUP_WORKFLOW_PY=${WORKFLOW_PY},TI_CHARM_CLEANUP_LOG_DIR=${LOG_DIR},TI_CHARM_CLEANUP_MAX_RETRIES=${MAX_RETRIES},TI_CHARM_CLEANUP_WORKERS_PER_ARRAY_TASK=${WORKERS_PER_ARRAY_TASK},TI_CHARM_CLEANUP_CSF_RADIUS=${CSF_RADIUS},TI_CHARM_CLEANUP_CSF_OPENING_RADIUS=${CSF_OPENING_RADIUS},TI_CHARM_CLEANUP_SKIN_RADIUS=${SKIN_RADIUS},TI_CHARM_CLEANUP_CSF_INCLUDE_BLOOD=${CSF_INCLUDE_BLOOD},TI_CHARM_CLEANUP_CSF_COMPONENT_POLICY=${CSF_COMPONENT_POLICY},TI_CHARM_CLEANUP_COMPONENT_POLICY=${COMPONENT_POLICY},TI_CHARM_CLEANUP_WM_MIN_COMPONENT_VOXELS=${WM_MIN_COMPONENT_VOXELS},TI_CHARM_CLEANUP_GM_MIN_COMPONENT_VOXELS=${GM_MIN_COMPONENT_VOXELS},TI_CHARM_CLEANUP_CONNECTIVITY=${CONNECTIVITY}"
 ARRAY_SUBMISSION=$("${SBATCH_BIN}" \
     --parsable \
     --job-name="${JOB_NAME}" \

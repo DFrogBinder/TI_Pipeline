@@ -170,6 +170,20 @@ mesh, requires tetrahedral elements and tissue tags, verifies that the input
 map hash is unchanged, atomically installs the mesh, and writes one provenance
 JSON under `<mesh-root>/results/`.
 
+For CPU-bound full cohorts, the submitter can pack two independent meshes into
+each eight-core allocation. Each worker is restricted to its own four-core CPU
+set, and temporary mesh write/reload validation uses node-local storage. The
+mesh settings and final output validation remain unchanged:
+
+```bash
+TI_CHARM_MESH_WORKERS_PER_ARRAY_TASK=2 TI_CHARM_MESH_LOCAL_STAGING=1 CPUS_PER_TASK=8 MEMORY=32G MANIFEST="$MANIFEST" LOG_DIR="$LOG_DIR" EXPECTED_TASKS=652 MAX_CONCURRENT_TASKS=50 TI_CHARM_MESH_MAX_RETRIES=2 bash CamCan_Experiment/charm_segmentation_batch/submit_collected_meshes.sh
+```
+
+For 652 subjects this produces 326 array elements (`0-325%50`), four threads
+per mesh worker, at most 100 simultaneous subjects, and exactly 652 meshes plus
+652 result JSON files. Packing is opt-in; omitting the two packing variables
+retains the original one-subject-per-array-element behavior.
+
 After the array terminates, perform the quick aggregate gate without rehashing
 all mesh bytes:
 

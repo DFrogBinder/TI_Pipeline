@@ -332,7 +332,13 @@ def _mesh_settings(
 
     if supports("num_threads"):
         options["num_threads"] = max(
-            1, int(os.environ.get("SLURM_CPUS_PER_TASK", "8"))
+            1,
+            int(
+                os.environ.get(
+                    "TI_CHARM_MESH_THREADS_PER_WORKER",
+                    os.environ.get("SLURM_CPUS_PER_TASK", "8"),
+                )
+            ),
         )
     return options
 
@@ -395,6 +401,7 @@ def run_mesh_task(
     manifest: str | Path,
     task_index: int,
     settings_path: str | Path | None = None,
+    staging_root: str | Path | None = None,
 ) -> dict[str, object]:
     rows = read_tsv(manifest)
     if task_index < 0 or task_index >= len(rows):
@@ -485,9 +492,15 @@ def run_mesh_task(
     )
 
     mesh_root = mesh_path.parents[4]
-    staging_root = mesh_root / ".staging"
-    staging_root.mkdir(parents=True, exist_ok=True)
-    task_stage = Path(tempfile.mkdtemp(prefix=f"{subject}-", dir=staging_root))
+    resolved_staging_root = (
+        Path(staging_root).expanduser().resolve(strict=True)
+        if staging_root is not None
+        else mesh_root / ".staging"
+    )
+    resolved_staging_root.mkdir(parents=True, exist_ok=True)
+    task_stage = Path(
+        tempfile.mkdtemp(prefix=f"{subject}-", dir=resolved_staging_root)
+    )
     staged_mesh = task_stage / f"{subject}.msh"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     print(
@@ -555,6 +568,7 @@ def run_mesh_task(
         "segmentation_rerun": False,
         "surfaces_requested": False,
         "simulation_requested": False,
+        "staging_mode": "node_local" if staging_root is not None else "mesh_root",
         "started_at": started_at,
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -655,6 +669,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--manifest", required=True)
     run_task.add_argument("--task-index", type=int, required=True)
     run_task.add_argument("--settings")
+    run_task.add_argument("--staging-root")
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("--manifest", required=True)
@@ -680,6 +695,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest=args.manifest,
                 task_index=args.task_index,
                 settings_path=args.settings,
+                staging_root=args.staging_root,
             )
         else:
             payload = validate_results(

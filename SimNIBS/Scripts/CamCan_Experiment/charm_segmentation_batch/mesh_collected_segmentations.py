@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 MAP_SUFFIX = "_CHARM_tissue_labeling_upsampled.nii.gz"
@@ -376,11 +376,16 @@ def _completed_result_is_current(
     label_path: Path,
     expected_label_hash: str,
     mesh_path: Path,
+    required_provenance: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     if not result_path.is_file() or not mesh_path.is_file():
         return None
     try:
         payload = json.loads(result_path.read_text(encoding="utf-8"))
+        provenance_matches = all(
+            payload.get(key) == value
+            for key, value in (required_provenance or {}).items()
+        )
         if (
             payload.get("status") != "complete"
             or payload.get("subject") != subject
@@ -389,6 +394,7 @@ def _completed_result_is_current(
             or mesh_path.stat().st_size != payload.get("mesh_bytes")
             or sha256_file(label_path) != expected_label_hash
             or sha256_file(mesh_path) != payload.get("mesh_sha256")
+            or not provenance_matches
         ):
             return None
         return payload
@@ -396,38 +402,26 @@ def _completed_result_is_current(
         return None
 
 
-def run_mesh_task(
+def create_mesh_from_label(
     *,
-    manifest: str | Path,
+    subject: str,
+    label_path: str | Path,
+    expected_label_hash: str,
+    mesh_path: str | Path,
+    result_path: str | Path,
     task_index: int,
     settings_path: str | Path | None = None,
     staging_root: str | Path | None = None,
+    provenance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    rows = read_tsv(manifest)
-    if task_index < 0 or task_index >= len(rows):
-        raise IndexError(
-            f"task index {task_index} is outside manifest range 0..{len(rows) - 1}"
-        )
-    row = rows[task_index]
-    if row.get("status") != "ready":
-        raise ValueError(f"task {task_index} is not ready: {row.get('message')}")
-    if int(row["task_id"]) != task_index:
-        raise ValueError(
-            f"manifest task_id {row['task_id']} does not match index {task_index}"
-        )
+    """Create one audited CHARM-equivalent mesh at an arbitrary output path."""
 
-    subject = _safe_subject(row["subject"])
-    label_path = Path(row["label_path"]).expanduser().resolve(strict=True)
-    expected_label_hash = row["label_sha256"]
-    mesh_path = Path(row["mesh_path"]).expanduser().resolve()
-    result_path = Path(row["result_path"]).expanduser().resolve()
-    expected_mesh_path = mesh_path_for_subject(mesh_path.parents[4], subject)
-    if mesh_path != expected_mesh_path:
-        raise ValueError(f"unexpected mesh output path: {mesh_path}")
+    subject = _safe_subject(subject)
+    label_path = Path(label_path).expanduser().resolve(strict=True)
+    mesh_path = Path(mesh_path).expanduser().resolve()
+    result_path = Path(result_path).expanduser().resolve()
     if label_path.is_symlink() or mesh_path.is_symlink():
         raise ValueError("refusing symlinked label or mesh path")
-    if label_path.name != f"{subject}{MAP_SUFFIX}":
-        raise ValueError(f"collected map does not match subject identity: {label_path}")
 
     previous = _completed_result_is_current(
         result_path,
@@ -435,6 +429,7 @@ def run_mesh_task(
         label_path=label_path,
         expected_label_hash=expected_label_hash,
         mesh_path=mesh_path,
+        required_provenance=provenance,
     )
     if previous is not None:
         print(
@@ -571,6 +566,7 @@ def run_mesh_task(
         "staging_mode": "node_local" if staging_root is not None else "mesh_root",
         "started_at": started_at,
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        **dict(provenance or {}),
     }
     write_json_atomic(result_path, payload)
     print(
@@ -578,6 +574,47 @@ def run_mesh_task(
         flush=True,
     )
     return payload
+
+
+def run_mesh_task(
+    *,
+    manifest: str | Path,
+    task_index: int,
+    settings_path: str | Path | None = None,
+    staging_root: str | Path | None = None,
+) -> dict[str, object]:
+    rows = read_tsv(manifest)
+    if task_index < 0 or task_index >= len(rows):
+        raise IndexError(
+            f"task index {task_index} is outside manifest range 0..{len(rows) - 1}"
+        )
+    row = rows[task_index]
+    if row.get("status") != "ready":
+        raise ValueError(f"task {task_index} is not ready: {row.get('message')}")
+    if int(row["task_id"]) != task_index:
+        raise ValueError(
+            f"manifest task_id {row['task_id']} does not match index {task_index}"
+        )
+
+    subject = _safe_subject(row["subject"])
+    label_path = Path(row["label_path"]).expanduser().resolve(strict=True)
+    mesh_path = Path(row["mesh_path"]).expanduser().resolve()
+    expected_mesh_path = mesh_path_for_subject(mesh_path.parents[4], subject)
+    if mesh_path != expected_mesh_path:
+        raise ValueError(f"unexpected mesh output path: {mesh_path}")
+    if label_path.name != f"{subject}{MAP_SUFFIX}":
+        raise ValueError(f"collected map does not match subject identity: {label_path}")
+
+    return create_mesh_from_label(
+        subject=subject,
+        label_path=label_path,
+        expected_label_hash=row["label_sha256"],
+        mesh_path=mesh_path,
+        result_path=row["result_path"],
+        task_index=task_index,
+        settings_path=settings_path,
+        staging_root=staging_root,
+    )
 
 
 def validate_results(

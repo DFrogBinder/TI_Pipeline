@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "study_id": "corrected_v4_four_roi",
+  "corrected_map_set": "corrected_v4_csf7_open3_lcc_no_blood",
+  "hpc_corrected_map_manifest": "/mnt/parscratch/users/cop23bi/charm_segmentations_corrected_v4_csf7_open3_lcc_no_blood/collection/charm_segmentation_manifest.tsv",
+  "hpc_study_root": "/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI",
+  "hpc_scaffold_root": "/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Scaffolds",
+  "hpc_source_roots": [
+    "/mnt/parscratch/users/cop23bi/CamCanMRI",
+    "/mnt/parscratch/users/cop23bi/ti_dataset"
+  ],
+  "hpc_legacy_scaffold_manifest": "/mnt/parscratch/users/cop23bi/CamCan_Approved_Wave_1/campaign/Left_Hippocampus/prep_tasks.tsv",
+  "targets_csv_sha256": "97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6",
+  "rois": [
+    "Left_Hippocampus",
+    "Left_M1",
+    "Right_DLPC",
+    "Right_Thalamus"
+  ],
+  "repeats": [
+    "01",
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07",
+    "08",
+    "09",
+    "10"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "cohort_id": "interim_53",
+  "status": "provisional",
+  "subjects_file": "subjects.txt",
+  "expected_subjects": 53,
+  "source_review_exported_at": "2026-07-22T17:30:11.196749+00:00",
+  "source_database_sha256": "c0861494787a45079b2715cd05e63e7f6489cba3ab97e84a56ec07e5549675b9",
+  "selection_rule": "Exclude tag_03_csf_recheck and require every other active image to be accepted, with no maybe or decline decisions.",
+  "excluded_tissues": [
+    "tag_03_csf_recheck"
+  ],
+  "overlap_with_accepted_wave_1": 47,
+  "new_relative_to_accepted_wave_1": 6,
+  "subjects_sha256": "2c4bca7fa6a485663d437888bdbb1d80e3d9d9d7c3cce428a8d98d8dc17da2f2",
+  "note": "Interim simulation cohort pending the supervisor's final approved-subject export."
+}

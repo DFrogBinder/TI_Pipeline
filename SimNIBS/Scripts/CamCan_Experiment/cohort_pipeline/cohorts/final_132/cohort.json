@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "cohort_id": "final_132",
+  "status": "final",
+  "subjects_file": "subjects.txt",
+  "expected_subjects": 132,
+  "source_review_exported_at": "2026-07-24T02:01:20.628006+00:00",
+  "source_database_sha256": "b5c950250b16e82083bbcc12c57b3c01fc7d13b6d904e1d19fbc19c1c09c516a",
+  "source_accepted_export_sha256": "522e5085f4eee25cd4a2c01ad9ca885b5a214333c8da38dec9f918c965d4f607",
+  "subjects_sha256": "522e5085f4eee25cd4a2c01ad9ca885b5a214333c8da38dec9f918c965d4f607",
+  "selection_rule": "Use the final accepted_subjects.txt exported by the supervisor's completed corrected-v4 review state.",
+  "review_subjects_total": 652,
+  "review_accepted_subjects": 132,
+  "review_maybe_subjects": 154,
+  "review_declined_subjects": 366,
+  "review_in_review_subjects": 0,
+  "review_unreviewed_subjects": 0,
+  "overlap_with_interim_53": 52,
+  "excluded_from_interim_53": [
+    "sub-CC410390"
+  ],
+  "new_relative_to_interim_53": 80,
+  "overlap_with_accepted_wave_1": 72,
+  "new_relative_to_accepted_wave_1": 60,
+  "strict_tier_file": "strict_39_history_reconstruction.txt",
+  "strict_tier_subjects": 39,
+  "strict_tier_sha256": "183a3dd14949dc584c2b6e042e20ba76a831e6c67ebace4b6a3b224b285d4893",
+  "strict_tier_status": "history-derived candidate",
+  "strict_tier_reconstruction": {
+    "accepted_count_reached": 39,
+    "decision_history_id": 8773,
+    "decision_timestamp": "2026-07-24T01:14:40.343876+00:00",
+    "last_subject_added": "sub-CC420383",
+    "next_acceptance_history_id": 8790,
+    "next_acceptance_timestamp": "2026-07-24T01:19:27.228599+00:00",
+    "next_subject_added": "sub-CC110174",
+    "gap_before_lenient_pass_seconds": 286.884723
+  },
+  "note": "Authoritative 132-subject simulation cohort. The optional strict 39-subject tier was reconstructed from decision history at the pause before the lenient maybe-subject pass; it is preserved for sensitivity analysis and is not treated as a separate simulation cohort."
+}

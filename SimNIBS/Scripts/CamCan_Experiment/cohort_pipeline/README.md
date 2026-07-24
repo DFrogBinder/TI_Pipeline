@@ -56,13 +56,13 @@ Only one array chunk is eligible at a time. This keeps the established
 50-array-task concurrency within Stanage's user limits. Array chunks are
 calculated from the live `MaxArraySize` and the cohort size.
 
-For the current 53-subject cohort the full scope is:
+For the final 132-subject cohort the full scope is:
 
-- 53 scaffold tasks;
-- 2,120 independent meshes (53 × 4 ROIs × 10 repeats);
-- 1,060 packed mesh array elements, normally split into two chunks;
-- 2,120 validated FEM simulations, normally split into three chunks;
-- six dependency-linked arrays in total.
+- 132 scaffold tasks;
+- 5,280 independent meshes (132 × 4 ROIs × 10 repeats);
+- 2,640 packed mesh array elements, normally split into three chunks;
+- 5,280 validated FEM simulations, normally split into six chunks;
+- ten dependency-linked arrays in total.
 
 For 200 subjects the same code creates 8,000 mesh tasks and 8,000 FEM tasks,
 split automatically. No script change is required.
@@ -71,11 +71,17 @@ Task retries default to `unlimited`. Completed siblings in a requeued packed
 mesh element are reused rather than recalculated. A deterministic failure can
 therefore remain active until it is diagnosed or manually cancelled.
 
-## Current interim cohort
+## Final supervisor-approved cohort
 
-`cohorts/interim_53/` contains the provisional 53-subject list selected from
-the second review database. Its `cohort.json` records the selection rule,
-database hash, and subject-list hash.
+`cohorts/final_132/` contains the authoritative 132 subjects from the
+supervisor's completed corrected-v4 review export. Its `cohort.json` records
+the review-database and accepted-export hashes, final review counts, and its
+relationship to the earlier provisional cohorts.
+
+The folder also preserves a history-derived candidate for the supervisor's
+strict 39-subject checkpoint. This is an optional downstream sensitivity tier:
+all 132 subjects are simulated once, and the 39-subject subset can be selected
+during analysis without duplicating any meshing or FEM work.
 
 After pulling the committed code on Stanage, run the non-submitting gate first:
 
@@ -84,7 +90,7 @@ cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts
 conda deactivate
 
 bash CamCan_Experiment/cohort_pipeline/submit_cohort_pipeline.sh \
-    interim_53 \
+    final_132 \
     --preflight
 ```
 
@@ -93,7 +99,7 @@ Then submit the complete dependency chain:
 
 ```bash
 bash CamCan_Experiment/cohort_pipeline/submit_cohort_pipeline.sh \
-    interim_53
+    final_132
 ```
 
 The launcher refuses a duplicate submission while job IDs recorded for that
@@ -102,18 +108,26 @@ cohort are still active.
 Monitor the chain with:
 
 ```bash
-CAMPAIGN=/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI/campaigns/interim_53
+CAMPAIGN=/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI/campaigns/final_132
 
 squeue -j "$(paste -sd, "$CAMPAIGN/submitted_job_ids.txt")" \
     -o '%.18i %.2t %.10M %.30R'
 ```
+
+## Archived interim cohort
+
+`cohorts/interim_53/` contains the provisional 53-subject list selected from
+the second review database. Its `cohort.json` records the selection rule,
+database hash, and subject-list hash. It is retained for provenance and should
+not be submitted now that `final_132` exists. Of those 53 provisional subjects,
+52 are in the final cohort; `sub-CC410390` is not.
 
 ## Validation
 
 After the chain is absent from `squeue`, validate the three layers:
 
 ```bash
-CAMPAIGN=/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI/campaigns/interim_53
+CAMPAIGN=/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI/campaigns/final_132
 WORKFLOW=CamCan_Experiment/cohort_pipeline/workflow.py
 
 python3 "$WORKFLOW" validate \
@@ -157,6 +171,5 @@ python3 CamCan_Experiment/cohort_pipeline/workflow.py create-cohort \
 
 Commit and pull the new `cohorts/final_v1/` directory, then use the same
 preflight and submission commands with `final_v1`. Subjects already completed
-under `interim_53` are validated and reused; only missing or stale work is
+under earlier cohorts are validated and reused; only missing or stale work is
 performed.
-

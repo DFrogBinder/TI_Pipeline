@@ -161,6 +161,99 @@ def test_preflight_chunks_maximum_200_subject_cohort(tmp_path):
     assert payload["simulation_array_chunks"] == 8
 
 
+def test_release_job_submits_one_array_and_one_dependent_releaser(tmp_path):
+    pipeline_dir = Path(__file__).resolve().parents[1] / "cohort_pipeline"
+    release_script = pipeline_dir / "cohort_pipeline_release.sh"
+    array_script = pipeline_dir / "cohort_pipeline_array.slurm"
+    workflow_script = pipeline_dir / "workflow.py"
+    camcan_dir = pipeline_dir.parent
+    targets = Path(__file__).resolve().parents[2] / "utils" / "targets.csv"
+    plan = _write(
+        tmp_path / "release_plan.tsv",
+        "step\tstage\tchunk_index\toffset\tcount\n"
+        "0\tmesh\t0\t0\t2\n",
+    )
+    mesh_manifest = _write(tmp_path / "mesh.tsv", "task_id\n")
+    simulation_manifest = _write(tmp_path / "simulation.tsv", "task_id\n")
+    job_ids = _write(tmp_path / "submitted_job_ids.txt", "100\n")
+    sbatch_log = tmp_path / "sbatch.log"
+    sbatch_counter = tmp_path / "sbatch.counter"
+    fake_sbatch = _write(
+        tmp_path / "fake_sbatch.sh",
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        f"printf '%s\\n' \"$*\" >> {sbatch_log}\n"
+        f"count=$(cat {sbatch_counter} 2>/dev/null || printf '0')\n"
+        "count=$((count + 1))\n"
+        f"printf '%s\\n' \"$count\" > {sbatch_counter}\n"
+        "printf '%s\\n' \"$((20000 + count))\"\n",
+    )
+    fake_sbatch.chmod(0o755)
+    environment = {
+        **os.environ,
+        "TI_COHORT_RELEASE_PLAN": str(plan),
+        "TI_COHORT_RELEASE_STEP": "0",
+        "TI_COHORT_RELEASE_SCRIPT": str(release_script),
+        "TI_COHORT_ARRAY_SCRIPT": str(array_script),
+        "TI_COHORT_WORKFLOW_PY": str(workflow_script),
+        "TI_COHORT_LOG_DIR": str(tmp_path / "logs"),
+        "TI_COHORT_JOB_ID_FILE": str(job_ids),
+        "TI_COHORT_RELEASE_STATE_DIR": str(tmp_path / "release_state"),
+        "TI_COHORT_MESH_MANIFEST": str(mesh_manifest),
+        "TI_COHORT_SIMULATION_MANIFEST": str(simulation_manifest),
+        "TI_TARGETS_CSV": str(targets),
+        "TI_EXPECTED_TARGETS_SHA256": sha256_file(targets),
+        "TI_SIM_RUNNER_PY": str(
+            camcan_dir / "simulation" / "TI_runner_multi-core.py"
+        ),
+        "TI_COMPLETION_CHECK_PY": str(
+            camcan_dir / "simulation" / "validate_simulation_outputs.py"
+        ),
+        "SBATCH_BIN": str(fake_sbatch),
+        "SCANCEL_BIN": "/bin/true",
+        "TI_COHORT_RELEASE_RETRY_DELAY": "0",
+        "SLURM_JOB_ID": "555",
+    }
+
+    completed = subprocess.run(
+        ["bash", str(release_script)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert "Submitted mesh chunk 0" in completed.stdout
+    assert job_ids.read_text(encoding="utf-8").splitlines() == [
+        "100",
+        "20001",
+        "20002",
+    ]
+    calls = sbatch_log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 2
+    assert "--array=0-1%50" in calls[0]
+    assert "TI_COHORT_STAGE=mesh" in calls[0]
+    assert "ELEMENT_OFFSET=0" in calls[0]
+    assert "--dependency=afterok:20001" in calls[1]
+    assert "TI_COHORT_RELEASE_STEP=1" in calls[1]
+    assert (
+        tmp_path / "release_state" / "release_step_0.tsv"
+    ).is_file()
+
+    environment["TI_COHORT_RELEASE_STEP"] = "1"
+    finalizer = subprocess.run(
+        ["bash", str(release_script)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert "All planned scaffold, mesh, and FEM arrays completed" in finalizer.stdout
+    assert (
+        tmp_path / "release_state" / "chain_complete.tsv"
+    ).is_file()
+
+
 def test_legacy_scaffold_is_imported_without_segmentation_or_mesh(tmp_path):
     fixture = _fixture(tmp_path)
     subject = fixture["subjects"][0]
@@ -353,7 +446,7 @@ def test_simulation_uses_existing_mesh_and_reruns_if_outputs_are_missing(
     assert len(commands) == 4
 
 
-def test_submitter_chunks_full_scope_and_chains_every_array(tmp_path):
+def test_submitter_writes_full_plan_and_releases_only_first_stage(tmp_path):
     fixture = _fixture(tmp_path)
     sbatch_log = tmp_path / "sbatch.log"
     sbatch_counter = tmp_path / "sbatch.counter"
@@ -414,15 +507,27 @@ def test_submitter_chunks_full_scope_and_chains_every_array(tmp_path):
     assert "independent mesh tasks: 40" in completed.stdout
     assert "packed mesh array elements: 20 in 3 sequential chunk(s)" in completed.stdout
     assert "FEM tasks: 40 in 6 sequential chunk(s)" in completed.stdout
+    assert "automatic release steps: 9" in completed.stdout
     assert "execution: full requested cohort; not a smoke or subset" in completed.stdout
     submissions = sbatch_log.read_text(encoding="utf-8").splitlines()
-    assert len(submissions) == 10
+    assert len(submissions) == 2
     assert "--array=0-0%5" in submissions[0]
-    assert "--array=0-6%5" in submissions[1]
-    assert "ELEMENT_OFFSET=0" in submissions[1]
-    assert "ELEMENT_OFFSET=7" in submissions[2]
-    assert "ELEMENT_OFFSET=14" in submissions[3]
-    assert "TASK_OFFSET=0" in submissions[4]
-    assert "TASK_OFFSET=35" in submissions[-1]
-    for index, submission in enumerate(submissions[1:], start=1):
-        assert f"--dependency=afterok:{21000 + index}" in submission
+    assert "--dependency=afterok:21001" in submissions[1]
+    assert "TI_COHORT_RELEASE_STEP=0" in submissions[1]
+    assert "--array=" not in submissions[1]
+
+    release_plan = (
+        fixture["campaign"] / "release_plan.tsv"
+    ).read_text(encoding="utf-8").splitlines()
+    assert release_plan == [
+        "step\tstage\tchunk_index\toffset\tcount",
+        "0\tmesh\t0\t0\t7",
+        "1\tmesh\t1\t7\t7",
+        "2\tmesh\t2\t14\t6",
+        "3\tsimulate\t0\t0\t7",
+        "4\tsimulate\t1\t7\t7",
+        "5\tsimulate\t2\t14\t7",
+        "6\tsimulate\t3\t21\t7",
+        "7\tsimulate\t4\t28\t7",
+        "8\tsimulate\t5\t35\t5",
+    ]

@@ -45,24 +45,28 @@ scaffold copies; the m2m directory itself is not symlinked.
 
 ## Execution architecture
 
-The launcher submits one dependency chain:
+The launcher submits one automatically released dependency chain:
 
 1. one scaffold array;
-2. packed direct-meshing arrays, two mesh workers per eight-CPU array element,
-   four threads per worker, with node-local staging;
-3. FEM arrays using `--reuse-existing-mesh`.
+2. sequential packed direct-meshing arrays, two mesh workers per eight-CPU
+   array element, four threads per worker, with node-local staging;
+3. sequential FEM arrays using `--reuse-existing-mesh`.
 
-Only one array chunk is eligible at a time. This keeps the established
-50-array-task concurrency within Stanage's user limits. Array chunks are
-calculated from the live `MaxArraySize` and the cohort size.
+Only one large array is submitted at a time. A one-CPU release job with an
+`afterok` dependency submits the next chunk when the preceding chunk finishes,
+then attaches the next release job. The 875-element chunk ceiling and one
+pending releaser keep this campaign at or below 877 submitted jobs, avoiding
+Stanage's per-user QOS submission ceiling. The release job retries only
+`QOSMaxSubmitJobPerUserLimit` submission failures; scientific task retries
+remain unlimited and separate.
 
 For the final 132-subject cohort the full scope is:
 
 - 132 scaffold tasks;
 - 5,280 independent meshes (132 × 4 ROIs × 10 repeats);
-- 2,640 packed mesh array elements, normally split into three chunks;
-- 5,280 validated FEM simulations, normally split into six chunks;
-- ten dependency-linked arrays in total.
+- 2,640 packed mesh array elements, split into four sequential chunks;
+- 5,280 validated FEM simulations, split into seven sequential chunks;
+- twelve scientific arrays in total, connected by small release jobs.
 
 For 200 subjects the same code creates 8,000 mesh tasks and 8,000 FEM tasks,
 split automatically. No script change is required.
@@ -103,7 +107,7 @@ bash CamCan_Experiment/cohort_pipeline/submit_cohort_pipeline.sh \
 ```
 
 The launcher refuses a duplicate submission while job IDs recorded for that
-cohort are still active.
+cohort are still active. The job-ID file grows as later chunks are released.
 
 Monitor the chain with:
 

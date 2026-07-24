@@ -27,6 +27,7 @@ STUDY_CONFIG="${STUDY_CONFIG:-${SCRIPT_DIR}/studies/corrected_v4_four_roi.json}"
 COHORT_CONFIG="${COHORT_CONFIG:-${SCRIPT_DIR}/cohorts/${COHORT_ID}/cohort.json}"
 WORKFLOW_PY="${TI_COHORT_WORKFLOW_PY:-${SCRIPT_DIR}/workflow.py}"
 SLURM_SCRIPT="${SLURM_SCRIPT:-${SCRIPT_DIR}/cohort_pipeline_array.slurm}"
+RELEASE_SCRIPT="${TI_COHORT_RELEASE_SCRIPT:-${SCRIPT_DIR}/cohort_pipeline_release.sh}"
 TARGETS_CSV="${TI_TARGETS_CSV:-${PIPELINE_DIR}/utils/targets.csv}"
 EXPECTED_TARGETS_SHA256="${TI_EXPECTED_TARGETS_SHA256:-97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6}"
 SIM_RUNNER_PY="${TI_SIM_RUNNER_PY:-${CAMCAN_DIR}/simulation/TI_runner_multi-core.py}"
@@ -47,7 +48,7 @@ SIMULATION_MANIFEST="${SIMULATION_MANIFEST:-${CAMPAIGN_ROOT}/simulation_tasks.ts
 SUMMARY="${SUMMARY:-${CAMPAIGN_ROOT}/preflight.json}"
 
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-50}"
-MAX_ARRAY_ELEMENTS="${MAX_ARRAY_ELEMENTS:-1000}"
+MAX_ARRAY_ELEMENTS="${MAX_ARRAY_ELEMENTS:-875}"
 MESH_WORKERS="${TI_COHORT_MESH_WORKERS_PER_ELEMENT:-2}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
 MEMORY="${MEMORY:-32G}"
@@ -60,12 +61,18 @@ SCONTROL_BIN="${SCONTROL_BIN:-scontrol}"
 SCANCEL_BIN="${SCANCEL_BIN:-scancel}"
 SQUEUE_BIN="${SQUEUE_BIN:-squeue}"
 JOB_PREFIX="${JOB_PREFIX:-cohort_${COHORT_ID}}"
+RELEASE_CPUS="${TI_COHORT_RELEASE_CPUS:-1}"
+RELEASE_MEMORY="${TI_COHORT_RELEASE_MEMORY:-1G}"
+RELEASE_TIME="${TI_COHORT_RELEASE_TIME:-01:00:00}"
+RELEASE_SUBMIT_ATTEMPTS="${TI_COHORT_RELEASE_SUBMIT_ATTEMPTS:-60}"
+RELEASE_RETRY_DELAY="${TI_COHORT_RELEASE_RETRY_DELAY:-60}"
 
 for required in \
     "${STUDY_CONFIG}" \
     "${COHORT_CONFIG}" \
     "${WORKFLOW_PY}" \
     "${SLURM_SCRIPT}" \
+    "${RELEASE_SCRIPT}" \
     "${TARGETS_CSV}" \
     "${SIM_RUNNER_PY}" \
     "${COMPLETION_CHECK_PY}" \
@@ -86,7 +93,9 @@ for value_name in \
     MAX_CONCURRENT_TASKS \
     MAX_ARRAY_ELEMENTS \
     MESH_WORKERS \
-    CPUS_PER_TASK
+    CPUS_PER_TASK \
+    RELEASE_CPUS \
+    RELEASE_SUBMIT_ATTEMPTS
 do
     value="${!value_name}"
     if ! [[ "${value}" =~ ^[0-9]+$ ]] || [ "${value}" -lt 1 ]; then
@@ -104,6 +113,10 @@ if [ $((CPUS_PER_TASK % MESH_WORKERS)) -ne 0 ]; then
 fi
 if [ "${LOCAL_STAGING}" != "0" ] && [ "${LOCAL_STAGING}" != "1" ]; then
     echo "[ERROR] TI_COHORT_MESH_LOCAL_STAGING must be 0 or 1." >&2
+    exit 2
+fi
+if ! [[ "${RELEASE_RETRY_DELAY}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] TI_COHORT_RELEASE_RETRY_DELAY must be a non-negative integer." >&2
     exit 2
 fi
 
@@ -189,6 +202,8 @@ MESH_ELEMENTS=$(( (MESH_TASKS + MESH_WORKERS - 1) / MESH_WORKERS ))
 MESH_CHUNKS=$(( (MESH_ELEMENTS + MAX_ARRAY_ELEMENTS - 1) / MAX_ARRAY_ELEMENTS ))
 SIMULATION_CHUNKS=$(( (SIMULATION_TASKS + MAX_ARRAY_ELEMENTS - 1) / MAX_ARRAY_ELEMENTS ))
 SCHEDULER_TASKS=$((EXPECTED_SUBJECTS + MESH_ELEMENTS + SIMULATION_TASKS))
+RELEASE_STEPS=$((MESH_CHUNKS + SIMULATION_CHUNKS))
+MAX_SUBMITTED_BY_CAMPAIGN=$((MAX_ARRAY_ELEMENTS + 2))
 THREADS_PER_MESH_WORKER=$((CPUS_PER_TASK / MESH_WORKERS))
 
 printf '%s\n' \
@@ -206,6 +221,8 @@ printf '%s\n' \
     "  packed mesh array elements: ${MESH_ELEMENTS} in ${MESH_CHUNKS} sequential chunk(s)" \
     "  FEM tasks: ${SIMULATION_TASKS} in ${SIMULATION_CHUNKS} sequential chunk(s)" \
     "  scheduler task instances: ${SCHEDULER_TASKS}" \
+    "  automatic release steps: ${RELEASE_STEPS}" \
+    "  maximum campaign jobs submitted at once: ${MAX_SUBMITTED_BY_CAMPAIGN}" \
     "  expected meshes: ${MESH_TASKS}" \
     "  expected validated simulations: ${SIMULATION_TASKS}" \
     '  execution: full requested cohort; not a smoke or subset' \
@@ -222,6 +239,8 @@ echo "[INFO] Resource profile:    SimNIBS/4.0.1-foss-2023a, ${PARTITION}, ${CPUS
 echo "[INFO] Mesh architecture:   ${MESH_WORKERS} workers x ${THREADS_PER_MESH_WORKER} cores, node-local staging=${LOCAL_STAGING}"
 echo "[INFO] Array concurrency:   ${MAX_CONCURRENT_TASKS}"
 echo "[INFO] Array chunk limit:   ${MAX_ARRAY_ELEMENTS}"
+echo "[INFO] Release architecture: one large array at a time plus one afterok releaser"
+echo "[INFO] Release resources:   ${RELEASE_CPUS} CPU, ${RELEASE_MEMORY}, ${RELEASE_TIME}"
 echo "[INFO] Retry limit:         ${MAX_RETRIES}"
 echo "[INFO] ROAST involvement:   none"
 
@@ -245,120 +264,124 @@ if [ -s "${SUBMITTED_JOB_FILE}" ] && command -v "${SQUEUE_BIN}" >/dev/null 2>&1;
     fi
 fi
 
-SUBMITTED_JOB_IDS=()
-LAST_SUBMITTED_JOB_ID=""
-cancel_submitted() {
-    if [ "${#SUBMITTED_JOB_IDS[@]}" -gt 0 ]; then
-        echo "[WARN] Cancelling already-submitted cohort jobs: ${SUBMITTED_JOB_IDS[*]}" >&2
-        "${SCANCEL_BIN}" "${SUBMITTED_JOB_IDS[@]}" || true
-    fi
-}
+RELEASE_PLAN="${CAMPAIGN_ROOT}/release_plan.tsv"
+RELEASE_STATE_DIR="${CAMPAIGN_ROOT}/release_state"
+mkdir -p "${RELEASE_STATE_DIR}"
+rm -f \
+    "${RELEASE_STATE_DIR}"/release_step_*.tsv \
+    "${RELEASE_STATE_DIR}/chain_complete.tsv"
 
-submit_array() {
-    local stage="$1"
-    local array_spec="$2"
-    local dependency="$3"
-    local output_pattern="$4"
-    local exports="$5"
-    local job_name="$6"
-    local -a command
-    local submission exit_code job_id
-    command=(
-        "${SBATCH_BIN}"
-        --parsable
-        --job-name="${job_name}"
-        --partition="${PARTITION}"
-        --cpus-per-task="${CPUS_PER_TASK}"
-        --mem="${MEMORY}"
-        --time="${TIME_LIMIT}"
-        --array="${array_spec}"
-        --output="${output_pattern}"
-        --export="${exports}"
-    )
-    if [ -n "${dependency}" ]; then
-        command+=(--dependency="afterok:${dependency}")
-    fi
-    command+=("${SLURM_SCRIPT}")
-    set +e
-    submission=$("${command[@]}" 2>&1)
-    exit_code=$?
-    set -e
-    echo "${submission}" >&2
-    if [ "${exit_code}" -ne 0 ]; then
-        echo "[ERROR] ${stage} submission failed." >&2
-        cancel_submitted
-        exit "${exit_code}"
-    fi
-    job_id="${submission%%;*}"
+{
+    printf 'step\tstage\tchunk_index\toffset\tcount\n'
+    RELEASE_STEP=0
+    ELEMENT_OFFSET=0
+    MESH_CHUNK_INDEX=0
+    while [ "${ELEMENT_OFFSET}" -lt "${MESH_ELEMENTS}" ]; do
+        REMAINING=$((MESH_ELEMENTS - ELEMENT_OFFSET))
+        CHUNK_ELEMENTS="${MAX_ARRAY_ELEMENTS}"
+        if [ "${REMAINING}" -lt "${CHUNK_ELEMENTS}" ]; then
+            CHUNK_ELEMENTS="${REMAINING}"
+        fi
+        printf '%s\tmesh\t%s\t%s\t%s\n' \
+            "${RELEASE_STEP}" \
+            "${MESH_CHUNK_INDEX}" \
+            "${ELEMENT_OFFSET}" \
+            "${CHUNK_ELEMENTS}"
+        RELEASE_STEP=$((RELEASE_STEP + 1))
+        ELEMENT_OFFSET=$((ELEMENT_OFFSET + CHUNK_ELEMENTS))
+        MESH_CHUNK_INDEX=$((MESH_CHUNK_INDEX + 1))
+    done
+
+    TASK_OFFSET=0
+    SIMULATION_CHUNK_INDEX=0
+    while [ "${TASK_OFFSET}" -lt "${SIMULATION_TASKS}" ]; do
+        REMAINING=$((SIMULATION_TASKS - TASK_OFFSET))
+        CHUNK_TASKS="${MAX_ARRAY_ELEMENTS}"
+        if [ "${REMAINING}" -lt "${CHUNK_TASKS}" ]; then
+            CHUNK_TASKS="${REMAINING}"
+        fi
+        printf '%s\tsimulate\t%s\t%s\t%s\n' \
+            "${RELEASE_STEP}" \
+            "${SIMULATION_CHUNK_INDEX}" \
+            "${TASK_OFFSET}" \
+            "${CHUNK_TASKS}"
+        RELEASE_STEP=$((RELEASE_STEP + 1))
+        TASK_OFFSET=$((TASK_OFFSET + CHUNK_TASKS))
+        SIMULATION_CHUNK_INDEX=$((SIMULATION_CHUNK_INDEX + 1))
+    done
+} > "${RELEASE_PLAN}"
+
+PLANNED_RELEASE_STEPS=$(awk 'NR > 1 && NF > 0 { count++ } END { print count + 0 }' "${RELEASE_PLAN}")
+if [ "${PLANNED_RELEASE_STEPS}" -ne "${RELEASE_STEPS}" ]; then
+    echo "[ERROR] Internal release-plan count mismatch." >&2
+    exit 2
+fi
+
+parse_job_id() {
+    local submission="$1"
+    local job_id="${submission%%;*}"
     if ! [[ "${job_id}" =~ ^[0-9]+$ ]]; then
-        echo "[ERROR] Could not parse ${stage} job ID: ${submission}" >&2
-        cancel_submitted
-        exit 2
+        echo "[ERROR] Could not parse Slurm job ID: ${submission}" >&2
+        return 2
     fi
-    SUBMITTED_JOB_IDS+=("${job_id}")
-    LAST_SUBMITTED_JOB_ID="${job_id}"
+    printf '%s\n' "${job_id}"
 }
 
 COMMON_EXPORTS="TI_COHORT_WORKFLOW_PY=${WORKFLOW_PY},TI_COHORT_LOG_DIR=${LOG_DIR},TI_COHORT_MAX_RETRIES=${MAX_RETRIES}"
 SCAFFOLD_ARRAY="0-$((EXPECTED_SUBJECTS - 1))%${MAX_CONCURRENT_TASKS}"
 SCAFFOLD_EXPORTS="ALL,${COMMON_EXPORTS},TI_COHORT_STAGE=scaffold,TI_COHORT_MANIFEST=${SCAFFOLD_MANIFEST}"
-submit_array \
-    scaffold \
-    "${SCAFFOLD_ARRAY}" \
-    "" \
-    "${LOG_DIR}/scaffold-%A_%a.out" \
-    "${SCAFFOLD_EXPORTS}" \
-    "${JOB_PREFIX}_scaffold"
-PREVIOUS_JOB="${LAST_SUBMITTED_JOB_ID}"
-echo "[INFO] Submitted scaffold array: ${PREVIOUS_JOB}"
+set +e
+SCAFFOLD_SUBMISSION=$(
+    "${SBATCH_BIN}" \
+        --parsable \
+        --job-name="${JOB_PREFIX}_scaffold" \
+        --partition="${PARTITION}" \
+        --cpus-per-task="${CPUS_PER_TASK}" \
+        --mem="${MEMORY}" \
+        --time="${TIME_LIMIT}" \
+        --array="${SCAFFOLD_ARRAY}" \
+        --output="${LOG_DIR}/scaffold-%A_%a.out" \
+        --export="${SCAFFOLD_EXPORTS}" \
+        "${SLURM_SCRIPT}" 2>&1
+)
+SCAFFOLD_EXIT=$?
+set -e
+echo "${SCAFFOLD_SUBMISSION}" >&2
+if [ "${SCAFFOLD_EXIT}" -ne 0 ]; then
+    echo "[ERROR] Scaffold-array submission failed." >&2
+    exit "${SCAFFOLD_EXIT}"
+fi
+SCAFFOLD_JOB_ID=$(parse_job_id "${SCAFFOLD_SUBMISSION}")
 
-ELEMENT_OFFSET=0
-MESH_CHUNK_INDEX=0
-while [ "${ELEMENT_OFFSET}" -lt "${MESH_ELEMENTS}" ]; do
-    REMAINING=$((MESH_ELEMENTS - ELEMENT_OFFSET))
-    CHUNK_ELEMENTS="${MAX_ARRAY_ELEMENTS}"
-    if [ "${REMAINING}" -lt "${CHUNK_ELEMENTS}" ]; then
-        CHUNK_ELEMENTS="${REMAINING}"
-    fi
-    ARRAY_SPEC="0-$((CHUNK_ELEMENTS - 1))%${MAX_CONCURRENT_TASKS}"
-    MESH_EXPORTS="ALL,${COMMON_EXPORTS},TI_COHORT_STAGE=mesh,TI_COHORT_MANIFEST=${MESH_MANIFEST},ELEMENT_OFFSET=${ELEMENT_OFFSET},TI_COHORT_MESH_WORKERS_PER_ELEMENT=${MESH_WORKERS},TI_COHORT_MESH_THREADS_PER_WORKER=${THREADS_PER_MESH_WORKER},TI_COHORT_MESH_LOCAL_STAGING=${LOCAL_STAGING}"
-    submit_array \
-        "mesh chunk ${MESH_CHUNK_INDEX}" \
-        "${ARRAY_SPEC}" \
-        "${PREVIOUS_JOB}" \
-        "${LOG_DIR}/mesh-c${MESH_CHUNK_INDEX}-%A_%a.out" \
-        "${MESH_EXPORTS}" \
-        "${JOB_PREFIX}_mesh${MESH_CHUNK_INDEX}"
-    PREVIOUS_JOB="${LAST_SUBMITTED_JOB_ID}"
-    echo "[INFO] Submitted mesh chunk ${MESH_CHUNK_INDEX}: job=${PREVIOUS_JOB}, element_offset=${ELEMENT_OFFSET}, elements=${CHUNK_ELEMENTS}"
-    ELEMENT_OFFSET=$((ELEMENT_OFFSET + CHUNK_ELEMENTS))
-    MESH_CHUNK_INDEX=$((MESH_CHUNK_INDEX + 1))
-done
+RELEASE_EXPORTS="ALL,TI_COHORT_RELEASE_PLAN=${RELEASE_PLAN},TI_COHORT_RELEASE_STEP=0,TI_COHORT_RELEASE_SCRIPT=${RELEASE_SCRIPT},TI_COHORT_ARRAY_SCRIPT=${SLURM_SCRIPT},TI_COHORT_WORKFLOW_PY=${WORKFLOW_PY},TI_COHORT_LOG_DIR=${LOG_DIR},TI_COHORT_JOB_ID_FILE=${SUBMITTED_JOB_FILE},TI_COHORT_RELEASE_STATE_DIR=${RELEASE_STATE_DIR},TI_COHORT_MESH_MANIFEST=${MESH_MANIFEST},TI_COHORT_SIMULATION_MANIFEST=${SIMULATION_MANIFEST},TI_TARGETS_CSV=${TARGETS_CSV},TI_EXPECTED_TARGETS_SHA256=${TARGETS_SHA256},TI_SIM_RUNNER_PY=${SIM_RUNNER_PY},TI_COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY},TI_COHORT_MAX_RETRIES=${MAX_RETRIES},TI_COHORT_MESH_WORKERS_PER_ELEMENT=${MESH_WORKERS},TI_COHORT_MESH_THREADS_PER_WORKER=${THREADS_PER_MESH_WORKER},TI_COHORT_MESH_LOCAL_STAGING=${LOCAL_STAGING},TI_COHORT_RELEASE_CPUS=${RELEASE_CPUS},TI_COHORT_RELEASE_MEMORY=${RELEASE_MEMORY},TI_COHORT_RELEASE_TIME=${RELEASE_TIME},TI_COHORT_RELEASE_SUBMIT_ATTEMPTS=${RELEASE_SUBMIT_ATTEMPTS},TI_COHORT_RELEASE_RETRY_DELAY=${RELEASE_RETRY_DELAY},TI_COHORT_JOB_PREFIX=${JOB_PREFIX},PARTITION=${PARTITION},CPUS_PER_TASK=${CPUS_PER_TASK},MEMORY=${MEMORY},TIME_LIMIT=${TIME_LIMIT},MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS},SBATCH_BIN=${SBATCH_BIN},SCANCEL_BIN=${SCANCEL_BIN}"
+set +e
+RELEASE_SUBMISSION=$(
+    "${SBATCH_BIN}" \
+        --parsable \
+        --job-name="${JOB_PREFIX}_release0" \
+        --partition="${PARTITION}" \
+        --cpus-per-task="${RELEASE_CPUS}" \
+        --mem="${RELEASE_MEMORY}" \
+        --time="${RELEASE_TIME}" \
+        --dependency="afterok:${SCAFFOLD_JOB_ID}" \
+        --output="${LOG_DIR}/release-%j.out" \
+        --export="${RELEASE_EXPORTS}" \
+        "${RELEASE_SCRIPT}" 2>&1
+)
+RELEASE_EXIT=$?
+set -e
+echo "${RELEASE_SUBMISSION}" >&2
+if [ "${RELEASE_EXIT}" -ne 0 ]; then
+    echo "[ERROR] Initial release-job submission failed; cancelling scaffold job ${SCAFFOLD_JOB_ID}." >&2
+    "${SCANCEL_BIN}" "${SCAFFOLD_JOB_ID}" || true
+    exit "${RELEASE_EXIT}"
+fi
+RELEASE_JOB_ID=$(parse_job_id "${RELEASE_SUBMISSION}")
 
-TASK_OFFSET=0
-SIMULATION_CHUNK_INDEX=0
-while [ "${TASK_OFFSET}" -lt "${SIMULATION_TASKS}" ]; do
-    REMAINING=$((SIMULATION_TASKS - TASK_OFFSET))
-    CHUNK_TASKS="${MAX_ARRAY_ELEMENTS}"
-    if [ "${REMAINING}" -lt "${CHUNK_TASKS}" ]; then
-        CHUNK_TASKS="${REMAINING}"
-    fi
-    ARRAY_SPEC="0-$((CHUNK_TASKS - 1))%${MAX_CONCURRENT_TASKS}"
-    SIMULATION_EXPORTS="ALL,${COMMON_EXPORTS},TI_COHORT_STAGE=simulate,TI_COHORT_MANIFEST=${SIMULATION_MANIFEST},TASK_OFFSET=${TASK_OFFSET},TI_TARGETS_CSV=${TARGETS_CSV},TI_EXPECTED_TARGETS_SHA256=${TARGETS_SHA256},TI_SIM_RUNNER_PY=${SIM_RUNNER_PY},TI_COMPLETION_CHECK_PY=${COMPLETION_CHECK_PY}"
-    submit_array \
-        "simulation chunk ${SIMULATION_CHUNK_INDEX}" \
-        "${ARRAY_SPEC}" \
-        "${PREVIOUS_JOB}" \
-        "${LOG_DIR}/simulate-c${SIMULATION_CHUNK_INDEX}-%A_%a.out" \
-        "${SIMULATION_EXPORTS}" \
-        "${JOB_PREFIX}_sim${SIMULATION_CHUNK_INDEX}"
-    PREVIOUS_JOB="${LAST_SUBMITTED_JOB_ID}"
-    echo "[INFO] Submitted simulation chunk ${SIMULATION_CHUNK_INDEX}: job=${PREVIOUS_JOB}, task_offset=${TASK_OFFSET}, tasks=${CHUNK_TASKS}"
-    TASK_OFFSET=$((TASK_OFFSET + CHUNK_TASKS))
-    SIMULATION_CHUNK_INDEX=$((SIMULATION_CHUNK_INDEX + 1))
-done
-
-printf '%s\n' "${SUBMITTED_JOB_IDS[@]}" > "${SUBMITTED_JOB_FILE}"
-echo "[INFO] Submitted ${#SUBMITTED_JOB_IDS[@]} dependent Slurm arrays."
-echo "[INFO] Final dependency-chain job: ${PREVIOUS_JOB}"
-echo "[INFO] Job IDs: ${SUBMITTED_JOB_IDS[*]}"
+printf '%s\n' "${SCAFFOLD_JOB_ID}" "${RELEASE_JOB_ID}" > "${SUBMITTED_JOB_FILE}"
+echo "[INFO] Submitted scaffold array: ${SCAFFOLD_JOB_ID}"
+echo "[INFO] Submitted automatic release controller: ${RELEASE_JOB_ID}"
+echo "[INFO] Release dependency: afterok:${SCAFFOLD_JOB_ID}"
+echo "[INFO] Release plan: ${RELEASE_PLAN}"
+echo "[INFO] Later array and release IDs will be appended to: ${SUBMITTED_JOB_FILE}"
+echo "[INFO] At most one large cohort array will be submitted at a time."

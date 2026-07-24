@@ -531,3 +531,100 @@ def test_submitter_writes_full_plan_and_releases_only_first_stage(tmp_path):
         "7\tsimulate\t4\t28\t7",
         "8\tsimulate\t5\t35\t5",
     ]
+
+
+def test_progress_report_is_bounded_and_summarizes_campaign(tmp_path):
+    fixture = _fixture(tmp_path)
+    _preflight(fixture, max_array_elements=20, mesh_workers=2)
+    subject = fixture["subjects"][0]
+    scaffold_marker = (
+        fixture["scaffold_root"] / "results" / f"{subject}.json"
+    )
+    mesh_marker = (
+        fixture["study_root"]
+        / "results"
+        / "meshes"
+        / "Left_Hippocampus"
+        / "01"
+        / f"{subject}.json"
+    )
+    simulation_marker = (
+        fixture["study_root"]
+        / "results"
+        / "simulations"
+        / "Left_Hippocampus"
+        / "01"
+        / f"{subject}.json"
+    )
+    for marker in (scaffold_marker, mesh_marker, simulation_marker):
+        _write(marker, '{"status": "complete"}\n')
+
+    campaign = fixture["campaign"]
+    _write(
+        campaign / "release_plan.tsv",
+        "step\tstage\tchunk_index\toffset\tcount\n"
+        "0\tmesh\t0\t0\t20\n"
+        "1\tsimulate\t0\t0\t20\n",
+    )
+    _write(campaign / "submitted_job_ids.txt", "100\n101\n")
+    _write(
+        campaign / "release_state" / "release_step_0.tsv",
+        "step\tstage\n0\tmesh\n",
+    )
+    _write(campaign / "logs" / "retry_state" / "mesh_100_0.retry", "1\n")
+    _write(
+        campaign / "logs" / "release-101.out",
+        "[INFO] Submitted mesh chunk 0: job=100\n",
+    )
+
+    fake_squeue = _write(
+        tmp_path / "squeue",
+        "#!/bin/bash\n"
+        "echo '100_0|cohort_test_mesh0|RUNNING|00:05|node001|2026-01-01T00:00:00'\n"
+        "echo '101|cohort_test_release1|PENDING|0:00|Dependency|N/A'\n",
+    )
+    fake_sacct = _write(
+        tmp_path / "sacct",
+        "#!/bin/bash\n"
+        "echo '100_0|cohort_test_mesh0|COMPLETED|0:0|300'\n"
+        "echo '101|cohort_test_release1|PENDING|0:0|0'\n",
+    )
+    for executable in (fake_squeue, fake_sacct):
+        executable.chmod(0o755)
+
+    progress_script = (
+        Path(__file__).resolve().parents[1]
+        / "cohort_pipeline"
+        / "check_cohort_progress.bash"
+    )
+    environment = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "STUDY_ROOT": str(fixture["study_root"]),
+        "SCAFFOLD_ROOT": str(fixture["scaffold_root"]),
+        "CAMPAIGN_ROOT": str(campaign),
+        "TI_COHORT_PROGRESS_COMMAND_TIMEOUT_SECONDS": "2",
+        "TI_COHORT_PROGRESS_SCAN_TIMEOUT_SECONDS": "2",
+    }
+
+    completed = subprocess.run(
+        ["bash", str(progress_script), "test"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=10,
+    )
+
+    assert "CAMCAN_COHORT_PROGRESS_V1" in completed.stdout
+    assert "scaffolds_expected=1" in completed.stdout
+    assert "meshes_expected=40" in completed.stdout
+    assert "simulations_expected=40" in completed.stdout
+    assert "scaffolds_complete=1 scan=complete" in completed.stdout
+    assert "meshes_complete=1 scan=complete" in completed.stdout
+    assert "simulations_complete=1 scan=complete" in completed.stdout
+    assert "release_steps_recorded=1 scan=complete" in completed.stdout
+    assert "active_retry_files=1 scan=complete" in completed.stdout
+    assert "terminal_problem_records=0" in completed.stdout
+    assert "report_read_only=true" in completed.stdout
+    assert completed.returncode == 0

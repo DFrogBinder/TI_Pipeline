@@ -109,7 +109,19 @@ bash CamCan_Experiment/cohort_pipeline/submit_cohort_pipeline.sh \
 The launcher refuses a duplicate submission while job IDs recorded for that
 cohort are still active. The job-ID file grows as later chunks are released.
 
-Monitor the chain with:
+Monitor the chain with the bounded, read-only progress reporter:
+
+```bash
+bash CamCan_Experiment/cohort_pipeline/check_cohort_progress.bash final_132
+```
+
+The report summarizes manifest scope, completed scaffold/mesh/simulation
+markers, per-ROI/repeat output counts, release receipts, live Slurm state,
+accounting failures, retry markers, and recent releaser messages. Slurm calls
+and filesystem scans are individually time-bounded; the report performs no
+hashing and does not load meshes or NIfTI outputs.
+
+The lower-level queue view remains available with:
 
 ```bash
 CAMPAIGN=/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI/campaigns/final_132

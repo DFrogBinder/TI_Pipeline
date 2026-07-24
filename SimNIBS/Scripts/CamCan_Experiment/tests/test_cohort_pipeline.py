@@ -119,6 +119,30 @@ def _write_cap(path: Path):
     )
 
 
+def _bootstrap_command_runner(scaffold_row, commands=None):
+    def run(command, *, cwd, env=None):
+        if commands is not None:
+            commands.append(command)
+        m2m = Path(scaffold_row["scaffold_m2m_dir"])
+        if "--segment" in command:
+            _write(
+                m2m / "label_prep" / workflow.MAP_BASENAME,
+                "generated",
+            )
+        elif "--mesh" in command:
+            assert (
+                m2m / "label_prep" / workflow.MAP_BASENAME
+            ).read_text(encoding="utf-8") == (
+                f"{scaffold_row['subject']}-corrected-v4"
+            )
+            _write(m2m / f"{scaffold_row['subject']}.msh", "temporary-mesh")
+            _write_cap(m2m / "eeg_positions" / workflow.CAP_BASENAME)
+        else:
+            raise AssertionError(f"unexpected CHARM command: {command}")
+
+    return run
+
+
 def test_preflight_scales_four_rois_and_chunks_without_hardcoded_subject_count(
     tmp_path,
 ):
@@ -133,6 +157,7 @@ def test_preflight_scales_four_rois_and_chunks_without_hardcoded_subject_count(
     assert payload["subjects"] == 1
     assert payload["scaffold_bootstrap"] == 1
     assert payload["full_charm_segmentations_expected"] == 1
+    assert payload["temporary_scaffold_mesh_runs_expected"] == 1
     assert payload["mesh_tasks"] == 40
     assert payload["simulation_tasks"] == 40
     assert payload["mesh_array_elements"] == 20
@@ -301,6 +326,7 @@ def test_legacy_scaffold_is_imported_without_segmentation_or_mesh(tmp_path):
     assert commands == []
     assert result["scaffold_mode"] == "import"
     assert result["segmentation_runs_for_scaffold"] == 0
+    assert result["temporary_mesh_runs_for_eeg_cap"] == 0
     target_m2m = Path(row["scaffold_m2m_dir"])
     assert not (target_m2m / f"{subject}.msh").exists()
     assert (
@@ -315,17 +341,28 @@ def test_packed_mesh_task_physically_copies_scaffold_and_uses_direct_mesher(
     payload = _preflight(fixture)
     scaffold_manifest = fixture["campaign"] / "scaffold_tasks.tsv"
     scaffold_row = workflow.approved.read_tsv(scaffold_manifest)[0]
+    scaffold_commands = []
 
-    def fake_charm(command, *, cwd, env=None):
-        m2m = Path(scaffold_row["scaffold_m2m_dir"])
-        _write(m2m / "label_prep" / workflow.MAP_BASENAME, "generated")
-        _write_cap(m2m / "eeg_positions" / workflow.CAP_BASENAME)
-
-    workflow.run_scaffold_task(
+    scaffold_result = workflow.run_scaffold_task(
         manifest=scaffold_manifest,
         task_index=0,
-        command_runner=fake_charm,
+        command_runner=_bootstrap_command_runner(
+            scaffold_row,
+            scaffold_commands,
+        ),
     )
+    scaffold_m2m = Path(scaffold_row["scaffold_m2m_dir"])
+    assert "--segment" in scaffold_commands[0]
+    assert scaffold_commands[1] == [
+        "charm",
+        scaffold_row["subject"],
+        "--mesh",
+    ]
+    assert scaffold_result["completed_segmentation_recovered"] is False
+    assert scaffold_result["segmentation_runs_for_scaffold"] == 1
+    assert scaffold_result["temporary_mesh_runs_for_eeg_cap"] == 1
+    assert scaffold_result["temporary_mesh_removed"] is True
+    assert not (scaffold_m2m / f"{scaffold_row['subject']}.msh").exists()
     captured = {}
 
     def fake_direct_mesh(**kwargs):
@@ -364,6 +401,49 @@ def test_packed_mesh_task_physically_copies_scaffold_and_uses_direct_mesher(
     assert "--mesh" not in json.dumps(result)
 
 
+def test_bootstrap_retry_recovers_completed_segmentation_and_only_builds_cap(
+    tmp_path,
+):
+    fixture = _fixture(tmp_path)
+    _preflight(fixture)
+    manifest = fixture["campaign"] / "scaffold_tasks.tsv"
+    row = workflow.approved.read_tsv(manifest)[0]
+    anat = Path(row["scaffold_anat_dir"])
+    m2m = Path(row["scaffold_m2m_dir"])
+    task_t1 = anat / Path(row["source_t1"]).name
+    task_t2 = anat / Path(row["source_t2"]).name
+    workflow.approved._copy_verified(
+        Path(row["source_t1"]),
+        task_t1,
+        row["source_t1_sha256"],
+    )
+    workflow.approved._copy_verified(
+        Path(row["source_t2"]),
+        task_t2,
+        row["source_t2_sha256"],
+    )
+    workflow.approved._copy_verified(
+        Path(row["corrected_label"]),
+        m2m / "label_prep" / workflow.MAP_BASENAME,
+        row["corrected_label_sha256"],
+    )
+    commands = []
+
+    result = workflow.run_scaffold_task(
+        manifest=manifest,
+        task_index=0,
+        command_runner=_bootstrap_command_runner(row, commands),
+    )
+
+    assert commands == [["charm", row["subject"], "--mesh"]]
+    assert result["completed_segmentation_recovered"] is True
+    assert result["segmentation_runs_for_scaffold"] == 0
+    assert result["temporary_mesh_runs_for_eeg_cap"] == 1
+    assert result["temporary_mesh_removed"] is True
+    assert not (m2m / f"{row['subject']}.msh").exists()
+    assert workflow.scaffold_result_is_current(row) == result
+
+
 def test_simulation_uses_existing_mesh_and_reruns_if_outputs_are_missing(
     tmp_path, monkeypatch
 ):
@@ -372,15 +452,10 @@ def test_simulation_uses_existing_mesh_and_reruns_if_outputs_are_missing(
     scaffold_manifest = fixture["campaign"] / "scaffold_tasks.tsv"
     scaffold_row = workflow.approved.read_tsv(scaffold_manifest)[0]
 
-    def fake_charm(command, *, cwd, env=None):
-        m2m = Path(scaffold_row["scaffold_m2m_dir"])
-        _write(m2m / "label_prep" / workflow.MAP_BASENAME, "generated")
-        _write_cap(m2m / "eeg_positions" / workflow.CAP_BASENAME)
-
     workflow.run_scaffold_task(
         manifest=scaffold_manifest,
         task_index=0,
-        command_runner=fake_charm,
+        command_runner=_bootstrap_command_runner(scaffold_row),
     )
 
     def fake_direct_mesh(**kwargs):

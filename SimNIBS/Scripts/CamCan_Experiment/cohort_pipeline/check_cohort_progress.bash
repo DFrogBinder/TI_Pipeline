@@ -314,14 +314,13 @@ if [ -s "${SACCT_OUTPUT}" ]; then
         state = $3
         sub(/[[:space:]].*$/, "", state)
         sub(/\+$/, "", state)
-        if (
-            state ~ /^(FAILED|CANCELLED|OUT_OF_MEMORY|TIMEOUT|NODE_FAIL|BOOT_FAIL|DEADLINE|PREEMPTED|REVOKED)$/ ||
-            (state == "COMPLETED" && $4 != "0:0")
-        )
+        is_bad = state ~ /^(FAILED|CANCELLED|OUT_OF_MEMORY|TIMEOUT|NODE_FAIL|BOOT_FAIL|DEADLINE|PREEMPTED|REVOKED)$/
+        if (is_bad || (state == "COMPLETED" && $4 != "0:0"))
             print $1 "|" $2 "|" state "|" $4 "|" $5
     }
     ' "${SACCT_OUTPUT}" > "${BAD_ACCOUNTING}"
-    printf 'terminal_problem_records=%s\n' "$(count_lines "${BAD_ACCOUNTING}")"
+    TERMINAL_PROBLEM_COUNT="$(count_lines "${BAD_ACCOUNTING}")"
+    printf 'terminal_problem_records=%s\n' "${TERMINAL_PROBLEM_COUNT}"
     if [ -s "${BAD_ACCOUNTING}" ]; then
         echo "terminal_problem_sample_first_12:"
         head -n 12 "${BAD_ACCOUNTING}" |
@@ -350,6 +349,34 @@ if [ -s "${RETRY_PATHS}" ]; then
                 "$(basename "${retry_file}")" \
                 "$(tr -d '[:space:]' < "${retry_file}" 2>/dev/null || echo unreadable)"
         done
+
+    echo "retry_log_excerpts_first_3:"
+    head -n 3 "${RETRY_PATHS}" |
+        while IFS= read -r retry_file; do
+            retry_name="$(basename "${retry_file}" .retry)"
+            retry_stage="${retry_name%%_*}"
+            retry_rest="${retry_name#*_}"
+            retry_array="${retry_rest%%_*}"
+            retry_task="${retry_rest##*_}"
+            retry_log="$(
+                find "${LOG_DIR}" \
+                    -maxdepth 1 \
+                    -type f \
+                    -name "${retry_stage}__${retry_task}__*.log" \
+                    -print -quit 2>/dev/null
+            )"
+            printf '  retry=%s stage=%s array=%s log=%s\n' \
+                "${retry_name}" \
+                "${retry_stage}" \
+                "${retry_array}" \
+                "${retry_log:-not_found}"
+            if [ -n "${retry_log}" ] && [ -f "${retry_log}" ]; then
+                tail -n 120 "${retry_log}" |
+                    grep -E '\[(ERROR|WARN)\]|CRITICAL|Traceback|Exception|non-zero|No such file|Killed|OUT_OF_MEMORY' |
+                    tail -n 12 |
+                    sed 's/^/    /'
+            fi
+        done
 fi
 
 section "LATEST RELEASE MESSAGES"
@@ -376,4 +403,12 @@ fi
 section "REPORT"
 printf 'report_elapsed_seconds=%s\n' "$((SECONDS - START_SECONDS))"
 echo "report_read_only=true"
+RETRY_COUNT="$(count_lines "${RETRY_PATHS}")"
+if [ -s "${RELEASE_STATE_DIR}/chain_complete.tsv" ]; then
+    echo "report_health=complete"
+elif [ "${RETRY_COUNT}" -gt 0 ] || [ "${TERMINAL_PROBLEM_COUNT:-0}" -gt 0 ]; then
+    echo "report_health=attention_required"
+else
+    echo "report_health=healthy_in_progress"
+fi
 echo "report_complete=true"

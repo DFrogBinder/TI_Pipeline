@@ -250,6 +250,38 @@ def scaffold_result_is_current(
         return None
 
 
+def _completed_bootstrap_can_be_recovered(
+    row: Mapping[str, str],
+    anat: Path,
+    m2m: Path,
+    task_t1: Path,
+    task_t2: Path,
+) -> bool:
+    """Detect the checkpoint left after a successful CHARM segmentation.
+
+    The corrected label is installed only after the segmentation command
+    returns successfully.  Its exact hash, together with the copied source
+    scans, therefore distinguishes a completed segmentation from a partial
+    bootstrap.  This permits a retry to create the missing EEG cap without
+    deleting and rerunning the completed segmentation.
+    """
+
+    installed_label = m2m / "label_prep" / MAP_BASENAME
+    try:
+        checks = (
+            anat.is_dir(),
+            m2m.is_dir(),
+            not anat.is_symlink(),
+            not m2m.is_symlink(),
+            sha256_file(task_t1) == row["source_t1_sha256"],
+            sha256_file(task_t2) == row["source_t2_sha256"],
+            sha256_file(installed_label) == row["corrected_label_sha256"],
+        )
+        return all(checks)
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def _manifest_paths(campaign_root: Path) -> tuple[Path, Path, Path, Path]:
     return (
         campaign_root / "scaffold_tasks.tsv",
@@ -529,6 +561,10 @@ def build_manifests(
             row["mode"] == "bootstrap" and row["status"] == "ready"
             for row in scaffold_rows
         ),
+        "temporary_scaffold_mesh_runs_expected": sum(
+            row["mode"] == "bootstrap" and row["status"] == "ready"
+            for row in scaffold_rows
+        ),
         "mesh_tasks": expected_tasks,
         "mesh_ready": ready_tasks,
         "mesh_workers_per_array_element": mesh_workers,
@@ -603,18 +639,11 @@ def run_scaffold_task(
     anat = Path(row["scaffold_anat_dir"])
     m2m = Path(row["scaffold_m2m_dir"])
     scaffold_root = m2m.parents[3]
-    _clear_subject_root(anat, scaffold_root)
-    Path(row["result_path"]).unlink(missing_ok=True)
-    anat.mkdir(parents=True, exist_ok=True)
     source_t1 = Path(row["source_t1"])
     source_t2 = Path(row["source_t2"])
     task_t1 = anat / source_t1.name
     task_t2 = anat / source_t2.name
-    approved._copy_verified(source_t1, task_t1, row["source_t1_sha256"])
-    approved._copy_verified(source_t2, task_t2, row["source_t2_sha256"])
 
-    segmentation_runs = 0
-    started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     execution_mode = row["mode"]
     if execution_mode == "reuse":
         execution_mode = (
@@ -630,6 +659,40 @@ def run_scaffold_task(
             )
             else "bootstrap"
         )
+
+    bootstrap_recovered = (
+        execution_mode == "bootstrap"
+        and _completed_bootstrap_can_be_recovered(
+            row,
+            anat,
+            m2m,
+            task_t1,
+            task_t2,
+        )
+    )
+    if not bootstrap_recovered:
+        _clear_subject_root(anat, scaffold_root)
+        anat.mkdir(parents=True, exist_ok=True)
+        approved._copy_verified(
+            source_t1,
+            task_t1,
+            row["source_t1_sha256"],
+        )
+        approved._copy_verified(
+            source_t2,
+            task_t2,
+            row["source_t2_sha256"],
+        )
+    Path(row["result_path"]).unlink(missing_ok=True)
+
+    segmentation_runs = 0
+    temporary_mesh_runs = 0
+    segmentation_command: list[str] | None = None
+    temporary_mesh_command: list[str] | None = None
+    temporary_mesh_bytes = 0
+    temporary_mesh_sha256: str | None = None
+    generated_label_hash: str | None = None
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     if execution_mode == "import":
         legacy_m2m = Path(row["legacy_m2m_dir"]).resolve(strict=True)
 
@@ -646,19 +709,25 @@ def run_scaffold_task(
         )
         source_description = str(legacy_m2m)
     elif execution_mode == "bootstrap":
-        command = [
-            charm_bin,
-            subject,
-            str(task_t1),
-            str(task_t2),
-            "--registerT2",
-            "--initatlas",
-            "--segment",
-            "--forceqform",
-        ]
-        command_runner(command, cwd=anat)
-        segmentation_runs = 1
-        source_description = "new_charm_bootstrap"
+        if bootstrap_recovered:
+            source_description = "recovered_completed_charm_bootstrap"
+        else:
+            segmentation_command = [
+                charm_bin,
+                subject,
+                str(task_t1),
+                str(task_t2),
+                "--registerT2",
+                "--initatlas",
+                "--segment",
+                "--forceqform",
+            ]
+            command_runner(segmentation_command, cwd=anat)
+            segmentation_runs = 1
+            generated_label_hash = sha256_file(
+                m2m / "label_prep" / MAP_BASENAME
+            )
+            source_description = "new_charm_bootstrap"
     else:
         raise ValueError(f"unexpected non-current scaffold mode: {execution_mode}")
 
@@ -669,16 +738,40 @@ def run_scaffold_task(
         row["corrected_label_sha256"],
         replace_existing=True,
     )
+    if sha256_file(installed_label) != row["corrected_label_sha256"]:
+        raise RuntimeError("corrected-v4 scaffold label installation failed")
+
     mesh = m2m / f"{subject}.msh"
     mesh.unlink(missing_ok=True)
     cap = m2m / "eeg_positions" / CAP_BASENAME
     required = set(row["required_electrodes"].split(","))
+    try:
+        cap_is_usable = required.issubset(approved._cap_names(cap))
+    except (FileNotFoundError, OSError, UnicodeError, csv.Error):
+        cap_is_usable = False
+
+    if execution_mode == "bootstrap" and not cap_is_usable:
+        temporary_mesh_command = [charm_bin, subject, "--mesh"]
+        command_runner(temporary_mesh_command, cwd=anat)
+        temporary_mesh_runs = 1
+        if sha256_file(installed_label) != row["corrected_label_sha256"]:
+            mesh.unlink(missing_ok=True)
+            raise RuntimeError("temporary scaffold meshing changed corrected-v4 label")
+        if not mesh.is_file() or mesh.stat().st_size == 0:
+            raise RuntimeError(
+                "temporary CHARM mesh did not produce a non-empty mesh"
+            )
+        temporary_mesh_bytes = mesh.stat().st_size
+        temporary_mesh_sha256 = sha256_file(mesh)
+
     missing = sorted(required - approved._cap_names(cap))
     if missing:
+        mesh.unlink(missing_ok=True)
         raise ValueError("scaffold EEG cap lacks: " + ",".join(missing))
+    mesh.unlink(missing_ok=True)
 
     payload: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "complete",
         "task_index": task_index,
         "subject": subject,
@@ -696,6 +789,14 @@ def run_scaffold_task(
         "eeg_cap_sha256": sha256_file(cap),
         "required_electrodes": sorted(required),
         "segmentation_runs_for_scaffold": segmentation_runs,
+        "segmentation_command": segmentation_command,
+        "generated_label_sha256_before_corrected_install": generated_label_hash,
+        "completed_segmentation_recovered": bootstrap_recovered,
+        "temporary_mesh_runs_for_eeg_cap": temporary_mesh_runs,
+        "temporary_mesh_command": temporary_mesh_command,
+        "temporary_mesh_bytes_before_removal": temporary_mesh_bytes,
+        "temporary_mesh_sha256_before_removal": temporary_mesh_sha256,
+        "temporary_mesh_removed": not mesh.exists(),
         "mesh_created_in_scaffold_stage": False,
         "roast_involvement": False,
         "started_at": started_at,

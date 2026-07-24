@@ -217,6 +217,7 @@ printf '%s\n' \
     "  existing scaffold reuse tasks: ${SCAFFOLD_REUSE}" \
     "  legacy scaffold imports: ${SCAFFOLD_IMPORT}" \
     "  one-time CHARM bootstraps: ${SCAFFOLD_BOOTSTRAP}" \
+    "  temporary scaffold meshes for EEG caps: ${SCAFFOLD_BOOTSTRAP}" \
     "  independent mesh tasks: ${MESH_TASKS}" \
     "  packed mesh array elements: ${MESH_ELEMENTS} in ${MESH_CHUNKS} sequential chunk(s)" \
     "  FEM tasks: ${SIMULATION_TASKS} in ${SIMULATION_CHUNKS} sequential chunk(s)" \

@@ -14,9 +14,13 @@ The established scientific constraints are enforced:
 - ROAST is never invoked;
 - each subject has one reusable canonical m2m scaffold;
 - a valid legacy scaffold is imported without rerunning segmentation;
-- subjects without a reusable scaffold receive exactly one CHARM bootstrap;
+- subjects without a reusable scaffold receive one CHARM segmentation
+  bootstrap followed by a temporary `charm <subject> --mesh` run, which is
+  required to create the subject-space EEG cap;
 - the corrected-v4 map replaces any label produced or imported during
-  scaffold creation before meshing starts.
+  scaffold creation before the temporary mesh and all study remeshes;
+- the temporary scaffold mesh is verified and deleted; it is never counted as
+  or reused for any independent study mesh.
 
 ## Storage layout
 
@@ -51,6 +55,18 @@ The launcher submits one automatically released dependency chain:
 2. sequential packed direct-meshing arrays, two mesh workers per eight-CPU
    array element, four threads per worker, with node-local staging;
 3. sequential FEM arrays using `--reuse-existing-mesh`.
+
+For a new bootstrap subject, the scaffold task has two CHARM phases:
+
+1. `--registerT2 --initatlas --segment --forceqform` creates the complete m2m
+   support directory;
+2. after installing the exact corrected-v4 label, `--mesh` creates the
+   transformed EEG-cap coordinates required by the four montages.
+
+The resulting temporary `.msh` is removed immediately. If phase 1 completed
+but a retry occurred before the cap was available, the exact installed-label
+and source-image hashes act as a recovery checkpoint: the retry resumes at
+phase 2 without repeating segmentation.
 
 Only one large array is submitted at a time. A one-CPU release job with an
 `afterok` dependency submits the next chunk when the preceding chunk finishes,

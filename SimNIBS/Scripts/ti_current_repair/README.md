@@ -19,19 +19,70 @@ export CURRENT_REPAIR_DIR="${REPO_ROOT}/SimNIBS/Scripts/ti_current_repair"
 
 ## End-to-End Run
 
-1. Initialize the experiment.
+The preferred production path is one dependency-aware submission. Initialize
+the experiment once:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
-  --source-root /mnt/parscratch/users/cop23bi/ti_dataset_balanced_10_corrected \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
-  --subjects sub-CC122620,sub-CC222496,sub-CC120120,sub-CC321506,sub-CC410182,sub-CC420075,sub-CC510534,sub-CC520209,sub-CC711128,sub-CC721418 \
+  --source-root /mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected \
+  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10 \
+  --subjects sub-CC110174,sub-CC121144,sub-CC310407,sub-CC320616,sub-CC420071,sub-CC410432,sub-CC520083,sub-CC520127,sub-CC610631,sub-CC720941 \
   --repeat-count 40 \
   --atlas-dir /mnt/parscratch/users/cop23bi/ZIPs/atlases \
   --roi-preset left-hippocampus
 ```
 
-2. Submit remesh simulations.
+Run the read-only full-scope submission preflight:
+
+```bash
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-all \
+  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10 \
+  --max-concurrent 50 \
+  --analysis-max-concurrent 10 \
+  --dry-run
+```
+
+The preflight must report 10 subjects, 400 remesh tasks, 400 fixed-mesh tasks,
+800 expected `TI.msh` outputs, and full requested scope. Then perform the single
+production submission:
+
+```bash
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-all \
+  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10 \
+  --max-concurrent 50 \
+  --analysis-max-concurrent 10
+```
+
+This submits the remesh array plus one `afterok` controller. Later stages are
+released automatically only after their validation gates pass:
+
+1. 400 remesh simulations.
+2. Ten-subject remesh analysis.
+3. Median-repeat selection using `median_roi`.
+4. Checksum-validated physical fixed-mesh seeding with no symlinks.
+5. 400 fixed-mesh simulations.
+6. Ten-subject paired analysis.
+7. Final figures and completion receipt.
+
+If any gate or job fails, `afterok` prevents downstream release. The workflow
+does not silently continue with incomplete subjects.
+
+Monitor at any time:
+
+```bash
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" status \
+  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10
+```
+
+Workflow submission, receipts, controller logs, job IDs, and final completion
+state are written under `<experiment_root>/_pipeline/workflow/`.
+
+### Manual stage-by-stage fallback
+
+The original commands remain available for deliberate recovery or inspection.
+They should not be mixed with an active automated chain.
+
+Submit remesh:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-remesh \
@@ -39,31 +90,8 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-r
   --max-concurrent 50
 ```
 
-3. After the remesh Slurm array finishes, analyze remesh outputs.
-
-```bash
-python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" analyze-remesh \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
-  --max-concurrent 10
-```
-
-4. Select the representative median remesh repeat per subject.
-
-```bash
-python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" select-medians \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
-  --metric median_roi
-```
-
-5. Seed fixed-mesh workspaces using physical copies of the selected remesh
-   anatomy and mesh.
-
-```bash
-python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" seed-fixed \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
-```
-
-6. Submit fixed-mesh simulations.
+Then run `analyze-remesh`, `select-medians`, and `seed-fixed` in order. Submit
+fixed simulations only after all ten seed rows validate:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-fixed \
@@ -71,25 +99,10 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-f
   --max-concurrent 50
 ```
 
-7. After the fixed Slurm array finishes, run paired analysis.
-
-```bash
-python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" analyze-paired \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
-  --max-concurrent 10
-```
-
-8. Build presentation figures and summary tables.
+After fixed simulations finish, run `analyze-paired` and then build figures:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" make-figures \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
-```
-
-9. Check final status at any point.
-
-```bash
-python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" status \
   --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
 ```
 
@@ -99,6 +112,8 @@ The pipeline writes operational state under:
 
 - `<experiment_root>/_pipeline/`: configs, events, submitted job records,
   status snapshots, median-selection CSV, and fixed seeding manifest.
+- `<experiment_root>/_pipeline/workflow/`: automatic-chain submission record,
+  job-ID ledger, step receipts, controller logs, and final completion receipt.
 - `<experiment_root>/_analysis/`: per-subject report outputs plus paired
   summary CSV/JSON.
 - `<experiment_root>/_figures/presentation/`: generated figures and tables.

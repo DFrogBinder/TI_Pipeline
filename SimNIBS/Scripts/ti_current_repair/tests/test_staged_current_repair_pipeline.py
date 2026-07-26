@@ -64,6 +64,93 @@ def _seed_remesh_anat(experiment_root: Path, subject: str, repeat_tag: str, *, m
     return anat
 
 
+def _init_staged_experiment(
+    root: Path,
+    *,
+    subjects: list[str],
+    repeat_count: int,
+) -> None:
+    source = root / "_source"
+    atlas_dir = root / "atlases"
+    atlas_dir.mkdir(parents=True)
+    for subject in subjects:
+        anat = source / subject / "anat"
+        anat.mkdir(parents=True)
+        for suffix in (
+            "_T1w.nii",
+            "_T2w.nii",
+            "_T1w_ras_1mm_T1andT2_masks.nii",
+        ):
+            (anat / f"{subject}{suffix}").write_text(f"{suffix}\n", encoding="utf-8")
+        (atlas_dir / f"{subject}.nii.gz").write_text("atlas\n", encoding="utf-8")
+    staged.main(
+        [
+            "init",
+            "--source-root",
+            str(source),
+            "--experiment-root",
+            str(root),
+            "--subjects",
+            ",".join(subjects),
+            "--repeat-count",
+            str(repeat_count),
+            "--roi-preset",
+            "left-hippocampus",
+            "--atlas-dir",
+            str(atlas_dir),
+        ]
+    )
+
+
+def _install_fake_scheduler(tmp_path: Path, monkeypatch) -> Path:
+    counter = tmp_path / "fake_sbatch_counter"
+    fake_sbatch = tmp_path / "fake_sbatch.sh"
+    fake_sbatch.write_text(
+        "#!/bin/sh\n"
+        f"counter={counter}\n"
+        "value=7000\n"
+        "if [ -f \"$counter\" ]; then value=$(cat \"$counter\"); fi\n"
+        "value=$((value + 1))\n"
+        "printf '%s\\n' \"$value\" > \"$counter\"\n"
+        "printf 'Submitted batch job %s\\n' \"$value\"\n",
+        encoding="utf-8",
+    )
+    fake_sbatch.chmod(0o755)
+    fake_scancel = tmp_path / "fake_scancel.sh"
+    fake_scancel.write_text("#!/bin/sh\nprintf 'cancelled %s\\n' \"$1\"\n", encoding="utf-8")
+    fake_scancel.chmod(0o755)
+    monkeypatch.setenv("SBATCH_BIN", str(fake_sbatch))
+    monkeypatch.setenv("SCANCEL_BIN", str(fake_scancel))
+    monkeypatch.setenv("PYTHON_BIN", sys.executable)
+    return counter
+
+
+def _seed_ti_outputs(
+    root: Path,
+    *,
+    subjects: list[str],
+    condition: str,
+    repeat_count: int,
+) -> None:
+    for subject in subjects:
+        for index in range(1, repeat_count + 1):
+            output = (
+                root
+                / f"{subject}_repeatability"
+                / condition
+                / "repeats"
+                / f"repeat_{index:03d}"
+                / subject
+                / "anat"
+                / "SimNIBS"
+                / "Output"
+                / subject
+                / "TI.msh"
+            )
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("TI mesh\n", encoding="utf-8")
+
+
 def test_provenance_event_log_and_sbatch_job_id_parse(tmp_path):
     log = tmp_path / "events.jsonl"
 
@@ -198,7 +285,10 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     assert paired_config["analysis"]["atlas_dir"] == str(atlas_dir.resolve())
 
     fake_sbatch = tmp_path / "fake_sbatch.sh"
-    fake_sbatch.write_text("#!/bin/sh\nprintf 'Submitted batch job 4242\\n'\n", encoding="utf-8")
+    fake_sbatch.write_text(
+        "#!/bin/sh\nprintf 'Submitted batch job 4242\\n'\nprintf '%s\\n' \"$@\"\n",
+        encoding="utf-8",
+    )
     fake_sbatch.chmod(0o755)
     monkeypatch.setenv("SBATCH_BIN", str(fake_sbatch))
     monkeypatch.setenv("PYTHON_BIN", sys.executable)
@@ -212,9 +302,13 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     assert submit_events[0]["stage"] == "submit-remesh"
     assert submit_events[0]["job_id"] == "4242"
     assert "--array=0-1%7" in " ".join(submit_events[0]["command"])
+    assert "--time=08:00:00" in submit_events[0]["command"]
+    assert "--time=08:00:00" in submit_events[0]["stdout_tail"]
     assert submit_events[1]["stage"] == "analyze-remesh"
     assert submit_events[1]["job_id"] == "4242"
     assert "--array=0-0%3" in " ".join(submit_events[1]["command"])
+    assert "--time=08:00:00" in submit_events[1]["command"]
+    assert "--time=08:00:00" in submit_events[1]["stdout_tail"]
     assert submit_events[2]["stage"] == "analyze-paired"
     assert submit_events[2]["env"]["CONDITIONS"] == ""
     assert "CONDITIONS=" in " ".join(submit_events[2]["command"])
@@ -225,6 +319,524 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     assert status["remesh_ti_msh"]["observed"] == 0
     assert status["fixed_seed"]["expected"] == 1
     assert status["figure_outputs"]["expected"] >= 1
+
+
+def test_submit_all_dry_run_prints_full_scope_without_submission(tmp_path, capsys):
+    root = tmp_path / "experiment"
+    _init_staged_experiment(
+        root,
+        subjects=["sub-01", "sub-02"],
+        repeat_count=2,
+    )
+
+    staged.main(
+        [
+            "submit-all",
+            "--experiment-root",
+            str(root),
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+            "--dry-run",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert "remesh tasks: 4 (0-3%50)" in output
+    assert "fixed-mesh tasks: 4 (0-3%50)" in output
+    assert "expected TI.msh outputs: 8" in output
+    assert "not a smoke or subset" in output
+    assert not (root / "_pipeline" / "workflow" / "submission.json").exists()
+
+
+def test_final132_full_scope_is_400_then_400(tmp_path):
+    root = tmp_path / "experiment"
+    subjects = [
+        "sub-CC110174",
+        "sub-CC121144",
+        "sub-CC310407",
+        "sub-CC320616",
+        "sub-CC420071",
+        "sub-CC410432",
+        "sub-CC520083",
+        "sub-CC520127",
+        "sub-CC610631",
+        "sub-CC720941",
+    ]
+    _init_staged_experiment(root, subjects=subjects, repeat_count=40)
+
+    scope = staged._workflow_scope(
+        root,
+        max_concurrent=50,
+        analysis_max_concurrent=10,
+    )
+
+    assert scope["subject_count"] == 10
+    assert scope["remesh_tasks"] == 400
+    assert scope["fixed_mesh_tasks"] == 400
+    assert scope["total_simulation_tasks"] == 800
+    assert scope["remesh_array"] == "0-399%50"
+    assert scope["fixed_mesh_array"] == "0-399%50"
+    assert scope["analysis_array"] == "0-9%10"
+    assert scope["expected_ti_msh"] == 800
+
+
+def test_submit_all_preflight_verifies_staged_dataset_manifest_hashes(tmp_path):
+    root = tmp_path / "experiment"
+    subject = "sub-01"
+    _init_staged_experiment(root, subjects=[subject], repeat_count=2)
+    source = root / "_source"
+    (source / "subjects.txt").write_text(f"{subject}\n", encoding="utf-8")
+    destinations = [
+        Path(subject) / "anat" / f"{subject}{suffix}"
+        for suffix in (
+            "_T1w.nii",
+            "_T2w.nii",
+            "_T1w_ras_1mm_T1andT2_masks.nii",
+        )
+    ]
+    with (source / "dataset_manifest.tsv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=["destination", "sha256"], delimiter="\t")
+        writer.writeheader()
+        for destination in destinations:
+            writer.writerow(
+                {
+                    "destination": str(destination),
+                    "sha256": provenance.file_sha256(source / destination),
+                }
+            )
+
+    scope = staged._workflow_scope(
+        root,
+        max_concurrent=50,
+        analysis_max_concurrent=10,
+    )
+    assert scope["input_validation"]["manifest_hashes_verified"] == 3
+
+    (source / destinations[0]).write_text("changed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest SHA-256 mismatch"):
+        staged._workflow_scope(
+            root,
+            max_concurrent=50,
+            analysis_max_concurrent=10,
+        )
+
+
+def test_submit_all_attaches_afterok_controller_and_refuses_duplicate(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "experiment"
+    _init_staged_experiment(root, subjects=["sub-01"], repeat_count=2)
+    _install_fake_scheduler(tmp_path, monkeypatch)
+
+    staged.main(
+        [
+            "submit-all",
+            "--experiment-root",
+            str(root),
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+        ]
+    )
+
+    submission = json.loads(
+        (root / "_pipeline" / "workflow" / "submission.json").read_text(encoding="utf-8")
+    )
+    assert submission["initial_jobs"] == {
+        "remesh": "7001",
+        "after_remesh_controller": "7002",
+    }
+    controller = json.loads(
+        (
+            root
+            / "_pipeline"
+            / "submitted_jobs"
+            / "workflow-controller-after-remesh.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "--dependency=afterok:7001" in controller["command"]
+    assert "--cpus-per-task=1" in controller["command"]
+    assert "--mem=8G" in controller["command"]
+    assert "--time=08:00:00" in controller["command"]
+    job_rows = list(
+        csv.DictReader(
+            (root / "_pipeline" / "workflow" / "job_ids.tsv").open(
+                encoding="utf-8", newline=""
+            ),
+            delimiter="\t",
+        )
+    )
+    assert [(row["stage"], row["job_id"]) for row in job_rows] == [
+        ("submit-remesh", "7001"),
+        ("workflow-controller-after-remesh", "7002"),
+    ]
+
+    with pytest.raises(RuntimeError, match="already submitted"):
+        staged.main(
+            [
+                "submit-all",
+                "--experiment-root",
+                str(root),
+            ]
+        )
+
+
+def test_after_remesh_controller_validates_outputs_before_releasing_analysis(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "experiment"
+    subjects = ["sub-01", "sub-02"]
+    _init_staged_experiment(root, subjects=subjects, repeat_count=2)
+    _install_fake_scheduler(tmp_path, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="observed 0, expected 4"):
+        staged.main(
+            [
+                "advance-workflow",
+                "--experiment-root",
+                str(root),
+                "--step",
+                "after-remesh",
+                "--max-concurrent",
+                "50",
+                "--analysis-max-concurrent",
+                "10",
+            ]
+        )
+
+    _seed_ti_outputs(
+        root,
+        subjects=subjects,
+        condition="remesh",
+        repeat_count=2,
+    )
+    staged.main(
+        [
+            "advance-workflow",
+            "--experiment-root",
+            str(root),
+            "--step",
+            "after-remesh",
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+        ]
+    )
+
+    receipt = json.loads(
+        (
+            root / "_pipeline" / "workflow" / "receipts" / "after-remesh.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipt["remesh_ti_msh"] == {"expected": 4, "observed": 4}
+    assert receipt["report_job_id"] == "7001"
+    assert receipt["next_controller_job_id"] == "7002"
+    controller = json.loads(
+        (
+            root
+            / "_pipeline"
+            / "submitted_jobs"
+            / "workflow-controller-select-seed.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "--dependency=afterok:7001" in controller["command"]
+
+
+def test_select_seed_controller_uses_median_mesh_then_releases_fixed(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "experiment"
+    subject = "sub-01"
+    _init_staged_experiment(root, subjects=[subject], repeat_count=2)
+    _install_fake_scheduler(tmp_path, monkeypatch)
+    _write_summary(
+        root / "_analysis" / subject / "remesh" / "summary.csv",
+        [
+            {
+                "repeat_tag": "repeat_001",
+                "median_roi": 2.0,
+                "mean_roi": 2.1,
+                "peak_roi": 5.0,
+                "mesh_nodes": 100,
+            },
+            {
+                "repeat_tag": "repeat_002",
+                "median_roi": 4.0,
+                "mean_roi": 4.1,
+                "peak_roi": 9.0,
+                "mesh_nodes": 300,
+            },
+        ],
+    )
+    selected_anat = _seed_remesh_anat(root, subject, "repeat_001")
+
+    staged.main(
+        [
+            "advance-workflow",
+            "--experiment-root",
+            str(root),
+            "--step",
+            "select-seed",
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+        ]
+    )
+
+    selection_rows = list(
+        csv.DictReader(
+            (
+                root
+                / "_pipeline"
+                / "median_mesh_selection"
+                / "median_representative_remesh_repeats.csv"
+            ).open(encoding="utf-8", newline="")
+        )
+    )
+    assert selection_rows[0]["selected_repeat_tag"] == "repeat_001"
+    assert selection_rows[0]["selected_mesh_path"] == str(
+        selected_anat / f"m2m_{subject}" / f"{subject}.msh"
+    )
+    seed_rows = list(
+        csv.DictReader(
+            (root / "_pipeline" / "fixed_seed_manifest.csv").open(
+                encoding="utf-8", newline=""
+            )
+        )
+    )
+    assert seed_rows[0]["validation_result"] == "ok"
+    assert seed_rows[0]["message"] == "seeded 3 destinations"
+    receipt = json.loads(
+        (
+            root / "_pipeline" / "workflow" / "receipts" / "select-seed.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipt["fixed_job_id"] == "7001"
+    assert receipt["next_controller_job_id"] == "7002"
+    controller = json.loads(
+        (
+            root
+            / "_pipeline"
+            / "submitted_jobs"
+            / "workflow-controller-after-fixed.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "--dependency=afterok:7001" in controller["command"]
+
+
+def test_select_seed_controller_rejects_incomplete_or_nonfinite_metric_rows(tmp_path):
+    root = tmp_path / "experiment"
+    subject = "sub-01"
+    _init_staged_experiment(root, subjects=[subject], repeat_count=2)
+    summary = root / "_analysis" / subject / "remesh" / "summary.csv"
+    _write_summary(
+        summary,
+        [
+            {
+                "repeat_tag": "repeat_001",
+                "median_roi": 2.0,
+                "mean_roi": 2.1,
+                "peak_roi": 5.0,
+                "mesh_nodes": 100,
+            }
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="observed 0, expected 1"):
+        staged.main(
+            [
+                "advance-workflow",
+                "--experiment-root",
+                str(root),
+                "--step",
+                "select-seed",
+                "--max-concurrent",
+                "50",
+                "--analysis-max-concurrent",
+                "10",
+            ]
+        )
+
+    _write_summary(
+        summary,
+        [
+            {
+                "repeat_tag": "repeat_001",
+                "median_roi": 2.0,
+                "mean_roi": 2.1,
+                "peak_roi": 5.0,
+                "mesh_nodes": 100,
+            },
+            {
+                "repeat_tag": "repeat_002",
+                "median_roi": float("nan"),
+                "mean_roi": 4.1,
+                "peak_roi": 9.0,
+                "mesh_nodes": 300,
+            },
+        ],
+    )
+    with pytest.raises(RuntimeError, match="finite median_roi rows"):
+        staged.main(
+            [
+                "advance-workflow",
+                "--experiment-root",
+                str(root),
+                "--step",
+                "select-seed",
+                "--max-concurrent",
+                "50",
+                "--analysis-max-concurrent",
+                "10",
+            ]
+        )
+
+
+def test_after_fixed_controller_releases_paired_analysis(tmp_path, monkeypatch):
+    root = tmp_path / "experiment"
+    subjects = ["sub-01", "sub-02"]
+    _init_staged_experiment(root, subjects=subjects, repeat_count=2)
+    _install_fake_scheduler(tmp_path, monkeypatch)
+    _seed_ti_outputs(
+        root,
+        subjects=subjects,
+        condition="fixed_mesh",
+        repeat_count=2,
+    )
+
+    staged.main(
+        [
+            "advance-workflow",
+            "--experiment-root",
+            str(root),
+            "--step",
+            "after-fixed",
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+        ]
+    )
+
+    receipt = json.loads(
+        (
+            root / "_pipeline" / "workflow" / "receipts" / "after-fixed.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipt["fixed_mesh_ti_msh"] == {"expected": 4, "observed": 4}
+    assert receipt["report_job_id"] == "7001"
+    assert receipt["next_controller_job_id"] == "7002"
+    paired_job = json.loads(
+        (
+            root / "_pipeline" / "submitted_jobs" / "analyze-paired.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert paired_job["env"]["CONDITIONS"] == ""
+    controller = json.loads(
+        (
+            root
+            / "_pipeline"
+            / "submitted_jobs"
+            / "workflow-controller-finalize.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "--dependency=afterok:7001" in controller["command"]
+
+
+def test_finalize_controller_builds_figures_and_completion_receipt(tmp_path):
+    root = tmp_path / "experiment"
+    subject = "sub-01"
+    _init_staged_experiment(root, subjects=[subject], repeat_count=2)
+    for condition, offset in (("remesh", 0.0), ("fixed_mesh", 0.5)):
+        _write_summary(
+            root / "_analysis" / subject / condition / "summary.csv",
+            [
+                {
+                    "repeat_tag": "repeat_001",
+                    "median_roi": 2.0 + offset,
+                    "mean_roi": 2.1,
+                    "peak_roi": 5.0,
+                    "mesh_nodes": 100,
+                },
+                {
+                    "repeat_tag": "repeat_002",
+                    "median_roi": 4.0 + offset,
+                    "mean_roi": 4.1,
+                    "peak_roi": 9.0,
+                    "mesh_nodes": 110,
+                },
+            ],
+        )
+    paired = root / "_analysis" / "paired_condition_summary.csv"
+    paired.write_text(
+        "subject,status,baseline_condition,comparison_condition,compare_metric,"
+        "baseline_std,comparison_std,std_reduction_percent\n"
+        "sub-01,complete,remesh,fixed_mesh,median_roi,1.4,0.7,50.0\n",
+        encoding="utf-8",
+    )
+
+    staged.main(
+        [
+            "advance-workflow",
+            "--experiment-root",
+            str(root),
+            "--step",
+            "finalize",
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+        ]
+    )
+
+    completion = json.loads(
+        (
+            root / "_pipeline" / "workflow" / "complete.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert completion["status"] == "complete"
+    assert completion["scope"]["total_simulation_tasks"] == 4
+    assert completion["status_snapshot"]["figure_outputs"]["observed"] == 4
+    assert (
+        root
+        / "_figures"
+        / "presentation"
+        / "01_primary_median_roi_repeat_distributions.png"
+    ).is_file()
+
+
+def test_controller_attachment_failure_cancels_unmanaged_child(tmp_path, monkeypatch):
+    root = tmp_path / "experiment"
+    cancelled = []
+    monkeypatch.setattr(staged, "_submit_controller", lambda **_kwargs: (1, None))
+    monkeypatch.setattr(
+        staged,
+        "_cancel_job",
+        lambda _root, job_id, *, reason: cancelled.append((job_id, reason)),
+    )
+
+    with pytest.raises(RuntimeError, match="cancelled child job 8123"):
+        staged._attach_controller_or_cancel(
+            experiment_root=root,
+            child_job_id="8123",
+            step="after-remesh",
+            max_concurrent=50,
+            analysis_max_concurrent=10,
+        )
+
+    assert cancelled == [
+        ("8123", "failed to attach workflow controller for after-remesh")
+    ]
 
 
 def test_init_rejects_missing_exact_subject_atlas(tmp_path):
@@ -308,6 +920,7 @@ def test_report_array_submitter_builds_expected_array(tmp_path):
     )
 
     assert "--array=0-1%4" in result.stdout
+    assert "--time=08:00:00" in result.stdout
     assert "REPORT_TASK_PY=" in result.stdout
     assert "CONDITIONS=remesh" in result.stdout
 

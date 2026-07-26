@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,21 @@ FIGURE_OUTPUTS = [
     "condition_median_roi_by_repeat.png",
     "presentation_manifest.json",
 ]
+WORKFLOW_STEPS = (
+    "after-remesh",
+    "select-seed",
+    "after-fixed",
+    "finalize",
+)
+WORKFLOW_CONTROLLER_CPUS = 1
+WORKFLOW_CONTROLLER_MEMORY = "8G"
+WORKFLOW_CONTROLLER_TIME = "08:00:00"
+WORKFLOW_PARTITION = "sheffield"
+SOURCE_SUFFIXES = (
+    "_T1w.nii",
+    "_T2w.nii",
+    "_T1w_ras_1mm_T1andT2_masks.nii",
+)
 
 
 def _pipeline_root(experiment_root: Path) -> Path:
@@ -54,6 +71,22 @@ def _selection_csv(experiment_root: Path) -> Path:
 
 def _seed_manifest(experiment_root: Path) -> Path:
     return _pipeline_root(experiment_root) / SEED_MANIFEST
+
+
+def _workflow_root(experiment_root: Path) -> Path:
+    return _pipeline_root(experiment_root) / "workflow"
+
+
+def _workflow_submission(experiment_root: Path) -> Path:
+    return _workflow_root(experiment_root) / "submission.json"
+
+
+def _workflow_job_ids(experiment_root: Path) -> Path:
+    return _workflow_root(experiment_root) / "job_ids.tsv"
+
+
+def _workflow_completion(experiment_root: Path) -> Path:
+    return _workflow_root(experiment_root) / "complete.json"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -158,6 +191,212 @@ def _simulation_task_count(config: dict[str, Any]) -> int:
     return sum(_subject_count(config) * int(condition["repeat_count"]) for condition in config["conditions"])
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
+def _workflow_configs(experiment_root: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    remesh = _load_pipeline_config(experiment_root, REMESH_CONFIG)
+    fixed = _load_pipeline_config(experiment_root, FIXED_CONFIG)
+    paired = _load_pipeline_config(experiment_root, PAIRED_CONFIG)
+    subject_lists = [list(config.get("subjects", [])) for config in (remesh, fixed, paired)]
+    if not subject_lists[0] or subject_lists[0] != subject_lists[1] or subject_lists[0] != subject_lists[2]:
+        raise ValueError("Workflow configs must contain the same non-empty ordered subject list.")
+    roots = [
+        (str(config.get("source_root", "")), str(config.get("experiment_root", "")))
+        for config in (remesh, fixed, paired)
+    ]
+    if len(set(roots)) != 1:
+        raise ValueError("Workflow configs disagree on source_root or experiment_root.")
+    if roots[0][1] != str(experiment_root):
+        raise ValueError(
+            f"Workflow config experiment_root is {roots[0][1]!r}, expected {str(experiment_root)!r}."
+        )
+    remesh_conditions = remesh.get("conditions", [])
+    fixed_conditions = fixed.get("conditions", [])
+    paired_conditions = paired.get("conditions", [])
+    if (
+        len(remesh_conditions) != 1
+        or remesh_conditions[0].get("name") != "remesh"
+        or remesh_conditions[0].get("mesh_mode") != "remesh"
+    ):
+        raise ValueError("remesh_only.json must contain only the remesh condition.")
+    if (
+        len(fixed_conditions) != 1
+        or fixed_conditions[0].get("name") != "fixed_mesh"
+        or fixed_conditions[0].get("mesh_mode") != "fixed_mesh"
+    ):
+        raise ValueError("fixed_mesh_only.json must contain only the fixed_mesh condition.")
+    if [condition.get("name") for condition in paired_conditions] != ["remesh", "fixed_mesh"]:
+        raise ValueError("paired_analysis.json must contain remesh followed by fixed_mesh.")
+    if int(remesh_conditions[0]["repeat_count"]) != int(fixed_conditions[0]["repeat_count"]):
+        raise ValueError("Remesh and fixed-mesh repeat counts must match.")
+    return remesh, fixed, paired
+
+
+def _validate_workflow_inputs(config: dict[str, Any]) -> dict[str, Any]:
+    subjects = list(config.get("subjects", []))
+    source_root = Path(str(config.get("source_root", "")))
+    if not source_root.is_dir():
+        raise ValueError(f"Staged source root is not a directory: {source_root}")
+    expected_relative_paths = [
+        Path(subject) / "anat" / f"{subject}{suffix}"
+        for subject in subjects
+        for suffix in SOURCE_SUFFIXES
+    ]
+    source_issues = []
+    for relative_path in expected_relative_paths:
+        path = source_root / relative_path
+        if not path.is_file():
+            source_issues.append(f"missing {path}")
+        elif path.is_symlink():
+            source_issues.append(f"symlinked staged input {path}")
+        elif path.stat().st_size <= 0:
+            source_issues.append(f"empty {path}")
+    if source_issues:
+        raise ValueError(
+            "Staged source validation failed: " + "; ".join(source_issues[:10])
+        )
+
+    subjects_file = source_root / "subjects.txt"
+    if subjects_file.is_file():
+        staged_subjects = [
+            line.strip()
+            for line in subjects_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if staged_subjects != subjects:
+            raise ValueError(
+                f"Staged subjects.txt does not exactly match workflow subjects: {subjects_file}"
+            )
+
+    manifest_path = source_root / "dataset_manifest.tsv"
+    manifest_hashes_verified: int | str = "not available"
+    if manifest_path.is_file():
+        with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+            manifest_rows = [dict(row) for row in csv.DictReader(handle, delimiter="\t")]
+        by_destination = {
+            row.get("destination", ""): row
+            for row in manifest_rows
+            if row.get("destination")
+        }
+        if len(by_destination) != len(manifest_rows):
+            raise ValueError(f"Dataset manifest has duplicate or blank destinations: {manifest_path}")
+        manifest_issues = []
+        verified = 0
+        for relative_path in expected_relative_paths:
+            key = str(relative_path)
+            row = by_destination.get(key)
+            if row is None:
+                manifest_issues.append(f"missing manifest row {key}")
+                continue
+            expected_hash = row.get("sha256", "")
+            if len(expected_hash) != 64:
+                manifest_issues.append(f"invalid manifest SHA-256 for {key}")
+                continue
+            actual_hash = provenance.file_sha256(source_root / relative_path)
+            if actual_hash != expected_hash:
+                manifest_issues.append(
+                    f"manifest SHA-256 mismatch for {key}: expected {expected_hash}, observed {actual_hash}"
+                )
+                continue
+            verified += 1
+        if manifest_issues:
+            raise ValueError(
+                "Dataset manifest validation failed: " + "; ".join(manifest_issues[:10])
+            )
+        manifest_hashes_verified = verified
+
+    analysis = config.get("analysis", {})
+    atlas_dir = Path(str(analysis.get("atlas_dir", "")))
+    if not atlas_dir.is_dir():
+        raise ValueError(f"Subject atlas directory is not a directory: {atlas_dir}")
+    missing_atlases = [
+        atlas_dir / f"{subject}.nii.gz"
+        for subject in subjects
+        if not (atlas_dir / f"{subject}.nii.gz").is_file()
+        or (atlas_dir / f"{subject}.nii.gz").stat().st_size <= 0
+    ]
+    if missing_atlases:
+        raise ValueError(
+            "Missing or empty exact subject atlas file(s): "
+            + ", ".join(str(path) for path in missing_atlases)
+        )
+    return {
+        "source_root": str(source_root),
+        "source_files_expected": len(expected_relative_paths),
+        "source_files_ready": len(expected_relative_paths),
+        "dataset_manifest": str(manifest_path) if manifest_path.is_file() else None,
+        "manifest_hashes_verified": manifest_hashes_verified,
+        "atlas_dir": str(atlas_dir),
+        "atlases_expected": len(subjects),
+        "atlases_ready": len(subjects),
+    }
+
+
+def _workflow_scope(
+    experiment_root: Path,
+    *,
+    max_concurrent: int,
+    analysis_max_concurrent: int,
+) -> dict[str, Any]:
+    remesh, fixed, paired = _workflow_configs(experiment_root)
+    subjects = list(paired["subjects"])
+    input_validation = _validate_workflow_inputs(paired)
+    remesh_tasks = _simulation_task_count(remesh)
+    fixed_tasks = _simulation_task_count(fixed)
+    roi = str(paired.get("analysis", {}).get("roi_preset", ""))
+    source_root = str(paired.get("source_root", ""))
+    return {
+        "dataset": source_root,
+        "roi": roi,
+        "subjects": subjects,
+        "subject_count": len(subjects),
+        "repeats_per_condition": _condition_repeat_count(remesh, "remesh"),
+        "remesh_tasks": remesh_tasks,
+        "fixed_mesh_tasks": fixed_tasks,
+        "total_simulation_tasks": remesh_tasks + fixed_tasks,
+        "remesh_array": f"0-{remesh_tasks - 1}%{max_concurrent}",
+        "fixed_mesh_array": f"0-{fixed_tasks - 1}%{max_concurrent}",
+        "analysis_array": f"0-{len(subjects) - 1}%{analysis_max_concurrent}",
+        "expected_ti_msh": remesh_tasks + fixed_tasks,
+        "input_validation": input_validation,
+        "execution_scope": "full requested experiment; not a smoke or subset",
+    }
+
+
+def _print_workflow_scope(scope: dict[str, Any]) -> None:
+    print("Scope:")
+    print(f"  dataset: {scope['dataset']}")
+    print(f"  ROI: {scope['roi']}")
+    print(f"  subjects: {scope['subject_count']}")
+    print(f"  repeats per condition: {scope['repeats_per_condition']}")
+    print(f"  remesh tasks: {scope['remesh_tasks']} ({scope['remesh_array']})")
+    print(f"  fixed-mesh tasks: {scope['fixed_mesh_tasks']} ({scope['fixed_mesh_array']})")
+    print(f"  total simulation tasks: {scope['total_simulation_tasks']}")
+    print(f"  analysis array: {scope['analysis_array']}")
+    print(f"  expected TI.msh outputs: {scope['expected_ti_msh']}")
+    input_validation = scope["input_validation"]
+    print(
+        "  staged inputs: "
+        f"{input_validation['source_files_ready']}/"
+        f"{input_validation['source_files_expected']} ready"
+    )
+    print(
+        "  subject atlases: "
+        f"{input_validation['atlases_ready']}/"
+        f"{input_validation['atlases_expected']} ready"
+    )
+    print(
+        "  dataset manifest hashes: "
+        f"{input_validation['manifest_hashes_verified']}"
+    )
+    print(f"  execution: {scope['execution_scope']}")
+
+
 def _env_subset(env: dict[str, str], keys: list[str]) -> dict[str, str]:
     return {key: env[key] for key in keys if key in env}
 
@@ -212,6 +451,158 @@ def _run_submitter(script: Path, env: dict[str, str]) -> subprocess.CompletedPro
     )
 
 
+def _append_workflow_job(
+    experiment_root: Path,
+    *,
+    stage: str,
+    job_id: str,
+    dependency: str,
+) -> None:
+    path = _workflow_job_ids(experiment_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["timestamp_utc", "stage", "job_id", "dependency"],
+            delimiter="\t",
+        )
+        if write_header:
+            writer.writeheader()
+        writer.writerow(
+            {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "stage": stage,
+                "job_id": job_id,
+                "dependency": dependency,
+            }
+        )
+
+
+def _cancel_job(experiment_root: Path, job_id: str, *, reason: str) -> None:
+    command = [os.environ.get("SCANCEL_BIN", "scancel"), job_id]
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    provenance.append_event(
+        _events_path(experiment_root),
+        "workflow_cancel",
+        job_id=job_id,
+        reason=reason,
+        command=command,
+        returncode=result.returncode,
+        stdout_tail=result.stdout[-4000:],
+        stderr_tail=result.stderr[-4000:],
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to cancel unmanaged job {job_id}: {result.stderr or result.stdout}"
+        )
+
+
+def _submit_controller(
+    *,
+    experiment_root: Path,
+    afterok_job_id: str,
+    step: str,
+    max_concurrent: int,
+    analysis_max_concurrent: int,
+) -> tuple[int, str | None]:
+    if step not in WORKFLOW_STEPS:
+        raise ValueError(f"Unsupported workflow step: {step}")
+    script = PIPELINE_DIR / "hpc_scripts" / "repeatability_workflow_controller.slurm"
+    if not script.is_file():
+        raise FileNotFoundError(script)
+    log_dir = _workflow_root(experiment_root) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    env = {
+        "PIPELINE_DIR": str(PIPELINE_DIR),
+        "EXPERIMENT_ROOT": str(experiment_root),
+        "WORKFLOW_STEP": step,
+        "MAX_CONCURRENT_TASKS": str(max_concurrent),
+        "ANALYSIS_MAX_CONCURRENT_TASKS": str(analysis_max_concurrent),
+        "SBATCH_BIN": os.environ.get("SBATCH_BIN", "sbatch"),
+        "SCANCEL_BIN": os.environ.get("SCANCEL_BIN", "scancel"),
+    }
+    invalid_exports = {
+        key: value for key, value in env.items() if "," in value or "\n" in value
+    }
+    if invalid_exports:
+        raise ValueError(f"Slurm export values cannot contain commas or newlines: {invalid_exports}")
+    dependency = f"afterok:{afterok_job_id}"
+    export_vars = "ALL," + ",".join(f"{key}={value}" for key, value in env.items())
+    command = [
+        os.environ.get("SBATCH_BIN", "sbatch"),
+        f"--job-name=ti_repeat_flow_{step}",
+        f"--partition={WORKFLOW_PARTITION}",
+        f"--cpus-per-task={WORKFLOW_CONTROLLER_CPUS}",
+        f"--mem={WORKFLOW_CONTROLLER_MEMORY}",
+        f"--time={WORKFLOW_CONTROLLER_TIME}",
+        f"--dependency={dependency}",
+        f"--output={log_dir / f'{step}-%j.out'}",
+        f"--export={export_vars}",
+        str(script),
+    ]
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    job_id = provenance.parse_sbatch_job_id(result.stdout)
+    returncode = result.returncode
+    stderr = result.stderr
+    if returncode == 0 and job_id is None:
+        returncode = 2
+        stderr = (
+            f"{stderr}\n" if stderr else ""
+        ) + "sbatch succeeded but no controller job ID could be parsed."
+    stage = f"workflow-controller-{step}"
+    _submit_command_event(
+        experiment_root=experiment_root,
+        stage=stage,
+        command=command,
+        env=env,
+        stdout=result.stdout,
+        stderr=stderr,
+        returncode=returncode,
+        job_id=job_id,
+        expected_outputs={"workflow_step": step},
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if stderr:
+        print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
+    if returncode == 0 and job_id is not None:
+        _append_workflow_job(
+            experiment_root,
+            stage=stage,
+            job_id=job_id,
+            dependency=dependency,
+        )
+    return returncode, job_id
+
+
+def _attach_controller_or_cancel(
+    *,
+    experiment_root: Path,
+    child_job_id: str,
+    step: str,
+    max_concurrent: int,
+    analysis_max_concurrent: int,
+) -> str:
+    returncode, controller_job_id = _submit_controller(
+        experiment_root=experiment_root,
+        afterok_job_id=child_job_id,
+        step=step,
+        max_concurrent=max_concurrent,
+        analysis_max_concurrent=analysis_max_concurrent,
+    )
+    if returncode != 0 or controller_job_id is None:
+        _cancel_job(
+            experiment_root,
+            child_job_id,
+            reason=f"failed to attach workflow controller for {step}",
+        )
+        raise RuntimeError(
+            f"Controller submission for {step} failed; cancelled child job {child_job_id}."
+        )
+    return controller_job_id
+
+
 def _simulation_sbatch_command(
     *,
     config: dict[str, Any],
@@ -227,7 +618,7 @@ def _simulation_sbatch_command(
         f"--job-name=ti_repeat_{stage}",
         "--cpus-per-task=8",
         "--mem=32G",
-        "--time=12:00:00",
+        "--time=08:00:00",
         f"--array={array_spec}",
         (
             "EXPERIMENT_CONFIG="
@@ -253,7 +644,7 @@ def _report_sbatch_command(
         f"--job-name=ti_repeat_{stage}",
         "--cpus-per-task=8",
         "--mem=32G",
-        "--time=12:00:00",
+        "--time=08:00:00",
         f"--array={array_spec}",
         (
             "EXPERIMENT_CONFIG="
@@ -319,7 +710,12 @@ def command_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _submit_simulation_stage(args: argparse.Namespace, *, stage: str, config_name: str) -> int:
+def _submit_simulation_stage_result(
+    args: argparse.Namespace,
+    *,
+    stage: str,
+    config_name: str,
+) -> tuple[int, str | None]:
     experiment_root = args.experiment_root.expanduser().resolve()
     config_path = _config_path(experiment_root, config_name)
     config = _load_pipeline_config(experiment_root, config_name)
@@ -357,10 +753,24 @@ def _submit_simulation_stage(args: argparse.Namespace, *, stage: str, config_nam
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+    return result.returncode, job_id
 
 
-def _submit_report_stage(args: argparse.Namespace, *, stage: str, config_name: str, conditions: str) -> int:
+def _submit_simulation_stage(args: argparse.Namespace, *, stage: str, config_name: str) -> int:
+    return _submit_simulation_stage_result(
+        args,
+        stage=stage,
+        config_name=config_name,
+    )[0]
+
+
+def _submit_report_stage_result(
+    args: argparse.Namespace,
+    *,
+    stage: str,
+    config_name: str,
+    conditions: str,
+) -> tuple[int, str | None]:
     experiment_root = args.experiment_root.expanduser().resolve()
     config_path = _config_path(experiment_root, config_name)
     config = _load_pipeline_config(experiment_root, config_name)
@@ -398,7 +808,22 @@ def _submit_report_stage(args: argparse.Namespace, *, stage: str, config_name: s
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
-    return result.returncode
+    return result.returncode, job_id
+
+
+def _submit_report_stage(
+    args: argparse.Namespace,
+    *,
+    stage: str,
+    config_name: str,
+    conditions: str,
+) -> int:
+    return _submit_report_stage_result(
+        args,
+        stage=stage,
+        config_name=config_name,
+        conditions=conditions,
+    )[0]
 
 
 def command_submit_remesh(args: argparse.Namespace) -> int:
@@ -482,6 +907,332 @@ def command_make_figures(args: argparse.Namespace) -> int:
     return 0
 
 
+def _require_complete(label: str, status: dict[str, Any]) -> None:
+    expected = int(status.get("expected", 0))
+    observed = int(status.get("observed", 0))
+    if expected < 1 or observed != expected:
+        raise RuntimeError(
+            f"Workflow gate failed for {label}: observed {observed}, expected {expected}."
+        )
+
+
+def _write_workflow_step_receipt(
+    experiment_root: Path,
+    *,
+    step: str,
+    payload: dict[str, Any],
+) -> Path:
+    path = _workflow_root(experiment_root) / "receipts" / f"{step}.json"
+    return _write_json(
+        path,
+        {
+            "schema_version": 1,
+            "step": step,
+            "completed_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **payload,
+        },
+    )
+
+
+def _require_submission(
+    *,
+    stage: str,
+    returncode: int,
+    job_id: str | None,
+) -> str:
+    if returncode != 0:
+        raise RuntimeError(f"{stage} submission failed with exit code {returncode}.")
+    if job_id is None:
+        raise RuntimeError(f"{stage} submission returned no parseable Slurm job ID.")
+    return job_id
+
+
+def command_submit_all(args: argparse.Namespace) -> int:
+    experiment_root = args.experiment_root.expanduser().resolve()
+    scope = _workflow_scope(
+        experiment_root,
+        max_concurrent=args.max_concurrent,
+        analysis_max_concurrent=args.analysis_max_concurrent,
+    )
+    _print_workflow_scope(scope)
+    print(
+        "  workflow: remesh -> remesh analysis -> median selection -> physical "
+        "fixed seeding -> fixed simulations -> paired analysis -> figures"
+    )
+    print(
+        "  controller resources: "
+        f"{WORKFLOW_CONTROLLER_CPUS} CPU, {WORKFLOW_CONTROLLER_MEMORY}, "
+        f"{WORKFLOW_CONTROLLER_TIME}, {WORKFLOW_PARTITION}"
+    )
+    if args.dry_run:
+        print("[READY] Workflow preflight passed; no jobs submitted.")
+        return 0
+    submission_path = _workflow_submission(experiment_root)
+    if submission_path.exists():
+        raise RuntimeError(
+            f"Workflow was already submitted for this experiment: {submission_path}"
+        )
+    if _workflow_completion(experiment_root).exists():
+        raise RuntimeError(
+            f"Workflow is already complete: {_workflow_completion(experiment_root)}"
+        )
+    submitted_job_dir = _pipeline_root(experiment_root) / "submitted_jobs"
+    prior_job_records = sorted(submitted_job_dir.glob("*.json"))
+    if prior_job_records:
+        raise RuntimeError(
+            "Refusing to mix the automated chain with prior manual submissions: "
+            + ", ".join(str(path) for path in prior_job_records)
+        )
+
+    submit_args = argparse.Namespace(
+        experiment_root=experiment_root,
+        max_concurrent=args.max_concurrent,
+    )
+    returncode, remesh_job_id = _submit_simulation_stage_result(
+        submit_args,
+        stage="submit-remesh",
+        config_name=REMESH_CONFIG,
+    )
+    remesh_job_id = _require_submission(
+        stage="remesh",
+        returncode=returncode,
+        job_id=remesh_job_id,
+    )
+    _append_workflow_job(
+        experiment_root,
+        stage="submit-remesh",
+        job_id=remesh_job_id,
+        dependency="",
+    )
+    controller_job_id = _attach_controller_or_cancel(
+        experiment_root=experiment_root,
+        child_job_id=remesh_job_id,
+        step="after-remesh",
+        max_concurrent=args.max_concurrent,
+        analysis_max_concurrent=args.analysis_max_concurrent,
+    )
+    payload = {
+        "schema_version": 1,
+        "status": "submitted",
+        "submitted_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "scope": scope,
+        "settings": {
+            "partition": WORKFLOW_PARTITION,
+            "simulation_cpus": 8,
+            "simulation_memory": "32G",
+            "simulation_time": "08:00:00",
+            "max_concurrent_tasks": args.max_concurrent,
+            "analysis_max_concurrent_tasks": args.analysis_max_concurrent,
+            "controller_cpus": WORKFLOW_CONTROLLER_CPUS,
+            "controller_memory": WORKFLOW_CONTROLLER_MEMORY,
+            "controller_time": WORKFLOW_CONTROLLER_TIME,
+            "dependency": "afterok",
+        },
+        "initial_jobs": {
+            "remesh": remesh_job_id,
+            "after_remesh_controller": controller_job_id,
+        },
+    }
+    _write_json(submission_path, payload)
+    provenance.append_event(
+        _events_path(experiment_root),
+        "workflow_submit",
+        scope=scope,
+        remesh_job_id=remesh_job_id,
+        controller_job_id=controller_job_id,
+    )
+    print(f"[OK] Submitted remesh array: {remesh_job_id}")
+    print(
+        f"[OK] Attached automatic workflow controller: {controller_job_id} "
+        f"(afterok:{remesh_job_id})"
+    )
+    print(f"[OK] Workflow provenance: {submission_path}")
+    return 0
+
+
+def _submit_next_report(
+    *,
+    experiment_root: Path,
+    stage: str,
+    config_name: str,
+    conditions: str,
+    next_step: str,
+    max_concurrent: int,
+    analysis_max_concurrent: int,
+) -> tuple[str, str]:
+    submit_args = argparse.Namespace(
+        experiment_root=experiment_root,
+        max_concurrent=analysis_max_concurrent,
+    )
+    returncode, job_id = _submit_report_stage_result(
+        submit_args,
+        stage=stage,
+        config_name=config_name,
+        conditions=conditions,
+    )
+    job_id = _require_submission(stage=stage, returncode=returncode, job_id=job_id)
+    _append_workflow_job(
+        experiment_root,
+        stage=stage,
+        job_id=job_id,
+        dependency="controller_gate",
+    )
+    controller_job_id = _attach_controller_or_cancel(
+        experiment_root=experiment_root,
+        child_job_id=job_id,
+        step=next_step,
+        max_concurrent=max_concurrent,
+        analysis_max_concurrent=analysis_max_concurrent,
+    )
+    return job_id, controller_job_id
+
+
+def command_advance_workflow(args: argparse.Namespace) -> int:
+    experiment_root = args.experiment_root.expanduser().resolve()
+    _, _, paired = _workflow_configs(experiment_root)
+    status = collect_status(experiment_root)
+
+    if args.step == "after-remesh":
+        _require_complete("remesh TI.msh outputs", status["remesh_ti_msh"])
+        report_job, controller_job = _submit_next_report(
+            experiment_root=experiment_root,
+            stage="analyze-remesh",
+            config_name=REMESH_CONFIG,
+            conditions="remesh",
+            next_step="select-seed",
+            max_concurrent=args.max_concurrent,
+            analysis_max_concurrent=args.analysis_max_concurrent,
+        )
+        _write_workflow_step_receipt(
+            experiment_root,
+            step=args.step,
+            payload={
+                "remesh_ti_msh": status["remesh_ti_msh"],
+                "report_job_id": report_job,
+                "next_controller_job_id": controller_job,
+            },
+        )
+        return 0
+
+    if args.step == "select-seed":
+        _require_complete("remesh subject summaries", status["remesh_summaries"])
+        metric = str(paired.get("analysis", {}).get("compare_metric", "median_roi"))
+        _require_summary_metric_coverage(
+            paired,
+            condition_name="remesh",
+            metric=metric,
+        )
+        command_select_medians(
+            argparse.Namespace(experiment_root=experiment_root, metric=metric)
+        )
+        selection_status = collect_status(experiment_root)["selected_medians"]
+        _require_complete("median remesh selections", selection_status)
+        command_seed_fixed(
+            argparse.Namespace(experiment_root=experiment_root, overwrite=False)
+        )
+        seed_status = collect_status(experiment_root)["fixed_seed"]
+        _require_complete("fixed-mesh seed rows", seed_status)
+        if int(seed_status.get("symlink_count", 0)) != 0:
+            raise RuntimeError("Workflow gate failed: fixed-mesh seeds contain symlinks.")
+        if int(seed_status.get("checksum_mismatches", 0)) != 0:
+            raise RuntimeError("Workflow gate failed: fixed-mesh seed checksum mismatch.")
+
+        submit_args = argparse.Namespace(
+            experiment_root=experiment_root,
+            max_concurrent=args.max_concurrent,
+        )
+        returncode, fixed_job_id = _submit_simulation_stage_result(
+            submit_args,
+            stage="submit-fixed",
+            config_name=FIXED_CONFIG,
+        )
+        fixed_job_id = _require_submission(
+            stage="fixed-mesh",
+            returncode=returncode,
+            job_id=fixed_job_id,
+        )
+        _append_workflow_job(
+            experiment_root,
+            stage="submit-fixed",
+            job_id=fixed_job_id,
+            dependency="controller_gate",
+        )
+        controller_job = _attach_controller_or_cancel(
+            experiment_root=experiment_root,
+            child_job_id=fixed_job_id,
+            step="after-fixed",
+            max_concurrent=args.max_concurrent,
+            analysis_max_concurrent=args.analysis_max_concurrent,
+        )
+        _write_workflow_step_receipt(
+            experiment_root,
+            step=args.step,
+            payload={
+                "selected_medians": selection_status,
+                "fixed_seed": seed_status,
+                "fixed_job_id": fixed_job_id,
+                "next_controller_job_id": controller_job,
+            },
+        )
+        return 0
+
+    if args.step == "after-fixed":
+        _require_complete("fixed-mesh TI.msh outputs", status["fixed_mesh_ti_msh"])
+        report_job, controller_job = _submit_next_report(
+            experiment_root=experiment_root,
+            stage="analyze-paired",
+            config_name=PAIRED_CONFIG,
+            conditions="",
+            next_step="finalize",
+            max_concurrent=args.max_concurrent,
+            analysis_max_concurrent=args.analysis_max_concurrent,
+        )
+        _write_workflow_step_receipt(
+            experiment_root,
+            step=args.step,
+            payload={
+                "fixed_mesh_ti_msh": status["fixed_mesh_ti_msh"],
+                "report_job_id": report_job,
+                "next_controller_job_id": controller_job,
+            },
+        )
+        return 0
+
+    if args.step == "finalize":
+        _require_complete("remesh subject summaries", status["remesh_summaries"])
+        _require_complete("fixed-mesh subject summaries", status["fixed_mesh_summaries"])
+        command_make_figures(argparse.Namespace(experiment_root=experiment_root))
+        final_status = collect_status(experiment_root)
+        _require_complete("presentation figure outputs", final_status["figure_outputs"])
+        completion = {
+            "schema_version": 1,
+            "status": "complete",
+            "completed_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "scope": _workflow_scope(
+                experiment_root,
+                max_concurrent=args.max_concurrent,
+                analysis_max_concurrent=args.analysis_max_concurrent,
+            ),
+            "status_snapshot": final_status,
+            "job_ids_file": str(_workflow_job_ids(experiment_root)),
+        }
+        _write_json(_workflow_completion(experiment_root), completion)
+        _write_workflow_step_receipt(
+            experiment_root,
+            step=args.step,
+            payload={"completion": str(_workflow_completion(experiment_root))},
+        )
+        provenance.append_event(
+            _events_path(experiment_root),
+            "workflow_complete",
+            completion=str(_workflow_completion(experiment_root)),
+        )
+        print(f"[OK] Full workflow complete: {_workflow_completion(experiment_root)}")
+        return 0
+
+    raise ValueError(f"Unsupported workflow step: {args.step}")
+
+
 def _exists_nonempty(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
@@ -513,13 +1264,66 @@ def _count_ti_msh(config: dict[str, Any], condition_name: str) -> tuple[int, int
 
 def _count_summaries(config: dict[str, Any], condition_name: str) -> tuple[int, int]:
     root = Path(config["experiment_root"])
+    repeat_count = _condition_repeat_count(config, condition_name)
+    expected_tags = {repeat_tag(index) for index in range(1, repeat_count + 1)}
     expected = _subject_count(config)
-    observed = sum(
-        1
-        for subject in config["subjects"]
-        if _exists_nonempty(root / "_analysis" / subject / condition_name / "summary.csv")
-    )
+    observed = 0
+    for subject in config["subjects"]:
+        path = root / "_analysis" / subject / condition_name / "summary.csv"
+        if not _exists_nonempty(path):
+            continue
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                rows = [dict(row) for row in csv.DictReader(handle)]
+        except (OSError, UnicodeError, csv.Error):
+            continue
+        tags = [row.get("repeat_tag", "") for row in rows]
+        if len(rows) == repeat_count and len(tags) == len(set(tags)) and set(tags) == expected_tags:
+            observed += 1
     return expected, observed
+
+
+def _require_summary_metric_coverage(
+    config: dict[str, Any],
+    *,
+    condition_name: str,
+    metric: str,
+) -> None:
+    root = Path(config["experiment_root"])
+    repeat_count = _condition_repeat_count(config, condition_name)
+    expected_tags = {repeat_tag(index) for index in range(1, repeat_count + 1)}
+    issues = []
+    for subject in config["subjects"]:
+        path = root / "_analysis" / subject / condition_name / "summary.csv"
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                rows = [dict(row) for row in csv.DictReader(handle)]
+        except (OSError, UnicodeError, csv.Error) as exc:
+            issues.append(f"{subject}: unreadable summary {path}: {exc}")
+            continue
+        tags = [row.get("repeat_tag", "") for row in rows]
+        finite_tags = set()
+        for row in rows:
+            try:
+                value = float(row.get(metric, ""))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                finite_tags.add(row.get("repeat_tag", ""))
+        if (
+            len(rows) != repeat_count
+            or len(tags) != len(set(tags))
+            or set(tags) != expected_tags
+            or finite_tags != expected_tags
+        ):
+            issues.append(
+                f"{subject}: expected {repeat_count} unique finite {metric} rows in {path}"
+            )
+    if issues:
+        raise RuntimeError(
+            f"Workflow gate failed for {condition_name} {metric} coverage: "
+            + "; ".join(issues[:10])
+        )
 
 
 def _count_selected_medians(experiment_root: Path, config: dict[str, Any]) -> dict[str, Any]:
@@ -542,28 +1346,56 @@ def _count_seed_rows(experiment_root: Path, config: dict[str, Any]) -> dict[str,
     if path.is_file():
         with path.open("r", encoding="utf-8", newline="") as handle:
             rows = [dict(row) for row in csv.DictReader(handle)]
+    expected_repeat_count = _condition_repeat_count(config, "fixed_mesh")
     ok_rows = [row for row in rows if row.get("validation_result") == "ok"]
+    validated_rows = 0
     checksum_mismatches = 0
+    missing_meshes = 0
+    repeat_count_mismatches = 0
     symlink_paths: list[str] = []
     for row in ok_rows:
-        for key in ("cache_anat_dir",):
-            root = Path(row[key])
-            symlink_paths.extend(str(path) for path in provenance.find_symlinks(root))
-        for raw in row.get("repeat_anat_dirs", "").split(";"):
-            if raw:
-                symlink_paths.extend(str(path) for path in provenance.find_symlinks(Path(raw)))
+        subject = row.get("subject", "")
+        repeat_anat_dirs = [
+            Path(raw)
+            for raw in row.get("repeat_anat_dirs", "").split(";")
+            if raw
+        ]
+        if len(repeat_anat_dirs) != expected_repeat_count:
+            repeat_count_mismatches += 1
+        anat_dirs = [Path(row.get("cache_anat_dir", "")), *repeat_anat_dirs]
         checksum = row.get("mesh_checksum", "")
-        cache_mesh = Path(row.get("cache_anat_dir", "")) / f"m2m_{row.get('subject', '')}" / f"{row.get('subject', '')}.msh"
-        if checksum and cache_mesh.is_file() and provenance.file_sha256(cache_mesh) != checksum:
-            checksum_mismatches += 1
+        row_missing = 0
+        row_mismatches = 0
+        row_symlinks = []
+        for anat_dir in anat_dirs:
+            row_symlinks.extend(
+                str(path) for path in provenance.find_symlinks(anat_dir)
+            )
+            mesh = anat_dir / f"m2m_{subject}" / f"{subject}.msh"
+            if not mesh.is_file():
+                row_missing += 1
+            elif not checksum or provenance.file_sha256(mesh) != checksum:
+                row_mismatches += 1
+        symlink_paths.extend(row_symlinks)
+        missing_meshes += row_missing
+        checksum_mismatches += row_mismatches
+        if (
+            len(repeat_anat_dirs) == expected_repeat_count
+            and row_missing == 0
+            and row_mismatches == 0
+            and not row_symlinks
+        ):
+            validated_rows += 1
     return {
         "path": str(path),
         "expected": _subject_count(config),
-        "observed": len(ok_rows),
+        "observed": validated_rows,
         "rows": len(rows),
         "symlink_count": len(symlink_paths),
         "symlinks": symlink_paths[:20],
         "checksum_mismatches": checksum_mismatches,
+        "missing_meshes": missing_meshes,
+        "repeat_count_mismatches": repeat_count_mismatches,
     }
 
 
@@ -609,6 +1441,21 @@ def collect_status(experiment_root: Path) -> dict[str, Any]:
     status["selected_medians"] = _count_selected_medians(experiment_root, config)
     status["fixed_seed"] = _count_seed_rows(experiment_root, config)
     status["figure_outputs"] = _figure_status(experiment_root)
+    workflow_jobs = _workflow_job_ids(experiment_root)
+    job_rows = []
+    if workflow_jobs.is_file():
+        with workflow_jobs.open("r", encoding="utf-8", newline="") as handle:
+            job_rows = [dict(row) for row in csv.DictReader(handle, delimiter="\t")]
+    status["workflow"] = {
+        "submission": str(_workflow_submission(experiment_root)),
+        "submitted": _workflow_submission(experiment_root).is_file(),
+        "completion": str(_workflow_completion(experiment_root)),
+        "complete": _workflow_completion(experiment_root).is_file(),
+        "job_ids": str(workflow_jobs),
+        "jobs_recorded": len(job_rows),
+        "latest_stage": job_rows[-1]["stage"] if job_rows else None,
+        "latest_job_id": job_rows[-1]["job_id"] if job_rows else None,
+    }
     return status
 
 
@@ -663,6 +1510,30 @@ def build_parser() -> argparse.ArgumentParser:
     figures = subparsers.add_parser("make-figures")
     figures.add_argument("--experiment-root", type=Path, required=True)
     figures.set_defaults(func=command_make_figures)
+
+    submit_all = subparsers.add_parser(
+        "submit-all",
+        help="Submit the complete dependency-gated remesh-to-fixed workflow.",
+    )
+    submit_all.add_argument("--experiment-root", type=Path, required=True)
+    submit_all.add_argument("--max-concurrent", type=_positive_int, default=50)
+    submit_all.add_argument("--analysis-max-concurrent", type=_positive_int, default=10)
+    submit_all.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and print the full scope without submitting jobs.",
+    )
+    submit_all.set_defaults(func=command_submit_all)
+
+    advance = subparsers.add_parser(
+        "advance-workflow",
+        help="Internal dependency-controller entry point.",
+    )
+    advance.add_argument("--experiment-root", type=Path, required=True)
+    advance.add_argument("--step", choices=WORKFLOW_STEPS, required=True)
+    advance.add_argument("--max-concurrent", type=_positive_int, required=True)
+    advance.add_argument("--analysis-max-concurrent", type=_positive_int, required=True)
+    advance.set_defaults(func=command_advance_workflow)
 
     status = subparsers.add_parser("status")
     status.add_argument("--experiment-root", type=Path, required=True)

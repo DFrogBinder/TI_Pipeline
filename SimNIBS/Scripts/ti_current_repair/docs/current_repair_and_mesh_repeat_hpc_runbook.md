@@ -1,6 +1,6 @@
 # Current-Repair and Mesh-Repeat HPC Runbook
 
-Last updated: 2026-06-18
+Last updated: 2026-07-27
 
 This document records the end-to-end launch procedure for two related workflows:
 
@@ -107,11 +107,11 @@ and are recorded in `_pipeline/events.jsonl`.
 ```bash
 cd "$REPO_ROOT"
 
-export RUN_NAME=current_repair_median_fixed_v1
-export SOURCE_ROOT=/mnt/parscratch/users/cop23bi/ti_dataset_balanced_10_corrected
+export RUN_NAME=final_132_balanced_10
+export SOURCE_ROOT=/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected
 export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/current-repair/${RUN_NAME}
 export ATLAS_DIR=/mnt/parscratch/users/cop23bi/ZIPs/atlases
-export SUBJECTS=sub-CC122620,sub-CC222496,sub-CC120120,sub-CC321506,sub-CC410182,sub-CC420075,sub-CC510534,sub-CC520209,sub-CC711128,sub-CC721418
+export SUBJECTS=sub-CC110174,sub-CC121144,sub-CC310407,sub-CC320616,sub-CC420071,sub-CC410432,sub-CC520083,sub-CC520127,sub-CC610631,sub-CC720941
 ```
 
 Adjust `RUN_NAME` for each production attempt. Do not reuse an experiment root
@@ -161,7 +161,76 @@ $EXPERIMENT_ROOT/_pipeline/events.jsonl
 $EXPERIMENT_ROOT/_pipeline/stage_status.json
 ```
 
-### Stage 2: Submit Remesh Simulations
+### Preferred: One Dependency-Aware Submission
+
+Preflight the complete production scope without submitting:
+
+```bash
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-all \
+  --experiment-root "$EXPERIMENT_ROOT" \
+  --max-concurrent 50 \
+  --analysis-max-concurrent 10 \
+  --dry-run
+```
+
+The scope block must report:
+
+```text
+subjects: 10
+repeats per condition: 40
+remesh tasks: 400 (0-399%50)
+fixed-mesh tasks: 400 (0-399%50)
+total simulation tasks: 800
+analysis array: 0-9%10
+expected TI.msh outputs: 800
+execution: full requested experiment; not a smoke or subset
+```
+
+Then make the single production submission:
+
+```bash
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-all \
+  --experiment-root "$EXPERIMENT_ROOT" \
+  --max-concurrent 50 \
+  --analysis-max-concurrent 10
+```
+
+The command initially submits only the 400-task remesh array and one lightweight
+controller with an `afterok` dependency. Controllers subsequently validate and
+release:
+
+1. remesh analysis after exactly 400 remesh `TI.msh` outputs;
+2. median selection after ten complete remesh summaries;
+3. fixed seeding after ten successful selections, with mesh checksum and
+   no-symlink validation;
+4. fixed simulations after ten valid seed rows;
+5. paired analysis after exactly 400 fixed `TI.msh` outputs;
+6. figures and a completion receipt after ten complete summaries per condition.
+
+Any failed job or validation gate stops downstream release. Controller jobs are
+one-shot; they do not add self-requeue behavior. Monitor with:
+
+```bash
+python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" status \
+  --experiment-root "$EXPERIMENT_ROOT"
+```
+
+Automatic-chain state is stored under:
+
+```text
+$EXPERIMENT_ROOT/_pipeline/workflow/submission.json
+$EXPERIMENT_ROOT/_pipeline/workflow/job_ids.tsv
+$EXPERIMENT_ROOT/_pipeline/workflow/receipts/
+$EXPERIMENT_ROOT/_pipeline/workflow/logs/
+$EXPERIMENT_ROOT/_pipeline/workflow/complete.json
+```
+
+Do not run manual stage commands while this chain is active.
+
+### Manual Recovery: Stage 2 Submit Remesh Simulations
+
+The following stage-by-stage commands remain available for deliberate recovery
+or inspection when no automated chain is active.
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-remesh \

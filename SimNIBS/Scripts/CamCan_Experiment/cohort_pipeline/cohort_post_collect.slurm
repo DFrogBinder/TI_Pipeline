@@ -9,9 +9,14 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${PIPELINE_DIR:?Set PIPELINE_DIR to the repository Scripts directory.}"
+COMMON_SH="${PIPELINE_DIR}/CamCan_Experiment/cohort_pipeline/cohort_post_common.sh"
+if [ ! -f "${COMMON_SH}" ]; then
+    echo "[ERROR] Cohort post helper is missing: ${COMMON_SH}" >&2
+    exit 2
+fi
 # shellcheck source=cohort_post_common.sh
-source "${SCRIPT_DIR}/cohort_post_common.sh"
+source "${COMMON_SH}"
 
 : "${SLURM_ARRAY_TASK_ID:?This script must run as a Slurm array task.}"
 if ! [[ "${SLURM_ARRAY_TASK_ID}" =~ ^[0-9]+$ ]] || \

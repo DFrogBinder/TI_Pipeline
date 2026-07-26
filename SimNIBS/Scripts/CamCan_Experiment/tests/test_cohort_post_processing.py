@@ -41,6 +41,11 @@ def test_subject_array_covers_four_rois_and_ten_repeats():
         encoding="utf-8"
     )
 
+    assert (
+        '${PIPELINE_DIR}/CamCan_Experiment/cohort_pipeline/'
+        'cohort_post_common.sh'
+    ) in text
+    assert 'dirname "${BASH_SOURCE[0]}"' not in text
     assert "ROI_INDEX=$((SLURM_ARRAY_TASK_ID / 10))" in text
     assert "REPEAT_NUMBER=$((SLURM_ARRAY_TASK_ID % 10 + 1))" in text
     assert 'export PIPELINE_POPULATION_ENABLED="0"' in text
@@ -54,6 +59,11 @@ def test_collector_runs_complete_case_population_repeatability_and_figures():
         encoding="utf-8"
     )
 
+    assert (
+        '${PIPELINE_DIR}/CamCan_Experiment/cohort_pipeline/'
+        'cohort_post_common.sh'
+    ) in text
+    assert 'dirname "${BASH_SOURCE[0]}"' not in text
     assert 'export BATCH_REPEATS="01 02 03 04 05 06 07 08 09 10"' in text
     assert 'export PIPELINE_POPULATION_ENABLED="1"' in text
     assert 'export PIPELINE_REPEATABILITY_ENABLED="1"' in text

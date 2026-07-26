@@ -97,6 +97,9 @@ def test_atlas_repair_preflight_keeps_flat_imports_nested_and_reconstructs(
     assert payload["tasks"] == 2
     assert payload["import_nifti"] == 1
     assert payload["reconstruct"] == 1
+    assert payload["array_elements"] == 1
+    assert payload["workers_per_array_element"] == 2
+    assert payload["threads_per_atlas"] == 8
     assert len(rows) == 3
     assert f"\t{subjects[1]}\timport_nifti\t" in rows[1]
     assert f"\t{subjects[2]}\treconstruct\t" in rows[2]
@@ -148,7 +151,7 @@ def test_atlas_repair_submitter_uses_array_and_afterany_collector(
     )
 
     submitted = calls.read_text(encoding="utf-8")
-    assert "--array=0-1%50" in submitted
+    assert "--array=0-0%1" in submitted
     assert "--dependency=afterany:12345" in submitted
     assert "Submitted missing-atlas array job: 12345" in completed.stdout
     assert "Submitted afterany atlas collector: 12346" in completed.stdout
@@ -160,8 +163,10 @@ def test_atlas_repair_slurm_is_resumable_and_destrieux_specific() -> None:
     )
     assert "aparc.a2009s+aseg.mgz" in text
     assert "Resuming existing FreeSurfer subject state." in text
+    assert 'WORKERS_PER_ELEMENT="${TI_COHORT_ATLAS_WORKERS_PER_ARRAY_TASK:-2}"' in text
+    assert 'THREADS_PER_WORKER="${TI_COHORT_ATLAS_THREADS_PER_WORKER:-8}"' in text
     assert 'scontrol requeue "${SLURM_JOB_ID}"' in text
-    assert 'mri_info "${FLAT_ATLAS}"' in text
+    assert 'mri_info "${flat_atlas}"' in text
 
 
 def test_atlas_repair_slurm_imports_nested_nifti_and_writes_receipt(

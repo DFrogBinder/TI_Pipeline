@@ -206,7 +206,11 @@ and runs native FreeSurfer reconstruction only where no reusable atlas exists.
 It uses the canonical T1 files in `CamCan_Corrected_v4_Scaffolds`; it does not
 modify or substitute the corrected CHARM tissue maps. The after-any collector
 writes `atlas_repair/validation.json`. Rerun the post-processing preflight only
-after that file reports all cohort subjects complete.
+after that file reports all cohort subjects complete. By default, each
+16-CPU/64-GB array element runs two independent eight-thread reconstructions.
+If either fails, the element requeues safely: a completed partner atlas is
+detected and preserved while the incomplete subject resumes its FreeSurfer
+state.
 
 ## Archived interim cohort
 

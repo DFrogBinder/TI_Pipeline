@@ -39,6 +39,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-16}"
 MEMORY="${MEMORY:-64G}"
 TIME_LIMIT="${TIME_LIMIT:-24:00:00}"
 MAX_CONCURRENT_TASKS="${MAX_CONCURRENT_TASKS:-50}"
+ATLAS_WORKERS_PER_ARRAY_TASK="${ATLAS_WORKERS_PER_ARRAY_TASK:-2}"
 TI_COHORT_ATLAS_MAX_RETRIES="${TI_COHORT_ATLAS_MAX_RETRIES:-2}"
 COLLECTOR_CPUS="${COLLECTOR_CPUS:-1}"
 COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-2G}"
@@ -64,13 +65,27 @@ if [ ! -d "${SCAFFOLD_ROOT}/subjects" ]; then
     echo "[ERROR] Scaffold subject root is missing: ${SCAFFOLD_ROOT}/subjects" >&2
     exit 2
 fi
-for value_name in CPUS_PER_TASK MAX_CONCURRENT_TASKS COLLECTOR_CPUS; do
+for value_name in \
+    CPUS_PER_TASK \
+    MAX_CONCURRENT_TASKS \
+    ATLAS_WORKERS_PER_ARRAY_TASK \
+    COLLECTOR_CPUS
+do
     value="${!value_name}"
     if ! [[ "${value}" =~ ^[1-9][0-9]*$ ]]; then
         echo "[ERROR] ${value_name} must be a positive integer; received ${value}." >&2
         exit 2
     fi
 done
+if [ "${ATLAS_WORKERS_PER_ARRAY_TASK}" -gt "${CPUS_PER_TASK}" ]; then
+    echo "[ERROR] ATLAS_WORKERS_PER_ARRAY_TASK cannot exceed CPUS_PER_TASK." >&2
+    exit 2
+fi
+if [ $((CPUS_PER_TASK % ATLAS_WORKERS_PER_ARRAY_TASK)) -ne 0 ]; then
+    echo "[ERROR] CPUS_PER_TASK must be divisible by ATLAS_WORKERS_PER_ARRAY_TASK." >&2
+    exit 2
+fi
+THREADS_PER_ATLAS=$((CPUS_PER_TASK / ATLAS_WORKERS_PER_ARRAY_TASK))
 if ! [[ "${TI_COHORT_ATLAS_MAX_RETRIES}" =~ ^[0-9]+$ ]]; then
     echo "[ERROR] TI_COHORT_ATLAS_MAX_RETRIES must be a non-negative integer." >&2
     exit 2
@@ -209,8 +224,20 @@ done < "${SUBJECTS_FILE}"
 
 mv "${TMP_MANIFEST}" "${MANIFEST}"
 
+ARRAY_ELEMENTS=$(((TASKS + ATLAS_WORKERS_PER_ARRAY_TASK - 1) / ATLAS_WORKERS_PER_ARRAY_TASK))
+ACTIVE_ARRAY_CONCURRENCY="${MAX_CONCURRENT_TASKS}"
+if [ "${ARRAY_ELEMENTS}" -gt 0 ] && \
+   [ "${ACTIVE_ARRAY_CONCURRENCY}" -gt "${ARRAY_ELEMENTS}" ]
+then
+    ACTIVE_ARRAY_CONCURRENCY="${ARRAY_ELEMENTS}"
+fi
+MAX_SIMULTANEOUS_SUBJECTS=$((ACTIVE_ARRAY_CONCURRENCY * ATLAS_WORKERS_PER_ARRAY_TASK))
+if [ "${MAX_SIMULTANEOUS_SUBJECTS}" -gt "${TASKS}" ]; then
+    MAX_SIMULTANEOUS_SUBJECTS="${TASKS}"
+fi
+
 python3 -c \
-    'import json,sys; json.dump({"status":sys.argv[1],"subjects":int(sys.argv[2]),"flat_atlases_present":int(sys.argv[3]),"tasks":int(sys.argv[4]),"import_nifti":int(sys.argv[5]),"convert_mgz":int(sys.argv[6]),"reconstruct":int(sys.argv[7]),"blocked":int(sys.argv[8]),"manifest":sys.argv[9],"flat_atlas_root":sys.argv[10],"atlas_work_root":sys.argv[11],"source_atlas":"FreeSurfer Destrieux aparc.a2009s+aseg"},open(sys.argv[12],"w"),indent=2,sort_keys=True); print()' \
+    'import json,sys; json.dump({"status":sys.argv[1],"subjects":int(sys.argv[2]),"flat_atlases_present":int(sys.argv[3]),"tasks":int(sys.argv[4]),"import_nifti":int(sys.argv[5]),"convert_mgz":int(sys.argv[6]),"reconstruct":int(sys.argv[7]),"blocked":int(sys.argv[8]),"manifest":sys.argv[9],"flat_atlas_root":sys.argv[10],"atlas_work_root":sys.argv[11],"source_atlas":"FreeSurfer Destrieux aparc.a2009s+aseg","array_elements":int(sys.argv[12]),"workers_per_array_element":int(sys.argv[13]),"threads_per_atlas":int(sys.argv[14])},open(sys.argv[15],"w"),indent=2,sort_keys=True); print()' \
     "$([ "${BLOCKED}" -eq 0 ] && echo ready || echo blocked)" \
     "${EXPECTED_SUBJECTS}" \
     "${FLAT_PRESENT}" \
@@ -222,6 +249,9 @@ python3 -c \
     "${MANIFEST}" \
     "${FLAT_ATLAS_ROOT}" \
     "${ATLAS_WORK_ROOT}" \
+    "${ARRAY_ELEMENTS}" \
+    "${ATLAS_WORKERS_PER_ARRAY_TASK}" \
+    "${THREADS_PER_ATLAS}" \
     "${PREFLIGHT_JSON}"
 
 cat "${PREFLIGHT_JSON}"
@@ -232,6 +262,11 @@ printf '%s\n' \
     "  subjects: ${EXPECTED_SUBJECTS}" \
     "  existing flat atlases: ${FLAT_PRESENT}" \
     "  missing-atlas tasks: ${TASKS}" \
+    "  packed array elements: ${ARRAY_ELEMENTS}" \
+    "  array: 0-$((ARRAY_ELEMENTS > 0 ? ARRAY_ELEMENTS - 1 : 0))%${ACTIVE_ARRAY_CONCURRENCY}" \
+    "  atlas workers per element: ${ATLAS_WORKERS_PER_ARRAY_TASK}" \
+    "  CPU threads per atlas: ${THREADS_PER_ATLAS}" \
+    "  maximum simultaneous subjects: ${MAX_SIMULTANEOUS_SUBJECTS}" \
     "  reusable nested NIfTI imports: ${IMPORT_NIFTI}" \
     "  reusable nested MGZ conversions: ${CONVERT_MGZ}" \
     "  full FreeSurfer reconstructions: ${RECONSTRUCT}" \
@@ -246,7 +281,9 @@ echo "[INFO] FreeSurfer work:    ${ATLAS_WORK_ROOT}/subjects"
 echo "[INFO] Manifest:           ${MANIFEST}"
 echo "[INFO] Logs:               ${ATLAS_CAMPAIGN_ROOT}/logs"
 echo "[INFO] Resource profile:   ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
-echo "[INFO] Array concurrency:  ${MAX_CONCURRENT_TASKS}"
+echo "[INFO] Array concurrency:  ${ACTIVE_ARRAY_CONCURRENCY}"
+echo "[INFO] Atlas workers:      ${ATLAS_WORKERS_PER_ARRAY_TASK} per array element"
+echo "[INFO] Threads per atlas:  ${THREADS_PER_ATLAS}"
 echo "[INFO] Retry limit:        ${TI_COHORT_ATLAS_MAX_RETRIES}"
 
 if [ "${BLOCKED}" -ne 0 ]; then
@@ -278,7 +315,7 @@ if [ -s "${JOB_ID_FILE}" ] && command -v "${SQUEUE_BIN}" >/dev/null 2>&1; then
     fi
 fi
 
-COMMON_EXPORTS="ALL,TI_COHORT_ATLAS_MANIFEST=${MANIFEST},TI_COHORT_ATLAS_LOG_DIR=${ATLAS_CAMPAIGN_ROOT}/logs,TI_COHORT_ATLAS_STATE_DIR=${ATLAS_CAMPAIGN_ROOT}/retry_state,TI_COHORT_ATLAS_MAX_RETRIES=${TI_COHORT_ATLAS_MAX_RETRIES},TI_COHORT_ATLAS_FS_LICENSE=${FS_LICENSE_FILE},TI_COHORT_ATLAS_FREESURFER_MODULE=${FREESURFER_MODULE}"
+COMMON_EXPORTS="ALL,TI_COHORT_ATLAS_MANIFEST=${MANIFEST},TI_COHORT_ATLAS_LOG_DIR=${ATLAS_CAMPAIGN_ROOT}/logs,TI_COHORT_ATLAS_STATE_DIR=${ATLAS_CAMPAIGN_ROOT}/retry_state,TI_COHORT_ATLAS_MAX_RETRIES=${TI_COHORT_ATLAS_MAX_RETRIES},TI_COHORT_ATLAS_WORKERS_PER_ARRAY_TASK=${ATLAS_WORKERS_PER_ARRAY_TASK},TI_COHORT_ATLAS_THREADS_PER_WORKER=${THREADS_PER_ATLAS},TI_COHORT_ATLAS_FS_LICENSE=${FS_LICENSE_FILE},TI_COHORT_ATLAS_FREESURFER_MODULE=${FREESURFER_MODULE}"
 ARRAY_SUBMISSION="$(
     "${SBATCH_BIN}" \
         --parsable \
@@ -287,7 +324,7 @@ ARRAY_SUBMISSION="$(
         --cpus-per-task="${CPUS_PER_TASK}" \
         --mem="${MEMORY}" \
         --time="${TIME_LIMIT}" \
-        --array="0-$((TASKS - 1))%${MAX_CONCURRENT_TASKS}" \
+        --array="0-$((ARRAY_ELEMENTS - 1))%${ACTIVE_ARRAY_CONCURRENCY}" \
         --output="${ATLAS_CAMPAIGN_ROOT}/logs/atlas-%A_%a.out" \
         --export="${COMMON_EXPORTS}" \
         "${ARRAY_SLURM}"

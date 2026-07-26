@@ -146,6 +146,48 @@ squeue -j "$(paste -sd, "$CAMPAIGN/submitted_job_ids.txt")" \
     -o '%.18i %.2t %.10M %.30R'
 ```
 
+## Final-cohort post-processing
+
+After all 5,280 FEM simulations validate, run the post-processing preflight:
+
+```bash
+bash CamCan_Experiment/cohort_pipeline/submit_cohort_post_processing.sh \
+    final_132 \
+    --preflight
+```
+
+The gate requires:
+
+- the completed FEM release-chain receipt;
+- 5,280 current simulation outputs;
+- all 132 flat subject-space FastSurfer atlases;
+- the fixed MNI atlas;
+- one ROI-specific MNI baseline for each of the four study ROIs;
+- the confirmed `targets.csv` hash;
+- the explicit `ti-post` Python environment and its dependencies.
+
+Submit after the preflight passes:
+
+```bash
+bash CamCan_Experiment/cohort_pipeline/submit_cohort_post_processing.sh \
+    final_132
+```
+
+The post launcher submits 40 independent dataset jobs (four ROIs times ten
+repeats) with a maximum of 20 active dataset jobs. Each dataset job uses 12
+single-threaded Python workers to produce the 132 subject-level metric sets.
+Four ROI collector jobs start only after all 40 dataset jobs succeed. The
+collectors fingerprint-check and skip completed subject outputs, then build:
+
+- 40 complete-case within-run population summaries;
+- four across-repeat repeatability analyses;
+- four static post-processing figure collections;
+- one auditable batch summary and complete-repeat subject manifest per ROI.
+
+Subject outputs are resumable. If the one-shot post array needs to be
+resubmitted after a failure, complete metrics with the same configuration
+fingerprint are reused; `PIPELINE_FORCE` remains disabled by default.
+
 ## Archived interim cohort
 
 `cohorts/interim_53/` contains the provisional 53-subject list selected from

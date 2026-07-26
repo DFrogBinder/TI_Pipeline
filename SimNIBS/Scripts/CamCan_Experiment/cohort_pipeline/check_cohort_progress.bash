@@ -86,9 +86,9 @@ print_roi_counts() {
     fi
     awk -F/ -v marker="${marker}" '
     {
-        for (index = 1; index <= NF; index++) {
-            if ($index == marker && index + 2 <= NF) {
-                key = $(index + 1) "/" $(index + 2)
+        for (field_index = 1; field_index <= NF; field_index++) {
+            if ($field_index == marker && field_index + 2 <= NF) {
+                key = $(field_index + 1) "/" $(field_index + 2)
                 counts[key]++
                 break
             }

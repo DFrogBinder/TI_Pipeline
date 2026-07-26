@@ -172,6 +172,8 @@ while read -r subject; do
 done < "${SUBJECTS_FILE}"
 if [ "${MISSING_ATLASES}" -ne 0 ]; then
     echo "[ERROR] Missing ${MISSING_ATLASES} subject-space atlas file(s)." >&2
+    echo "[INFO] Prepare a missing-only repair campaign with:" >&2
+    echo "[INFO]   bash CamCan_Experiment/cohort_pipeline/submit_cohort_atlas_repair.sh ${COHORT_ID} --preflight" >&2
     exit 2
 fi
 

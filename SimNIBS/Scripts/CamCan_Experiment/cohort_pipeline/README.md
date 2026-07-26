@@ -188,6 +188,26 @@ Subject outputs are resumable. If the one-shot post array needs to be
 resubmitted after a failure, complete metrics with the same configuration
 fingerprint are reused; `PIPELINE_FORCE` remains disabled by default.
 
+If the post-processing preflight reports missing subject-space atlases, first
+prepare and submit the missing-only Destrieux repair stage:
+
+```bash
+bash CamCan_Experiment/cohort_pipeline/submit_cohort_atlas_repair.sh \
+    final_132 \
+    --preflight
+
+bash CamCan_Experiment/cohort_pipeline/submit_cohort_atlas_repair.sh \
+    final_132
+```
+
+The repair preflight preserves existing flat atlases, searches known nested
+FreeSurfer output roots for reusable `aparc.a2009s+aseg` NIfTI or MGZ files,
+and runs native FreeSurfer reconstruction only where no reusable atlas exists.
+It uses the canonical T1 files in `CamCan_Corrected_v4_Scaffolds`; it does not
+modify or substitute the corrected CHARM tissue maps. The after-any collector
+writes `atlas_repair/validation.json`. Rerun the post-processing preflight only
+after that file reports all cohort subjects complete.
+
 ## Archived interim cohort
 
 `cohorts/interim_53/` contains the provisional 53-subject list selected from

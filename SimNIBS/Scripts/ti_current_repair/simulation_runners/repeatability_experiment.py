@@ -18,11 +18,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
-import nibabel as nib
-import numpy as np
-from nibabel.processing import resample_from_to
-from scipy import ndimage as ndi
-
 HERE = Path(__file__).resolve()
 PIPELINE_ROOT = HERE.parents[1]
 if str(PIPELINE_ROOT) not in sys.path:
@@ -83,6 +78,10 @@ SIM_MODULE = None
 SIM_MESH_IO = None
 SIM_STRUCT = None
 SIM_TI = None
+NIB_MODULE = None
+NP_MODULE = None
+RESAMPLE_FROM_TO = None
+NDI_MODULE = None
 MESH_LOCK_TIMEOUT_SEC = 12 * 60 * 60
 MESH_LOCK_POLL_SEC = 5.0
 SIM_INPUT_EXIT_CODE = 126
@@ -156,10 +155,26 @@ def log_event(event: str, **fields) -> None:
     print(json.dumps(payload, default=str))
 
 
+def _ensure_scientific_imports() -> None:
+    global NIB_MODULE, NP_MODULE, RESAMPLE_FROM_TO, NDI_MODULE
+    if NIB_MODULE is not None:
+        return
+    import nibabel as nib_module  # type: ignore
+    import numpy as np_module  # type: ignore
+    from nibabel.processing import resample_from_to as resample  # type: ignore
+    from scipy import ndimage as ndi_module  # type: ignore
+
+    NIB_MODULE = nib_module
+    NP_MODULE = np_module
+    RESAMPLE_FROM_TO = resample
+    NDI_MODULE = ndi_module
+
+
 def _ensure_simnibs_imports() -> None:
     global SIM_MODULE, SIM_MESH_IO, SIM_STRUCT, SIM_TI
     if SIM_MODULE is not None:
         return
+    _ensure_scientific_imports()
     import simnibs as sim_module  # type: ignore
     from simnibs import mesh_io, sim_struct  # type: ignore
     from simnibs.utils import TI_utils as ti_utils  # type: ignore
@@ -245,7 +260,10 @@ def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> No
     result.check_returncode()
 
 
-def _smooth_scalp_labels(label_data: np.ndarray) -> np.ndarray:
+def _smooth_scalp_labels(label_data):
+    _ensure_scientific_imports()
+    np = NP_MODULE
+    ndi = NDI_MODULE
     mask = label_data == SCALP_LABEL
     structure = np.ones(MORPH_KERNEL, dtype=bool)
     if CLOSE_ITERS > 0:
@@ -448,6 +466,9 @@ def _mesh_workspace(
     subject: str,
     force_mesh: bool,
 ) -> Path:
+    _ensure_scientific_imports()
+    nib = NIB_MODULE
+    np = NP_MODULE
     ready_marker = _mesh_ready_marker(workspace)
     lock_path = workspace.anat_dir / ".mesh_build.lock"
 
@@ -556,6 +577,9 @@ def _run_ti_pipeline(
     stimulation: StimulationConfig,
 ) -> float:
     _ensure_simnibs_imports()
+    nib = NIB_MODULE
+    np = NP_MODULE
+    resample_from_to = RESAMPLE_FROM_TO
     subject_start = time.time()
     log_event(
         "simulation_start",

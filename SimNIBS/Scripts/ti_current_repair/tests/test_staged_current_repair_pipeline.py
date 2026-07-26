@@ -166,6 +166,53 @@ def test_workflow_preflight_rejects_targets_csv_drift(tmp_path):
         )
 
 
+def test_show_plan_count_only_does_not_import_scientific_stack(tmp_path):
+    root = tmp_path / "experiment"
+    config = root / "_pipeline" / "configs" / "paired_analysis.json"
+    _write_config(
+        config,
+        experiment_root=root,
+        subjects=["sub-01", "sub-02"],
+        repeat_count=1,
+    )
+    import_blocker = tmp_path / "import_blocker"
+    import_blocker.mkdir()
+    (import_blocker / "sitecustomize.py").write_text(
+        "import builtins\n"
+        "_real_import = builtins.__import__\n"
+        "def _guarded_import(name, *args, **kwargs):\n"
+        "    if name == 'nibabel' or name == 'numpy' or name == 'scipy' "
+        "or name.startswith(('nibabel.', 'numpy.', 'scipy.')):\n"
+        "        raise ModuleNotFoundError(f'blocked scientific import: {name}')\n"
+        "    return _real_import(name, *args, **kwargs)\n"
+        "builtins.__import__ = _guarded_import\n",
+        encoding="utf-8",
+    )
+    runner = (
+        CURRENT_REPAIR_ROOT
+        / "simulation_runners"
+        / "repeatability_experiment.py"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(runner),
+            "show-plan",
+            "--config",
+            str(config),
+            "--count-only",
+        ],
+        env={**os.environ, "PYTHONPATH": str(import_blocker)},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "4"
+    assert result.stderr == ""
+
+
 def _install_fake_scheduler(tmp_path: Path, monkeypatch) -> Path:
     counter = tmp_path / "fake_sbatch_counter"
     fake_sbatch = tmp_path / "fake_sbatch.sh"
@@ -566,6 +613,62 @@ def test_submit_all_attaches_afterok_controller_and_refuses_duplicate(
                 str(root),
             ]
         )
+
+
+def test_submit_all_retries_after_failed_pre_sbatch_receipt(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    root = tmp_path / "experiment"
+    _init_staged_experiment(root, subjects=["sub-01"], repeat_count=2)
+    provenance.write_submitted_job_record(
+        root,
+        stage="submit-remesh",
+        command=["python", "show-plan"],
+        env={"PYTHON_BIN": "python"},
+        stdout="",
+        stderr="ModuleNotFoundError: No module named 'nibabel'",
+        returncode=1,
+        job_id=None,
+        expected_outputs={"ti_msh": 2},
+    )
+    _install_fake_scheduler(tmp_path, monkeypatch)
+
+    staged.main(
+        [
+            "submit-all",
+            "--experiment-root",
+            str(root),
+            "--max-concurrent",
+            "50",
+            "--analysis-max-concurrent",
+            "10",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert "Retrying after failed pre-sbatch attempt" in output
+    current = json.loads(
+        (
+            root / "_pipeline" / "submitted_jobs" / "submit-remesh.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert current["returncode"] == 0
+    assert current["job_id"] == "7001"
+    archived = list(
+        (
+            root
+            / "_pipeline"
+            / "submitted_jobs"
+            / "attempts"
+            / "submit-remesh"
+        ).glob("*.json")
+    )
+    assert len(archived) == 1
+    failed = json.loads(archived[0].read_text(encoding="utf-8"))
+    assert failed["returncode"] == 1
+    assert failed["job_id"] is None
 
 
 def test_after_remesh_controller_validates_outputs_before_releasing_analysis(

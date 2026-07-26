@@ -95,6 +95,24 @@ def write_submitted_job_record(
     job_id: str | None,
     expected_outputs: dict[str, Any],
 ) -> Path:
+    current_path = (
+        experiment_root / "_pipeline" / "submitted_jobs" / f"{stage}.json"
+    )
+    if current_path.is_file():
+        existing = read_json(current_path)
+        timestamp = str(existing.get("timestamp_utc", "unknown"))
+        safe_timestamp = re.sub(r"[^0-9A-Za-z]+", "-", timestamp).strip("-")
+        attempts_dir = current_path.parent / "attempts" / stage
+        attempts_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = attempts_dir / f"{safe_timestamp or 'unknown'}.json"
+        suffix = 1
+        while archive_path.exists():
+            archive_path = attempts_dir / (
+                f"{safe_timestamp or 'unknown'}-{suffix}.json"
+            )
+            suffix += 1
+        current_path.replace(archive_path)
+
     payload = {
         "stage": stage,
         "timestamp_utc": utc_timestamp(),
@@ -106,4 +124,4 @@ def write_submitted_job_record(
         "job_id": job_id,
         "expected_outputs": expected_outputs,
     }
-    return write_json(experiment_root / "_pipeline" / "submitted_jobs" / f"{stage}.json", payload)
+    return write_json(current_path, payload)

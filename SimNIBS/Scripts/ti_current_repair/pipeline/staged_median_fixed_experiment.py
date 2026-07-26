@@ -1013,11 +1013,30 @@ def command_submit_all(args: argparse.Namespace) -> int:
             f"Workflow is already complete: {_workflow_completion(experiment_root)}"
         )
     submitted_job_dir = _pipeline_root(experiment_root) / "submitted_jobs"
-    prior_job_records = sorted(submitted_job_dir.glob("*.json"))
-    if prior_job_records:
+    blocking_job_records = []
+    failed_pre_submission_records = []
+    for record_path in sorted(submitted_job_dir.glob("*.json")):
+        try:
+            record = _load_json(record_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            blocking_job_records.append(record_path)
+            continue
+        returncode = record.get("returncode")
+        job_id = record.get("job_id")
+        if isinstance(returncode, int) and returncode != 0 and not job_id:
+            failed_pre_submission_records.append(record_path)
+        else:
+            blocking_job_records.append(record_path)
+    if blocking_job_records:
         raise RuntimeError(
             "Refusing to mix the automated chain with prior manual submissions: "
-            + ", ".join(str(path) for path in prior_job_records)
+            + ", ".join(str(path) for path in blocking_job_records)
+        )
+    if failed_pre_submission_records:
+        print(
+            "[INFO] Retrying after failed pre-sbatch attempt(s); their receipts "
+            "will be archived automatically: "
+            + ", ".join(str(path) for path in failed_pre_submission_records)
         )
 
     submit_args = argparse.Namespace(

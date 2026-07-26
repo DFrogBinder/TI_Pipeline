@@ -43,6 +43,7 @@ from experiment_config import (  # noqa: E402
     template_config_dict,
     write_template_config,
 )
+from stimulation_config import StimulationConfig, stimulation_summary  # noqa: E402
 
 
 def _find_camcan_root() -> Path:
@@ -97,18 +98,33 @@ CAMCAN_TISSUE_CONDUCTIVITIES = {
 }
 
 
-def _ti_montage_parameters() -> dict[str, object]:
-    electrode_conductivity = 1.4
+def _ti_montage_parameters(
+    stimulation: StimulationConfig,
+) -> dict[str, object]:
+    electrode_conductivity = stimulation.electrode_conductivity
     return {
-        "electrode_size": [10, 2],
-        "electrode_shape": "ellipse",
+        "electrode_size": [
+            stimulation.electrode_radius_mm,
+            stimulation.electrode_thickness_mm,
+        ],
+        "electrode_shape": stimulation.electrode_shape,
         "electrode_conductivity": electrode_conductivity,
         "custom_conductivities": {
             **CAMCAN_TISSUE_CONDUCTIVITIES,
             "Saline": electrode_conductivity,
         },
-        "montage_right": ("F10", 2e-3, "P8", -2e-3),
-        "montage_left": ("T7", 1.588656e-3, "P7", -1.588656e-3),
+        "montage_pair1": (
+            stimulation.pair1.anode,
+            stimulation.pair1.current_a,
+            stimulation.pair1.cathode,
+            -stimulation.pair1.current_a,
+        ),
+        "montage_pair2": (
+            stimulation.pair2.anode,
+            stimulation.pair2.current_a,
+            stimulation.pair2.cathode,
+            -stimulation.pair2.current_a,
+        ),
     }
 
 
@@ -537,6 +553,7 @@ def _run_ti_pipeline(
     fnamehead: Path,
     repeat_tag_value: str,
     condition_name: str,
+    stimulation: StimulationConfig,
 ) -> float:
     _ensure_simnibs_imports()
     subject_start = time.time()
@@ -546,15 +563,16 @@ def _run_ti_pipeline(
         condition=condition_name,
         repeat_tag=repeat_tag_value,
         mesh_path=str(fnamehead),
+        stimulation=stimulation_summary(stimulation),
     )
     _reset_dir_contents(output_root)
 
-    montage_params = _ti_montage_parameters()
+    montage_params = _ti_montage_parameters(stimulation)
     electrode_size = montage_params["electrode_size"]
     electrode_shape = montage_params["electrode_shape"]
     custom_conductivities = montage_params["custom_conductivities"]
-    montage_right = montage_params["montage_right"]
-    montage_left = montage_params["montage_left"]
+    montage_pair1 = montage_params["montage_pair1"]
+    montage_pair2 = montage_params["montage_pair2"]
 
     S = SIM_STRUCT.SESSION()
     S.fnamehead = str(fnamehead)
@@ -567,26 +585,26 @@ def _run_ti_pipeline(
     for conductivity in tdcs1.cond:
         if conductivity.name in custom_conductivities:
             conductivity.value = float(custom_conductivities[conductivity.name])
-    tdcs1.currents = [montage_right[1], montage_right[3]]
+    tdcs1.currents = [montage_pair1[1], montage_pair1[3]]
 
     el1 = tdcs1.add_electrode()
     el1.channelnr = 1
-    el1.centre = montage_right[0]
+    el1.centre = montage_pair1[0]
     el1.shape = electrode_shape
     el1.dimensions = [electrode_size[0] * 2, electrode_size[0] * 2]
     el1.thickness = electrode_size[1]
 
     el2 = tdcs1.add_electrode()
     el2.channelnr = 2
-    el2.centre = montage_right[2]
+    el2.centre = montage_pair1[2]
     el2.shape = electrode_shape
     el2.dimensions = [electrode_size[0] * 2, electrode_size[0] * 2]
     el2.thickness = electrode_size[1]
 
     tdcs2 = S.add_tdcslist(deepcopy(tdcs1))
-    tdcs2.currents = [montage_left[1], montage_left[3]]
-    tdcs2.electrode[0].centre = montage_left[0]
-    tdcs2.electrode[1].centre = montage_left[2]
+    tdcs2.currents = [montage_pair2[1], montage_pair2[3]]
+    tdcs2.electrode[0].centre = montage_pair2[0]
+    tdcs2.electrode[1].centre = montage_pair2[2]
     tdcs2.electrode[0].mesh_element_size = 0.1
     tdcs2.electrode[1].mesh_element_size = 0.1
 
@@ -716,6 +734,7 @@ def _write_condition_manifest(
         "mesh_mode": condition.mesh_mode,
         "repeat_count": condition.repeat_count,
         "description": condition.description,
+        "stimulation": config.stimulation.to_dict(),
         "source_root": str(config.source_root),
         "condition_root": str(subject_condition_root(config, subject, condition_name)),
         "repeats_root": str(subject_condition_repeats_root(config, subject, condition_name)),
@@ -743,8 +762,33 @@ def _write_task_manifest(
         "repeat_output_root": str(workspace.output_root),
         "repeat_mesh_path": str(workspace.mesh_path),
         "shared_mesh_path": str(shared_mesh_path) if shared_mesh_path is not None else None,
+        "stimulation": config.stimulation.to_dict(),
     }
     _write_json(workspace.root / "task_manifest.json", payload)
+
+
+def _validate_existing_task_manifest(
+    workspace: WorkspacePaths,
+    *,
+    config: ExperimentConfig,
+) -> None:
+    manifest_path = workspace.root / "task_manifest.json"
+    if not manifest_path.is_file():
+        raise SimulationInputError(
+            "Complete outputs lack stimulation provenance; refusing to reuse them "
+            f"without an explicit overwrite: {manifest_path}"
+        )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SimulationInputError(
+            f"Could not validate existing task manifest: {manifest_path}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("stimulation") != config.stimulation.to_dict():
+        raise SimulationInputError(
+            "Existing outputs do not have the exact confirmed stimulation "
+            f"configuration; refusing reuse without an explicit overwrite: {manifest_path}"
+        )
 
 
 def execute_task(
@@ -790,13 +834,7 @@ def execute_task(
     }
 
     if _repeat_outputs_complete(repeat_workspace, task.subject) and not overwrite and not dry_run:
-        if not (repeat_workspace.root / "task_manifest.json").exists():
-            _write_task_manifest(
-                repeat_workspace,
-                task=task,
-                config=config,
-                shared_mesh_path=shared_mesh_path,
-            )
+        _validate_existing_task_manifest(repeat_workspace, config=config)
         log_event(
             "task_skip",
             subject=task.subject,
@@ -875,6 +913,7 @@ def execute_task(
         fnamehead=repeat_workspace.mesh_path,
         repeat_tag_value=task.repeat_tag,
         condition_name=task.condition_name,
+        stimulation=config.stimulation,
     )
     return result
 
@@ -934,6 +973,7 @@ def _command_show_plan(args: argparse.Namespace) -> int:
             }
             for condition in config.conditions
         ],
+        "stimulation": config.stimulation.to_dict(),
         "task_count": len(tasks),
         "tasks": [
             {

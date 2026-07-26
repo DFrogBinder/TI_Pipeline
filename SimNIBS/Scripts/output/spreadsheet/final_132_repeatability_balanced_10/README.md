@@ -123,7 +123,8 @@ initialize the current-repair pipeline:
 
 ```bash
 export CURRENT_REPAIR_DIR=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/ti_current_repair
-export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10
+export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10
+export TARGETS_CSV=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv
 
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --source-root /mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected \
@@ -131,7 +132,9 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --subjects sub-CC110174,sub-CC121144,sub-CC310407,sub-CC320616,sub-CC420071,sub-CC410432,sub-CC520083,sub-CC520127,sub-CC610631,sub-CC720941 \
   --repeat-count 40 \
   --atlas-dir /mnt/parscratch/users/cop23bi/ZIPs/atlases \
-  --roi-preset left-hippocampus
+  --roi-preset left-hippocampus \
+  --montage-preset left-hippocampus \
+  --targets-csv "$TARGETS_CSV"
 ```
 
 Run the read-only full-scope submission preflight:

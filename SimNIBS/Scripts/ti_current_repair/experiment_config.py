@@ -8,6 +8,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from stimulation_config import StimulationConfig, validate_stimulation_config
+
 
 VALID_MESH_MODES = {"remesh", "fixed_mesh"}
 VALID_COMPARE_METRICS = {
@@ -49,6 +51,7 @@ class ExperimentConfig:
     experiment_root: Path
     subjects: list[str]
     conditions: list[ConditionConfig]
+    stimulation: StimulationConfig
     analysis: AnalysisConfig
 
 
@@ -204,6 +207,7 @@ def load_experiment_config(path: str | Path, *, validate_paths: bool = True) -> 
         experiment_root=experiment_root,
         subjects=subjects,
         conditions=conditions,
+        stimulation=validate_stimulation_config(raw.get("stimulation")),
         analysis=_parse_analysis(raw.get("analysis")),
     )
 
@@ -275,6 +279,8 @@ def iter_experiment_tasks(
 
 
 def template_config_dict() -> dict[str, object]:
+    from stimulation_config import resolve_confirmed_stimulation
+
     return {
         "source_root": "/mnt/parscratch/users/cop23bi/repeatability-ti-dataset",
         "experiment_root": "/mnt/parscratch/users/cop23bi/repeatability-ti-experiment",
@@ -297,6 +303,9 @@ def template_config_dict() -> dict[str, object]:
                 "description": "Generate one mesh once per subject, then reuse it across repeats to isolate FEM variation.",
             },
         ],
+        "stimulation": resolve_confirmed_stimulation(
+            "left-hippocampus"
+        ).to_dict(),
         "analysis": {
             "roi_preset": "left-hippocampus",
             "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",

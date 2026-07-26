@@ -1,6 +1,6 @@
 {
   "source_root": "/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected",
-  "experiment_root": "/mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10",
+  "experiment_root": "/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10",
   "subjects": [
     "sub-CC110174",
     "sub-CC121144",
@@ -27,6 +27,31 @@
       "description": "Generate one mesh once per subject, then reuse it across repeats to isolate FEM variation."
     }
   ],
+  "stimulation": {
+    "montage_preset": "left-hippocampus",
+    "target_roi": "Left_Hippocampus",
+    "targets_csv": "/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv",
+    "targets_csv_sha256": "97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6",
+    "e_target": 0.20126048959568976,
+    "stimulated_volume": 2.0036083411773995,
+    "configuration": 2759214,
+    "pair1": {
+      "anode": "F8",
+      "cathode": "P8",
+      "current_a": 0.002
+    },
+    "pair2": {
+      "anode": "T7",
+      "cathode": "P7",
+      "current_a": 0.0015886564694485628
+    },
+    "electrode": {
+      "radius_mm": 10.0,
+      "thickness_mm": 2.0,
+      "shape": "ellipse",
+      "conductivity": 1.4
+    }
+  },
   "analysis": {
     "roi_preset": "left-hippocampus",
     "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",

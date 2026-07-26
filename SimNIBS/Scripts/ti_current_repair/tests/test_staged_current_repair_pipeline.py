@@ -21,6 +21,13 @@ from post import mesh_repeat_report
 from post import repeatability_experiment_report
 from post import seed_fixed_from_median
 from post import select_median_remesh_repeats
+from simulation_runners import repeatability_experiment
+from stimulation_config import (
+    CONFIRMED_TARGETS_SHA256,
+    TARGETS_CSV_PATH,
+    resolve_confirmed_stimulation,
+    validate_stimulation_config,
+)
 
 
 def _write_config(path: Path, *, experiment_root: Path, subjects: list[str], repeat_count: int = 3) -> None:
@@ -32,6 +39,9 @@ def _write_config(path: Path, *, experiment_root: Path, subjects: list[str], rep
             {"name": "remesh", "mesh_mode": "remesh", "repeat_count": repeat_count},
             {"name": "fixed_mesh", "mesh_mode": "fixed_mesh", "repeat_count": repeat_count},
         ],
+        "stimulation": resolve_confirmed_stimulation(
+            "left-hippocampus"
+        ).to_dict(),
         "analysis": {"roi_preset": "left-hippocampus", "compare_metric": "median_roi"},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +79,7 @@ def _init_staged_experiment(
     *,
     subjects: list[str],
     repeat_count: int,
+    targets_csv: Path = TARGETS_CSV_PATH,
 ) -> None:
     source = root / "_source"
     atlas_dir = root / "atlases"
@@ -96,10 +107,63 @@ def _init_staged_experiment(
             str(repeat_count),
             "--roi-preset",
             "left-hippocampus",
+            "--montage-preset",
+            "left-hippocampus",
+            "--targets-csv",
+            str(targets_csv),
             "--atlas-dir",
             str(atlas_dir),
         ]
     )
+
+
+def test_confirmed_left_hippocampus_stimulation_is_loaded_from_targets_csv():
+    stimulation = resolve_confirmed_stimulation("left-hippocampus")
+    params = repeatability_experiment._ti_montage_parameters(stimulation)
+
+    assert stimulation.targets_csv == TARGETS_CSV_PATH.resolve()
+    assert stimulation.targets_csv_sha256 == CONFIRMED_TARGETS_SHA256
+    assert stimulation.target_roi == "Left_Hippocampus"
+    assert stimulation.configuration == 2759214
+    assert params["montage_pair1"] == ("F8", 0.002, "P8", -0.002)
+    assert params["montage_pair2"] == (
+        "T7",
+        pytest.approx(0.0015886564694485628),
+        "P7",
+        pytest.approx(-0.0015886564694485628),
+    )
+
+
+def test_serialized_stimulation_must_exactly_match_confirmed_csv():
+    payload = resolve_confirmed_stimulation("left-hippocampus").to_dict()
+    payload["pair1"] = {
+        "anode": "F10",
+        "cathode": "P8",
+        "current_a": 0.002,
+    }
+
+    with pytest.raises(ValueError, match="do not exactly match"):
+        validate_stimulation_config(payload)
+
+
+def test_workflow_preflight_rejects_targets_csv_drift(tmp_path):
+    targets_copy = tmp_path / "targets.csv"
+    targets_copy.write_bytes(TARGETS_CSV_PATH.read_bytes())
+    root = tmp_path / "experiment"
+    _init_staged_experiment(
+        root,
+        subjects=["sub-01"],
+        repeat_count=2,
+        targets_csv=targets_copy,
+    )
+
+    targets_copy.write_text("changed after initialization\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not the confirmed optimized file"):
+        staged._workflow_scope(
+            root,
+            max_concurrent=50,
+            analysis_max_concurrent=10,
+        )
 
 
 def _install_fake_scheduler(tmp_path: Path, monkeypatch) -> Path:
@@ -270,6 +334,8 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
             "2",
             "--roi-preset",
             "left-hippocampus",
+            "--montage-preset",
+            "left-hippocampus",
             "--atlas-dir",
             str(atlas_dir),
         ]
@@ -283,6 +349,18 @@ def test_stage_cli_init_configs_submitters_and_status(tmp_path, monkeypatch):
     assert [condition["name"] for condition in fixed_config["conditions"]] == ["fixed_mesh"]
     assert [condition["name"] for condition in paired_config["conditions"]] == ["remesh", "fixed_mesh"]
     assert paired_config["analysis"]["atlas_dir"] == str(atlas_dir.resolve())
+    assert paired_config["stimulation"]["montage_preset"] == "left-hippocampus"
+    assert paired_config["stimulation"]["targets_csv_sha256"] == CONFIRMED_TARGETS_SHA256
+    assert paired_config["stimulation"]["pair1"] == {
+        "anode": "F8",
+        "cathode": "P8",
+        "current_a": 0.002,
+    }
+    assert paired_config["stimulation"]["pair2"] == {
+        "anode": "T7",
+        "cathode": "P7",
+        "current_a": pytest.approx(0.0015886564694485628),
+    }
 
     fake_sbatch = tmp_path / "fake_sbatch.sh"
     fake_sbatch.write_text(
@@ -346,6 +424,9 @@ def test_submit_all_dry_run_prints_full_scope_without_submission(tmp_path, capsy
     assert "remesh tasks: 4 (0-3%50)" in output
     assert "fixed-mesh tasks: 4 (0-3%50)" in output
     assert "expected TI.msh outputs: 8" in output
+    assert "pair 1: F8-P8 2 mA" in output
+    assert "pair 2: T7-P7 1.58865646944856 mA" in output
+    assert f"targets.csv SHA-256: {CONFIRMED_TARGETS_SHA256}" in output
     assert "not a smoke or subset" in output
     assert not (root / "_pipeline" / "workflow" / "submission.json").exists()
 
@@ -860,6 +941,8 @@ def test_init_rejects_missing_exact_subject_atlas(tmp_path):
                 subject,
                 "--repeat-count",
                 "2",
+                "--montage-preset",
+                "left-hippocampus",
                 "--atlas-dir",
                 str(atlas_dir),
             ]

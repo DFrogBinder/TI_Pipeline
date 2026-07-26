@@ -32,6 +32,8 @@ WORKBOOK_NAME = "CamCAN (1).xlsx"
 WORKBOOK_SHEET = "Raw data"
 STANDARD_DATA_NAME = "standard_data.csv"
 OLD_POOL_NAME = "subjects.txt"
+CONFIRMED_TARGETS_SHA256 = "97a8c7a72faf88d9af9e4facbdf628fba1a130d327da778bcbd00af66f2916e6"
+TARGETS_CSV_HPC = "/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/utils/targets.csv"
 
 NAVY = "17324D"
 TEAL = "177E89"
@@ -727,7 +729,8 @@ initialize the current-repair pipeline:
 
 ```bash
 export CURRENT_REPAIR_DIR=/users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/ti_current_repair
-export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10
+export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10
+export TARGETS_CSV={TARGETS_CSV_HPC}
 
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \\
   --source-root {source_root} \\
@@ -735,7 +738,9 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \\
   --subjects {','.join(candidate.subject.subject for candidate in selected)} \\
   --repeat-count 40 \\
   --atlas-dir /mnt/parscratch/users/cop23bi/ZIPs/atlases \\
-  --roi-preset left-hippocampus
+  --roi-preset left-hippocampus \\
+  --montage-preset left-hippocampus \\
+  --targets-csv "$TARGETS_CSV"
 ```
 
 Run the read-only full-scope submission preflight:
@@ -945,7 +950,7 @@ def build(args: argparse.Namespace) -> Path:
 
     candidate_config = {
         "source_root": "/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected",
-        "experiment_root": "/mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10",
+        "experiment_root": "/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10",
         "subjects": [candidate.subject.subject for candidate in selected],
         "conditions": [
             {
@@ -961,6 +966,31 @@ def build(args: argparse.Namespace) -> Path:
                 "description": "Generate one mesh once per subject, then reuse it across repeats to isolate FEM variation.",
             },
         ],
+        "stimulation": {
+            "montage_preset": "left-hippocampus",
+            "target_roi": "Left_Hippocampus",
+            "targets_csv": TARGETS_CSV_HPC,
+            "targets_csv_sha256": CONFIRMED_TARGETS_SHA256,
+            "e_target": 0.20126048959568976,
+            "stimulated_volume": 2.0036083411773995,
+            "configuration": 2759214,
+            "pair1": {
+                "anode": "F8",
+                "cathode": "P8",
+                "current_a": 0.002,
+            },
+            "pair2": {
+                "anode": "T7",
+                "cathode": "P7",
+                "current_a": 0.0015886564694485628,
+            },
+            "electrode": {
+                "radius_mm": 10.0,
+                "thickness_mm": 2.0,
+                "shape": "ellipse",
+                "conductivity": 1.4,
+            },
+        },
         "analysis": {
             "roi_preset": "left-hippocampus",
             "atlas_dir": "/mnt/parscratch/users/cop23bi/ZIPs/atlases",

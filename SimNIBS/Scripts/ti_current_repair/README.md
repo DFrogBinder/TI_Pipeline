@@ -15,6 +15,7 @@ Run commands from the repository root on the HPC:
 cd /users/cop23bi/Repos/TI_Pipeline
 export REPO_ROOT=/users/cop23bi/Repos/TI_Pipeline
 export CURRENT_REPAIR_DIR="${REPO_ROOT}/SimNIBS/Scripts/ti_current_repair"
+export TARGETS_CSV="${REPO_ROOT}/SimNIBS/Scripts/utils/targets.csv"
 ```
 
 ## End-to-End Run
@@ -25,18 +26,20 @@ the experiment once:
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --source-root /mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10 \
+  --experiment-root /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10 \
   --subjects sub-CC110174,sub-CC121144,sub-CC310407,sub-CC320616,sub-CC420071,sub-CC410432,sub-CC520083,sub-CC520127,sub-CC610631,sub-CC720941 \
   --repeat-count 40 \
   --atlas-dir /mnt/parscratch/users/cop23bi/ZIPs/atlases \
-  --roi-preset left-hippocampus
+  --roi-preset left-hippocampus \
+  --montage-preset left-hippocampus \
+  --targets-csv "$TARGETS_CSV"
 ```
 
 Run the read-only full-scope submission preflight:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-all \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10 \
+  --experiment-root /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10 \
   --max-concurrent 50 \
   --analysis-max-concurrent 10 \
   --dry-run
@@ -48,7 +51,7 @@ production submission:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-all \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10 \
+  --experiment-root /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10 \
   --max-concurrent 50 \
   --analysis-max-concurrent 10
 ```
@@ -71,7 +74,7 @@ Monitor at any time:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" status \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/final_132_balanced_10
+  --experiment-root /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10
 ```
 
 Workflow submission, receipts, controller logs, job IDs, and final completion
@@ -86,7 +89,7 @@ Submit remesh:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-remesh \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
+  --experiment-root /mnt/parscratch/users/cop23bi/<run_name> \
   --max-concurrent 50
 ```
 
@@ -95,7 +98,7 @@ fixed simulations only after all ten seed rows validate:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" submit-fixed \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name> \
+  --experiment-root /mnt/parscratch/users/cop23bi/<run_name> \
   --max-concurrent 50
 ```
 
@@ -103,7 +106,7 @@ After fixed simulations finish, run `analyze-paired` and then build figures:
 
 ```bash
 python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" make-figures \
-  --experiment-root /mnt/parscratch/users/cop23bi/current-repair/<run_name>
+  --experiment-root /mnt/parscratch/users/cop23bi/<run_name>
 ```
 
 ## Outputs
@@ -138,5 +141,7 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init --d
   --subjects sub-01 \
   --repeat-count 2 \
   --atlas-dir /tmp/atlases \
-  --roi-preset left-hippocampus
+  --roi-preset left-hippocampus \
+  --montage-preset left-hippocampus \
+  --targets-csv "$TARGETS_CSV"
 ```

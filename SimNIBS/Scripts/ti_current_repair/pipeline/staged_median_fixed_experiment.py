@@ -22,6 +22,13 @@ if str(PIPELINE_DIR) not in sys.path:
 from experiment_config import repeat_tag  # noqa: E402
 from pipeline import provenance  # noqa: E402
 from post import make_presentation_figures, seed_fixed_from_median, select_median_remesh_repeats  # noqa: E402
+from stimulation_config import (  # noqa: E402
+    TARGETS_CSV_PATH,
+    StimulationConfig,
+    resolve_confirmed_stimulation,
+    stimulation_summary,
+    validate_stimulation_config,
+)
 
 
 CONFIG_DIRNAME = "configs"
@@ -135,6 +142,7 @@ def _base_config(
     roi_preset: str,
     atlas_dir: Path,
     compare_metric: str,
+    stimulation: StimulationConfig,
 ) -> dict[str, Any]:
     analysis: dict[str, Any] = {
         "roi_preset": roi_preset,
@@ -159,6 +167,7 @@ def _base_config(
                 "description": "Physical copy of selected median remesh mesh reused for fixed repeats.",
             },
         ],
+        "stimulation": stimulation.to_dict(),
         "analysis": analysis,
     }
 
@@ -215,6 +224,10 @@ def _workflow_configs(experiment_root: Path) -> tuple[dict[str, Any], dict[str, 
         raise ValueError(
             f"Workflow config experiment_root is {roots[0][1]!r}, expected {str(experiment_root)!r}."
         )
+    stimulations = [config.get("stimulation") for config in (remesh, fixed, paired)]
+    if stimulations[0] != stimulations[1] or stimulations[0] != stimulations[2]:
+        raise ValueError("Workflow configs disagree on stimulation parameters.")
+    validate_stimulation_config(stimulations[0])
     remesh_conditions = remesh.get("conditions", [])
     fixed_conditions = fixed.get("conditions", [])
     paired_conditions = paired.get("conditions", [])
@@ -325,6 +338,7 @@ def _validate_workflow_inputs(config: dict[str, Any]) -> dict[str, Any]:
             "Missing or empty exact subject atlas file(s): "
             + ", ".join(str(path) for path in missing_atlases)
         )
+    stimulation = validate_stimulation_config(config.get("stimulation"))
     return {
         "source_root": str(source_root),
         "source_files_expected": len(expected_relative_paths),
@@ -334,6 +348,7 @@ def _validate_workflow_inputs(config: dict[str, Any]) -> dict[str, Any]:
         "atlas_dir": str(atlas_dir),
         "atlases_expected": len(subjects),
         "atlases_ready": len(subjects),
+        "stimulation": stimulation_summary(stimulation),
     }
 
 
@@ -394,6 +409,15 @@ def _print_workflow_scope(scope: dict[str, Any]) -> None:
         "  dataset manifest hashes: "
         f"{input_validation['manifest_hashes_verified']}"
     )
+    stimulation = input_validation["stimulation"]
+    print(
+        "  stimulation: "
+        f"{stimulation['montage_preset']} ({stimulation['target_roi']})"
+    )
+    print(f"  targets.csv: {stimulation['targets_csv']}")
+    print(f"  targets.csv SHA-256: {stimulation['targets_csv_sha256']}")
+    print(f"  pair 1: {stimulation['pair1']}")
+    print(f"  pair 2: {stimulation['pair2']}")
     print(f"  execution: {scope['execution_scope']}")
 
 
@@ -661,6 +685,15 @@ def command_init(args: argparse.Namespace) -> int:
     experiment_root = args.experiment_root.expanduser().resolve()
     subjects = _subjects_from_arg(args.subjects)
     atlas_dir = _validate_atlas_dir(args.atlas_dir, subjects)
+    stimulation = resolve_confirmed_stimulation(
+        args.montage_preset,
+        targets_csv=args.targets_csv,
+    )
+    if stimulation.montage_preset != args.roi_preset:
+        raise ValueError(
+            "Analysis ROI and stimulation montage must match for this repeatability "
+            f"workflow: {args.roi_preset!r} != {stimulation.montage_preset!r}."
+        )
     base = _base_config(
         source_root=source_root,
         experiment_root=experiment_root,
@@ -669,6 +702,7 @@ def command_init(args: argparse.Namespace) -> int:
         roi_preset=args.roi_preset,
         atlas_dir=atlas_dir,
         compare_metric=args.compare_metric,
+        stimulation=stimulation,
     )
     configs = {
         REMESH_CONFIG: _config_with_conditions(base, {"remesh"}),
@@ -693,6 +727,7 @@ def command_init(args: argparse.Namespace) -> int:
             "roi_preset": args.roi_preset,
             "compare_metric": args.compare_metric,
             "atlas_dir": str(atlas_dir),
+            "stimulation": stimulation.to_dict(),
             "configs": {name: str(_config_path(experiment_root, name)) for name in configs},
         },
     )
@@ -704,6 +739,7 @@ def command_init(args: argparse.Namespace) -> int:
         subjects=subjects,
         repeat_count=args.repeat_count,
         atlas_dir=str(atlas_dir),
+        stimulation=stimulation.to_dict(),
     )
     provenance.write_stage_status(experiment_root, collect_status(experiment_root))
     print(f"initialized staged pipeline: {_pipeline_root(experiment_root)}")
@@ -1477,6 +1513,20 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--subjects", required=True)
     init.add_argument("--repeat-count", type=int, required=True)
     init.add_argument("--roi-preset", default="left-hippocampus")
+    init.add_argument(
+        "--montage-preset",
+        required=True,
+        help="Confirmed targets.csv montage preset used for all simulations.",
+    )
+    init.add_argument(
+        "--targets-csv",
+        type=Path,
+        default=TARGETS_CSV_PATH,
+        help=(
+            "Path to the confirmed optimized targets.csv. Its SHA-256 must match "
+            "the repository-approved hash."
+        ),
+    )
     init.add_argument("--atlas-dir", type=Path, required=True)
     init.add_argument(
         "--compare-metric",

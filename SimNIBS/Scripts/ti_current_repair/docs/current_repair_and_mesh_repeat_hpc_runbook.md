@@ -25,6 +25,7 @@ git status
 export REPO_ROOT=/users/cop23bi/Repos/TI_Pipeline
 export CURRENT_REPAIR_DIR="${REPO_ROOT}/SimNIBS/Scripts/ti_current_repair"
 export MESH_REPEAT_DIR="${REPO_ROOT}/SimNIBS/Scripts/mesh_repeat_analysis"
+export TARGETS_CSV="${REPO_ROOT}/SimNIBS/Scripts/utils/targets.csv"
 ```
 
 The preferred state before launching production work is:
@@ -107,9 +108,9 @@ and are recorded in `_pipeline/events.jsonl`.
 ```bash
 cd "$REPO_ROOT"
 
-export RUN_NAME=final_132_balanced_10
+export RUN_NAME=final_132_repeatability_balanced_10
 export SOURCE_ROOT=/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected
-export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/current-repair/${RUN_NAME}
+export EXPERIMENT_ROOT=/mnt/parscratch/users/cop23bi/${RUN_NAME}
 export ATLAS_DIR=/mnt/parscratch/users/cop23bi/ZIPs/atlases
 export SUBJECTS=sub-CC110174,sub-CC121144,sub-CC310407,sub-CC320616,sub-CC420071,sub-CC410432,sub-CC520083,sub-CC520127,sub-CC610631,sub-CC720941
 ```
@@ -135,7 +136,9 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init --d
   --subjects "$SUBJECTS" \
   --repeat-count 40 \
   --atlas-dir "$ATLAS_DIR" \
-  --roi-preset left-hippocampus
+  --roi-preset left-hippocampus \
+  --montage-preset left-hippocampus \
+  --targets-csv "$TARGETS_CSV"
 ```
 
 ### Stage 1: Initialize
@@ -147,7 +150,9 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" init \
   --subjects "$SUBJECTS" \
   --repeat-count 40 \
   --atlas-dir "$ATLAS_DIR" \
-  --roi-preset left-hippocampus
+  --roi-preset left-hippocampus \
+  --montage-preset left-hippocampus \
+  --targets-csv "$TARGETS_CSV"
 ```
 
 Expected outputs:
@@ -619,7 +624,7 @@ For a remesh-only rerun, the most important first check is the per-subject
 
 - Do not run production jobs from a dirty working tree unless the diffs were
   intentional and recorded.
-- Keep current-repair outputs under `/mnt/parscratch/users/cop23bi/current-repair/`.
+- Keep all outputs for this run under its dedicated `EXPERIMENT_ROOT`.
 - Keep original repeatability rerun outputs under a separate root, for example
   `/mnt/parscratch/users/cop23bi/repeatability-rerun-correct-current/`.
 - Do not reuse old current-correction or current-repair data roots unless the

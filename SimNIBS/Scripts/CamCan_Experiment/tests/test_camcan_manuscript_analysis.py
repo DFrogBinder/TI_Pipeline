@@ -162,6 +162,14 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
                     name: float(repeat_number + subject_index)
                     for name in metric_names
                 }
+                if (
+                    roi == "Left_Hippocampus"
+                    and repeat_number == 1
+                    and subject == "sub-01"
+                ):
+                    metrics["whole_brain_coverage_voxels_ge_0p18"] = 0
+                    metrics["target_coverage_voxels_ge_0p18"] = 0
+                    metrics["threshold_localization_percent_in_roi_ge_0p18"] = None
                 path.write_text(
                     json.dumps(
                         {
@@ -207,6 +215,19 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
     assert manifest["status"] == "complete"
     assert manifest["repeat_level_records"] == 80
     assert manifest["subject_level_records"] == 8
+    assert manifest["zero_denominator_localization_values_repaired"] == 1
+    assert manifest["zero_denominator_localization_repairs_by_metric"] == {
+        "threshold_localization_percent_in_roi_ge_0p18": 1,
+        "threshold_localization_percent_in_roi_ge_0p15": 0,
+    }
+    repeat_frame = manuscript.pd.read_csv(out_dir / "repeat_level_metrics.csv")
+    repaired = repeat_frame.loc[
+        (repeat_frame["roi"] == "Left_Hippocampus")
+        & (repeat_frame["subject"] == "sub-01")
+        & (repeat_frame["repeat"] == 1),
+        "threshold_localization_percent_in_roi_ge_0p18",
+    ].iloc[0]
+    assert repaired == 0.0
     subject_frame = manuscript.pd.read_csv(
         out_dir / "subject_level_repeat_mean_metrics.csv"
     )
@@ -261,7 +282,10 @@ def test_collector_rejects_nonfinite_repeat_metrics(monkeypatch, tmp_path):
                 encoding="utf-8",
             )
 
-    with pytest.raises(RuntimeError, match="silently omit repeats"):
+    with pytest.raises(
+        RuntimeError,
+        match="outside the defined 0/0 case",
+    ):
         manuscript.collect_analysis(
             study_root=study_root,
             subjects_file=subjects_file,

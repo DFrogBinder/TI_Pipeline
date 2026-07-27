@@ -1138,6 +1138,10 @@ def collect_analysis(
     repeat_frame = pd.DataFrame(records)
     if set(repeat_frame["subject"]) != expected_subjects:
         raise RuntimeError("Collected subject set does not match the cohort subject file.")
+    repeat_frame, repair_counts = _repair_zero_denominator_localization(
+        repeat_frame,
+        thresholds,
+    )
     metric_columns = manuscript_metric_names(thresholds)
     finite_metric_values = np.isfinite(
         repeat_frame[metric_columns].to_numpy(dtype=float, copy=False)
@@ -1176,7 +1180,10 @@ def collect_analysis(
         expected_subjects=expected_subjects,
         manifest_extra={
             "execution_mode": "full_image_metric_extraction_and_aggregation",
-            "zero_denominator_localization_values_repaired": 0,
+            "zero_denominator_localization_values_repaired": sum(
+                repair_counts.values()
+            ),
+            "zero_denominator_localization_repairs_by_metric": repair_counts,
         },
     )
 

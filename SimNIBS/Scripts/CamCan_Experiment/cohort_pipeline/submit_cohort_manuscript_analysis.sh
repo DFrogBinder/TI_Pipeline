@@ -202,6 +202,7 @@ EXISTING_COMPLETE="$(
     find "${STUDY_ROOT}/runs" -type f -path '*/anat/post/manuscript_metrics.json' \
         -exec grep -lF '"status": "complete"' {} + 2>/dev/null | wc -l
 )"
+MANUSCRIPT_THRESHOLDS_DISPLAY="${MANUSCRIPT_THRESHOLDS_COLON//:/ and }"
 SCHEDULER_TASKS=41
 printf '%s\n' \
     'Scope:' \
@@ -214,7 +215,7 @@ printf '%s\n' \
     "  subject-stage array: 0-39%${MAX_CONCURRENT_DATASETS}" \
     '  collector jobs: 1' \
     "  scheduler tasks total: ${SCHEDULER_TASKS}" \
-    "  thresholds: ${MANUSCRIPT_THRESHOLDS_COLON//:/' and '} V/m" \
+    "  thresholds: ${MANUSCRIPT_THRESHOLDS_DISPLAY} V/m" \
     "  robust maximum: P${MANUSCRIPT_ROBUST_MAX_PERCENTILE}" \
     "  robust sensitivity: median of upper $(python3 -c "print(${MANUSCRIPT_UPPER_TAIL_FRACTION} * 100)")%" \
     '  repeat aggregation: arithmetic mean after metric calculation' \

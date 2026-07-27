@@ -34,7 +34,7 @@ from utils.roi_registry import match_fastsurfer_roi_from_directory  # noqa: E402
 from utils.ti_utils import load_ti_as_scalar, vol_mm3  # noqa: E402
 
 
-ANALYSIS_SCHEMA_VERSION = 1
+ANALYSIS_SCHEMA_VERSION = 2
 DEFAULT_THRESHOLDS_V_PER_M = (0.18, 0.15)
 DEFAULT_TOP_PERCENTILE = 95.0
 DEFAULT_ROBUST_MAX_PERCENTILE = 99.9
@@ -60,6 +60,19 @@ def _threshold_slug(value: float) -> str:
 def _safe_percent(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return math.nan
+    return float(numerator / denominator * 100.0)
+
+
+def _localization_percent(numerator: int, denominator: int) -> float:
+    """Return 0% when no whole-brain voxels satisfy the threshold.
+
+    In that case there is no suprathreshold stimulation to localize in the
+    target. Encoding the result as zero keeps all ten repeats in the arithmetic
+    mean instead of silently dropping the repeat as an undefined 0/0 ratio.
+    """
+
+    if denominator <= 0:
+        return 0.0
     return float(numerator / denominator * 100.0)
 
 
@@ -245,7 +258,7 @@ def compute_manuscript_metrics(
                 f"off_target_coverage_percent_ge_{slug}": _safe_percent(
                     off_target_count, off_target_voxels
                 ),
-                f"threshold_localization_percent_in_roi_ge_{slug}": _safe_percent(
+                f"threshold_localization_percent_in_roi_ge_{slug}": _localization_percent(
                     target_count, whole_count
                 ),
             }
@@ -421,6 +434,9 @@ def _extract_subject(task: ExtractionTask) -> dict[str, Any]:
                 "whole_brain_coverage_denominator": "all finite whole-brain voxels",
                 "threshold_localization_denominator": (
                     "all finite whole-brain voxels at or above threshold"
+                ),
+                "zero_suprathreshold_localization_policy": (
+                    "0% when no finite whole-brain voxels meet the threshold"
                 ),
                 "top_percentile": task.top_percentile,
                 "robust_max_percentile": task.robust_max_percentile,
@@ -895,6 +911,18 @@ def collect_analysis(
         for name in manuscript_metric_names(thresholds)
         if name in repeat_frame.columns
     ]
+    finite_metric_values = np.isfinite(
+        repeat_frame[metric_columns].to_numpy(dtype=float, copy=False)
+    )
+    if not finite_metric_values.all():
+        bad_columns = repeat_frame[metric_columns].columns[
+            ~finite_metric_values.all(axis=0)
+        ].tolist()
+        raise RuntimeError(
+            "Repeat-level manuscript metrics contain non-finite values; "
+            "refusing an aggregation that could silently omit repeats. "
+            f"Affected metrics: {bad_columns}"
+        )
     group_columns = ["subject", "roi", "canonical_roi"]
     means = (
         repeat_frame.groupby(group_columns, sort=False)[metric_columns]
@@ -1044,6 +1072,9 @@ def collect_analysis(
         "primary_robust_maximum": "99.9th percentile (P99.9)",
         "robust_maximum_sensitivity": "median of values in the upper 1%",
         "nonfinite_roi_policy": "counted as unstimulated in target coverage denominator",
+        "zero_suprathreshold_localization_policy": (
+            "0% when no finite whole-brain voxels meet the threshold"
+        ),
         "cross_roi_inference": False,
         "individualized_optimization_included": False,
         "outputs": sorted(

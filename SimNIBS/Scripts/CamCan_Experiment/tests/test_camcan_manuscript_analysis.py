@@ -65,6 +65,24 @@ def test_top_five_metrics_are_coverage_and_localization():
     )
 
 
+def test_threshold_localization_is_zero_when_no_voxel_reaches_threshold():
+    ti_data = np.full((2, 2, 2), 0.10, dtype=np.float32)
+    roi_mask = np.zeros_like(ti_data, dtype=bool)
+    roi_mask[0, 0, 0] = True
+    ti_img = nib.Nifti1Image(ti_data, np.eye(4))
+
+    metrics = manuscript.compute_manuscript_metrics(
+        ti_img=ti_img,
+        ti_data=ti_data,
+        roi_mask=roi_mask,
+        thresholds=(0.18,),
+    )
+
+    assert metrics["whole_brain_coverage_voxels_ge_0p18"] == 0
+    assert metrics["target_coverage_voxels_ge_0p18"] == 0
+    assert metrics["threshold_localization_percent_in_roi_ge_0p18"] == 0.0
+
+
 def test_subject_extraction_writes_and_reuses_fingerprinted_record(tmp_path):
     dataset_root = tmp_path / "Left_Hippocampus_Data_01"
     subject = "sub-01"
@@ -200,6 +218,61 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
     assert row["repeat_count"] == 10
     assert (out_dir / "table_main_long.csv").is_file()
     assert (out_dir / "table_supplementary_descriptive_statistics.csv").is_file()
+
+
+def test_collector_rejects_nonfinite_repeat_metrics(monkeypatch, tmp_path):
+    study_root = tmp_path / "study"
+    subjects_file = tmp_path / "subjects.txt"
+    subjects_file.write_text("sub-01\n", encoding="utf-8")
+    metric_names = manuscript.manuscript_metric_names()
+
+    for roi in manuscript.ROI_ORDER:
+        canonical = manuscript.match_fastsurfer_roi_from_directory(
+            f"{roi}_Data_01"
+        ).canonical_name
+        for repeat_number in range(1, 11):
+            repeat = f"{repeat_number:02d}"
+            path = (
+                study_root
+                / "runs"
+                / f"{roi}_Runs"
+                / f"{roi}_Data_{repeat}"
+                / "sub-01"
+                / "anat"
+                / "post"
+                / "manuscript_metrics.json"
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            metrics = {name: 1.0 for name in metric_names}
+            if roi == "Right_DLPC" and repeat == "01":
+                metrics["threshold_localization_percent_in_roi_ge_0p18"] = None
+            path.write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "config_fingerprint": "test",
+                        "subject": "sub-01",
+                        "roi": roi,
+                        "repeat": repeat,
+                        "canonical_roi": canonical,
+                        "metrics": metrics,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    with pytest.raises(RuntimeError, match="silently omit repeats"):
+        manuscript.collect_analysis(
+            study_root=study_root,
+            subjects_file=subjects_file,
+            mni_atlas_path=tmp_path / "mni.nii.gz",
+            mni_baseline_parent=tmp_path / "baselines",
+            out_dir=tmp_path / "out",
+            thresholds=manuscript.DEFAULT_THRESHOLDS_V_PER_M,
+            top_percentile=manuscript.DEFAULT_TOP_PERCENTILE,
+            robust_max_percentile=manuscript.DEFAULT_ROBUST_MAX_PERCENTILE,
+            upper_tail_fraction=manuscript.DEFAULT_UPPER_TAIL_FRACTION,
+        )
 
 
 def test_effectiveness_spread_figure_writes_png_and_pdf(tmp_path):

@@ -188,6 +188,47 @@ Subject outputs are resumable. If the one-shot post array needs to be
 resubmitted after a failure, complete metrics with the same configuration
 fingerprint are reused; `PIPELINE_FORCE` remains disabled by default.
 
+## Final-cohort manuscript analysis
+
+The manuscript analysis is a compact, visualization-free extension of the
+completed post-processing campaign. It reads the existing whole-brain TI
+NIfTIs and subject-space atlases without modifying either, calculates the
+requested metrics independently in every repeat, and then uses the arithmetic
+mean of each subject's ten values. Run:
+
+```bash
+bash CamCan_Experiment/cohort_pipeline/submit_cohort_manuscript_analysis.sh \
+    final_132 \
+    --preflight
+
+bash CamCan_Experiment/cohort_pipeline/submit_cohort_manuscript_analysis.sh \
+    final_132
+```
+
+The launcher submits 40 resumable ROI/repeat jobs at up to 40-way concurrency,
+followed by one `afterok` collector. It preserves the established post-analysis
+resource profile (12 CPU, 24 GB, 8 hours per job). The analysis calculates:
+
+- target, off-target, and whole-brain coverage at both 0.18 and 0.15 V/m;
+- localization of suprathreshold and whole-brain top-5% voxels in the target;
+- median field and P99.9 robust maximum in the ROI, whole brain, and
+  off-target compartment;
+- the median of the upper 1% as a robust-maximum sensitivity analysis;
+- the same metrics for each ROI-specific MNI152 baseline.
+
+Target coverage always uses the complete anatomical ROI as its denominator, so
+non-finite ROI voxels count as unstimulated. The collector writes repeat-level
+and ten-repeat subject-mean CSVs, a primary table, a supplementary descriptive
+table (mean, SD, median, quartiles, IQR, range), four effectiveness-versus-
+spread figure sets, an audit manifest, and a compact download archive under:
+
+```text
+campaigns/final_132/post_processing/manuscript_analysis/
+```
+
+Individualized optimizations and cross-ROI inferential comparisons are not
+included in this stage.
+
 If the post-processing preflight reports missing subject-space atlases, first
 prepare and submit the missing-only Destrieux repair stage:
 

@@ -57,6 +57,14 @@ def _threshold_slug(value: float) -> str:
     return f"{float(value):.6f}".rstrip("0").rstrip(".").replace(".", "p")
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _safe_percent(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return math.nan
@@ -858,59 +866,51 @@ def _write_effectiveness_spread_figure(
     plt.close(fig)
 
 
-def collect_analysis(
+def _write_analysis_outputs(
     *,
-    study_root: Path,
-    subjects_file: Path,
-    mni_atlas_path: Path,
-    mni_baseline_parent: Path,
+    repeat_frame: pd.DataFrame,
+    mni_frame: pd.DataFrame,
     out_dir: Path,
     thresholds: Sequence[float],
     top_percentile: float,
     robust_max_percentile: float,
     upper_tail_fraction: float,
+    expected_subjects: set[str] | None = None,
+    manifest_extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    subjects = _read_subjects(subjects_file)
-    expected_subjects = set(subjects)
-    records: list[dict[str, Any]] = []
-    missing: list[str] = []
-    for roi in ROI_ORDER:
-        for repeat_number in range(1, 11):
-            repeat = f"{repeat_number:02d}"
-            dataset_root = study_root / "runs" / f"{roi}_Runs" / f"{roi}_Data_{repeat}"
-            for subject in subjects:
-                path = (
-                    dataset_root
-                    / subject
-                    / "anat"
-                    / "post"
-                    / "manuscript_metrics.json"
-                )
-                try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    missing.append(str(path))
-                    continue
-                if payload.get("status") != "complete":
-                    missing.append(str(path))
-                    continue
-                records.append(_flatten_payload(payload))
-
-    expected_records = len(subjects) * len(ROI_ORDER) * 10
-    if missing or len(records) != expected_records:
+    required_identity_columns = {"subject", "roi", "repeat", "canonical_roi"}
+    missing_identity_columns = required_identity_columns.difference(repeat_frame.columns)
+    if missing_identity_columns:
         raise RuntimeError(
-            f"Expected {expected_records} complete manuscript metric records; "
-            f"found {len(records)} with {len(missing)} missing/incomplete."
+            "Repeat-level metric table is missing identity columns: "
+            f"{sorted(missing_identity_columns)}"
         )
-    repeat_frame = pd.DataFrame(records)
-    if set(repeat_frame["subject"]) != expected_subjects:
+    if repeat_frame.duplicated(["subject", "roi", "repeat"]).any():
+        raise RuntimeError("Repeat-level metric table contains duplicate subject/ROI/repeat rows.")
+    if set(repeat_frame["roi"]) != set(ROI_ORDER):
+        raise RuntimeError("Repeat-level ROI set does not match the four planned ROIs.")
+    if expected_subjects is not None and set(repeat_frame["subject"]) != expected_subjects:
         raise RuntimeError("Collected subject set does not match the cohort subject file.")
+    if set(mni_frame["roi"]) != set(ROI_ORDER) or len(mni_frame) != len(ROI_ORDER):
+        raise RuntimeError("MNI baseline table must contain exactly one row for each planned ROI.")
 
     metric_columns = [
         name
         for name in manuscript_metric_names(thresholds)
         if name in repeat_frame.columns
     ]
+    missing_metrics = set(manuscript_metric_names(thresholds)).difference(metric_columns)
+    if missing_metrics:
+        raise RuntimeError(
+            "Repeat-level metric table is missing manuscript metrics: "
+            f"{sorted(missing_metrics)}"
+        )
+    missing_mni_metrics = set(metric_columns).difference(mni_frame.columns)
+    if missing_mni_metrics:
+        raise RuntimeError(
+            "MNI baseline table is missing manuscript metrics: "
+            f"{sorted(missing_mni_metrics)}"
+        )
     finite_metric_values = np.isfinite(
         repeat_frame[metric_columns].to_numpy(dtype=float, copy=False)
     )
@@ -923,6 +923,18 @@ def collect_analysis(
             "refusing an aggregation that could silently omit repeats. "
             f"Affected metrics: {bad_columns}"
         )
+    finite_mni_values = np.isfinite(
+        mni_frame[metric_columns].to_numpy(dtype=float, copy=False)
+    )
+    if not finite_mni_values.all():
+        bad_columns = mni_frame[metric_columns].columns[
+            ~finite_mni_values.all(axis=0)
+        ].tolist()
+        raise RuntimeError(
+            "MNI baseline manuscript metrics contain non-finite values. "
+            f"Affected metrics: {bad_columns}"
+        )
+
     group_columns = ["subject", "roi", "canonical_roi"]
     means = (
         repeat_frame.groupby(group_columns, sort=False)[metric_columns]
@@ -946,20 +958,6 @@ def collect_analysis(
     )
     if not (subject_frame["repeat_count"] == 10).all():
         raise RuntimeError("At least one subject/ROI does not have exactly ten repeats.")
-
-    mni_records = [
-        _compute_mni_record(
-            roi=roi,
-            baseline_parent=mni_baseline_parent,
-            mni_atlas_path=mni_atlas_path,
-            thresholds=thresholds,
-            top_percentile=top_percentile,
-            robust_max_percentile=robust_max_percentile,
-            upper_tail_fraction=upper_tail_fraction,
-        )
-        for roi in ROI_ORDER
-    ]
-    mni_frame = pd.DataFrame(mni_records)
 
     summary_rows: list[dict[str, Any]] = []
     for roi in ROI_ORDER:
@@ -1029,7 +1027,9 @@ def collect_analysis(
     mni_frame.to_csv(out_dir / "mni152_baseline_metrics.csv", index=False)
     main_long.to_csv(out_dir / "table_main_long.csv", index=False)
     main_formatted.to_csv(out_dir / "table_main_formatted.csv", index=False)
-    supplementary.to_csv(out_dir / "table_supplementary_descriptive_statistics.csv", index=False)
+    supplementary.to_csv(
+        out_dir / "table_supplementary_descriptive_statistics.csv", index=False
+    )
     pd.DataFrame(dictionary_rows).to_csv(out_dir / "metric_dictionary.csv", index=False)
 
     figures_dir = out_dir / "figures"
@@ -1052,14 +1052,14 @@ def collect_analysis(
             / f"effectiveness_vs_whole_brain_coverage_ge_{slug}",
         )
 
-    manifest = {
+    manifest: dict[str, Any] = {
         "analysis_schema_version": ANALYSIS_SCHEMA_VERSION,
         "status": "complete",
         "aggregation": (
             "Each metric is calculated independently per repeat, then arithmetic-mean "
             "aggregated across the ten repeats for each subject and ROI."
         ),
-        "subjects": len(subjects),
+        "subjects": int(repeat_frame["subject"].nunique()),
         "rois": list(ROI_ORDER),
         "repeats_per_subject_roi": 10,
         "repeat_level_records": len(repeat_frame),
@@ -1077,16 +1077,213 @@ def collect_analysis(
         ),
         "cross_roi_inference": False,
         "individualized_optimization_included": False,
-        "outputs": sorted(
-            str(path.relative_to(out_dir))
-            for path in out_dir.rglob("*")
-            if path.is_file()
-        ),
     }
+    if manifest_extra:
+        manifest.update(manifest_extra)
+    manifest["outputs"] = sorted(
+        str(path.relative_to(out_dir))
+        for path in out_dir.rglob("*")
+        if path.is_file() and path.name != "analysis_manifest.json"
+    )
     (out_dir / "analysis_manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     return manifest
+
+
+def collect_analysis(
+    *,
+    study_root: Path,
+    subjects_file: Path,
+    mni_atlas_path: Path,
+    mni_baseline_parent: Path,
+    out_dir: Path,
+    thresholds: Sequence[float],
+    top_percentile: float,
+    robust_max_percentile: float,
+    upper_tail_fraction: float,
+) -> dict[str, Any]:
+    subjects = _read_subjects(subjects_file)
+    expected_subjects = set(subjects)
+    records: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for roi in ROI_ORDER:
+        for repeat_number in range(1, 11):
+            repeat = f"{repeat_number:02d}"
+            dataset_root = study_root / "runs" / f"{roi}_Runs" / f"{roi}_Data_{repeat}"
+            for subject in subjects:
+                path = (
+                    dataset_root
+                    / subject
+                    / "anat"
+                    / "post"
+                    / "manuscript_metrics.json"
+                )
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    missing.append(str(path))
+                    continue
+                if payload.get("status") != "complete":
+                    missing.append(str(path))
+                    continue
+                records.append(_flatten_payload(payload))
+
+    expected_records = len(subjects) * len(ROI_ORDER) * 10
+    if missing or len(records) != expected_records:
+        raise RuntimeError(
+            f"Expected {expected_records} complete manuscript metric records; "
+            f"found {len(records)} with {len(missing)} missing/incomplete."
+        )
+    repeat_frame = pd.DataFrame(records)
+    if set(repeat_frame["subject"]) != expected_subjects:
+        raise RuntimeError("Collected subject set does not match the cohort subject file.")
+    metric_columns = manuscript_metric_names(thresholds)
+    finite_metric_values = np.isfinite(
+        repeat_frame[metric_columns].to_numpy(dtype=float, copy=False)
+    )
+    if not finite_metric_values.all():
+        bad_columns = repeat_frame[metric_columns].columns[
+            ~finite_metric_values.all(axis=0)
+        ].tolist()
+        raise RuntimeError(
+            "Repeat-level manuscript metrics contain non-finite values; "
+            "refusing an aggregation that could silently omit repeats. "
+            f"Affected metrics: {bad_columns}"
+        )
+
+    mni_records = [
+        _compute_mni_record(
+            roi=roi,
+            baseline_parent=mni_baseline_parent,
+            mni_atlas_path=mni_atlas_path,
+            thresholds=thresholds,
+            top_percentile=top_percentile,
+            robust_max_percentile=robust_max_percentile,
+            upper_tail_fraction=upper_tail_fraction,
+        )
+        for roi in ROI_ORDER
+    ]
+    mni_frame = pd.DataFrame(mni_records)
+    return _write_analysis_outputs(
+        repeat_frame=repeat_frame,
+        mni_frame=mni_frame,
+        out_dir=out_dir,
+        thresholds=thresholds,
+        top_percentile=top_percentile,
+        robust_max_percentile=robust_max_percentile,
+        upper_tail_fraction=upper_tail_fraction,
+        expected_subjects=expected_subjects,
+        manifest_extra={
+            "execution_mode": "full_image_metric_extraction_and_aggregation",
+            "zero_denominator_localization_values_repaired": 0,
+        },
+    )
+
+
+def _repair_zero_denominator_localization(
+    repeat_frame: pd.DataFrame,
+    thresholds: Sequence[float],
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Repair only the legacy 0/0 localization values that have a defined policy."""
+
+    repaired = repeat_frame.copy()
+    repair_counts: dict[str, int] = {}
+    for threshold in thresholds:
+        slug = _threshold_slug(threshold)
+        localization = f"threshold_localization_percent_in_roi_ge_{slug}"
+        whole_count = f"whole_brain_coverage_voxels_ge_{slug}"
+        target_count = f"target_coverage_voxels_ge_{slug}"
+        required = {localization, whole_count, target_count}
+        missing = required.difference(repaired.columns)
+        if missing:
+            raise RuntimeError(
+                f"Cannot apply the zero-denominator policy; missing columns: {sorted(missing)}"
+            )
+
+        localization_values = pd.to_numeric(repaired[localization], errors="coerce")
+        whole_values = pd.to_numeric(repaired[whole_count], errors="coerce")
+        target_values = pd.to_numeric(repaired[target_count], errors="coerce")
+        invalid = ~np.isfinite(localization_values.to_numpy(dtype=float, copy=False))
+        repairable = invalid & (whole_values == 0).to_numpy() & (target_values == 0).to_numpy()
+        unrepairable = invalid & ~repairable
+        if np.any(unrepairable):
+            bad_rows = repaired.loc[
+                unrepairable, ["subject", "roi", "repeat", localization, whole_count, target_count]
+            ]
+            raise RuntimeError(
+                "Non-finite localization values were found outside the defined 0/0 case; "
+                f"first affected rows: {bad_rows.head(5).to_dict(orient='records')}"
+            )
+        repaired.loc[repairable, localization] = 0.0
+        repair_counts[localization] = int(np.count_nonzero(repairable))
+    return repaired, repair_counts
+
+
+def reaggregate_existing_analysis(
+    *,
+    input_dir: Path,
+    out_dir: Path,
+    thresholds: Sequence[float],
+    top_percentile: float,
+    robust_max_percentile: float,
+    upper_tail_fraction: float,
+    subjects_file: Path | None = None,
+) -> dict[str, Any]:
+    """Rebuild tables and figures from existing repeat-level CSV metrics.
+
+    This mode intentionally performs no NIfTI, atlas, or simulation reads. It
+    exists so small aggregation-policy corrections can run safely on a login
+    node or workstation without resubmitting the 5,280 image-level tasks.
+    """
+
+    repeat_path = input_dir / "repeat_level_metrics.csv"
+    mni_path = input_dir / "mni152_baseline_metrics.csv"
+    if not repeat_path.is_file():
+        raise FileNotFoundError(f"Missing repeat-level metric table: {repeat_path}")
+    if not mni_path.is_file():
+        raise FileNotFoundError(f"Missing MNI baseline metric table: {mni_path}")
+    if input_dir.resolve() == out_dir.resolve():
+        raise RuntimeError(
+            "Refusing to overwrite the source results in place; choose a new --out-dir."
+        )
+
+    repeat_frame = pd.read_csv(repeat_path)
+    mni_frame = pd.read_csv(mni_path)
+    repaired_frame, repair_counts = _repair_zero_denominator_localization(
+        repeat_frame, thresholds
+    )
+    expected_subjects = (
+        set(_read_subjects(subjects_file)) if subjects_file is not None else None
+    )
+    source_manifest_path = input_dir / "analysis_manifest.json"
+    source_manifest_sha256 = (
+        _sha256_file(source_manifest_path) if source_manifest_path.is_file() else None
+    )
+    repeat_sha256 = _sha256_file(repeat_path)
+    mni_sha256 = _sha256_file(mni_path)
+    total_repairs = int(sum(repair_counts.values()))
+
+    return _write_analysis_outputs(
+        repeat_frame=repaired_frame,
+        mni_frame=mni_frame,
+        out_dir=out_dir,
+        thresholds=thresholds,
+        top_percentile=top_percentile,
+        robust_max_percentile=robust_max_percentile,
+        upper_tail_fraction=upper_tail_fraction,
+        expected_subjects=expected_subjects,
+        manifest_extra={
+            "execution_mode": "csv_only_reaggregation",
+            "image_metric_extraction_rerun": False,
+            "source_results_dir": str(input_dir.resolve()),
+            "source_repeat_level_metrics_sha256": repeat_sha256,
+            "source_mni152_baseline_metrics_sha256": mni_sha256,
+            "source_analysis_manifest_sha256": source_manifest_sha256,
+            "zero_denominator_localization_values_repaired": total_repairs,
+            "zero_denominator_localization_repairs_by_metric": repair_counts,
+        },
+    )
 
 
 def _parse_thresholds(value: str) -> tuple[float, ...]:
@@ -1153,6 +1350,35 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_UPPER_TAIL_FRACTION,
     )
+
+    reaggregate = subparsers.add_parser(
+        "reaggregate-existing",
+        help=(
+            "Rebuild tables and figures from existing repeat-level CSVs without "
+            "reading NIfTIs or atlases."
+        ),
+    )
+    reaggregate.add_argument("--input-dir", type=Path, required=True)
+    reaggregate.add_argument("--out-dir", type=Path, required=True)
+    reaggregate.add_argument("--subjects-file", type=Path)
+    reaggregate.add_argument(
+        "--thresholds",
+        type=_parse_thresholds,
+        default=DEFAULT_THRESHOLDS_V_PER_M,
+    )
+    reaggregate.add_argument(
+        "--top-percentile", type=float, default=DEFAULT_TOP_PERCENTILE
+    )
+    reaggregate.add_argument(
+        "--robust-max-percentile",
+        type=float,
+        default=DEFAULT_ROBUST_MAX_PERCENTILE,
+    )
+    reaggregate.add_argument(
+        "--upper-tail-fraction",
+        type=float,
+        default=DEFAULT_UPPER_TAIL_FRACTION,
+    )
     return parser
 
 
@@ -1173,13 +1399,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             upper_tail_fraction=args.upper_tail_fraction,
             force=args.force,
         )
-    else:
+    elif args.command == "collect":
         result = collect_analysis(
             study_root=args.study_root,
             subjects_file=args.subjects_file,
             mni_atlas_path=args.mni_atlas,
             mni_baseline_parent=args.mni_baseline_parent,
             out_dir=args.out_dir,
+            thresholds=args.thresholds,
+            top_percentile=args.top_percentile,
+            robust_max_percentile=args.robust_max_percentile,
+            upper_tail_fraction=args.upper_tail_fraction,
+        )
+    else:
+        result = reaggregate_existing_analysis(
+            input_dir=args.input_dir,
+            out_dir=args.out_dir,
+            subjects_file=args.subjects_file,
             thresholds=args.thresholds,
             top_percentile=args.top_percentile,
             robust_max_percentile=args.robust_max_percentile,

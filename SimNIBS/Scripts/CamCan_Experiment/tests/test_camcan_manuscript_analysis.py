@@ -275,6 +275,84 @@ def test_collector_rejects_nonfinite_repeat_metrics(monkeypatch, tmp_path):
         )
 
 
+def test_csv_only_reaggregation_repairs_zero_denominator_localization(
+    monkeypatch, tmp_path
+):
+    input_dir = tmp_path / "schema1"
+    input_dir.mkdir()
+    metric_names = manuscript.manuscript_metric_names()
+    rows = []
+    for roi in manuscript.ROI_ORDER:
+        canonical = manuscript.match_fastsurfer_roi_from_directory(
+            f"{roi}_Data_01"
+        ).canonical_name
+        for repeat_number in range(1, 11):
+            row = {
+                "subject": "sub-01",
+                "roi": roi,
+                "repeat": repeat_number,
+                "canonical_roi": canonical,
+                **{name: 1.0 for name in metric_names},
+            }
+            if roi == "Left_Hippocampus" and repeat_number == 1:
+                row["whole_brain_coverage_voxels_ge_0p18"] = 0
+                row["target_coverage_voxels_ge_0p18"] = 0
+                row["threshold_localization_percent_in_roi_ge_0p18"] = np.nan
+            rows.append(row)
+    manuscript.pd.DataFrame(rows).to_csv(
+        input_dir / "repeat_level_metrics.csv", index=False
+    )
+    manuscript.pd.DataFrame(
+        [
+            {
+                "subject": "MNI152",
+                "roi": roi,
+                **{name: 1.0 for name in metric_names},
+            }
+            for roi in manuscript.ROI_ORDER
+        ]
+    ).to_csv(input_dir / "mni152_baseline_metrics.csv", index=False)
+    (input_dir / "analysis_manifest.json").write_text(
+        json.dumps({"analysis_schema_version": 1}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        manuscript,
+        "_write_effectiveness_spread_figure",
+        lambda **kwargs: None,
+    )
+
+    out_dir = tmp_path / "schema2"
+    manifest = manuscript.reaggregate_existing_analysis(
+        input_dir=input_dir,
+        out_dir=out_dir,
+        thresholds=manuscript.DEFAULT_THRESHOLDS_V_PER_M,
+        top_percentile=manuscript.DEFAULT_TOP_PERCENTILE,
+        robust_max_percentile=manuscript.DEFAULT_ROBUST_MAX_PERCENTILE,
+        upper_tail_fraction=manuscript.DEFAULT_UPPER_TAIL_FRACTION,
+    )
+
+    assert manifest["status"] == "complete"
+    assert manifest["execution_mode"] == "csv_only_reaggregation"
+    assert manifest["image_metric_extraction_rerun"] is False
+    assert manifest["zero_denominator_localization_values_repaired"] == 1
+    repeat_frame = manuscript.pd.read_csv(out_dir / "repeat_level_metrics.csv")
+    repaired = repeat_frame.loc[
+        (repeat_frame["roi"] == "Left_Hippocampus")
+        & (repeat_frame["repeat"] == 1),
+        "threshold_localization_percent_in_roi_ge_0p18",
+    ].iloc[0]
+    assert repaired == 0.0
+    subject_frame = manuscript.pd.read_csv(
+        out_dir / "subject_level_repeat_mean_metrics.csv"
+    )
+    subject_value = subject_frame.loc[
+        subject_frame["roi"] == "Left_Hippocampus",
+        "threshold_localization_percent_in_roi_ge_0p18",
+    ].iloc[0]
+    assert subject_value == pytest.approx(0.9)
+    assert subject_frame["repeat_count"].eq(10).all()
+
+
 def test_effectiveness_spread_figure_writes_png_and_pdf(tmp_path):
     subject_rows = []
     mni_rows = []

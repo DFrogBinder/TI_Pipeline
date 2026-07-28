@@ -113,6 +113,98 @@ def test_common_scale_paired_renderer_writes_a_nonempty_png(tmp_path):
     assert payload["threshold_v_per_m"] == 0.20
 
 
+def test_zero_support_threshold_writes_explicit_legacy_placeholders(tmp_path):
+    shape = (21, 21, 21)
+    affine = np.eye(4)
+    grid = np.indices(shape, dtype=float)
+    radius = np.sqrt(sum((axis - 10.0) ** 2 for axis in grid))
+    t1_data = np.maximum(0.0, 100.0 - 5.0 * radius)
+    ti_data = np.exp(-((radius / 5.0) ** 2)) * 0.19
+    atlas_data = np.zeros(shape, dtype=np.int16)
+    atlas_data[8:13, 8:13, 8:13] = 17
+
+    t1_path = tmp_path / "t1.nii.gz"
+    ti_path = tmp_path / "ti.nii.gz"
+    atlas_path = tmp_path / "atlas.nii.gz"
+    nib.save(nib.Nifti1Image(t1_data, affine), t1_path)
+    nib.save(nib.Nifti1Image(ti_data, affine), ti_path)
+    nib.save(nib.Nifti1Image(atlas_data, affine), atlas_path)
+    metrics = {
+        "qc_meta": {
+            "checks": {
+                "overlays": {
+                    "missing_overlay_types": [
+                        "context_threshold",
+                        "roi_focus_threshold",
+                    ]
+                }
+            }
+        },
+        "threshold_qc": {
+            "whole_brain": {
+                "overlay_threshold": {
+                    "threshold": 0.20,
+                    "voxels": 0,
+                    "has_voxels": False,
+                }
+            }
+        },
+    }
+
+    paths = visual_qc._write_expected_empty_threshold_overlays(
+        metrics=metrics,
+        output_dir=tmp_path / "post",
+        subject="sub-00",
+        canonical_roi="Left-Hippocampus",
+        ti_path=ti_path,
+        t1_path=t1_path,
+        atlas_path=atlas_path,
+    )
+
+    assert len(paths) == 2
+    assert all(path.is_file() and path.stat().st_size > 0 for path in paths)
+    assert paths[0].name.endswith("_context_sub-00_above0.20.png")
+    assert paths[1].name.endswith("_roi_focus_sub-00_above0.20.png")
+
+
+def test_missing_threshold_overlays_are_not_repaired_when_support_is_nonzero(
+    tmp_path,
+):
+    metrics = {
+        "qc_meta": {
+            "checks": {
+                "overlays": {
+                    "missing_overlay_types": [
+                        "context_threshold",
+                        "roi_focus_threshold",
+                    ]
+                }
+            }
+        },
+        "threshold_qc": {
+            "whole_brain": {
+                "overlay_threshold": {
+                    "threshold": 0.20,
+                    "voxels": 1,
+                    "has_voxels": True,
+                }
+            }
+        },
+    }
+
+    paths = visual_qc._write_expected_empty_threshold_overlays(
+        metrics=metrics,
+        output_dir=tmp_path,
+        subject="sub-00",
+        canonical_roi="Left-Hippocampus",
+        ti_path=tmp_path / "missing-ti.nii.gz",
+        t1_path=tmp_path / "missing-t1.nii.gz",
+        atlas_path=tmp_path / "missing-atlas.nii.gz",
+    )
+
+    assert paths == []
+
+
 def test_visual_qc_collector_requires_exact_selected_product(tmp_path):
     output_root = tmp_path / "visual_qc"
     allowlist_rows = []

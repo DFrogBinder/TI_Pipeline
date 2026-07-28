@@ -167,6 +167,73 @@ def test_zero_support_threshold_writes_explicit_legacy_placeholders(tmp_path):
     assert paths[1].name.endswith("_roi_focus_sub-00_above0.20.png")
 
 
+def test_zero_support_direct_recount_handles_legacy_metrics_schema(tmp_path):
+    """Mirror the HPC records whose metrics lacked the expected QC nesting."""
+
+    shape = (21, 21, 21)
+    affine = np.eye(4)
+    grid = np.indices(shape, dtype=float)
+    radius = np.sqrt(sum((axis - 10.0) ** 2 for axis in grid))
+    t1_data = np.maximum(0.0, 100.0 - 5.0 * radius)
+    ti_data = np.exp(-((radius / 5.0) ** 2)) * 0.19
+    atlas_data = np.zeros(shape, dtype=np.int16)
+    atlas_data[8:13, 8:13, 8:13] = 17
+
+    t1_path = tmp_path / "t1.nii.gz"
+    ti_path = tmp_path / "ti.nii.gz"
+    atlas_path = tmp_path / "atlas.nii.gz"
+    nib.save(nib.Nifti1Image(t1_data, affine), t1_path)
+    nib.save(nib.Nifti1Image(ti_data, affine), ti_path)
+    nib.save(nib.Nifti1Image(atlas_data, affine), atlas_path)
+
+    existing = []
+    for index in range(5):
+        path = tmp_path / f"existing_{index}.png"
+        path.write_bytes(b"existing")
+        existing.append(path)
+
+    paths = visual_qc._write_expected_empty_threshold_overlays(
+        metrics={},
+        output_dir=tmp_path / "post",
+        subject="sub-00",
+        canonical_roi="Left-Hippocampus",
+        ti_path=ti_path,
+        t1_path=t1_path,
+        atlas_path=atlas_path,
+        existing_overlay_paths=existing,
+    )
+
+    assert len(paths) == 2
+    assert all(path.is_file() and path.stat().st_size > 0 for path in paths)
+
+
+def test_direct_recount_does_not_repair_nonzero_threshold_support(tmp_path):
+    shape = (9, 9, 9)
+    affine = np.eye(4)
+    ti_data = np.zeros(shape, dtype=float)
+    ti_data[4, 4, 4] = 0.21
+    ti_path = tmp_path / "ti.nii.gz"
+    nib.save(nib.Nifti1Image(ti_data, affine), ti_path)
+    existing = []
+    for index in range(5):
+        path = tmp_path / f"existing_{index}.png"
+        path.write_bytes(b"existing")
+        existing.append(path)
+
+    paths = visual_qc._write_expected_empty_threshold_overlays(
+        metrics={},
+        output_dir=tmp_path / "post",
+        subject="sub-00",
+        canonical_roi="Left-Hippocampus",
+        ti_path=ti_path,
+        t1_path=tmp_path / "unused-t1.nii.gz",
+        atlas_path=tmp_path / "unused-atlas.nii.gz",
+        existing_overlay_paths=existing,
+    )
+
+    assert paths == []
+
+
 def test_missing_threshold_overlays_are_not_repaired_when_support_is_nonzero(
     tmp_path,
 ):
@@ -331,7 +398,10 @@ def test_submitter_declares_strict_qc_scope_and_isolated_outputs():
         pipeline_dir / "submit_personalized_vs_generic_visual_qc.sh"
     ).read_text(encoding="utf-8")
 
-    assert '--array="0-7%${MAX_CONCURRENT_PAIRS}"' in text
+    assert 'PAIR_ARRAY_SPEC="${PAIR_ARRAY_SPEC:-0-7%${MAX_CONCURRENT_PAIRS}}"' in text
+    assert '--array="${PAIR_ARRAY_SPEC}"' in text
+    assert "resumable recovery of pair" in text
+    assert "final validated product scope remains: 8 pairs" in text
     assert "full subject-level post-processing records: 160" in text
     assert "personalized simulations excluded as out of scope: 200" in text
     assert "existing source post directories modified: no" in text

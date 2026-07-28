@@ -357,6 +357,7 @@ def _run_full_post_task(task: FullPostTask) -> dict[str, Any]:
             ti_path=ti_path,
             t1_path=t1_path,
             atlas_path=atlas,
+            existing_overlay_paths=overlay_paths,
         )
         overlay_paths.extend(empty_threshold_placeholders)
     required_paths = [metrics_path, *overlay_paths]
@@ -392,7 +393,9 @@ def _run_full_post_task(task: FullPostTask) -> dict[str, Any]:
         "empty_threshold_placeholder_policy": (
             "When the whole brain contains zero finite voxels at or above "
             "0.20 V/m, the two mathematically empty threshold overlays are "
-            "represented by explicit annotated anatomy/ROI panels."
+            "represented by explicit annotated anatomy/ROI panels. Zero "
+            "support is verified from threshold QC metadata when available "
+            "and otherwise by a direct recount of the source TI image."
         ),
         "required_output_paths": [str(path.resolve()) for path in required_paths],
     }
@@ -489,6 +492,7 @@ def _write_expected_empty_threshold_overlays(
     ti_path: Path,
     t1_path: Path,
     atlas_path: Path,
+    existing_overlay_paths: Sequence[Path] = (),
 ) -> list[Path]:
     """Represent a valid zero-support threshold result without inventing data.
 
@@ -509,15 +513,16 @@ def _write_expected_empty_threshold_overlays(
         .get("whole_brain", {})
         .get("overlay_threshold", {})
     )
-    threshold = float(threshold_support.get("threshold", float("nan")))
-    is_expected_empty = (
+    reported_threshold = float(
+        threshold_support.get("threshold", float("nan"))
+    )
+    threshold = reported_threshold if math.isfinite(reported_threshold) else 0.20
+    metadata_proves_expected_empty = (
         missing_types == EXPECTED_EMPTY_THRESHOLD_OVERLAY_TYPES
         and threshold_support.get("has_voxels") is False
         and int(threshold_support.get("voxels", -1)) == 0
         and math.isclose(threshold, 0.20, rel_tol=0.0, abs_tol=1e-12)
     )
-    if not is_expected_empty:
-        return []
 
     roi_stub = normalize_roi_name(canonical_roi)
     paths = [
@@ -526,8 +531,35 @@ def _write_expected_empty_threshold_overlays(
         output_dir
         / f"{roi_stub}_TI_overlay_roi_focus_{subject}_above{threshold:.2f}.png",
     ]
+    existing_resolved = {
+        str(Path(path).expanduser().resolve()) for path in existing_overlay_paths
+    }
+    expected_threshold_paths_are_missing = all(
+        str(path.expanduser().resolve()) not in existing_resolved for path in paths
+    )
+    direct_recount_proves_expected_empty = False
+    if (
+        len(existing_overlay_paths) == 5
+        and expected_threshold_paths_are_missing
+        and math.isclose(threshold, 0.20, rel_tol=0.0, abs_tol=1e-12)
+    ):
+        ti_img = nib.load(str(ti_path))
+        ti_data = np.asarray(load_ti_as_scalar(ti_img), dtype=float)
+        direct_support_voxels = int(
+            np.count_nonzero(np.isfinite(ti_data) & (ti_data >= threshold))
+        )
+        direct_recount_proves_expected_empty = direct_support_voxels == 0
+
+    if not (
+        metadata_proves_expected_empty
+        or direct_recount_proves_expected_empty
+    ):
+        return []
+
     panel_labels = ("whole-brain context", "target-ROI focus")
     for path, panel_label in zip(paths, panel_labels):
+        if path.is_file() and path.stat().st_size > 0:
+            continue
         _render_empty_threshold_overlay(
             ti_path=ti_path,
             t1_path=t1_path,

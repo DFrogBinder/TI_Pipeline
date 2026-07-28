@@ -43,6 +43,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-16G}"
 TIME_LIMIT="${TIME_LIMIT:-02:00:00}"
 MAX_CONCURRENT_PAIRS="${MAX_CONCURRENT_PAIRS:-8}"
+PAIR_ARRAY_SPEC="${PAIR_ARRAY_SPEC:-0-7%${MAX_CONCURRENT_PAIRS}}"
 VISUAL_QC_WORKERS="${VISUAL_QC_WORKERS:-4}"
 COLLECTOR_CPUS="${COLLECTOR_CPUS:-2}"
 COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-8G}"
@@ -93,6 +94,16 @@ do
 done
 if [ "${MAX_CONCURRENT_PAIRS}" -gt 8 ]; then
     echo "[ERROR] MAX_CONCURRENT_PAIRS cannot exceed the eight selected pairs." >&2
+    exit 2
+fi
+if [[ "${PAIR_ARRAY_SPEC}" =~ ^[0-7]$ ]]; then
+    SCHEDULER_TASKS_TOTAL=2
+    EXECUTION_SCOPE="resumable recovery of pair ${PAIR_ARRAY_SPEC}; all existing valid products reused"
+elif [ "${PAIR_ARRAY_SPEC}" = "0-7%${MAX_CONCURRENT_PAIRS}" ]; then
+    SCHEDULER_TASKS_TOTAL=9
+    EXECUTION_SCOPE="full eight-pair resumable execution"
+else
+    echo "[ERROR] PAIR_ARRAY_SPEC must be one pair index (0-7) or the default 0-7%${MAX_CONCURRENT_PAIRS}; got ${PAIR_ARRAY_SPEC}." >&2
     exit 2
 fi
 if [ "${VISUAL_QC_WORKERS}" -gt "${CPUS_PER_TASK}" ]; then
@@ -174,9 +185,11 @@ printf '%s\n' \
     '  multipage pair reports expected: 16 (2 per pair)' \
     '  personalized simulations intentionally included: 80' \
     '  personalized simulations excluded as out of scope: 200' \
-    "  pair-stage array: 0-7%${MAX_CONCURRENT_PAIRS}" \
+    "  pair-stage array: ${PAIR_ARRAY_SPEC}" \
     '  collector jobs: 1' \
-    '  scheduler tasks total: 9' \
+    "  scheduler tasks total: ${SCHEDULER_TASKS_TOTAL}" \
+    "  execution: ${EXECUTION_SCOPE}" \
+    '  final validated product scope remains: 8 pairs, 160 post records, 160 paired PNGs, 16 reports' \
     '  source simulations modified: no' \
     '  existing source post directories modified: no' \
     '  output: isolated QC tree'
@@ -222,7 +235,7 @@ PAIR_JOB="$(
         --cpus-per-task="${CPUS_PER_TASK}" \
         --mem="${MEMORY}" \
         --time="${TIME_LIMIT}" \
-        --array="0-7%${MAX_CONCURRENT_PAIRS}" \
+        --array="${PAIR_ARRAY_SPEC}" \
         --output="${VISUAL_QC_ROOT}/logs/pairs-%A_%a.out" \
         --error="${VISUAL_QC_ROOT}/logs/pairs-%A_%a.err" \
         --export="${EXPORTS}" \

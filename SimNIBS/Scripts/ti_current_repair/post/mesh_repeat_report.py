@@ -34,11 +34,14 @@ ROI_PRESET_CHOICES = {
     "left-m1": ("ctx-lh-precentral", [1022]),
     "left-hippocampus": ("Left-Hippocampus", [17]),
     "right-hippocampus": ("Right-Hippocampus", [53]),
+    "right-m1": ("ctx_rh_G_precentral", [12129]),
 }
 ROI_LABEL_PRESETS = {
     "ctxlhprecentral": [1022],
     "m1": [1022],
     "leftm1": [1022],
+    "ctxrhgprecentral": [12129],
+    "rightm1": [12129],
     "lefthippocampus": [17],
     "righthippocampus": [53],
 }

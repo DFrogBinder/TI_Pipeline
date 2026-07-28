@@ -1,3 +1,4 @@
+import argparse
 import csv
 import json
 import math
@@ -14,6 +15,7 @@ if str(CURRENT_REPAIR_ROOT) not in sys.path:
     sys.path.insert(0, str(CURRENT_REPAIR_ROOT))
 
 from pipeline import provenance
+from pipeline import setup_final132_right_m1_repeatability as right_m1_setup
 from pipeline import staged_median_fixed_experiment as staged
 from post import aggregate_paired_analysis
 from post import make_presentation_figures
@@ -80,6 +82,7 @@ def _init_staged_experiment(
     subjects: list[str],
     repeat_count: int,
     targets_csv: Path = TARGETS_CSV_PATH,
+    roi_preset: str = "left-hippocampus",
 ) -> None:
     source = root / "_source"
     atlas_dir = root / "atlases"
@@ -106,9 +109,9 @@ def _init_staged_experiment(
             "--repeat-count",
             str(repeat_count),
             "--roi-preset",
-            "left-hippocampus",
+            roi_preset,
             "--montage-preset",
-            "left-hippocampus",
+            roi_preset,
             "--targets-csv",
             str(targets_csv),
             "--atlas-dir",
@@ -132,6 +135,37 @@ def test_confirmed_left_hippocampus_stimulation_is_loaded_from_targets_csv():
         "P7",
         pytest.approx(-0.0015886564694485628),
     )
+
+
+def test_confirmed_right_m1_stimulation_is_loaded_from_targets_csv():
+    stimulation = resolve_confirmed_stimulation("right-m1")
+    params = repeatability_experiment._ti_montage_parameters(stimulation)
+
+    assert stimulation.targets_csv == TARGETS_CSV_PATH.resolve()
+    assert stimulation.targets_csv_sha256 == CONFIRMED_TARGETS_SHA256
+    assert stimulation.target_roi == "ctx_rh_G_precentral"
+    assert stimulation.configuration == 137432
+    assert params["montage_pair1"] == ("Fp2", 0.002, "F6", -0.002)
+    assert params["montage_pair2"] == (
+        "C4",
+        pytest.approx(0.0006324555320336759),
+        "CP2",
+        pytest.approx(-0.0006324555320336759),
+    )
+
+
+def test_right_m1_analysis_preset_uses_destrieux_precentral_label():
+    args = argparse.Namespace(
+        roi_preset="right-m1",
+        roi_name=None,
+        roi_labels=None,
+        m1_labels=None,
+    )
+
+    roi_name, labels = mesh_repeat_report._resolve_roi_selection(args)
+
+    assert roi_name == "ctx_rh_G_precentral"
+    assert labels == [12129]
 
 
 def test_serialized_stimulation_must_exactly_match_confirmed_csv():
@@ -508,6 +542,64 @@ def test_final132_full_scope_is_400_then_400(tmp_path):
     assert scope["fixed_mesh_array"] == "0-399%50"
     assert scope["analysis_array"] == "0-9%10"
     assert scope["expected_ti_msh"] == 800
+
+
+def test_right_m1_setup_preflights_full_isolated_study(tmp_path, capsys):
+    source_root = tmp_path / "staged"
+    experiment_root = tmp_path / "right-m1-experiment"
+    atlas_dir = tmp_path / "atlases"
+    atlas_dir.mkdir()
+    for subject in right_m1_setup.SUBJECTS:
+        anat_dir = source_root / subject / "anat"
+        anat_dir.mkdir(parents=True)
+        for suffix in staged.SOURCE_SUFFIXES:
+            (anat_dir / f"{subject}{suffix}").write_text(
+                f"{subject}{suffix}\n",
+                encoding="utf-8",
+            )
+        (atlas_dir / f"{subject}.nii.gz").write_text(
+            f"{subject} atlas\n",
+            encoding="utf-8",
+        )
+    (source_root / "subjects.txt").write_text(
+        "\n".join(right_m1_setup.SUBJECTS) + "\n",
+        encoding="utf-8",
+    )
+
+    right_m1_setup.main(
+        [
+            "--preflight",
+            "--source-root",
+            str(source_root),
+            "--experiment-root",
+            str(experiment_root),
+            "--atlas-dir",
+            str(atlas_dir),
+            "--targets-csv",
+            str(TARGETS_CSV_PATH),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    manifest = json.loads(
+        (
+            experiment_root / "_pipeline" / "experiment_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["subjects"] == right_m1_setup.SUBJECTS
+    assert manifest["repeat_count"] == 40
+    assert manifest["roi_preset"] == "right-m1"
+    assert manifest["stimulation"]["montage_preset"] == "right-m1"
+    assert manifest["stimulation"]["target_roi"] == "ctx_rh_G_precentral"
+    assert "remesh tasks: 400 (0-399%50)" in output
+    assert "fixed-mesh tasks: 400 (0-399%50)" in output
+    assert "expected TI.msh outputs: 800" in output
+    assert "pair 1: Fp2-F6 2 mA" in output
+    assert "pair 2: C4-CP2 0.632455532033676 mA" in output
+    assert "preflight passed without submitting jobs" in output
+    assert not (
+        experiment_root / "_pipeline" / "workflow" / "submission.json"
+    ).exists()
 
 
 def test_submit_all_preflight_verifies_staged_dataset_manifest_hashes(tmp_path):
@@ -1139,6 +1231,12 @@ def test_report_array_submitter_rejects_comma_condition_exports(tmp_path):
 def test_presentation_figures_from_synthetic_analysis(tmp_path):
     root = tmp_path / "experiment"
     subject = "sub-01"
+    manifest = root / "_pipeline" / "experiment_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps({"roi_preset": "right-m1"}) + "\n",
+        encoding="utf-8",
+    )
     for condition, offset in (("remesh", 0.0), ("fixed_mesh", 0.5)):
         _write_summary(
             root / "_analysis" / subject / condition / "summary.csv",
@@ -1164,6 +1262,8 @@ def test_presentation_figures_from_synthetic_analysis(tmp_path):
     assert "p95_roi" in summary_rows[0]
     assert "p95_head" in summary_rows[0]
     assert outputs["figures_written"] >= 1
+    assert outputs["roi_preset"] == "right-m1"
+    assert outputs["roi_display_name"] == "right M1"
     assert any(path.endswith("01_primary_median_roi_repeat_distributions.png") for path in outputs["figures"])
 
 

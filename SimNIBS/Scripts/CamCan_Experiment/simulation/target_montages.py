@@ -5,12 +5,26 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from utils.camcan_dataset import (
-    canonical_subject,
-    electrode_names_from_target_row,
-    load_individualized_target_row,
-    sha256_file,
-)
+try:
+    from CamCan_Experiment.utils.camcan_dataset import (
+        canonical_subject,
+        electrode_names_from_target_row,
+        load_individualized_target_row,
+        sha256_file,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name not in {
+        "CamCan_Experiment",
+        "CamCan_Experiment.utils",
+        "CamCan_Experiment.utils.camcan_dataset",
+    }:
+        raise
+    from utils.camcan_dataset import (
+        canonical_subject,
+        electrode_names_from_target_row,
+        load_individualized_target_row,
+        sha256_file,
+    )
 
 
 TARGETS_CSV_PATH = Path(__file__).resolve().parents[2] / "utils" / "targets.csv"

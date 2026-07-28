@@ -23,6 +23,14 @@ if str(PIPELINE_ROOT) not in sys.path:
 from post import aggregate_paired_analysis
 
 
+ROI_DISPLAY_NAMES = {
+    "left-hippocampus": "left hippocampus",
+    "right-hippocampus": "right hippocampus",
+    "left-m1": "left M1",
+    "right-m1": "right M1",
+}
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
@@ -67,6 +75,28 @@ def _safe_float(value: object) -> float:
         return float(value)
     except Exception:
         return float("nan")
+
+
+def _roi_context(experiment_root: Path) -> tuple[str | None, str]:
+    manifest_path = experiment_root / "_pipeline" / "experiment_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None, "target ROI"
+
+    roi_preset = manifest.get("roi_preset")
+    if not isinstance(roi_preset, str) or not roi_preset.strip():
+        stimulation = manifest.get("stimulation")
+        if isinstance(stimulation, dict):
+            roi_preset = stimulation.get("montage_preset")
+    if not isinstance(roi_preset, str) or not roi_preset.strip():
+        return None, "target ROI"
+
+    normalized = roi_preset.strip().lower().replace("_", "-").replace(" ", "-")
+    return normalized, ROI_DISPLAY_NAMES.get(
+        normalized,
+        normalized.replace("-", " "),
+    )
 
 
 def _repeat_number(value: object) -> int:
@@ -263,7 +293,12 @@ def _write_line_plot(path: Path, rows: list[dict[str, object]], metric: str, yla
     return True
 
 
-def _write_primary_repeat_distribution(path: Path, rows: list[dict[str, object]]) -> bool:
+def _write_primary_repeat_distribution(
+    path: Path,
+    rows: list[dict[str, object]],
+    *,
+    roi_display_name: str,
+) -> bool:
     groups: dict[str, dict[str, list[float]]] = {}
     for row in rows:
         value = _safe_float(row.get("median_roi"))
@@ -354,8 +389,11 @@ def _write_primary_repeat_distribution(path: Path, rows: list[dict[str, object]]
                 label="Fixed-mesh mean +/- SD" if index == 0 else None,
             )
 
-        axis.set_title("Hippocampal TI varies across remeshed runs but not fixed-mesh runs", pad=18)
-        axis.set_ylabel("Median left-hippocampus TI (V/m)")
+        axis.set_title(
+            f"{roi_display_name.capitalize()} TI across remeshed and fixed-mesh runs",
+            pad=18,
+        )
+        axis.set_ylabel(f"Median {roi_display_name} TI (V/m)")
         axis.set_xlabel("Subject")
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
@@ -374,6 +412,7 @@ def _write_primary_repeat_distribution(path: Path, rows: list[dict[str, object]]
 def make_figures(*, experiment_root: Path, output_dir: Path | None = None) -> dict[str, object]:
     output_dir = output_dir or experiment_root / "_figures" / "presentation"
     output_dir.mkdir(parents=True, exist_ok=True)
+    roi_preset, roi_display_name = _roi_context(experiment_root)
     if any((experiment_root / "_analysis").glob("sub-*/condition_comparison.json")):
         aggregate_paired_analysis.aggregate_paired_summary(experiment_root=experiment_root)
     condition_rows = _collect_condition_rows(experiment_root)
@@ -386,13 +425,17 @@ def make_figures(*, experiment_root: Path, output_dir: Path | None = None) -> di
 
     figures = []
     primary_figure = output_dir / "01_primary_median_roi_repeat_distributions.png"
-    if _write_primary_repeat_distribution(primary_figure, condition_rows):
+    if _write_primary_repeat_distribution(
+        primary_figure,
+        condition_rows,
+        roi_display_name=roi_display_name,
+    ):
         figures.append(str(primary_figure))
     if _write_line_plot(
         output_dir / "condition_median_roi_by_repeat.png",
         condition_rows,
         "median_roi",
-        "Median ROI TI by Repeat",
+        f"Median {roi_display_name} TI by Repeat",
     ):
         figures.append(str(output_dir / "condition_median_roi_by_repeat.png"))
     if _write_line_plot(
@@ -411,6 +454,8 @@ def make_figures(*, experiment_root: Path, output_dir: Path | None = None) -> di
     manifest = {
         "experiment_root": str(experiment_root),
         "output_dir": str(output_dir),
+        "roi_preset": roi_preset,
+        "roi_display_name": roi_display_name,
         "condition_rows": len(condition_rows),
         "figures": figures,
         "figures_written": len(figures),

@@ -80,6 +80,54 @@ python "$CURRENT_REPAIR_DIR/pipeline/staged_median_fixed_experiment.py" status \
 Workflow submission, receipts, controller logs, job IDs, and final completion
 state are written under `<experiment_root>/_pipeline/workflow/`.
 
+## Final-132 Right-M1 Companion Study
+
+The right-M1 repeatability study uses the same balanced 10 subjects, corrected
+staged inputs, 40 remesh repeats, 40 fixed-mesh repeats, resource profile, and
+dependency-gated workflow as the left-hippocampus study. It writes to the
+separate experiment root:
+
+`/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1`
+
+The launcher fails closed on the full scope and the confirmed `targets.csv`
+row for `ctx_rh_G_precentral`: `Fp2-F6` at 2.0 mA and `C4-CP2` at
+0.6324555320336759 mA. Analysis uses the Destrieux right precentral-gyrus
+label `12129`.
+
+From `SimNIBS/Scripts` on Stanage, initialize and validate without submitting:
+
+```bash
+bash ti_current_repair/hpc_scripts/submit_final132_right_m1_repeatability.sh --preflight
+```
+
+The preflight must report:
+
+```text
+subjects: 10
+repeats per condition: 40
+remesh tasks: 400 (0-399%50)
+fixed-mesh tasks: 400 (0-399%50)
+total simulation tasks: 800
+analysis array: 0-9%10
+expected TI.msh outputs: 800
+execution: full requested experiment; not a smoke or subset
+```
+
+Submit the validated full study:
+
+```bash
+bash ti_current_repair/hpc_scripts/submit_final132_right_m1_repeatability.sh
+```
+
+This initially submits the 400-element remesh array and its `afterok`
+controller. It does not submit a reduced pilot and does not read from or write
+to the left-hippocampus experiment root. Monitor it with:
+
+```bash
+python ti_current_repair/pipeline/staged_median_fixed_experiment.py status \
+  --experiment-root /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1
+```
+
 ### Manual stage-by-stage fallback
 
 The original commands remain available for deliberate recovery or inspection.

@@ -182,7 +182,7 @@ printf '%s\n' \
     '  conditions per pair: 2 (generic, personalized)' \
     '  independently remeshed repeats per condition: 10' \
     '  full subject-level post-processing records: 160 (8 x 2 x 10)' \
-    '  legacy single-field overlays expected: 1120 (7 per field)' \
+    '  legacy single-field overlays: up to 1120 (optional overlay-only renderer failures are non-blocking)' \
     '  common-scale paired PNGs expected: 160 (2 per repeat)' \
     '  multipage pair reports expected: 16 (2 per pair)' \
     '  personalized simulations intentionally included: 80' \

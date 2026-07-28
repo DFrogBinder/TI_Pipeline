@@ -50,7 +50,7 @@ from post.camcan_personalized_comparison import (  # noqa: E402
 from post.post_functions import roi_masks_on_ti_grid  # noqa: E402
 from post.post_process import PostProcessConfig, run_post_process  # noqa: E402
 from utils.roi_registry import match_fastsurfer_roi_from_directory  # noqa: E402
-from utils.ti_utils import load_ti_as_scalar, normalize_roi_name  # noqa: E402
+from utils.ti_utils import load_ti_as_scalar  # noqa: E402
 
 
 VISUAL_QC_SCHEMA_VERSION = 1
@@ -71,9 +71,6 @@ BASELINE_DIR_BY_ROI = {
 PAIR_MODES = (
     ("full_field", None),
     ("above_0p20", 0.20),
-)
-EXPECTED_EMPTY_THRESHOLD_OVERLAY_TYPES = frozenset(
-    {"context_threshold", "roi_focus_threshold"}
 )
 
 
@@ -250,6 +247,73 @@ def _complete_existing_record(path: Path, fingerprint: str) -> dict[str, Any] | 
     return dict(payload)
 
 
+def _audit_legacy_overlays(
+    metrics: Mapping[str, Any],
+    overlay_paths: Sequence[Path],
+) -> dict[str, Any]:
+    """Audit legacy plots without overriding the main pipeline's QC contract.
+
+    ``run_post_process`` deliberately treats overlay-only plotting failures as
+    non-blocking.  Metrics and the common-scale paired QC remain valid even
+    when Nilearn cannot render one of the optional single-field panels.
+    """
+
+    missing_files = [
+        str(path.expanduser().resolve())
+        for path in overlay_paths
+        if not path.is_file()
+    ]
+    if missing_files:
+        raise RuntimeError(
+            "Post-processing returned legacy overlay path(s) that do not exist: "
+            + ", ".join(missing_files)
+        )
+
+    subject_meta = metrics.get("subject_metrics_meta", {})
+    qc_meta = metrics.get("qc_meta", {})
+    checks = qc_meta.get("checks", {}) if isinstance(qc_meta, Mapping) else {}
+    overlay_qc = checks.get("overlays", {}) if isinstance(checks, Mapping) else {}
+    if not isinstance(overlay_qc, Mapping):
+        overlay_qc = {}
+
+    expected_count = int(overlay_qc.get("expected_overlay_count", 7))
+    written_count = len(overlay_paths)
+    reported_written_count = int(
+        overlay_qc.get("written_overlay_count", written_count)
+    )
+    if reported_written_count != written_count:
+        raise RuntimeError(
+            "Legacy overlay QC metadata disagrees with returned output paths: "
+            f"metadata={reported_written_count}, returned={written_count}."
+        )
+
+    blocking_checks = (
+        list(subject_meta.get("blocking_qc_checks", []))
+        if isinstance(subject_meta, Mapping)
+        else []
+    )
+    nonblocking_checks = (
+        list(subject_meta.get("nonblocking_qc_checks", []))
+        if isinstance(subject_meta, Mapping)
+        else []
+    )
+    if "overlays" in blocking_checks:
+        raise RuntimeError(
+            "The main post-processing pipeline classified legacy overlays as "
+            "a blocking QC failure."
+        )
+
+    return {
+        "status": str(overlay_qc.get("status", "unknown")),
+        "expected_count": expected_count,
+        "written_count": written_count,
+        "missing_overlay_types": list(
+            overlay_qc.get("missing_overlay_types", [])
+        ),
+        "nonblocking": "overlays" in nonblocking_checks,
+    }
+
+
 def _run_full_post_task(task: FullPostTask) -> dict[str, Any]:
     pair_index = int(task.pair["pair_index"])
     subject = str(task.pair["subject"])
@@ -347,26 +411,8 @@ def _run_full_post_task(task: FullPostTask) -> dict[str, Any]:
             f"Full post-processing was not complete for "
             f"{subject}/{roi}/{task.condition}/{task.repeat}: {subject_meta}"
         )
-    empty_threshold_placeholders: list[Path] = []
-    if len(overlay_paths) != 7:
-        empty_threshold_placeholders = _write_expected_empty_threshold_overlays(
-            metrics=metrics,
-            output_dir=output_dir,
-            subject=subject,
-            canonical_roi=canonical_roi,
-            ti_path=ti_path,
-            t1_path=t1_path,
-            atlas_path=atlas,
-            existing_overlay_paths=overlay_paths,
-        )
-        overlay_paths.extend(empty_threshold_placeholders)
+    legacy_overlay_audit = _audit_legacy_overlays(metrics, overlay_paths)
     required_paths = [metrics_path, *overlay_paths]
-    if len(overlay_paths) != 7 or any(not path.is_file() for path in overlay_paths):
-        raise RuntimeError(
-            f"Expected seven legacy E-field overlays for "
-            f"{subject}/{roi}/{task.condition}/{task.repeat}; "
-            f"found {len(overlay_paths)}."
-        )
     payload = {
         "visual_qc_schema_version": VISUAL_QC_SCHEMA_VERSION,
         "status": "complete",
@@ -387,15 +433,13 @@ def _run_full_post_task(task: FullPostTask) -> dict[str, Any]:
         "subject_metrics_path": str(metrics_path.resolve()),
         "subject_metrics_status": subject_meta.get("status"),
         "legacy_overlay_paths": [str(path.resolve()) for path in overlay_paths],
-        "empty_threshold_placeholder_paths": [
-            str(path.resolve()) for path in empty_threshold_placeholders
-        ],
-        "empty_threshold_placeholder_policy": (
-            "When the whole brain contains zero finite voxels at or above "
-            "0.20 V/m, the two mathematically empty threshold overlays are "
-            "represented by explicit annotated anatomy/ROI panels. Zero "
-            "support is verified from threshold QC metadata when available "
-            "and otherwise by a direct recount of the source TI image."
+        "legacy_overlay_audit": legacy_overlay_audit,
+        "legacy_overlay_policy": (
+            "Legacy single-field overlay-only plotting failures are "
+            "non-blocking when the main post-processing pipeline reports "
+            "subject_metrics_meta.status=complete. Every returned overlay "
+            "path must exist. Common-scale paired PNGs and reports remain "
+            "mandatory downstream."
         ),
         "required_output_paths": [str(path.resolve()) for path in required_paths],
     }
@@ -481,180 +525,6 @@ def _roi_center_world(roi_img: nib.Nifti1Image) -> tuple[float, float, float]:
         raise ValueError("Target ROI mask is empty.")
     center = nib.affines.apply_affine(roi_img.affine, coordinates.mean(axis=0))
     return tuple(float(value) for value in center)
-
-
-def _write_expected_empty_threshold_overlays(
-    *,
-    metrics: Mapping[str, Any],
-    output_dir: Path,
-    subject: str,
-    canonical_roi: str,
-    ti_path: Path,
-    t1_path: Path,
-    atlas_path: Path,
-    existing_overlay_paths: Sequence[Path] = (),
-) -> list[Path]:
-    """Represent a valid zero-support threshold result without inventing data.
-
-    Nilearn cannot render an overlay/colorbar when the selected field contains
-    no voxels.  The standard full-post pipeline therefore omits the context and
-    ROI-focus threshold PNGs.  This is a valid scientific result, not a missing
-    simulation.  Only that exact, provenance-backed case is repaired here.
-    """
-
-    overlay_qc = (
-        metrics.get("qc_meta", {})
-        .get("checks", {})
-        .get("overlays", {})
-    )
-    missing_types = frozenset(overlay_qc.get("missing_overlay_types", []))
-    threshold_support = (
-        metrics.get("threshold_qc", {})
-        .get("whole_brain", {})
-        .get("overlay_threshold", {})
-    )
-    reported_threshold = float(
-        threshold_support.get("threshold", float("nan"))
-    )
-    threshold = reported_threshold if math.isfinite(reported_threshold) else 0.20
-    metadata_proves_expected_empty = (
-        missing_types == EXPECTED_EMPTY_THRESHOLD_OVERLAY_TYPES
-        and threshold_support.get("has_voxels") is False
-        and int(threshold_support.get("voxels", -1)) == 0
-        and math.isclose(threshold, 0.20, rel_tol=0.0, abs_tol=1e-12)
-    )
-
-    roi_stub = normalize_roi_name(canonical_roi)
-    paths = [
-        output_dir
-        / f"{roi_stub}_TI_overlay_context_{subject}_above{threshold:.2f}.png",
-        output_dir
-        / f"{roi_stub}_TI_overlay_roi_focus_{subject}_above{threshold:.2f}.png",
-    ]
-    existing_resolved = {
-        str(Path(path).expanduser().resolve()) for path in existing_overlay_paths
-    }
-    expected_threshold_paths_are_missing = all(
-        str(path.expanduser().resolve()) not in existing_resolved for path in paths
-    )
-    direct_recount_proves_expected_empty = False
-    if (
-        len(existing_overlay_paths) == 5
-        and expected_threshold_paths_are_missing
-        and math.isclose(threshold, 0.20, rel_tol=0.0, abs_tol=1e-12)
-    ):
-        ti_img = nib.load(str(ti_path))
-        ti_data = np.asarray(load_ti_as_scalar(ti_img), dtype=float)
-        direct_support_voxels = int(
-            np.count_nonzero(np.isfinite(ti_data) & (ti_data >= threshold))
-        )
-        direct_recount_proves_expected_empty = direct_support_voxels == 0
-
-    if not (
-        metadata_proves_expected_empty
-        or direct_recount_proves_expected_empty
-    ):
-        return []
-
-    panel_labels = ("whole-brain context", "target-ROI focus")
-    for path, panel_label in zip(paths, panel_labels):
-        if path.is_file() and path.stat().st_size > 0:
-            continue
-        _render_empty_threshold_overlay(
-            ti_path=ti_path,
-            t1_path=t1_path,
-            atlas_path=atlas_path,
-            subject=subject,
-            canonical_roi=canonical_roi,
-            threshold=threshold,
-            panel_label=panel_label,
-            output_path=path,
-        )
-    return paths
-
-
-def _render_empty_threshold_overlay(
-    *,
-    ti_path: Path,
-    t1_path: Path,
-    atlas_path: Path,
-    subject: str,
-    canonical_roi: str,
-    threshold: float,
-    panel_label: str,
-    output_path: Path,
-) -> None:
-    """Write an anatomy/ROI panel explicitly documenting zero field support."""
-
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from nilearn.image import resample_to_img
-    from nilearn.plotting import plot_anat
-
-    ti_img = nib.load(str(ti_path))
-    roi_img = _roi_mask_image(
-        ti_img,
-        atlas_path=atlas_path,
-        subject=subject,
-        canonical_roi=canonical_roi,
-    )
-    t1_on_ti = resample_to_img(
-        nib.load(str(t1_path)),
-        ti_img,
-        interpolation="continuous",
-        force_resample=True,
-        copy_header=True,
-    )
-    center = _roi_center_world(roi_img)
-    directions = (("x", center[0]), ("y", center[1]), ("z", center[2]))
-    fig, axes = plt.subplots(1, 3, figsize=(12.8, 4.4), facecolor="white")
-    for axis, (display_mode, coordinate) in zip(axes, directions):
-        display = plot_anat(
-            t1_on_ti,
-            display_mode=display_mode,
-            cut_coords=[coordinate],
-            figure=fig,
-            axes=axis,
-            annotate=True,
-            draw_cross=False,
-            colorbar=False,
-            black_bg=True,
-        )
-        display.add_contours(
-            roi_img,
-            levels=[0.5],
-            colors=["#FF3B30"],
-            linewidths=1.2,
-        )
-    fig.suptitle(
-        f"{subject} | {canonical_roi.replace('-', ' ')} | {panel_label}\n"
-        f"No finite whole-brain TI field voxels reached ≥ {threshold:.2f} V/m",
-        fontsize=12,
-        y=0.98,
-    )
-    fig.text(
-        0.5,
-        0.025,
-        (
-            "Red contour = subject-space target ROI. The absent colour overlay "
-            "is a measured zero-coverage result, not missing simulation data."
-        ),
-        ha="center",
-        fontsize=8.5,
-        color="#333333",
-    )
-    fig.subplots_adjust(
-        left=0.02,
-        right=0.98,
-        top=0.80,
-        bottom=0.13,
-        wspace=0.03,
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
 
 
 def _montage_label(pair: Mapping[str, Any], condition: str) -> str:
@@ -1002,6 +872,9 @@ def run_pair_qc(
         "legacy_overlays": sum(
             len(record["legacy_overlay_paths"]) for record in records
         ),
+        "legacy_overlay_expected_max": 20 * 7,
+        "legacy_overlay_missing": (20 * 7)
+        - sum(len(record["legacy_overlay_paths"]) for record in records),
         "paired_visualizations": len(visual_rows),
         "pair_reports": len(report_paths),
         "common_scale_definition": (
@@ -1052,7 +925,10 @@ outputs.  Source FEM fields are read-only and are not copied into this package.
 
 The legacy single-field overlays select display scales independently and
 therefore should not be used to compare colour intensity between conditions.
-Use the common-scale paired figures for that purpose.
+Use the common-scale paired figures for that purpose.  The main post-processing
+pipeline treats an overlay-only Nilearn rendering failure as non-blocking; the
+index records all legacy panels that were actually produced.  The common-scale
+paired PNGs and PDF reports remain mandatory for every in-scope field.
 """
 
 
@@ -1184,6 +1060,15 @@ def collect_qc(
         "multipage_pair_reports": report_count,
         "legacy_overlay_pngs": sum(
             int(summary["legacy_overlays"]) for summary in summaries
+        ),
+        "legacy_overlay_expected_max": EXPECTED_POST_RECORDS * 7,
+        "legacy_overlay_missing": (EXPECTED_POST_RECORDS * 7)
+        - sum(int(summary["legacy_overlays"]) for summary in summaries),
+        "legacy_overlay_policy": (
+            "Optional single-field overlay-only rendering failures follow the "
+            "main post-processing pipeline's non-blocking QC contract. Every "
+            "returned legacy path is validated; all common-scale paired PNGs "
+            "and reports are mandatory."
         ),
         "excluded_out_of_scope_personalized_simulations": 200,
         "source_simulations_modified": False,

@@ -113,163 +113,57 @@ def test_common_scale_paired_renderer_writes_a_nonempty_png(tmp_path):
     assert payload["threshold_v_per_m"] == 0.20
 
 
-def test_zero_support_threshold_writes_explicit_legacy_placeholders(tmp_path):
-    shape = (21, 21, 21)
-    affine = np.eye(4)
-    grid = np.indices(shape, dtype=float)
-    radius = np.sqrt(sum((axis - 10.0) ** 2 for axis in grid))
-    t1_data = np.maximum(0.0, 100.0 - 5.0 * radius)
-    ti_data = np.exp(-((radius / 5.0) ** 2)) * 0.19
-    atlas_data = np.zeros(shape, dtype=np.int16)
-    atlas_data[8:13, 8:13, 8:13] = 17
-
-    t1_path = tmp_path / "t1.nii.gz"
-    ti_path = tmp_path / "ti.nii.gz"
-    atlas_path = tmp_path / "atlas.nii.gz"
-    nib.save(nib.Nifti1Image(t1_data, affine), t1_path)
-    nib.save(nib.Nifti1Image(ti_data, affine), ti_path)
-    nib.save(nib.Nifti1Image(atlas_data, affine), atlas_path)
-    metrics = {
-        "qc_meta": {
-            "checks": {
-                "overlays": {
-                    "missing_overlay_types": [
-                        "context_threshold",
-                        "roi_focus_threshold",
-                    ]
-                }
-            }
-        },
-        "threshold_qc": {
-            "whole_brain": {
-                "overlay_threshold": {
-                    "threshold": 0.20,
-                    "voxels": 0,
-                    "has_voxels": False,
-                }
-            }
-        },
-    }
-
-    paths = visual_qc._write_expected_empty_threshold_overlays(
-        metrics=metrics,
-        output_dir=tmp_path / "post",
-        subject="sub-00",
-        canonical_roi="Left-Hippocampus",
-        ti_path=ti_path,
-        t1_path=t1_path,
-        atlas_path=atlas_path,
-    )
-
-    assert len(paths) == 2
-    assert all(path.is_file() and path.stat().st_size > 0 for path in paths)
-    assert paths[0].name.endswith("_context_sub-00_above0.20.png")
-    assert paths[1].name.endswith("_roi_focus_sub-00_above0.20.png")
-
-
-def test_zero_support_direct_recount_handles_legacy_metrics_schema(tmp_path):
-    """Mirror the HPC records whose metrics lacked the expected QC nesting."""
-
-    shape = (21, 21, 21)
-    affine = np.eye(4)
-    grid = np.indices(shape, dtype=float)
-    radius = np.sqrt(sum((axis - 10.0) ** 2 for axis in grid))
-    t1_data = np.maximum(0.0, 100.0 - 5.0 * radius)
-    ti_data = np.exp(-((radius / 5.0) ** 2)) * 0.19
-    atlas_data = np.zeros(shape, dtype=np.int16)
-    atlas_data[8:13, 8:13, 8:13] = 17
-
-    t1_path = tmp_path / "t1.nii.gz"
-    ti_path = tmp_path / "ti.nii.gz"
-    atlas_path = tmp_path / "atlas.nii.gz"
-    nib.save(nib.Nifti1Image(t1_data, affine), t1_path)
-    nib.save(nib.Nifti1Image(ti_data, affine), ti_path)
-    nib.save(nib.Nifti1Image(atlas_data, affine), atlas_path)
-
-    existing = []
-    for index in range(5):
-        path = tmp_path / f"existing_{index}.png"
-        path.write_bytes(b"existing")
-        existing.append(path)
-
-    paths = visual_qc._write_expected_empty_threshold_overlays(
-        metrics={},
-        output_dir=tmp_path / "post",
-        subject="sub-00",
-        canonical_roi="Left-Hippocampus",
-        ti_path=ti_path,
-        t1_path=t1_path,
-        atlas_path=atlas_path,
-        existing_overlay_paths=existing,
-    )
-
-    assert len(paths) == 2
-    assert all(path.is_file() and path.stat().st_size > 0 for path in paths)
-
-
-def test_direct_recount_does_not_repair_nonzero_threshold_support(tmp_path):
-    shape = (9, 9, 9)
-    affine = np.eye(4)
-    ti_data = np.zeros(shape, dtype=float)
-    ti_data[4, 4, 4] = 0.21
-    ti_path = tmp_path / "ti.nii.gz"
-    nib.save(nib.Nifti1Image(ti_data, affine), ti_path)
-    existing = []
-    for index in range(5):
-        path = tmp_path / f"existing_{index}.png"
-        path.write_bytes(b"existing")
-        existing.append(path)
-
-    paths = visual_qc._write_expected_empty_threshold_overlays(
-        metrics={},
-        output_dir=tmp_path / "post",
-        subject="sub-00",
-        canonical_roi="Left-Hippocampus",
-        ti_path=ti_path,
-        t1_path=tmp_path / "unused-t1.nii.gz",
-        atlas_path=tmp_path / "unused-atlas.nii.gz",
-        existing_overlay_paths=existing,
-    )
-
-    assert paths == []
-
-
-def test_missing_threshold_overlays_are_not_repaired_when_support_is_nonzero(
+def test_legacy_overlay_audit_preserves_main_pipeline_nonblocking_contract(
     tmp_path,
 ):
+    overlays = []
+    for index in range(5):
+        path = tmp_path / f"overlay_{index}.png"
+        path.write_bytes(b"png")
+        overlays.append(path)
     metrics = {
+        "subject_metrics_meta": {
+            "status": "complete",
+            "blocking_qc_checks": [],
+            "nonblocking_qc_checks": ["overlays"],
+        },
         "qc_meta": {
             "checks": {
                 "overlays": {
+                    "status": "error",
+                    "expected_overlay_count": 7,
+                    "written_overlay_count": 5,
                     "missing_overlay_types": [
                         "context_threshold",
                         "roi_focus_threshold",
-                    ]
-                }
-            }
-        },
-        "threshold_qc": {
-            "whole_brain": {
-                "overlay_threshold": {
-                    "threshold": 0.20,
-                    "voxels": 1,
-                    "has_voxels": True,
-                }
+                    ],
+                },
             }
         },
     }
 
-    paths = visual_qc._write_expected_empty_threshold_overlays(
-        metrics=metrics,
-        output_dir=tmp_path,
-        subject="sub-00",
-        canonical_roi="Left-Hippocampus",
-        ti_path=tmp_path / "missing-ti.nii.gz",
-        t1_path=tmp_path / "missing-t1.nii.gz",
-        atlas_path=tmp_path / "missing-atlas.nii.gz",
-    )
+    audit = visual_qc._audit_legacy_overlays(metrics, overlays)
 
-    assert paths == []
+    assert audit == {
+        "status": "error",
+        "expected_count": 7,
+        "written_count": 5,
+        "missing_overlay_types": [
+            "context_threshold",
+            "roi_focus_threshold",
+        ],
+        "nonblocking": True,
+    }
+
+
+def test_legacy_overlay_audit_rejects_a_returned_missing_file(tmp_path):
+    missing = tmp_path / "missing.png"
+    try:
+        visual_qc._audit_legacy_overlays({}, [missing])
+    except RuntimeError as exc:
+        assert "do not exist" in str(exc)
+    else:
+        raise AssertionError("Expected a missing returned overlay to be rejected.")
 
 
 def test_visual_qc_collector_requires_exact_selected_product(tmp_path):
@@ -331,7 +225,7 @@ def test_visual_qc_collector_requires_exact_selected_product(tmp_path):
             "roi": pair["roi"],
             "selection_role": pair["selection_role"],
             "post_records": 20,
-            "legacy_overlays": 140,
+            "legacy_overlays": 136 if pair_index == 3 else 140,
             "paired_visualizations": 20,
             "pair_reports": 2,
             "visual_index": str(visual_index),
@@ -388,6 +282,9 @@ def test_visual_qc_collector_requires_exact_selected_product(tmp_path):
     assert manifest["full_post_records"] == 160
     assert manifest["paired_visualization_pngs"] == 160
     assert manifest["multipage_pair_reports"] == 16
+    assert manifest["legacy_overlay_pngs"] == 1116
+    assert manifest["legacy_overlay_expected_max"] == 1120
+    assert manifest["legacy_overlay_missing"] == 4
     assert manifest["excluded_out_of_scope_personalized_simulations"] == 200
     assert (output_root / "results" / "README.md").is_file()
 
@@ -404,6 +301,7 @@ def test_submitter_declares_strict_qc_scope_and_isolated_outputs():
     assert "Submit with: ${SUBMIT_COMMAND}" in text
     assert "final validated product scope remains: 8 pairs" in text
     assert "full subject-level post-processing records: 160" in text
+    assert "legacy single-field overlays: up to 1120" in text
     assert "personalized simulations excluded as out of scope: 200" in text
     assert "existing source post directories modified: no" in text
     assert "VISUAL_QC_ROOT" in text

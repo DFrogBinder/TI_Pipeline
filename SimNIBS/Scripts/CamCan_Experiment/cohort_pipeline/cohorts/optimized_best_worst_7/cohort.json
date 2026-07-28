@@ -26,5 +26,5 @@
       "worst": "sub-CC420100"
     }
   },
-  "note": "Seven unique best/worst subjects across four ROIs. Each subject uses its own TI_free.Emin Pareto montage for all four ROIs and all ten independent remesh repeats."
+  "note": "The completed simulation grid contains all seven subjects for all four ROIs and ten repeats (280 simulations). The manuscript comparison must use only the eight subject-ROI pairs in selection (80 personalized simulations); the remaining 200 simulations are out of scope."
 }

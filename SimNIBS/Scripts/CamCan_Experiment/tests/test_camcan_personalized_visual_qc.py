@@ -401,6 +401,7 @@ def test_submitter_declares_strict_qc_scope_and_isolated_outputs():
     assert 'PAIR_ARRAY_SPEC="${PAIR_ARRAY_SPEC:-0-7%${MAX_CONCURRENT_PAIRS}}"' in text
     assert '--array="${PAIR_ARRAY_SPEC}"' in text
     assert "resumable recovery of pair" in text
+    assert "Submit with: ${SUBMIT_COMMAND}" in text
     assert "final validated product scope remains: 8 pairs" in text
     assert "full subject-level post-processing records: 160" in text
     assert "personalized simulations excluded as out of scope: 200" in text

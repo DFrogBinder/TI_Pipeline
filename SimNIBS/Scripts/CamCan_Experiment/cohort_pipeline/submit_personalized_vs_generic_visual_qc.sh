@@ -99,9 +99,11 @@ fi
 if [[ "${PAIR_ARRAY_SPEC}" =~ ^[0-7]$ ]]; then
     SCHEDULER_TASKS_TOTAL=2
     EXECUTION_SCOPE="resumable recovery of pair ${PAIR_ARRAY_SPEC}; all existing valid products reused"
+    SUBMIT_COMMAND="PAIR_ARRAY_SPEC=${PAIR_ARRAY_SPEC} bash CamCan_Experiment/cohort_pipeline/submit_personalized_vs_generic_visual_qc.sh"
 elif [ "${PAIR_ARRAY_SPEC}" = "0-7%${MAX_CONCURRENT_PAIRS}" ]; then
     SCHEDULER_TASKS_TOTAL=9
     EXECUTION_SCOPE="full eight-pair resumable execution"
+    SUBMIT_COMMAND="bash CamCan_Experiment/cohort_pipeline/submit_personalized_vs_generic_visual_qc.sh"
 else
     echo "[ERROR] PAIR_ARRAY_SPEC must be one pair index (0-7) or the default 0-7%${MAX_CONCURRENT_PAIRS}; got ${PAIR_ARRAY_SPEC}." >&2
     exit 2
@@ -208,7 +210,7 @@ echo "[INFO] Isolated QC output:     ${VISUAL_QC_ROOT}"
 
 if [ "${PREFLIGHT_ONLY}" -eq 1 ]; then
     echo "[INFO] Preflight passed without submitting jobs."
-    echo "[INFO] Submit with: bash CamCan_Experiment/cohort_pipeline/submit_personalized_vs_generic_visual_qc.sh"
+    echo "[INFO] Submit with: ${SUBMIT_COMMAND}"
     exit 0
 fi
 

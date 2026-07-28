@@ -13,14 +13,15 @@ set -euo pipefail
 : "${STUDY_ROOT:?Set STUDY_ROOT.}"
 : "${SUBJECTS_FILE:?Set SUBJECTS_FILE.}"
 : "${POST_CAMPAIGN_ROOT:?Set POST_CAMPAIGN_ROOT.}"
+: "${ANALYSIS_ROOT:?Set ANALYSIS_ROOT.}"
 : "${COHORT_ID:?Set COHORT_ID.}"
 : "${MNI_FIXED_ATLAS_PATH:?Set MNI_FIXED_ATLAS_PATH.}"
 : "${MNI_BASELINE_PARENT:?Set MNI_BASELINE_PARENT.}"
 : "${PYTHON:?Set PYTHON.}"
 
-THRESHOLDS="${MANUSCRIPT_THRESHOLDS_COLON:-0.18:0.15}"
+THRESHOLDS="${MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 THRESHOLDS="${THRESHOLDS//:/,}"
-OUTPUT_DIR="${POST_CAMPAIGN_ROOT}/manuscript_analysis/results"
+OUTPUT_DIR="${ANALYSIS_ROOT}/results"
 
 printf '%s\n' \
     "[INFO] CamCan manuscript analysis collector" \
@@ -45,7 +46,7 @@ printf '%s\n' \
     --upper-tail-fraction "${MANUSCRIPT_UPPER_TAIL_FRACTION:-0.01}"
 
 test -s "${OUTPUT_DIR}/analysis_manifest.json"
-ARCHIVE="${POST_CAMPAIGN_ROOT}/manuscript_analysis/${COHORT_ID}_manuscript_analysis_results.tar.gz"
+ARCHIVE="${ANALYSIS_ROOT}/${COHORT_ID}_optimizer_matched_analysis_results.tar.gz"
 rm -f "${ARCHIVE}" "${ARCHIVE}.sha256"
 tar -C "${OUTPUT_DIR}" -czf "${ARCHIVE}" .
 sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"

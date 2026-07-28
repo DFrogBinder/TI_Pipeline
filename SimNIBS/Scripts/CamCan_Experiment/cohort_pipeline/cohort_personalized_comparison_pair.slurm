@@ -19,8 +19,11 @@ set -euo pipefail
 : "${INDIVIDUALIZED_TARGETS_SHA256:?Set INDIVIDUALIZED_TARGETS_SHA256.}"
 : "${SLURM_ARRAY_TASK_ID:?This script must run as a Slurm array task.}"
 
-if ! [[ "${SLURM_ARRAY_TASK_ID}" =~ ^[0-7]$ ]]; then
-    echo "[ERROR] Comparison pair index must be in 0-7." >&2
+if ! [[ "${SLURM_ARRAY_TASK_ID}" =~ ^[0-9]+$ ]] || \
+   [ "${SLURM_ARRAY_TASK_ID}" -lt 0 ] || \
+   [ "${SLURM_ARRAY_TASK_ID}" -gt 27 ]
+then
+    echo "[ERROR] Comparison pair index must be in 0-27." >&2
     exit 2
 fi
 
@@ -49,7 +52,7 @@ if [ "${COMPARISON_FORCE:-0}" = "1" ]; then
 fi
 
 printf '%s\n' \
-    "[INFO] Selected personalized-vs-generic comparison" \
+    "[INFO] All-configuration personalized-vs-generic comparison" \
     "[INFO] Pair index:             ${SLURM_ARRAY_TASK_ID}" \
     "[INFO] Inputs:                 2 conditions x 10 repeats = 20" \
     "[INFO] Thresholds (V/m):       ${THRESHOLDS}" \

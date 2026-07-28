@@ -30,6 +30,8 @@ COHORT_CONFIG="${COHORT_CONFIG:-${SCRIPT_DIR}/cohorts/${COHORT_ID}/cohort.json}"
 STUDY_ROOT="${STUDY_ROOT:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hpc_study_root"])' "${STUDY_CONFIG}")}"
 CAMPAIGN_ROOT="${CAMPAIGN_ROOT:-${STUDY_ROOT}/campaigns/${COHORT_ID}}"
 POST_CAMPAIGN_ROOT="${POST_CAMPAIGN_ROOT:-${CAMPAIGN_ROOT}/post_processing}"
+ANALYSIS_SUBDIR="${ANALYSIS_SUBDIR:-optimizer_matched_analysis}"
+ANALYSIS_ROOT="${POST_CAMPAIGN_ROOT}/${ANALYSIS_SUBDIR}"
 SUBJECTS_FILE="${SUBJECTS_FILE:-${SCRIPT_DIR}/cohorts/${COHORT_ID}/subjects.txt}"
 SIMULATION_MANIFEST="${SIMULATION_MANIFEST:-${CAMPAIGN_ROOT}/simulation_tasks.tsv}"
 CHAIN_RECEIPT="${CHAIN_RECEIPT:-${CAMPAIGN_ROOT}/release_state/chain_complete.tsv}"
@@ -51,7 +53,7 @@ MAX_CONCURRENT_DATASETS="${MAX_CONCURRENT_DATASETS:-40}"
 COLLECTOR_CPUS="${COLLECTOR_CPUS:-12}"
 COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-24G}"
 COLLECTOR_TIME="${COLLECTOR_TIME:-08:00:00}"
-MANUSCRIPT_THRESHOLDS_COLON="${MANUSCRIPT_THRESHOLDS_COLON:-0.18:0.15}"
+MANUSCRIPT_THRESHOLDS_COLON="${MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 MANUSCRIPT_TOP_PERCENTILE="${MANUSCRIPT_TOP_PERCENTILE:-95.0}"
 MANUSCRIPT_ROBUST_MAX_PERCENTILE="${MANUSCRIPT_ROBUST_MAX_PERCENTILE:-99.9}"
 MANUSCRIPT_UPPER_TAIL_FRACTION="${MANUSCRIPT_UPPER_TAIL_FRACTION:-0.01}"
@@ -98,7 +100,7 @@ if [ ! -x "${PYTHON}" ]; then
     exit 2
 fi
 if ! [[ "${MANUSCRIPT_THRESHOLDS_COLON}" =~ ^[0-9]+([.][0-9]+)?(:[0-9]+([.][0-9]+)?)*$ ]]; then
-    echo "[ERROR] MANUSCRIPT_THRESHOLDS_COLON must look like 0.18:0.15." >&2
+    echo "[ERROR] MANUSCRIPT_THRESHOLDS_COLON must look like 0.20:0.18:0.15." >&2
     exit 2
 fi
 
@@ -128,16 +130,16 @@ then
 fi
 
 mkdir -p \
-    "${POST_CAMPAIGN_ROOT}/manuscript_analysis/logs" \
-    "${POST_CAMPAIGN_ROOT}/manuscript_analysis/dataset_summaries" \
-    "${POST_CAMPAIGN_ROOT}/manuscript_analysis/results"
+    "${ANALYSIS_ROOT}/logs" \
+    "${ANALYSIS_ROOT}/dataset_summaries" \
+    "${ANALYSIS_ROOT}/results"
 
 python3 "${WORKFLOW_PY}" validate \
     --stage simulations \
     --manifest "${SIMULATION_MANIFEST}" \
-    --summary "${POST_CAMPAIGN_ROOT}/manuscript_analysis/simulations.tsv" \
+    --summary "${ANALYSIS_ROOT}/simulations.tsv" \
     --skip-hashes
-VALIDATION_JSON="${POST_CAMPAIGN_ROOT}/manuscript_analysis/simulations.json"
+VALIDATION_JSON="${ANALYSIS_ROOT}/simulations.json"
 EXPECTED_RECORDS=$((EXPECTED_SUBJECTS * 4 * 10))
 VALIDATION_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${VALIDATION_JSON}")"
 VALIDATION_COMPLETE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["complete"])' "${VALIDATION_JSON}")"
@@ -197,9 +199,10 @@ if [ "${MISSING_TI}" -ne 0 ]; then
 fi
 
 "${PYTHON}" -c 'import matplotlib,nibabel,numpy,pandas; print("manuscript_analysis_dependencies=ready")'
+"${PYTHON}" "${ANALYSIS_PY}" validate-atlas --atlas "${MNI_FIXED_ATLAS_PATH}"
 
 EXISTING_COMPLETE="$(
-    find "${STUDY_ROOT}/runs" -type f -path '*/anat/post/manuscript_metrics.json' \
+    find "${STUDY_ROOT}/runs" -type f -path '*/anat/post/optimizer_matched_metrics.json' \
         -exec grep -lF '"status": "complete"' {} + 2>/dev/null | wc -l
 )"
 MANUSCRIPT_THRESHOLDS_DISPLAY="${MANUSCRIPT_THRESHOLDS_COLON//:/ and }"
@@ -219,7 +222,10 @@ printf '%s\n' \
     "  robust maximum: P${MANUSCRIPT_ROBUST_MAX_PERCENTILE}" \
     "  robust sensitivity: median of upper $(python3 -c "print(${MANUSCRIPT_UPPER_TAIL_FRACTION} * 100)")%" \
     '  repeat aggregation: arithmetic mean after metric calculation' \
-    '  primary spread: off-target volume excluding the ROI' \
+    '  primary ROI: anatomical-parcel-clipped optimizer sphere (100 mm3 cortical; 200 mm3 subcortical)' \
+    '  sphere construction: centroid, 3.00 mm start, 0.01 mm steps, <10 mm cap' \
+    '  secondary ROI: full anatomical parcel (anatomical_ metrics)' \
+    '  primary spread: off-target volume excluding the optimizer-matched ROI' \
     '  companion spread: whole-brain volume including the ROI' \
     '  individualized optimization: excluded' \
     '  execution: resumable metric-only analysis; existing simulations are read-only'
@@ -234,7 +240,7 @@ echo "[INFO] Resource profile:     ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}
 echo "[INFO] Dataset concurrency:  ${MAX_CONCURRENT_DATASETS}"
 echo "[INFO] Workers per dataset:  ${MANUSCRIPT_WORKERS}"
 echo "[INFO] Existing markers:     ${EXISTING_COMPLETE}/${EXPECTED_RECORDS}"
-echo "[INFO] Output:               ${POST_CAMPAIGN_ROOT}/manuscript_analysis/results"
+echo "[INFO] Output:               ${ANALYSIS_ROOT}/results"
 
 if [ "${PREFLIGHT_ONLY}" -eq 1 ]; then
     echo "[INFO] Preflight passed without submitting jobs."
@@ -242,7 +248,7 @@ if [ "${PREFLIGHT_ONLY}" -eq 1 ]; then
     exit 0
 fi
 
-JOB_ID_FILE="${POST_CAMPAIGN_ROOT}/manuscript_analysis/submitted_job_ids.txt"
+JOB_ID_FILE="${ANALYSIS_ROOT}/submitted_job_ids.txt"
 if [ -s "${JOB_ID_FILE}" ] && command -v "${SQUEUE_BIN}" >/dev/null 2>&1; then
     PREVIOUS_IDS="$(
         awk '/^[0-9]+$/ { values = values separator $1; separator = "," } END { print values }' \
@@ -256,7 +262,7 @@ if [ -s "${JOB_ID_FILE}" ] && command -v "${SQUEUE_BIN}" >/dev/null 2>&1; then
     fi
 fi
 
-EXPORTS="ALL,COHORT_ID=${COHORT_ID},STUDY_ROOT=${STUDY_ROOT},SUBJECTS_FILE=${SUBJECTS_FILE},POST_CAMPAIGN_ROOT=${POST_CAMPAIGN_ROOT},PIPELINE_DIR=${PIPELINE_DIR},FASTSURFER_ROOT=${FASTSURFER_ROOT},MNI_FIXED_ATLAS_PATH=${MNI_FIXED_ATLAS_PATH},MNI_BASELINE_PARENT=${MNI_BASELINE_PARENT},PYTHON=${PYTHON},MANUSCRIPT_WORKERS=${MANUSCRIPT_WORKERS},MANUSCRIPT_THRESHOLDS_COLON=${MANUSCRIPT_THRESHOLDS_COLON},MANUSCRIPT_TOP_PERCENTILE=${MANUSCRIPT_TOP_PERCENTILE},MANUSCRIPT_ROBUST_MAX_PERCENTILE=${MANUSCRIPT_ROBUST_MAX_PERCENTILE},MANUSCRIPT_UPPER_TAIL_FRACTION=${MANUSCRIPT_UPPER_TAIL_FRACTION},MANUSCRIPT_FORCE=${MANUSCRIPT_FORCE}"
+EXPORTS="ALL,COHORT_ID=${COHORT_ID},STUDY_ROOT=${STUDY_ROOT},SUBJECTS_FILE=${SUBJECTS_FILE},POST_CAMPAIGN_ROOT=${POST_CAMPAIGN_ROOT},ANALYSIS_ROOT=${ANALYSIS_ROOT},PIPELINE_DIR=${PIPELINE_DIR},FASTSURFER_ROOT=${FASTSURFER_ROOT},MNI_FIXED_ATLAS_PATH=${MNI_FIXED_ATLAS_PATH},MNI_BASELINE_PARENT=${MNI_BASELINE_PARENT},PYTHON=${PYTHON},MANUSCRIPT_WORKERS=${MANUSCRIPT_WORKERS},MANUSCRIPT_THRESHOLDS_COLON=${MANUSCRIPT_THRESHOLDS_COLON},MANUSCRIPT_TOP_PERCENTILE=${MANUSCRIPT_TOP_PERCENTILE},MANUSCRIPT_ROBUST_MAX_PERCENTILE=${MANUSCRIPT_ROBUST_MAX_PERCENTILE},MANUSCRIPT_UPPER_TAIL_FRACTION=${MANUSCRIPT_UPPER_TAIL_FRACTION},MANUSCRIPT_FORCE=${MANUSCRIPT_FORCE}"
 SUBJECT_JOB="$(
     "${SBATCH_BIN}" \
         --parsable \
@@ -266,8 +272,8 @@ SUBJECT_JOB="$(
         --mem="${MEMORY}" \
         --time="${TIME_LIMIT}" \
         --array="0-39%${MAX_CONCURRENT_DATASETS}" \
-        --output="${POST_CAMPAIGN_ROOT}/manuscript_analysis/logs/subjects-%A_%a.out" \
-        --error="${POST_CAMPAIGN_ROOT}/manuscript_analysis/logs/subjects-%A_%a.err" \
+        --output="${ANALYSIS_ROOT}/logs/subjects-%A_%a.out" \
+        --error="${ANALYSIS_ROOT}/logs/subjects-%A_%a.err" \
         --export="${EXPORTS}" \
         "${SUBJECT_SLURM}"
 )"
@@ -284,8 +290,8 @@ COLLECT_JOB="$(
         --mem="${COLLECTOR_MEMORY}" \
         --time="${COLLECTOR_TIME}" \
         --dependency="afterok:${SUBJECT_JOB}" \
-        --output="${POST_CAMPAIGN_ROOT}/manuscript_analysis/logs/collector-%j.out" \
-        --error="${POST_CAMPAIGN_ROOT}/manuscript_analysis/logs/collector-%j.err" \
+        --output="${ANALYSIS_ROOT}/logs/collector-%j.out" \
+        --error="${ANALYSIS_ROOT}/logs/collector-%j.err" \
         --export="${EXPORTS}" \
         "${COLLECT_SLURM}"
 )"

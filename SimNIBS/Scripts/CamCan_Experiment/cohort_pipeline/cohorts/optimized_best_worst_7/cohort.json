@@ -7,7 +7,7 @@
   "expected_subjects": 7,
   "individualized_targets_csv": "individualized_targets.csv",
   "individualized_targets_csv_sha256": "7010f98e3fdd4a76ba544939d15a5804d4d4a61f7765b5859cb73f7383a02e38",
-  "selection_metric": "roi_median_v_per_m averaged after per-repeat calculation",
+  "selection_metric": "historical full-anatomical-parcel roi_median_v_per_m averaged after per-repeat calculation",
   "selection": {
     "Left_Hippocampus": {
       "best": "sub-CC410182",
@@ -26,5 +26,5 @@
       "worst": "sub-CC420100"
     }
   },
-  "note": "The completed simulation grid contains all seven subjects for all four ROIs and ten repeats (280 simulations). The manuscript comparison must use only the eight subject-ROI pairs in selection (80 personalized simulations); the remaining 200 simulations are out of scope."
+  "note": "The completed simulation grid and individualized target table contain the correct optimized montage for all seven subjects, all four ROIs, and ten repeats (280 personalized simulations). All 28 subject-ROI configurations are in scope for the optimizer-matched analysis; the selection mapping records which eight configurations were originally chosen as best/worst examples."
 }

@@ -28,7 +28,7 @@ GENERIC_TARGETS="${GENERIC_TARGETS:-${PIPELINE_DIR}/utils/targets.csv}"
 FASTSURFER_ROOT="${FASTSURFER_ROOT:-/mnt/parscratch/users/cop23bi/ZIPs/atlases}"
 GENERIC_CHAIN_RECEIPT="${GENERIC_CHAIN_RECEIPT:-${GENERIC_STUDY_ROOT}/campaigns/final_132/release_state/chain_complete.tsv}"
 PERSONALIZED_CHAIN_RECEIPT="${PERSONALIZED_CHAIN_RECEIPT:-${PERSONALIZED_STUDY_ROOT}/campaigns/${COHORT_ID}/release_state/chain_complete.tsv}"
-COMPARISON_ROOT="${COMPARISON_ROOT:-${PERSONALIZED_STUDY_ROOT}/campaigns/${COHORT_ID}/post_processing/personalized_vs_generic}"
+COMPARISON_ROOT="${COMPARISON_ROOT:-${PERSONALIZED_STUDY_ROOT}/campaigns/${COHORT_ID}/post_processing/optimizer_matched_personalized_vs_generic}"
 ANALYSIS_PY="${ANALYSIS_PY:-${CAMCAN_DIR}/post/camcan_personalized_comparison.py}"
 PAIR_SLURM="${PAIR_SLURM:-${SCRIPT_DIR}/cohort_personalized_comparison_pair.slurm}"
 COLLECT_SLURM="${COLLECT_SLURM:-${SCRIPT_DIR}/cohort_personalized_comparison_collect.slurm}"
@@ -84,8 +84,8 @@ for variable in CPUS_PER_TASK MAX_CONCURRENT_PAIRS COMPARISON_WORKERS COLLECTOR_
         exit 2
     fi
 done
-if [ "${MAX_CONCURRENT_PAIRS}" -gt 8 ]; then
-    echo "[ERROR] MAX_CONCURRENT_PAIRS cannot exceed the eight selected pairs." >&2
+if [ "${MAX_CONCURRENT_PAIRS}" -gt 28 ]; then
+    echo "[ERROR] MAX_CONCURRENT_PAIRS cannot exceed the 28 subject/ROI configurations." >&2
     exit 2
 fi
 if [ "${COMPARISON_WORKERS}" -gt "${CPUS_PER_TASK}" ]; then
@@ -135,21 +135,24 @@ THRESHOLDS_DISPLAY="${COMPARISON_THRESHOLDS_COLON//:/, }"
 printf '%s\n' \
     'Scope:' \
     '  analysis: personalized Pareto montage vs MNI152-derived generic montage on the same subject head' \
-    '  selected subject-ROI pairs: 8 (best and worst case for each of four ROIs)' \
+    '  subject-ROI configurations: 28 (all 7 optimized subjects x all 4 ROIs)' \
+    '  originally selected extremes: 8; cross-target configurations: 20' \
     '  unique subjects: 7' \
     '  conditions per pair: 2 (generic, personalized)' \
     '  independent remesh repeats per condition: 10' \
-    '  required repeat-level metric inputs: 160 (8 x 2 x 10)' \
-    '  personalized simulations intentionally included: 80' \
-    '  personalized simulations excluded as out of scope: 200' \
-    "  pair-stage array: 0-7%${MAX_CONCURRENT_PAIRS}" \
+    '  required repeat-level metric inputs: 560 (28 x 2 x 10)' \
+    '  personalized simulations intentionally included: 280' \
+    '  personalized simulations excluded as out of scope: 0' \
+    "  pair-stage array: 0-27%${MAX_CONCURRENT_PAIRS}" \
     '  collector jobs: 1' \
-    '  scheduler tasks total: 9' \
+    '  scheduler tasks total: 29' \
     "  thresholds: ${THRESHOLDS_DISPLAY} V/m" \
     "  robust maximum: P${COMPARISON_ROBUST_MAX_PERCENTILE}" \
     '  aggregation: calculate every metric per repeat, then mean within condition' \
+    '  primary ROI: MakeROIs.m-equivalent parcel-clipped optimizer sphere' \
+    '  secondary ROI: full anatomical parcel (anatomical_ metrics)' \
     '  repeat pairing across conditions: none' \
-    '  population inference: none; selected-case descriptive comparison' \
+    '  population inference: none; descriptive seven-subject comparison' \
     '  source simulations: read-only'
 
 echo "[INFO] Generic study:          ${GENERIC_STUDY_ROOT}"
@@ -159,7 +162,7 @@ echo "[INFO] Selection allowlist:    ${COMPARISON_ROOT}/selection_allowlist.csv"
 echo "[INFO] Allowlist SHA256:       ${ALLOWLIST_SHA256}"
 echo "[INFO] Generic targets SHA:    ${GENERIC_TARGETS_SHA256}"
 echo "[INFO] Personalized table SHA: ${INDIVIDUALIZED_TARGETS_SHA256}"
-echo "[INFO] Existing valid markers: ${EXISTING_RECORDS}/160"
+echo "[INFO] Existing valid markers: ${EXISTING_RECORDS}/560"
 echo "[INFO] Resource profile:       ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
 echo "[INFO] Comparison output:      ${COMPARISON_ROOT}"
 
@@ -192,7 +195,7 @@ PAIR_JOB="$(
         --cpus-per-task="${CPUS_PER_TASK}" \
         --mem="${MEMORY}" \
         --time="${TIME_LIMIT}" \
-        --array="0-7%${MAX_CONCURRENT_PAIRS}" \
+        --array="0-27%${MAX_CONCURRENT_PAIRS}" \
         --output="${COMPARISON_ROOT}/logs/pairs-%A_%a.out" \
         --error="${COMPARISON_ROOT}/logs/pairs-%A_%a.err" \
         --export="${EXPORTS}" \
@@ -227,7 +230,7 @@ COLLECT_JOB="${COLLECT_JOB%%;*}"
 printf '%s\n' "${COLLECT_JOB}" >> "${JOB_ID_FILE}"
 
 printf '%s\n' \
-    "[INFO] Submitted selected-pair metric array: ${PAIR_JOB}" \
+    "[INFO] Submitted all-configuration metric array: ${PAIR_JOB}" \
     "[INFO] Submitted dependent collector:       ${COLLECT_JOB}" \
     "[INFO] Collector dependency:                afterok:${PAIR_JOB}" \
     "[INFO] Job IDs:                             ${JOB_ID_FILE}"

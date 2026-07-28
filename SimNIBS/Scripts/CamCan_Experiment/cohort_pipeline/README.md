@@ -188,13 +188,23 @@ Subject outputs are resumable. If the one-shot post array needs to be
 resubmitted after a failure, complete metrics with the same configuration
 fingerprint are reused; `PIPELINE_FORCE` remains disabled by default.
 
-## Final-cohort manuscript analysis
+## Optimizer-matched manuscript analyses
 
 The manuscript analysis is a compact, visualization-free extension of the
-completed post-processing campaign. It reads the existing whole-brain TI
-NIfTIs and subject-space atlases without modifying either, calculates the
-requested metrics independently in every repeat, and then uses the arithmetic
-mean of each subject's ten values. Run:
+completed simulation campaigns. It reads the existing whole-brain TI NIfTIs
+and subject-space atlases without modifying either. For each subject and ROI,
+it reproduces the target construction in the optimization `MakeROIs.m`:
+
+- calculate the world-space volume centroid of the anatomical parcel;
+- grow a sphere from 3.00 mm in 0.01 mm increments (strict distance `< radius`);
+- clip the sphere to the anatomical parcel;
+- stop at 100 mm³ for cortical M1/DLPFC targets or 200 mm³ for subcortical
+  hippocampus/thalamus targets, with a radius cap below 10 mm.
+
+The unprefixed metrics use this optimizer-matched target. The same metrics are
+also calculated over the complete anatomical parcel with an `anatomical_`
+prefix as a secondary analysis. Metrics are calculated independently in every
+repeat and then arithmetic-mean aggregated across the ten repeats. Run:
 
 ```bash
 bash CamCan_Experiment/cohort_pipeline/submit_cohort_manuscript_analysis.sh \
@@ -205,29 +215,54 @@ bash CamCan_Experiment/cohort_pipeline/submit_cohort_manuscript_analysis.sh \
     final_132
 ```
 
-The launcher submits 40 resumable ROI/repeat jobs at up to 40-way concurrency,
+The cohort launcher submits 40 resumable ROI/repeat jobs at up to 40-way concurrency,
 followed by one `afterok` collector. It preserves the established post-analysis
 resource profile (12 CPU, 24 GB, 8 hours per job). The analysis calculates:
 
-- target, off-target, and whole-brain coverage at both 0.18 and 0.15 V/m;
+- target, off-target, and whole-brain coverage at 0.20, 0.18, and 0.15 V/m;
 - localization of suprathreshold and whole-brain top-5% voxels in the target;
-- median field and P99.9 robust maximum in the ROI, whole brain, and
-  off-target compartment;
+- minimum and median target field, plus the P99.9 robust maximum in the target,
+  whole brain, and off-target compartment;
 - the median of the upper 1% as a robust-maximum sensitivity analysis;
 - the same metrics for each ROI-specific MNI152 baseline.
 
-Target coverage always uses the complete anatomical ROI as its denominator, so
-non-finite ROI voxels count as unstimulated. The collector writes repeat-level
-and ten-repeat subject-mean CSVs, a primary table, a supplementary descriptive
-table (mean, SD, median, quartiles, IQR, range), four effectiveness-versus-
-spread figure sets, an audit manifest, and a compact download archive under:
+Target coverage uses the complete optimizer-matched target as its denominator,
+so non-finite target voxels count as unstimulated. The collector writes
+repeat-level and ten-repeat subject-mean CSVs, an ROI construction audit table,
+a primary table, a supplementary descriptive table (mean, SD, median,
+quartiles, IQR, range), effectiveness-versus-spread figures, an audit manifest,
+and a compact download archive under:
 
 ```text
-campaigns/final_132/post_processing/manuscript_analysis/
+campaigns/final_132/post_processing/optimizer_matched_analysis/
 ```
 
-Individualized optimizations and cross-ROI inferential comparisons are not
-included in this stage.
+The completed individualized campaign contains the correct personalized
+montage for all seven subjects and all four ROIs. Analyse its complete 28
+subject/ROI grid against the generic montage on the same heads with:
+
+```bash
+bash CamCan_Experiment/cohort_pipeline/submit_personalized_vs_generic_analysis.sh \
+    --preflight
+
+bash CamCan_Experiment/cohort_pipeline/submit_personalized_vs_generic_analysis.sh
+```
+
+This submits 28 resumable configuration jobs at the preserved eight-way
+concurrency, followed by one collector. It reads 560 existing inputs
+(28 configurations × two conditions × ten repeats), includes all 280
+personalized simulations, performs no new FEM simulation, and writes to:
+
+```text
+campaigns/optimized_best_worst_7/post_processing/
+    optimizer_matched_personalized_vs_generic/
+```
+
+Because the seven subjects were selected as outcome extremes, this comparison
+is descriptive and is not used for population inference.
+
+The exact MATLAB-to-Python mapping and metric-scope rules are recorded in
+[`OPTIMIZER_MATCHED_ROI_ANALYSIS.md`](../docs/OPTIMIZER_MATCHED_ROI_ANALYSIS.md).
 
 If the post-processing preflight reports missing subject-space atlases, first
 prepare and submit the missing-only Destrieux repair stage:

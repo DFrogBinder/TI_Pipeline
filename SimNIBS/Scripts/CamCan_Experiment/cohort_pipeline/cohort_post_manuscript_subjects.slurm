@@ -13,6 +13,7 @@ set -euo pipefail
 : "${STUDY_ROOT:?Set STUDY_ROOT.}"
 : "${SUBJECTS_FILE:?Set SUBJECTS_FILE.}"
 : "${POST_CAMPAIGN_ROOT:?Set POST_CAMPAIGN_ROOT.}"
+: "${ANALYSIS_ROOT:?Set ANALYSIS_ROOT.}"
 : "${FASTSURFER_ROOT:?Set FASTSURFER_ROOT.}"
 : "${PYTHON:?Set PYTHON.}"
 : "${SLURM_ARRAY_TASK_ID:?This script must run as a Slurm array task.}"
@@ -38,8 +39,8 @@ REPEAT_NUMBER=$((SLURM_ARRAY_TASK_ID % 10 + 1))
 ROI="$(post_roi_for_index "${ROI_INDEX}")"
 REPEAT_ID="$(printf '%02d' "${REPEAT_NUMBER}")"
 DATASET_ROOT="${STUDY_ROOT}/runs/${ROI}_Runs/${ROI}_Data_${REPEAT_ID}"
-SUMMARY="${POST_CAMPAIGN_ROOT}/manuscript_analysis/dataset_summaries/${ROI}_repeat_${REPEAT_ID}.json"
-THRESHOLDS="${MANUSCRIPT_THRESHOLDS_COLON:-0.18:0.15}"
+SUMMARY="${ANALYSIS_ROOT}/dataset_summaries/${ROI}_repeat_${REPEAT_ID}.json"
+THRESHOLDS="${MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 THRESHOLDS="${THRESHOLDS//:/,}"
 
 COMMAND=(
@@ -63,7 +64,7 @@ if [ "${MANUSCRIPT_FORCE:-0}" = "1" ]; then
 fi
 
 printf '%s\n' \
-    "[INFO] CamCan manuscript metric extraction" \
+    "[INFO] CamCan optimizer-matched manuscript metric extraction" \
     "[INFO] Array index:          ${SLURM_ARRAY_TASK_ID}" \
     "[INFO] ROI:                  ${ROI}" \
     "[INFO] Repeat:               ${REPEAT_ID}" \

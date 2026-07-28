@@ -17,9 +17,9 @@ THRESHOLDS="${COMPARISON_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 THRESHOLDS="${THRESHOLDS//:/,}"
 
 printf '%s\n' \
-    "[INFO] Selected personalized-vs-generic collector" \
-    "[INFO] Required pair summaries: 8" \
-    "[INFO] Required repeat records:  160" \
+    "[INFO] All-configuration personalized-vs-generic collector" \
+    "[INFO] Required pair summaries: 28" \
+    "[INFO] Required repeat records:  560" \
     "[INFO] Thresholds (V/m):         ${THRESHOLDS}" \
     "[INFO] Repeat aggregation:       per-condition arithmetic mean after metric calculation" \
     "[INFO] Repeat pairing:           none across conditions" \
@@ -38,10 +38,10 @@ printf '%s\n' \
 MANIFEST="${COMPARISON_ROOT}/results/analysis_manifest.json"
 test -s "${MANIFEST}"
 "${PYTHON}" -c \
-    'import json,sys; p=json.load(open(sys.argv[1])); assert p["status"]=="complete" and p["selected_subject_roi_pairs"]==8 and p["repeat_level_records"]==160 and p["condition_repeat_mean_records"]==16' \
+    'import json,sys; p=json.load(open(sys.argv[1])); assert p["status"]=="complete" and p["subject_roi_configurations"]==28 and p["repeat_level_records"]==560 and p["condition_repeat_mean_records"]==56 and p["excluded_personalized_simulations"]==0' \
     "${MANIFEST}"
 
-ARCHIVE="${COMPARISON_ROOT}/optimized_best_worst_7_personalized_vs_generic_results.tar.gz"
+ARCHIVE="${COMPARISON_ROOT}/optimized_best_worst_7_all_roi_optimizer_matched_results.tar.gz"
 rm -f "${ARCHIVE}" "${ARCHIVE}.sha256"
 tar -C "${COMPARISON_ROOT}/results" -czf "${ARCHIVE}" .
 sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"

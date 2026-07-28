@@ -8,9 +8,91 @@ import numpy as np
 import pytest
 
 from post import camcan_manuscript_analysis as manuscript
+from post import optimizer_target_roi
 
 
-def test_manuscript_metrics_use_full_roi_denominator_and_both_thresholds():
+TEST_ROI_DEFINITION = {
+    "method": "synthetic test ROI",
+    "requested_volume_mm3": 100.0,
+    "achieved_volume_mm3": 100.0,
+    "radius_mm": 3.0,
+    "target_volume_reached": True,
+}
+
+
+def test_optimizer_roi_matches_make_rois_growth_and_volume_classes():
+    anatomical = np.ones((21, 21, 21), dtype=bool)
+    image = nib.Nifti1Image(np.zeros(anatomical.shape), np.eye(4))
+
+    cortical = optimizer_target_roi.build_optimizer_target_roi(
+        anatomical_mask=anatomical,
+        reference_img=image,
+        roi="Left_M1",
+    )
+    subcortical = optimizer_target_roi.build_optimizer_target_roi(
+        anatomical_mask=anatomical,
+        reference_img=image,
+        roi="Left_Hippocampus",
+    )
+
+    assert cortical.metadata["requested_volume_mm3"] == 100.0
+    assert cortical.metadata["achieved_volume_mm3"] == pytest.approx(
+        cortical.mask.sum()
+    )
+    assert cortical.metadata["achieved_volume_mm3"] >= 100.0
+    assert cortical.metadata["radius_mm"] == pytest.approx(3.01)
+    assert subcortical.metadata["requested_volume_mm3"] == 200.0
+    assert subcortical.metadata["achieved_volume_mm3"] >= 200.0
+    assert subcortical.metadata["radius_mm"] > cortical.metadata["radius_mm"]
+    assert np.all(cortical.mask <= anatomical)
+    assert np.all(subcortical.mask <= anatomical)
+
+
+def test_optimizer_roi_centroid_uses_world_coordinates_and_stays_in_parcel():
+    anatomical = np.zeros((9, 9, 9), dtype=bool)
+    anatomical[1, 2, 3] = True
+    anatomical[3, 4, 5] = True
+    affine = np.array(
+        [[2.0, 0.0, 0.0, 10.0], [0.0, 3.0, 0.0, -5.0], [0.0, 0.0, 4.0, 7.0], [0, 0, 0, 1]]
+    )
+    image = nib.Nifti1Image(np.zeros(anatomical.shape), affine)
+
+    target = optimizer_target_roi.build_optimizer_target_roi(
+        anatomical_mask=anatomical,
+        reference_img=image,
+        roi="Right_Thalamus",
+    )
+
+    expected_world = nib.affines.apply_affine(affine, [2.0, 3.0, 4.0])
+    observed_world = np.array(
+        [
+            target.metadata["centre_world_x_mm"],
+            target.metadata["centre_world_y_mm"],
+            target.metadata["centre_world_z_mm"],
+        ]
+    )
+    assert observed_world == pytest.approx(expected_world)
+    assert np.all(target.mask <= anatomical)
+    assert target.metadata["target_volume_reached"] is False
+
+
+def test_atlas_validation_requires_all_four_direct_roi_labels(tmp_path):
+    atlas_path = tmp_path / "atlas.nii.gz"
+    atlas = np.zeros((4, 4, 4), dtype=np.int32)
+    for index, label in enumerate((17, 11129, 12115, 49)):
+        atlas[index, 0, 0] = label
+    nib.save(nib.Nifti1Image(atlas, np.eye(4)), atlas_path)
+
+    result = manuscript.validate_atlas_rois(atlas_path)
+    assert result["status"] == "complete"
+
+    atlas[2, 0, 0] = 0
+    nib.save(nib.Nifti1Image(atlas, np.eye(4)), atlas_path)
+    with pytest.raises(ValueError, match="Right_DLPC"):
+        manuscript.validate_atlas_rois(atlas_path)
+
+
+def test_manuscript_metrics_use_supplied_roi_denominator_and_all_thresholds():
     ti_data = np.array(
         [[[0.20, 0.18], [0.15, np.nan]], [[0.10, 0.30], [0.00, 0.40]]],
         dtype=np.float32,
@@ -28,6 +110,7 @@ def test_manuscript_metrics_use_full_roi_denominator_and_both_thresholds():
     )
 
     assert metrics["roi_voxels"] == 4
+    assert metrics["roi_min_v_per_m"] == pytest.approx(0.15)
     assert metrics["roi_finite_voxels"] == 3
     assert metrics["roi_nonfinite_voxels"] == 1
     assert metrics["target_coverage_voxels_ge_0p18"] == 2
@@ -155,7 +238,7 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
                     / subject
                     / "anat"
                     / "post"
-                    / "manuscript_metrics.json"
+                    / manuscript.METRIC_MARKER_FILENAME
                 )
                 path.parent.mkdir(parents=True, exist_ok=True)
                 metrics = {
@@ -179,6 +262,7 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
                             "roi": roi,
                             "repeat": repeat,
                             "canonical_roi": canonical,
+                            "roi_definition": TEST_ROI_DEFINITION,
                             "metrics": metrics,
                         }
                     ),
@@ -217,6 +301,7 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
     assert manifest["subject_level_records"] == 8
     assert manifest["zero_denominator_localization_values_repaired"] == 1
     assert manifest["zero_denominator_localization_repairs_by_metric"] == {
+        "threshold_localization_percent_in_roi_ge_0p2": 0,
         "threshold_localization_percent_in_roi_ge_0p18": 1,
         "threshold_localization_percent_in_roi_ge_0p15": 0,
     }
@@ -261,7 +346,7 @@ def test_collector_rejects_nonfinite_repeat_metrics(monkeypatch, tmp_path):
                 / "sub-01"
                 / "anat"
                 / "post"
-                / "manuscript_metrics.json"
+                / manuscript.METRIC_MARKER_FILENAME
             )
             path.parent.mkdir(parents=True, exist_ok=True)
             metrics = {name: 1.0 for name in metric_names}
@@ -276,6 +361,7 @@ def test_collector_rejects_nonfinite_repeat_metrics(monkeypatch, tmp_path):
                         "roi": roi,
                         "repeat": repeat,
                         "canonical_roi": canonical,
+                        "roi_definition": TEST_ROI_DEFINITION,
                         "metrics": metrics,
                     }
                 ),
@@ -337,7 +423,8 @@ def test_csv_only_reaggregation_repairs_zero_denominator_localization(
         ]
     ).to_csv(input_dir / "mni152_baseline_metrics.csv", index=False)
     (input_dir / "analysis_manifest.json").write_text(
-        json.dumps({"analysis_schema_version": 1}), encoding="utf-8"
+        json.dumps({"analysis_schema_version": manuscript.ANALYSIS_SCHEMA_VERSION}),
+        encoding="utf-8",
     )
     monkeypatch.setattr(
         manuscript,
@@ -375,6 +462,26 @@ def test_csv_only_reaggregation_repairs_zero_denominator_localization(
     ].iloc[0]
     assert subject_value == pytest.approx(0.9)
     assert subject_frame["repeat_count"].eq(10).all()
+
+
+def test_csv_only_reaggregation_rejects_pre_optimizer_schema(tmp_path):
+    input_dir = tmp_path / "schema2"
+    input_dir.mkdir()
+    (input_dir / "repeat_level_metrics.csv").write_text("subject\n", encoding="utf-8")
+    (input_dir / "mni152_baseline_metrics.csv").write_text("subject\n", encoding="utf-8")
+    (input_dir / "analysis_manifest.json").write_text(
+        json.dumps({"analysis_schema_version": 2}), encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="cannot convert"):
+        manuscript.reaggregate_existing_analysis(
+            input_dir=input_dir,
+            out_dir=tmp_path / "out",
+            thresholds=manuscript.DEFAULT_THRESHOLDS_V_PER_M,
+            top_percentile=manuscript.DEFAULT_TOP_PERCENTILE,
+            robust_max_percentile=manuscript.DEFAULT_ROBUST_MAX_PERCENTILE,
+            upper_tail_fraction=manuscript.DEFAULT_UPPER_TAIL_FRACTION,
+        )
 
 
 def test_effectiveness_spread_figure_writes_png_and_pdf(tmp_path):
@@ -420,7 +527,9 @@ def test_manuscript_submitter_uses_40_resumable_jobs_then_one_collector():
     assert 'MAX_CONCURRENT_DATASETS="${MAX_CONCURRENT_DATASETS:-40}"' in text
     assert '--array="0-39%${MAX_CONCURRENT_DATASETS}"' in text
     assert '--dependency="afterok:${SUBJECT_JOB}"' in text
-    assert "MANUSCRIPT_THRESHOLDS_COLON:-0.18:0.15" in text
+    assert "MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15" in text
+    assert "optimizer_matched_analysis" in text
+    assert "100 mm3 cortical; 200 mm3 subcortical" in text
     assert "MANUSCRIPT_ROBUST_MAX_PERCENTILE:-99.9" in text
     assert "existing simulations are read-only" in text
 
@@ -526,5 +635,5 @@ def test_manuscript_submitter_preflight_accepts_complete_synthetic_scope(tmp_pat
     )
 
     assert "repeat-level metric records: 40" in completed.stdout
-    assert "thresholds: 0.18 and 0.15 V/m" in completed.stdout
+    assert "thresholds: 0.20 and 0.18 and 0.15 V/m" in completed.stdout
     assert "Preflight passed without submitting jobs." in completed.stdout

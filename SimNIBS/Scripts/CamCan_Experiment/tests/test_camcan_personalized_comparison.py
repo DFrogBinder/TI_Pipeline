@@ -10,7 +10,7 @@ import pytest
 from post import camcan_personalized_comparison as comparison
 
 
-def test_repository_selection_builds_exact_eight_pair_allowlist():
+def test_repository_allowlist_contains_all_28_optimized_configurations():
     pipeline_dir = Path(__file__).resolve().parents[1] / "cohort_pipeline"
     cohort_dir = pipeline_dir / "cohorts" / "optimized_best_worst_7"
     scripts_dir = pipeline_dir.parents[1]
@@ -22,7 +22,10 @@ def test_repository_selection_builds_exact_eight_pair_allowlist():
     )
 
     observed = {
-        (row.roi, row.selection_role): row.subject for row in frame.itertuples()
+        (row.roi, row.selection_role): row.subject
+        for row in frame.loc[
+            frame["selection_role"].isin(["best", "worst"])
+        ].itertuples()
     }
     assert observed == {
         ("Left_Hippocampus", "best"): "sub-CC410182",
@@ -34,9 +37,10 @@ def test_repository_selection_builds_exact_eight_pair_allowlist():
         ("Right_Thalamus", "best"): "sub-CC610061",
         ("Right_Thalamus", "worst"): "sub-CC420100",
     }
-    assert len(frame) == 8
+    assert len(frame) == 28
     assert frame["subject"].nunique() == 7
-    assert frame.groupby("roi").size().eq(2).all()
+    assert frame.groupby("roi").size().eq(7).all()
+    assert frame["selection_role"].eq("cross_target").sum() == 20
     assert frame["personalized_pareto_selection"].eq("TI_free.Emin").all()
 
 
@@ -170,18 +174,23 @@ def test_source_validation_distinguishes_generic_and_personalized(tmp_path):
         )
 
 
-def test_collector_requires_and_aggregates_exact_160_records(monkeypatch, tmp_path):
+def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_path):
     output_root = tmp_path / "comparison"
     allowlist_rows = []
     metric_names = comparison.manuscript_metric_names(comparison.DEFAULT_THRESHOLDS)
-    for pair_index in range(8):
-        roi = comparison.ROI_ORDER[pair_index // 2]
+    for pair_index in range(comparison.EXPECTED_CONFIGURATIONS):
+        roi = comparison.ROI_ORDER[pair_index // comparison.EXPECTED_SUBJECTS]
+        subject_index = pair_index % comparison.EXPECTED_SUBJECTS
         allowlist_rows.append(
             {
                 "pair_index": pair_index,
-                "subject": f"sub-{pair_index:02d}",
+                "subject": f"sub-{subject_index:02d}",
                 "roi": roi,
-                "selection_role": "best" if pair_index % 2 == 0 else "worst",
+                "selection_role": (
+                    "best"
+                    if subject_index == 0
+                    else "worst" if subject_index == 1 else "cross_target"
+                ),
             }
         )
     allowlist = pd.DataFrame(allowlist_rows)
@@ -237,6 +246,13 @@ def test_collector_requires_and_aggregates_exact_160_records(monkeypatch, tmp_pa
                                 "mesh_sha256": "mesh",
                                 "corrected_label_sha256": "label",
                             },
+                            "roi_definition": {
+                                "method": "synthetic test ROI",
+                                "requested_volume_mm3": 100.0,
+                                "achieved_volume_mm3": 100.0,
+                                "radius_mm": 3.0,
+                                "target_volume_reached": True,
+                            },
                             "metrics": {name: value for name in metric_names},
                         }
                     ),
@@ -256,8 +272,10 @@ def test_collector_requires_and_aggregates_exact_160_records(monkeypatch, tmp_pa
     )
 
     assert manifest["status"] == "complete"
-    assert manifest["repeat_level_records"] == 160
-    assert manifest["condition_repeat_mean_records"] == 16
+    assert manifest["subject_roi_configurations"] == 28
+    assert manifest["repeat_level_records"] == 560
+    assert manifest["condition_repeat_mean_records"] == 56
+    assert manifest["excluded_personalized_simulations"] == 0
     condition_frame = pd.read_csv(
         output_root / "results" / "condition_repeat_mean_metrics.csv"
     )
@@ -284,16 +302,17 @@ def test_collector_requires_and_aggregates_exact_160_records(monkeypatch, tmp_pa
     assert (output_root / "results" / "paired_personalized_vs_generic.csv").is_file()
 
 
-def test_submitter_declares_strict_selected_case_scope():
+def test_submitter_declares_all_configuration_optimizer_scope():
     pipeline_dir = Path(__file__).resolve().parents[1] / "cohort_pipeline"
     text = (pipeline_dir / "submit_personalized_vs_generic_analysis.sh").read_text(
         encoding="utf-8"
     )
 
-    assert '--array="0-7%${MAX_CONCURRENT_PAIRS}"' in text
+    assert '--array="0-27%${MAX_CONCURRENT_PAIRS}"' in text
     assert '--dependency="afterok:${PAIR_JOB}"' in text
-    assert "required repeat-level metric inputs: 160" in text
-    assert "personalized simulations excluded as out of scope: 200" in text
+    assert "required repeat-level metric inputs: 560" in text
+    assert "personalized simulations excluded as out of scope: 0" in text
+    assert "MakeROIs.m-equivalent" in text
     assert "repeat pairing across conditions: none" in text
     assert "source simulations: read-only" in text
 
@@ -359,25 +378,31 @@ def test_submitter_preflight_validates_exact_synthetic_scope(tmp_path):
         },
     )
 
-    assert "selected subject-ROI pairs: 8" in completed.stdout
-    assert "required repeat-level metric inputs: 160" in completed.stdout
-    assert "personalized simulations excluded as out of scope: 200" in completed.stdout
+    assert "subject-ROI configurations: 28" in completed.stdout
+    assert "required repeat-level metric inputs: 560" in completed.stdout
+    assert "personalized simulations excluded as out of scope: 0" in completed.stdout
     assert "Preflight passed without submitting jobs." in completed.stdout
     preflight = json.loads(
         (tmp_path / "comparison" / "preflight.json").read_text(encoding="utf-8")
     )
     assert preflight["status"] == "ready"
-    assert preflight["required_generic_inputs"] == 80
-    assert preflight["required_personalized_inputs"] == 80
+    assert preflight["subject_roi_configurations"] == 28
+    assert preflight["required_generic_inputs"] == 280
+    assert preflight["required_personalized_inputs"] == 280
 
 
 def test_comparison_figures_write_png_and_pdf(tmp_path):
     condition_rows = []
     repeat_rows = []
-    for pair_index in range(8):
-        roi = comparison.ROI_ORDER[pair_index // 2]
-        role = "best" if pair_index % 2 == 0 else "worst"
-        subject = f"sub-{pair_index:02d}"
+    for pair_index in range(comparison.EXPECTED_CONFIGURATIONS):
+        roi = comparison.ROI_ORDER[pair_index // comparison.EXPECTED_SUBJECTS]
+        subject_index = pair_index % comparison.EXPECTED_SUBJECTS
+        role = (
+            "best"
+            if subject_index == 0
+            else "worst" if subject_index == 1 else "cross_target"
+        )
+        subject = f"sub-{subject_index:02d}"
         for condition_index, condition in enumerate(comparison.CONDITIONS):
             condition_rows.append(
                 {
@@ -386,6 +411,7 @@ def test_comparison_figures_write_png_and_pdf(tmp_path):
                     "roi": roi,
                     "selection_role": role,
                     "condition": condition,
+                    "roi_min_v_per_m": 0.08 + 0.02 * condition_index,
                     "roi_median_v_per_m": 0.10 + 0.02 * condition_index,
                     "target_coverage_percent_ge_0p18": 20 + 10 * condition_index,
                     "off_target_coverage_percent_ge_0p18": 8 - condition_index,
@@ -402,6 +428,9 @@ def test_comparison_figures_write_png_and_pdf(tmp_path):
                         "selection_role": role,
                         "condition": condition,
                         "repeat": f"{repeat_number + 1:02d}",
+                        "roi_min_v_per_m": (
+                            0.08 + 0.02 * condition_index + repeat_number / 1000
+                        ),
                         "roi_median_v_per_m": (
                             0.10 + 0.02 * condition_index + repeat_number / 1000
                         ),

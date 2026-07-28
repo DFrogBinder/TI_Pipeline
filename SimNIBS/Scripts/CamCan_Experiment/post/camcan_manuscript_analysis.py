@@ -1,10 +1,12 @@
-"""CamCan manuscript metrics and ten-repeat aggregation.
+"""Optimizer-matched CamCan manuscript metrics and ten-repeat aggregation.
 
 This module is intentionally independent of the visualization-heavy legacy
 post-processing pass.  It reads the existing whole-brain TI NIfTI and the
-subject-space atlas, writes one small resumable JSON record per simulation,
-and then builds publication-ready tables and effectiveness-versus-spread
-figures from arithmetic means across the ten remeshing repeats.
+subject-space atlas, reconstructs the parcel-clipped spherical target used by
+the optimizer, writes one small resumable JSON record per simulation, and
+builds publication-ready tables and figures from arithmetic means across the
+ten remeshing repeats. Full anatomical-parcel metrics are retained with an
+``anatomical_`` prefix as a secondary analysis.
 """
 
 from __future__ import annotations
@@ -30,12 +32,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from post.post_functions import roi_masks_on_ti_grid  # noqa: E402
-from utils.roi_registry import match_fastsurfer_roi_from_directory  # noqa: E402
+from post.optimizer_target_roi import (  # noqa: E402
+    RADIUS_CAP_MM,
+    RADIUS_STEP_MM,
+    ROI_DEFINITION_SCHEMA_VERSION,
+    START_RADIUS_MM,
+    TARGET_VOLUME_MM3_BY_ROI,
+    build_optimizer_target_roi,
+    flatten_roi_metadata,
+)
+from utils.roi_registry import (  # noqa: E402
+    match_fastsurfer_roi_from_directory,
+    resolve_fastsurfer_roi_label_ids,
+)
 from utils.ti_utils import load_ti_as_scalar, vol_mm3  # noqa: E402
 
 
-ANALYSIS_SCHEMA_VERSION = 2
-DEFAULT_THRESHOLDS_V_PER_M = (0.18, 0.15)
+ANALYSIS_SCHEMA_VERSION = 3
+METRIC_MARKER_FILENAME = "optimizer_matched_metrics.json"
+DEFAULT_THRESHOLDS_V_PER_M = (0.20, 0.18, 0.15)
 DEFAULT_TOP_PERCENTILE = 95.0
 DEFAULT_ROBUST_MAX_PERCENTILE = 99.9
 DEFAULT_UPPER_TAIL_FRACTION = 0.01
@@ -98,10 +113,28 @@ def _upper_tail_median(values: np.ndarray, fraction: float) -> float:
     return float(np.median(tail)) if tail.size else math.nan
 
 
+def _metric_depends_on_roi_scope(name: str) -> bool:
+    """Return whether changing target ROI changes the metric's value."""
+
+    if name.startswith("whole_brain_"):
+        return False
+    if name in {
+        "voxel_volume_mm3",
+        "top_5_percent_threshold_v_per_m",
+        "top_5_percent_voxels",
+        "top_5_percent_whole_brain_volume_mm3",
+    }:
+        return False
+    return True
+
+
 def manuscript_metric_names(
     thresholds: Sequence[float] = DEFAULT_THRESHOLDS_V_PER_M,
+    *,
+    include_anatomical_secondary: bool = True,
 ) -> list[str]:
     names = [
+        "roi_min_v_per_m",
         "roi_median_v_per_m",
         "roi_robust_max_p99_9_v_per_m",
         "roi_upper_1_percent_median_v_per_m",
@@ -133,6 +166,12 @@ def manuscript_metric_names(
                 f"threshold_localization_percent_in_roi_ge_{slug}",
             ]
         )
+    if include_anatomical_secondary:
+        names.extend(
+            f"anatomical_{name}"
+            for name in tuple(names)
+            if _metric_depends_on_roi_scope(name)
+        )
     return names
 
 
@@ -148,9 +187,8 @@ def compute_manuscript_metrics(
 ) -> dict[str, float | int]:
     """Compute effectiveness, spread, localization, and robust intensity metrics.
 
-    The full anatomical ROI is the denominator for target coverage.  Therefore
-    ROI voxels with non-finite TI values remain in the denominator and count as
-    unstimulated, as agreed for the CamCan manuscript analysis.
+    The supplied ROI is the denominator for target coverage. ROI voxels with
+    non-finite TI values remain in the denominator and count as unstimulated.
     """
 
     if ti_data.shape != roi_mask.shape:
@@ -188,6 +226,7 @@ def compute_manuscript_metrics(
         "whole_brain_voxels": whole_brain_voxels,
         "off_target_voxels": off_target_voxels,
         "voxel_volume_mm3": voxel_volume,
+        "roi_min_v_per_m": float(np.min(roi_values)) if roi_values.size else math.nan,
         "roi_median_v_per_m": float(np.median(roi_values)) if roi_values.size else math.nan,
         "roi_robust_max_p99_9_v_per_m": _safe_percentile(
             roi_values, robust_max_percentile
@@ -274,6 +313,51 @@ def compute_manuscript_metrics(
     return metrics
 
 
+def compute_optimizer_matched_metric_bundle(
+    *,
+    ti_img: nib.spatialimages.SpatialImage,
+    ti_data: np.ndarray,
+    anatomical_roi_mask: np.ndarray,
+    roi: str,
+    thresholds: Sequence[float] = DEFAULT_THRESHOLDS_V_PER_M,
+    top_percentile: float = DEFAULT_TOP_PERCENTILE,
+    robust_max_percentile: float = DEFAULT_ROBUST_MAX_PERCENTILE,
+    upper_tail_fraction: float = DEFAULT_UPPER_TAIL_FRACTION,
+) -> tuple[dict[str, float | int], dict[str, Any]]:
+    """Compute primary optimizer-target and secondary anatomical-parcel metrics."""
+
+    optimizer_roi = build_optimizer_target_roi(
+        anatomical_mask=anatomical_roi_mask,
+        reference_img=ti_img,
+        roi=roi,
+    )
+    common = {
+        "ti_img": ti_img,
+        "ti_data": ti_data,
+        "thresholds": thresholds,
+        "top_percentile": top_percentile,
+        "robust_max_percentile": robust_max_percentile,
+        "upper_tail_fraction": upper_tail_fraction,
+    }
+    primary = compute_manuscript_metrics(
+        roi_mask=optimizer_roi.mask,
+        **common,
+    )
+    anatomical = compute_manuscript_metrics(
+        roi_mask=np.asarray(anatomical_roi_mask, dtype=bool),
+        **common,
+    )
+    metrics = {
+        **primary,
+        **{
+            f"anatomical_{key}": value
+            for key, value in anatomical.items()
+            if _metric_depends_on_roi_scope(key)
+        },
+    }
+    return metrics, optimizer_roi.metadata
+
+
 def _json_ready(value: Any) -> Any:
     if isinstance(value, np.generic):
         value = value.item()
@@ -310,6 +394,15 @@ def _analysis_fingerprint(
         "ti": _file_identity(ti_path),
         "atlas": _file_identity(atlas_path),
         "canonical_roi": canonical_roi,
+        "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
+        "roi_definition": {
+            "target_volume_mm3": TARGET_VOLUME_MM3_BY_ROI[
+                canonical_roi_to_dataset_roi(canonical_roi)
+            ],
+            "start_radius_mm": START_RADIUS_MM,
+            "radius_step_mm": RADIUS_STEP_MM,
+            "radius_cap_mm": RADIUS_CAP_MM,
+        },
         "thresholds_v_per_m": [float(value) for value in thresholds],
         "top_percentile": float(top_percentile),
         "robust_max_percentile": float(robust_max_percentile),
@@ -319,12 +412,56 @@ def _analysis_fingerprint(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def canonical_roi_to_dataset_roi(canonical_roi: str) -> str:
+    """Resolve a canonical atlas ROI name to the four-ROI dataset label."""
+
+    matches = [
+        roi
+        for roi in ROI_ORDER
+        if match_fastsurfer_roi_from_directory(f"{roi}_Data_01").canonical_name
+        == canonical_roi
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"Canonical ROI {canonical_roi!r} does not map uniquely to ROI_ORDER."
+        )
+    return matches[0]
+
+
 def _resolve_atlas(atlas_root: Path, subject: str) -> Path:
     for suffix in (".nii.gz", ".nii"):
         candidate = atlas_root / f"{subject}{suffix}"
         if candidate.is_file():
             return candidate
     raise FileNotFoundError(f"Missing subject-space atlas: {atlas_root}/{subject}.nii[.gz]")
+
+
+def validate_atlas_rois(atlas_path: Path) -> dict[str, Any]:
+    """Fail early if an atlas lacks any label required by the four-ROI study."""
+
+    image = nib.load(str(atlas_path))
+    present = set(np.unique(np.asanyarray(image.dataobj)).astype(np.int64).tolist())
+    roi_labels: dict[str, list[int]] = {}
+    missing: dict[str, list[int]] = {}
+    for roi in ROI_ORDER:
+        canonical = match_fastsurfer_roi_from_directory(
+            f"{roi}_Data_01"
+        ).canonical_name
+        expected = list(resolve_fastsurfer_roi_label_ids(canonical))
+        roi_labels[roi] = expected
+        absent = [label for label in expected if label not in present]
+        if absent:
+            missing[roi] = absent
+    if missing:
+        raise ValueError(
+            f"Atlas {atlas_path} lacks required ROI label IDs: {missing}. "
+            "Use the Destrieux/aparc.a2009s+aseg atlas used by the CamCan analysis."
+        )
+    return {
+        "status": "complete",
+        "atlas": str(atlas_path.resolve()),
+        "roi_label_ids": roi_labels,
+    }
 
 
 def _load_existing_complete(path: Path, fingerprint: str) -> dict[str, Any] | None:
@@ -374,7 +511,7 @@ def _extract_subject(task: ExtractionTask) -> dict[str, Any]:
         / task.subject
         / "anat"
         / "post"
-        / "manuscript_metrics.json"
+        / METRIC_MARKER_FILENAME
     )
     fingerprint = _analysis_fingerprint(
         ti_path=ti_path,
@@ -410,10 +547,11 @@ def _extract_subject(task: ExtractionTask) -> dict[str, Any]:
         raise ValueError(
             f"ROI '{task.canonical_roi}' was not returned for {task.subject}."
         )
-    metrics = compute_manuscript_metrics(
+    metrics, roi_definition = compute_optimizer_matched_metric_bundle(
         ti_img=ti_img,
         ti_data=ti_data,
-        roi_mask=roi_mask,
+        anatomical_roi_mask=roi_mask,
+        roi=task.roi,
         thresholds=task.thresholds,
         top_percentile=task.top_percentile,
         robust_max_percentile=task.robust_max_percentile,
@@ -430,14 +568,16 @@ def _extract_subject(task: ExtractionTask) -> dict[str, Any]:
             "canonical_roi": task.canonical_roi,
             "ti_path": str(ti_path.resolve()),
             "atlas_path": str(atlas_path.resolve()),
+            "roi_definition": roi_definition,
             "definitions": {
                 "thresholds_v_per_m": list(task.thresholds),
                 "threshold_comparator": ">=",
                 "target_coverage_denominator": (
-                    "all anatomical ROI voxels; non-finite ROI voxels count as unstimulated"
+                    "all optimizer-matched parcel-clipped spherical target voxels; "
+                    "non-finite target voxels count as unstimulated"
                 ),
                 "off_target_coverage_denominator": (
-                    "finite whole-brain voxels outside the target ROI"
+                    "finite whole-brain voxels outside the optimizer-matched target ROI"
                 ),
                 "whole_brain_coverage_denominator": "all finite whole-brain voxels",
                 "threshold_localization_denominator": (
@@ -449,6 +589,13 @@ def _extract_subject(task: ExtractionTask) -> dict[str, Any]:
                 "top_percentile": task.top_percentile,
                 "robust_max_percentile": task.robust_max_percentile,
                 "upper_tail_fraction": task.upper_tail_fraction,
+                "primary_roi": (
+                    "MakeROIs.m-equivalent parcel-clipped sphere centred on the "
+                    "anatomical parcel volume centroid"
+                ),
+                "secondary_roi": (
+                    "full anatomical atlas parcel; metrics use the anatomical_ prefix"
+                ),
             },
             "metrics": metrics,
         }
@@ -565,6 +712,10 @@ def _flatten_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "canonical_roi": payload["canonical_roi"],
         "config_fingerprint": payload["config_fingerprint"],
     }
+    roi_definition = payload.get("roi_definition")
+    if not isinstance(roi_definition, Mapping):
+        raise ValueError("Manuscript metrics payload has no ROI-definition object.")
+    record.update(flatten_roi_metadata(dict(roi_definition)))
     metrics = payload.get("metrics")
     if not isinstance(metrics, Mapping):
         raise ValueError("Manuscript metrics payload has no metrics object.")
@@ -609,33 +760,44 @@ def _compute_mni_record(
         roi_mask = next(iter(roi_masks.values()))
     if roi_mask is None:
         raise ValueError(f"MNI ROI '{canonical_roi}' was not returned for {roi}.")
-    metrics = compute_manuscript_metrics(
+    metrics, roi_definition = compute_optimizer_matched_metric_bundle(
         ti_img=ti_img,
         ti_data=ti_data,
-        roi_mask=roi_mask,
+        anatomical_roi_mask=roi_mask,
+        roi=roi,
         thresholds=thresholds,
         top_percentile=top_percentile,
         robust_max_percentile=robust_max_percentile,
         upper_tail_fraction=upper_tail_fraction,
     )
-    return {"subject": "MNI152", "roi": roi, **metrics}
+    return {
+        "subject": "MNI152",
+        "roi": roi,
+        **flatten_roi_metadata(roi_definition),
+        **metrics,
+    }
 
 
 METRIC_METADATA: dict[str, tuple[str, str, str]] = {
-    "roi_median_v_per_m": (
-        "Median target-ROI TI field",
+    "roi_min_v_per_m": (
+        "Minimum optimizer-target TI field",
         "V/m",
-        "Median over finite target-ROI voxels.",
+        "Minimum over finite voxels in the optimizer-matched parcel-clipped sphere.",
+    ),
+    "roi_median_v_per_m": (
+        "Median optimizer-target TI field",
+        "V/m",
+        "Median over finite voxels in the optimizer-matched parcel-clipped sphere.",
     ),
     "roi_robust_max_p99_9_v_per_m": (
-        "Robust maximum target-ROI TI field (P99.9)",
+        "Robust maximum optimizer-target TI field (P99.9)",
         "V/m",
-        "99.9th percentile over finite target-ROI voxels; primary robust maximum.",
+        "99.9th percentile over finite optimizer-target voxels; primary robust maximum.",
     ),
     "roi_upper_1_percent_median_v_per_m": (
-        "Median of upper 1% target-ROI TI field",
+        "Median of upper 1% optimizer-target TI field",
         "V/m",
-        "Median among target-ROI values at or above P99; sensitivity robust maximum.",
+        "Median among optimizer-target values at or above P99; sensitivity robust maximum.",
     ),
     "whole_brain_median_v_per_m": (
         "Median whole-brain TI field",
@@ -670,7 +832,8 @@ METRIC_METADATA: dict[str, tuple[str, str, str]] = {
     "top_5_percent_target_coverage_percent": (
         "Target coverage by whole-brain top 5% field",
         "%",
-        "Target-ROI voxels in the whole-brain top 5%, divided by all anatomical ROI voxels.",
+        "Optimizer-target voxels in the whole-brain top 5%, divided by all "
+        "optimizer-target voxels.",
     ),
     "top_5_percent_whole_brain_volume_mm3": (
         "Whole-brain top-5% field volume",
@@ -680,7 +843,8 @@ METRIC_METADATA: dict[str, tuple[str, str, str]] = {
     "top_5_percent_target_volume_mm3": (
         "Target volume in whole-brain top 5% field",
         "mm³",
-        "Physical target-ROI volume occupied by values at or above the whole-brain 95th percentile.",
+        "Physical optimizer-target volume occupied by values at or above the "
+        "whole-brain 95th percentile.",
     ),
     "top_5_percent_localization_percent_in_roi": (
         "Localization of whole-brain top 5% field in target",
@@ -696,7 +860,8 @@ for _threshold in DEFAULT_THRESHOLDS_V_PER_M:
             f"target_coverage_percent_ge_{_slug}": (
                 f"Target coverage ≥ {_label}",
                 "%",
-                "Suprathreshold target voxels divided by all anatomical ROI voxels.",
+                "Suprathreshold optimizer-target voxels divided by all "
+                "optimizer-target voxels.",
             ),
             f"target_coverage_volume_mm3_ge_{_slug}": (
                 f"Target volume ≥ {_label}",
@@ -731,10 +896,26 @@ for _threshold in DEFAULT_THRESHOLDS_V_PER_M:
         }
     )
 
+# Retain the full anatomical-parcel analysis as a clearly labelled secondary
+# result. This permits direct comparison with the earlier schema while the
+# unprefixed metrics match the ROI used for optimization.
+for _metric, (_label, _unit, _definition) in tuple(METRIC_METADATA.items()):
+    if not _metric_depends_on_roi_scope(_metric):
+        continue
+    METRIC_METADATA[f"anatomical_{_metric}"] = (
+        f"Full anatomical parcel: {_label}",
+        _unit,
+        f"Secondary analysis using the full anatomical parcel instead of the "
+        f"optimizer-matched sphere; otherwise the calculation matches {_metric}.",
+    )
 
 MAIN_METRICS = (
+    "roi_min_v_per_m",
     "roi_median_v_per_m",
     "roi_robust_max_p99_9_v_per_m",
+    "target_coverage_percent_ge_0p2",
+    "off_target_coverage_percent_ge_0p2",
+    "threshold_localization_percent_in_roi_ge_0p2",
     "target_coverage_percent_ge_0p18",
     "off_target_coverage_percent_ge_0p18",
     "whole_brain_coverage_percent_ge_0p18",
@@ -828,7 +1009,9 @@ def _write_effectiveness_spread_figure(
         axis.set_xlim(-2.0, 102.0)
         axis.set_ylim(-2.0, 102.0)
         axis.grid(True, color="#D9D9D9", linewidth=0.6, alpha=0.7)
-        axis.set_xlabel(f"Target ROI coverage ≥ {threshold:.2f} V/m (%)")
+        axis.set_xlabel(
+            f"Optimizer-matched target coverage ≥ {threshold:.2f} V/m (%)"
+        )
     axes[0].set_ylabel(y_label)
     legend_handles = [
         Line2D(
@@ -936,8 +1119,16 @@ def _write_analysis_outputs(
         )
 
     group_columns = ["subject", "roi", "canonical_roi"]
+    roi_definition_columns = [
+        column
+        for column in repeat_frame.columns
+        if column.startswith("optimizer_roi_")
+        and pd.api.types.is_numeric_dtype(repeat_frame[column])
+    ]
     means = (
-        repeat_frame.groupby(group_columns, sort=False)[metric_columns]
+        repeat_frame.groupby(group_columns, sort=False)[
+            metric_columns + roi_definition_columns
+        ]
         .mean(numeric_only=True)
         .reset_index()
     )
@@ -1024,6 +1215,9 @@ def _write_analysis_outputs(
     out_dir.mkdir(parents=True, exist_ok=True)
     repeat_frame.to_csv(out_dir / "repeat_level_metrics.csv", index=False)
     subject_frame.to_csv(out_dir / "subject_level_repeat_mean_metrics.csv", index=False)
+    subject_frame[
+        group_columns + ["repeat_count"] + roi_definition_columns
+    ].to_csv(out_dir / "table_optimizer_roi_definitions.csv", index=False)
     mni_frame.to_csv(out_dir / "mni152_baseline_metrics.csv", index=False)
     main_long.to_csv(out_dir / "table_main_long.csv", index=False)
     main_formatted.to_csv(out_dir / "table_main_formatted.csv", index=False)
@@ -1071,6 +1265,24 @@ def _write_analysis_outputs(
         "upper_tail_fraction": float(upper_tail_fraction),
         "primary_robust_maximum": "99.9th percentile (P99.9)",
         "robust_maximum_sensitivity": "median of values in the upper 1%",
+        "primary_roi_definition": (
+            "MakeROIs.m-equivalent sphere centred on the anatomical parcel "
+            "volume centroid and clipped to that parcel"
+        ),
+        "secondary_roi_definition": (
+            "full anatomical atlas parcel; metrics carry the anatomical_ prefix"
+        ),
+        "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
+        "roi_target_volumes_mm3": TARGET_VOLUME_MM3_BY_ROI,
+        "roi_sphere_start_radius_mm": START_RADIUS_MM,
+        "roi_sphere_radius_step_mm": RADIUS_STEP_MM,
+        "roi_sphere_radius_cap_mm": RADIUS_CAP_MM,
+        "roi_distance_comparator": "<",
+        "roi_representation_note": (
+            "The tetrahedral MakeROIs.m construction is reproduced on the "
+            "voxelized subject-space atlas/TI grid. Constant NIfTI voxel volume "
+            "makes the world-coordinate voxel-centre mean volume weighted."
+        ),
         "nonfinite_roi_policy": "counted as unstimulated in target coverage denominator",
         "zero_suprathreshold_localization_policy": (
             "0% when no finite whole-brain voxels meet the threshold"
@@ -1117,7 +1329,7 @@ def collect_analysis(
                     / subject
                     / "anat"
                     / "post"
-                    / "manuscript_metrics.json"
+                    / METRIC_MARKER_FILENAME
                 )
                 try:
                     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1240,8 +1452,9 @@ def reaggregate_existing_analysis(
     """Rebuild tables and figures from existing repeat-level CSV metrics.
 
     This mode intentionally performs no NIfTI, atlas, or simulation reads. It
-    exists so small aggregation-policy corrections can run safely on a login
-    node or workstation without resubmitting the 5,280 image-level tasks.
+    only accepts repeat-level metrics already extracted with the current
+    optimizer-matched schema. Earlier full-anatomical-parcel CSVs cannot be
+    converted to the new ROI definition and are rejected.
     """
 
     repeat_path = input_dir / "repeat_level_metrics.csv"
@@ -1254,6 +1467,18 @@ def reaggregate_existing_analysis(
         raise RuntimeError(
             "Refusing to overwrite the source results in place; choose a new --out-dir."
         )
+    source_manifest_path = input_dir / "analysis_manifest.json"
+    if not source_manifest_path.is_file():
+        raise RuntimeError(
+            "CSV-only reaggregation requires a source analysis_manifest.json."
+        )
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    if source_manifest.get("analysis_schema_version") != ANALYSIS_SCHEMA_VERSION:
+        raise RuntimeError(
+            "CSV-only reaggregation cannot convert an earlier anatomical-ROI "
+            "schema to the optimizer-matched ROI. Run image extraction instead."
+        )
+    source_manifest_sha256 = _sha256_file(source_manifest_path)
 
     repeat_frame = pd.read_csv(repeat_path)
     mni_frame = pd.read_csv(mni_path)
@@ -1262,10 +1487,6 @@ def reaggregate_existing_analysis(
     )
     expected_subjects = (
         set(_read_subjects(subjects_file)) if subjects_file is not None else None
-    )
-    source_manifest_path = input_dir / "analysis_manifest.json"
-    source_manifest_sha256 = (
-        _sha256_file(source_manifest_path) if source_manifest_path.is_file() else None
     )
     repeat_sha256 = _sha256_file(repeat_path)
     mni_sha256 = _sha256_file(mni_path)
@@ -1361,8 +1582,8 @@ def build_parser() -> argparse.ArgumentParser:
     reaggregate = subparsers.add_parser(
         "reaggregate-existing",
         help=(
-            "Rebuild tables and figures from existing repeat-level CSVs without "
-            "reading NIfTIs or atlases."
+            "Rebuild tables and figures from current-schema repeat-level CSVs "
+            "without reading NIfTIs or atlases."
         ),
     )
     reaggregate.add_argument("--input-dir", type=Path, required=True)
@@ -1386,6 +1607,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_UPPER_TAIL_FRACTION,
     )
+
+    validate_atlas = subparsers.add_parser(
+        "validate-atlas",
+        help="Confirm that an atlas contains all labels required by the four ROIs.",
+    )
+    validate_atlas.add_argument("--atlas", type=Path, required=True)
     return parser
 
 
@@ -1418,7 +1645,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             robust_max_percentile=args.robust_max_percentile,
             upper_tail_fraction=args.upper_tail_fraction,
         )
-    else:
+    elif args.command == "reaggregate-existing":
         result = reaggregate_existing_analysis(
             input_dir=args.input_dir,
             out_dir=args.out_dir,
@@ -1428,6 +1655,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             robust_max_percentile=args.robust_max_percentile,
             upper_tail_fraction=args.upper_tail_fraction,
         )
+    else:
+        result = validate_atlas_rois(args.atlas)
     print(json.dumps(result, indent=2))
     return 0
 

@@ -1,11 +1,10 @@
-"""Selected-case comparison of generic and personalized CamCan TI montages.
+"""All-configuration comparison of generic and personalized CamCan TI montages.
 
-The completed individualized campaign contains a deliberately over-broad
-7-subject x 4-ROI simulation grid.  This module enforces the manuscript scope:
-the best and worst selected subject for each of four ROIs, and only the ROI for
-which that subject was selected.  It compares the generic MNI152-derived
-montage and the subject-personalized Pareto montage on the same corrected-v4
-subject head across ten independent remeshing repeats.
+The completed individualized campaign contains a 7-subject x 4-ROI simulation
+grid, and the optimization table contains the correct subject-specific montage
+for every one of those 28 subject/ROI configurations. This module compares
+each personalized Pareto montage with the generic MNI152-derived montage on
+the same corrected-v4 subject head across ten independent remeshing repeats.
 
 Metrics are calculated independently for every repeat and only then
 arithmetic-mean aggregated within condition.  Repeat 01 in one condition is
@@ -43,17 +42,23 @@ from post.camcan_manuscript_analysis import (  # noqa: E402
     ROI_ORDER,
     _resolve_atlas,
     _threshold_slug,
-    compute_manuscript_metrics,
+    compute_optimizer_matched_metric_bundle,
     manuscript_metric_names,
+)
+from post.optimizer_target_roi import (  # noqa: E402
+    ROI_DEFINITION_SCHEMA_VERSION,
+    flatten_roi_metadata,
 )
 from post.post_functions import roi_masks_on_ti_grid  # noqa: E402
 from utils.roi_registry import match_fastsurfer_roi_from_directory  # noqa: E402
 from utils.ti_utils import load_ti_as_scalar  # noqa: E402
 
 
-COMPARISON_SCHEMA_VERSION = 1
+COMPARISON_SCHEMA_VERSION = 2
 CONDITIONS = ("generic", "personalized")
 REPEATS = tuple(f"{number:02d}" for number in range(1, 11))
+EXPECTED_SUBJECTS = 7
+EXPECTED_CONFIGURATIONS = EXPECTED_SUBJECTS * len(ROI_ORDER)
 DEFAULT_THRESHOLDS = (0.20, 0.18, 0.15)
 GENERIC_TARGET_BY_ROI = {
     "Left_Hippocampus": "Left_Hippocampus",
@@ -62,6 +67,7 @@ GENERIC_TARGET_BY_ROI = {
     "Right_Thalamus": "Right_Thalamus",
 }
 MAIN_METRICS = (
+    "roi_min_v_per_m",
     "roi_median_v_per_m",
     "roi_robust_max_p99_9_v_per_m",
     "roi_upper_1_percent_median_v_per_m",
@@ -158,6 +164,17 @@ def build_allowlist(
     individualized_rows = _read_csv(individualized_targets_csv)
     generic_rows = _read_csv(generic_targets_csv)
     records: list[dict[str, Any]] = []
+    selected_subjects = {
+        str(subject).strip()
+        for roles in selection.values()
+        for subject in roles.values()
+    }
+    if len(selected_subjects) != EXPECTED_SUBJECTS:
+        raise ValueError(
+            f"Expected {EXPECTED_SUBJECTS} unique optimized subjects; "
+            f"found {len(selected_subjects)}."
+        )
+
     pair_index = 0
     for roi in ROI_ORDER:
         roles = selection.get(roi)
@@ -170,29 +187,37 @@ def build_allowlist(
             value=generic_target,
             description="generic target",
         )
-        for role in ("best", "worst"):
-            subject = str(roles[role]).strip()
-            matches = [
-                row
-                for row in individualized_rows
-                if row.get("subject", "").strip() == subject
-                and row.get("dataset_roi", "").strip() == roi
-            ]
-            if len(matches) != 1:
-                raise ValueError(
-                    f"Expected one individualized row for {subject}/{roi}; "
-                    f"found {len(matches)}."
-                )
-            personalized = matches[0]
-            expected_role = f"{role}_{roi}"
+        roi_rows = [
+            row
+            for row in individualized_rows
+            if row.get("dataset_roi", "").strip() == roi
+            and row.get("subject", "").strip() in selected_subjects
+        ]
+        if len(roi_rows) != EXPECTED_SUBJECTS:
+            raise ValueError(
+                f"Expected {EXPECTED_SUBJECTS} individualized rows for {roi}; "
+                f"found {len(roi_rows)}."
+            )
+        if len({row["subject"].strip() for row in roi_rows}) != EXPECTED_SUBJECTS:
+            raise ValueError(f"Individualized rows for {roi} contain duplicate subjects.")
+        for personalized in sorted(
+            roi_rows, key=lambda row: row.get("subject", "").strip()
+        ):
+            subject = personalized["subject"].strip()
+            if subject == str(roles["best"]).strip():
+                role = "best"
+            elif subject == str(roles["worst"]).strip():
+                role = "worst"
+            else:
+                role = "cross_target"
             recorded_roles = {
                 value.strip()
                 for value in personalized.get("cohort_selection_role", "").split(";")
                 if value.strip()
             }
-            if expected_role not in recorded_roles:
+            if role in {"best", "worst"} and f"{role}_{roi}" not in recorded_roles:
                 raise ValueError(
-                    f"{subject}/{roi} is not tagged {expected_role} in the "
+                    f"{subject}/{roi} is not tagged {role}_{roi} in the "
                     "individualized target table."
                 )
             records.append(
@@ -248,12 +273,20 @@ def build_allowlist(
             )
             pair_index += 1
     frame = pd.DataFrame(records)
-    if len(frame) != 8 or frame.duplicated(["subject", "roi"]).any():
+    if (
+        len(frame) != EXPECTED_CONFIGURATIONS
+        or frame.duplicated(["subject", "roi"]).any()
+    ):
         raise ValueError(
-            "Selection allowlist must contain eight unique subject/ROI pairs."
+            f"Analysis allowlist must contain {EXPECTED_CONFIGURATIONS} unique "
+            "subject/ROI configurations."
         )
-    if frame.groupby("roi").size().to_dict() != {roi: 2 for roi in ROI_ORDER}:
-        raise ValueError("Selection allowlist must contain two cases per ROI.")
+    if frame.groupby("roi").size().to_dict() != {
+        roi: EXPECTED_SUBJECTS for roi in ROI_ORDER
+    }:
+        raise ValueError(
+            f"Analysis allowlist must contain {EXPECTED_SUBJECTS} subjects per ROI."
+        )
     return frame
 
 
@@ -470,7 +503,13 @@ def prepare_analysis(
             "MNI152-derived generic montage versus subject-personalized Pareto "
             "montage on the same corrected-v4 subject head."
         ),
-        "selected_subject_roi_pairs": len(allowlist),
+        "subject_roi_configurations": len(allowlist),
+        "originally_selected_extreme_configurations": int(
+            allowlist["selection_role"].isin(["best", "worst"]).sum()
+        ),
+        "cross_target_configurations": int(
+            allowlist["selection_role"].eq("cross_target").sum()
+        ),
         "unique_subjects": len(atlas_subjects),
         "conditions": list(CONDITIONS),
         "repeats_per_condition": len(REPEATS),
@@ -481,7 +520,12 @@ def prepare_analysis(
         "required_personalized_inputs": sum(
             row["condition"] == "personalized" for row in source_rows
         ),
-        "out_of_scope_personalized_simulations": 200,
+        "personalized_simulations_in_scope": len(allowlist) * len(REPEATS),
+        "out_of_scope_personalized_simulations": 0,
+        "roi_definition": (
+            "MakeROIs.m-equivalent parcel-clipped sphere centred on the "
+            "anatomical parcel volume centroid"
+        ),
         "generic_targets_csv_sha256": actual_generic_hash,
         "individualized_targets_csv_sha256": actual_individualized_hash,
         "selection_allowlist": str(allowlist_path.resolve()),
@@ -525,6 +569,7 @@ def _repeat_fingerprint(
     payload = {
         "comparison_schema_version": COMPARISON_SCHEMA_VERSION,
         "manuscript_analysis_schema_version": ANALYSIS_SCHEMA_VERSION,
+        "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
         "condition": task.condition,
         "pair_index": int(task.pair["pair_index"]),
         "subject": task.pair["subject"],
@@ -589,10 +634,11 @@ def _extract_repeat(task: RepeatTask) -> dict[str, Any]:
         raise ValueError(
             f"ROI {canonical_roi!r} was not returned for {task.pair['subject']}."
         )
-    metrics = compute_manuscript_metrics(
+    metrics, roi_definition = compute_optimizer_matched_metric_bundle(
         ti_img=ti_img,
         ti_data=ti_data,
-        roi_mask=roi_mask,
+        anatomical_roi_mask=roi_mask,
+        roi=str(task.pair["roi"]),
         thresholds=task.thresholds,
         top_percentile=task.top_percentile,
         robust_max_percentile=task.robust_max_percentile,
@@ -611,6 +657,7 @@ def _extract_repeat(task: RepeatTask) -> dict[str, Any]:
         "condition": task.condition,
         "repeat": task.repeat,
         "source": source,
+        "roi_definition": roi_definition,
         "metrics": metrics,
     }
     _atomic_json(output_path, payload)
@@ -714,6 +761,9 @@ def _flatten_record(payload: Mapping[str, Any]) -> dict[str, Any]:
     metrics = payload.get("metrics")
     if not isinstance(metrics, Mapping):
         raise ValueError("Repeat record has no metrics mapping.")
+    roi_definition = payload.get("roi_definition")
+    if not isinstance(roi_definition, Mapping):
+        raise ValueError("Repeat record has no optimizer ROI-definition mapping.")
     return {
         "pair_index": int(payload["pair_index"]),
         "subject": payload["subject"],
@@ -727,19 +777,24 @@ def _flatten_record(payload: Mapping[str, Any]) -> dict[str, Any]:
         "source_marker_path": payload["source"]["marker_path"],
         "source_mesh_sha256": payload["source"]["mesh_sha256"],
         "corrected_label_sha256": payload["source"]["corrected_label_sha256"],
+        **flatten_roi_metadata(dict(roi_definition)),
         **metrics,
     }
 
 
 def _metric_label(metric: str) -> tuple[str, str]:
+    if metric.startswith("anatomical_"):
+        label, unit = _metric_label(metric.removeprefix("anatomical_"))
+        return (f"Full anatomical parcel: {label}", unit)
     fixed = {
-        "roi_median_v_per_m": ("Median target-ROI TI field", "V/m"),
+        "roi_min_v_per_m": ("Minimum optimizer-target TI field", "V/m"),
+        "roi_median_v_per_m": ("Median optimizer-target TI field", "V/m"),
         "roi_robust_max_p99_9_v_per_m": (
-            "Target-ROI robust maximum (P99.9)",
+            "Optimizer-target robust maximum (P99.9)",
             "V/m",
         ),
         "roi_upper_1_percent_median_v_per_m": (
-            "Median of upper 1% target-ROI TI field",
+            "Median of upper 1% optimizer-target TI field",
             "V/m",
         ),
         "top_5_percent_target_coverage_percent": (
@@ -774,12 +829,14 @@ def _write_paired_dumbbell(condition_frame: pd.DataFrame, output_base: Path) -> 
     from matplotlib.lines import Line2D
 
     plot_metrics = (
-        "roi_median_v_per_m",
+        "roi_min_v_per_m",
         "target_coverage_percent_ge_0p18",
         "off_target_coverage_percent_ge_0p18",
         "threshold_localization_percent_in_roi_ge_0p18",
     )
-    fig, axes = plt.subplots(2, 2, figsize=(11.5, 7.5))
+    pair_count = int(condition_frame["pair_index"].nunique())
+    fig_height = max(8.0, 4.5 + 0.27 * pair_count)
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, fig_height))
     labels = [
         f"{row.roi.replace('_', ' ')} – {row.selection_role}"
         for row in condition_frame.drop_duplicates(
@@ -807,7 +864,7 @@ def _write_paired_dumbbell(condition_frame: pd.DataFrame, output_base: Path) -> 
         label, unit = _metric_label(metric)
         axis.set_title(label)
         axis.set_xlabel(unit)
-        axis.set_yticks(y, labels if axis_index % 2 == 0 else [])
+        axis.set_yticks(y, labels if axis_index % 2 == 0 else [], fontsize=7)
         axis.grid(axis="x", color="#D9D9D9", linewidth=0.6)
         axis.invert_yaxis()
     fig.legend(
@@ -861,22 +918,39 @@ def _write_effectiveness_arrows(
     x_metric = f"target_coverage_percent_ge_{slug}"
     y_metric = f"off_target_coverage_percent_ge_{slug}"
     fig, axes = plt.subplots(1, 4, figsize=(15.5, 4.2), sharex=True, sharey=True)
+    subjects = sorted(condition_frame["subject"].unique())
+    palette = plt.get_cmap("tab10")
+    subject_colors = {
+        subject: palette(index % 10) for index, subject in enumerate(subjects)
+    }
+    role_markers = {"best": "^", "worst": "v", "cross_target": "o"}
     for axis, roi in zip(axes, ROI_ORDER):
         rows = condition_frame.loc[condition_frame["roi"] == roi]
-        for role, color in (("best", "#009E73"), ("worst", "#CC79A7")):
-            role_rows = rows.loc[rows["selection_role"] == role].set_index("condition")
-            generic = role_rows.loc["generic"]
-            personalized = role_rows.loc["personalized"]
+        for pair_index in sorted(rows["pair_index"].unique()):
+            pair_rows = rows.loc[rows["pair_index"] == pair_index].set_index(
+                "condition"
+            )
+            generic = pair_rows.loc["generic"]
+            personalized = pair_rows.loc["personalized"]
+            subject = str(generic["subject"])
+            role = str(generic["selection_role"])
+            color = subject_colors[subject]
+            marker = role_markers.get(role, "o")
             axis.annotate(
                 "",
                 xy=(personalized[x_metric], personalized[y_metric]),
                 xytext=(generic[x_metric], generic[y_metric]),
-                arrowprops={"arrowstyle": "->", "color": color, "lw": 1.8},
+                arrowprops={
+                    "arrowstyle": "->",
+                    "color": color,
+                    "lw": 1.8 if role in {"best", "worst"} else 1.1,
+                    "alpha": 0.9 if role in {"best", "worst"} else 0.65,
+                },
             )
             axis.scatter(
                 generic[x_metric],
                 generic[y_metric],
-                marker="o",
+                marker=marker,
                 facecolor="white",
                 edgecolor=color,
                 s=55,
@@ -886,20 +960,42 @@ def _write_effectiveness_arrows(
             axis.scatter(
                 personalized[x_metric],
                 personalized[y_metric],
-                marker="o",
+                marker=marker,
                 facecolor=color,
                 edgecolor=color,
                 s=55,
                 zorder=4,
             )
         axis.set_title(roi.replace("_", " "))
-        axis.set_xlabel(f"Target coverage ≥ {threshold:.2f} V/m (%)")
+        axis.set_xlabel(
+            f"Optimizer-target coverage ≥ {threshold:.2f} V/m (%)"
+        )
         axis.grid(True, color="#D9D9D9", linewidth=0.6)
     axes[0].set_ylabel(f"Off-target coverage ≥ {threshold:.2f} V/m (%)")
     fig.legend(
         handles=[
-            Line2D([0], [0], color="#009E73", lw=2, label="Selected best case"),
-            Line2D([0], [0], color="#CC79A7", lw=2, label="Selected worst case"),
+            *[
+                Line2D([0], [0], color=subject_colors[subject], lw=2, label=subject)
+                for subject in subjects
+            ],
+            Line2D(
+                [0],
+                [0],
+                marker="^",
+                markerfacecolor="white",
+                markeredgecolor="#555555",
+                linestyle="none",
+                label="Originally selected best",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="v",
+                markerfacecolor="white",
+                markeredgecolor="#555555",
+                linestyle="none",
+                label="Originally selected worst",
+            ),
             Line2D(
                 [0],
                 [0],
@@ -907,26 +1003,19 @@ def _write_effectiveness_arrows(
                 markerfacecolor="white",
                 markeredgecolor="#555555",
                 linestyle="none",
-                label="Generic",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="#555555",
-                linestyle="none",
-                label="Personalized",
+                label="Cross-target configuration",
             ),
         ],
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.94),
-        ncol=4,
+        bbox_to_anchor=(0.5, 0.96),
+        ncol=5,
         frameon=False,
+        fontsize=7.5,
     )
     fig.suptitle(
         "Change in effectiveness–spread balance after personalization", y=0.995
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.86))
+    fig.tight_layout(rect=(0, 0, 1, 0.80))
     output_base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
     fig.savefig(output_base.with_suffix(".pdf"), bbox_inches="tight")
@@ -939,43 +1028,62 @@ def _write_repeat_distribution(repeat_frame: pd.DataFrame, output_base: Path) ->
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(2, 4, figsize=(15.5, 7.1), sharey=False)
+    subjects = sorted(repeat_frame["subject"].unique())
+    fig, axes = plt.subplots(
+        len(subjects),
+        len(ROI_ORDER),
+        figsize=(15.5, 3.0 * len(subjects)),
+        sharey=False,
+        squeeze=False,
+    )
     rng = np.random.default_rng(20260728)
-    for axis, pair_index in zip(axes.flat, range(8)):
-        rows = repeat_frame.loc[repeat_frame["pair_index"] == pair_index]
-        pair = rows.iloc[0]
-        values = [
-            rows.loc[rows["condition"] == condition, "roi_median_v_per_m"].to_numpy()
-            for condition in CONDITIONS
-        ]
-        box = axis.boxplot(
-            values,
-            tick_labels=["Generic", "Personalized"],
-            widths=0.55,
-            patch_artist=True,
-            showfliers=False,
-        )
-        for patch, color in zip(box["boxes"], ("#A6CEE3", "#FDBF6F")):
-            patch.set_facecolor(color)
-        for x, condition_values in enumerate(values, start=1):
-            jitter = rng.uniform(-0.055, 0.055, len(condition_values))
-            axis.scatter(
-                x + jitter,
-                condition_values,
-                s=17,
-                color="#333333",
-                alpha=0.65,
-                zorder=3,
+    for row_index, subject in enumerate(subjects):
+        for column_index, roi in enumerate(ROI_ORDER):
+            axis = axes[row_index, column_index]
+            rows = repeat_frame.loc[
+                (repeat_frame["subject"] == subject)
+                & (repeat_frame["roi"] == roi)
+            ]
+            if rows.empty:
+                axis.set_visible(False)
+                continue
+            pair = rows.iloc[0]
+            values = [
+                rows.loc[
+                    rows["condition"] == condition, "roi_min_v_per_m"
+                ].to_numpy()
+                for condition in CONDITIONS
+            ]
+            box = axis.boxplot(
+                values,
+                tick_labels=["Generic", "Personalized"],
+                widths=0.55,
+                patch_artist=True,
+                showfliers=False,
             )
-        axis.set_title(
-            f"{pair['roi'].replace('_', ' ')}\n{pair['selection_role']}: {pair['subject']}",
-            fontsize=9.5,
-        )
-        axis.grid(axis="y", color="#D9D9D9", linewidth=0.6)
-    axes[0, 0].set_ylabel("Median target-ROI TI field (V/m)")
-    axes[1, 0].set_ylabel("Median target-ROI TI field (V/m)")
-    fig.suptitle("Technical-repeat distributions for the eight selected cases")
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+            for patch, color in zip(box["boxes"], ("#A6CEE3", "#FDBF6F")):
+                patch.set_facecolor(color)
+            for x, condition_values in enumerate(values, start=1):
+                jitter = rng.uniform(-0.055, 0.055, len(condition_values))
+                axis.scatter(
+                    x + jitter,
+                    condition_values,
+                    s=14,
+                    color="#333333",
+                    alpha=0.65,
+                    zorder=3,
+                )
+            axis.set_title(
+                f"{roi.replace('_', ' ')}\n{pair['selection_role']}: {subject}",
+                fontsize=8.2,
+            )
+            axis.grid(axis="y", color="#D9D9D9", linewidth=0.6)
+            if column_index == 0:
+                axis.set_ylabel("Minimum target field (V/m)")
+    fig.suptitle(
+        "Technical-repeat distributions for all 28 optimized subject–ROI configurations"
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
     output_base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
     fig.savefig(output_base.with_suffix(".pdf"), bbox_inches="tight")
@@ -992,10 +1100,17 @@ def collect_analysis(
     upper_tail_fraction: float,
 ) -> dict[str, Any]:
     allowlist = pd.read_csv(allowlist_path)
-    if len(allowlist) != 8:
-        raise RuntimeError("Collector requires exactly eight allowlisted pairs.")
+    pair_count = len(allowlist)
+    if pair_count != EXPECTED_CONFIGURATIONS:
+        raise RuntimeError(
+            f"Collector requires exactly {EXPECTED_CONFIGURATIONS} subject/ROI "
+            f"configurations; found {pair_count}."
+        )
+    pair_indices = sorted(int(value) for value in allowlist["pair_index"].unique())
+    if pair_indices != list(range(pair_count)):
+        raise RuntimeError("Allowlist pair indices must be contiguous from zero.")
     summary_rows: list[dict[str, Any]] = []
-    for pair_index in range(8):
+    for pair_index in pair_indices:
         summary_path = output_root / "pair_summaries" / f"pair_{pair_index:02d}.json"
         try:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -1040,9 +1155,10 @@ def collect_analysis(
                 if any(payload.get(key) != value for key, value in expected.items()):
                     raise RuntimeError(f"Repeat record identity mismatch: {path}")
                 records.append(_flatten_record(payload))
-    if missing or len(records) != 160:
+    expected_records = pair_count * len(CONDITIONS) * len(REPEATS)
+    if missing or len(records) != expected_records:
         raise RuntimeError(
-            f"Expected 160 repeat records; found {len(records)} with "
+            f"Expected {expected_records} repeat records; found {len(records)} with "
             f"{len(missing)} missing/incomplete."
         )
     repeat_frame = pd.DataFrame(records).sort_values(
@@ -1052,7 +1168,7 @@ def collect_analysis(
         raise RuntimeError("Duplicate repeat records were collected.")
     expected_product = {
         (pair, condition, repeat)
-        for pair in range(8)
+        for pair in pair_indices
         for condition in CONDITIONS
         for repeat in REPEATS
     }
@@ -1085,7 +1201,19 @@ def collect_analysis(
         "selection_role",
         "condition",
     ]
-    means = repeat_frame.groupby(group, sort=False)[metric_columns].mean().reset_index()
+    roi_definition_columns = [
+        column
+        for column in repeat_frame.columns
+        if column.startswith("optimizer_roi_")
+        and pd.api.types.is_numeric_dtype(repeat_frame[column])
+    ]
+    means = (
+        repeat_frame.groupby(group, sort=False)[
+            metric_columns + roi_definition_columns
+        ]
+        .mean()
+        .reset_index()
+    )
     sds = (
         repeat_frame.groupby(group, sort=False)[metric_columns]
         .std(ddof=1)
@@ -1099,8 +1227,15 @@ def collect_analysis(
         .reset_index()
     )
     condition_frame = means.merge(sds, on=group).merge(counts, on=group)
-    if len(condition_frame) != 16 or not condition_frame["repeat_count"].eq(10).all():
-        raise RuntimeError("Expected 16 condition means with ten repeats each.")
+    expected_condition_means = pair_count * len(CONDITIONS)
+    if (
+        len(condition_frame) != expected_condition_means
+        or not condition_frame["repeat_count"].eq(len(REPEATS)).all()
+    ):
+        raise RuntimeError(
+            f"Expected {expected_condition_means} condition means with "
+            f"{len(REPEATS)} repeats each."
+        )
 
     comparison_rows: list[dict[str, Any]] = []
     for pair in allowlist.to_dict(orient="records"):
@@ -1210,6 +1345,9 @@ def collect_analysis(
     condition_frame.to_csv(
         results_dir / "condition_repeat_mean_metrics.csv", index=False
     )
+    condition_frame[
+        group + ["repeat_count"] + roi_definition_columns
+    ].to_csv(results_dir / "table_optimizer_roi_definitions.csv", index=False)
     comparison_long.to_csv(
         results_dir / "paired_personalized_vs_generic_long.csv", index=False
     )
@@ -1253,7 +1391,13 @@ def collect_analysis(
             "MNI152-derived generic montage versus subject-personalized Pareto "
             "montage, both simulated on the same corrected-v4 subject head."
         ),
-        "selected_subject_roi_pairs": 8,
+        "subject_roi_configurations": pair_count,
+        "originally_selected_extreme_configurations": int(
+            allowlist["selection_role"].isin(["best", "worst"]).sum()
+        ),
+        "cross_target_configurations": int(
+            allowlist["selection_role"].eq("cross_target").sum()
+        ),
         "unique_subjects": int(allowlist["subject"].nunique()),
         "conditions": list(CONDITIONS),
         "repeats_per_pair_condition": 10,
@@ -1269,14 +1413,23 @@ def collect_analysis(
             "within each condition. Repeat numbers are not paired between conditions."
         ),
         "inference": (
-            "Descriptive selected-case analysis only; no population inference "
-            "because cases were selected as outcome extremes."
+            "Descriptive analysis of seven subjects originally selected as "
+            "outcome extremes; no population inference."
         ),
-        "excluded_personalized_simulations": 200,
-        "selection_metric": (
-            "roi_median_v_per_m averaged after per-repeat calculation in the "
-            "generic final-132 cohort analysis"
+        "personalized_simulations_included": pair_count * len(REPEATS),
+        "excluded_personalized_simulations": 0,
+        "primary_roi_definition": (
+            "MakeROIs.m-equivalent parcel-clipped sphere centred on the "
+            "anatomical parcel volume centroid"
         ),
+        "secondary_roi_definition": (
+            "full anatomical atlas parcel; metrics carry the anatomical_ prefix"
+        ),
+        "historical_extreme_selection_metric": (
+            "full-anatomical-parcel roi_median_v_per_m averaged after "
+            "per-repeat calculation in the generic final-132 cohort analysis"
+        ),
+        "current_optimizer_objective_metric": "roi_min_v_per_m",
         "outputs": [],
     }
     preflight_path = output_root / "preflight.json"
@@ -1372,8 +1525,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             out_dir=args.out_dir,
         )
     elif args.command == "extract-pair":
-        if args.pair_index not in range(8):
-            raise ValueError("pair-index must be in 0-7.")
+        allowlist = pd.read_csv(args.allowlist)
+        valid_pair_indices = {
+            int(value) for value in allowlist["pair_index"].tolist()
+        }
+        if args.pair_index not in valid_pair_indices:
+            raise ValueError(
+                f"pair-index {args.pair_index} is not present in {args.allowlist}."
+            )
         result = extract_pair(
             pair_index=args.pair_index,
             allowlist_path=args.allowlist,

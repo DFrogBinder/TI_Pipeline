@@ -8,7 +8,9 @@ from target_montages import (
     DEFAULT_ELECTRODE_THICKNESS_MM,
     MONTAGE_PRESETS,
     preset_key_for_roi,
+    resolve_individualized_montage,
 )
+from utils.camcan_dataset import sha256_file
 
 
 TARGETS_CSV = Path(__file__).resolve().parents[2] / "utils" / "targets.csv"
@@ -81,3 +83,28 @@ def test_all_ti_runners_assign_pair2_currents_after_copying_pair1():
         source = (root / runner).read_text()
         assert "add_tdcslist(deepcopy(tdcs1))" in source
         assert expected_assignment in source
+
+
+def test_individualized_montage_uses_exact_subject_roi_pareto_row():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "cohort_pipeline"
+        / "cohorts"
+        / "optimized_best_worst_7"
+        / "individualized_targets.csv"
+    )
+    montage, row = resolve_individualized_montage(
+        path,
+        subject="sub-CC610061",
+        dataset_roi="Right_Thalamus",
+        expected_targets_roi="Right_Thalamus",
+        expected_montage_preset="right-thalamus",
+        expected_sha256=sha256_file(path),
+    )
+
+    assert montage.name == "right-thalamus"
+    assert (montage.pair1.anode, montage.pair1.cathode) == ("F6", "CP6")
+    assert (montage.pair2.anode, montage.pair2.cathode) == ("FT9", "P9")
+    assert montage.pair1.current_a == 1.26191468896039e-3
+    assert montage.pair2.current_a == 2e-3
+    assert row["pareto_selection"] == "TI_free.Emin"

@@ -186,6 +186,46 @@ def test_preflight_chunks_maximum_200_subject_cohort(tmp_path):
     assert payload["simulation_array_chunks"] == 8
 
 
+def test_preflight_supports_complete_subject_specific_pareto_table(tmp_path):
+    fixture = _fixture(tmp_path)
+    subject = fixture["subjects"][0]
+    individualized = _write(
+        fixture["cohort_config"].parent / "individualized_targets.csv",
+        "subject,dataset_roi,roi,montage_preset,E_target,stimulated_volume,"
+        "configuration,pair1,pair2,current1,current2,pareto_selection\n"
+        f"{subject},Left_M1,ctx_lh_G_precentral,left-m1,0.2,1,1,"
+        "F1-F2,C3-CP3,2,1,TI_free.Emin\n"
+        f"{subject},Left_Hippocampus,Left_Hippocampus,left-hippocampus,"
+        "0.2,1,2,F8-P8,T7-P7,2,1,TI_free.Emin\n"
+        f"{subject},Right_DLPC,ctx_rh_G_front_middle,right-dlpfc,0.2,1,3,"
+        "AF4-F4,FC2-C2,1,2,TI_free.Emin\n"
+        f"{subject},Right_Thalamus,Right_Thalamus,right-thalamus,0.2,1,4,"
+        "F5-TP7,FT8-P8,2,2,TI_free.Emin\n",
+    )
+    cohort = json.loads(fixture["cohort_config"].read_text())
+    cohort["individualized_targets_csv"] = individualized.name
+    cohort["individualized_targets_csv_sha256"] = sha256_file(individualized)
+    fixture["cohort_config"].write_text(json.dumps(cohort))
+
+    payload = _preflight(fixture)
+
+    assert payload["montage_mode"] == "subject_roi_individualized"
+    assert payload["individualized_target_rows"] == 4
+    assert payload["individualized_targets_csv_sha256"] == sha256_file(
+        individualized
+    )
+    rows = workflow.approved.read_tsv(
+        fixture["campaign"] / "simulation_tasks.tsv"
+    )
+    hippocampus = next(
+        row
+        for row in rows
+        if row["roi"] == "Left_Hippocampus"
+        and row["repeat_id"] == "01"
+    )
+    assert hippocampus["required_electrodes"] == "F8,P8,T7,P7"
+
+
 def test_release_job_submits_one_array_and_one_dependent_releaser(tmp_path):
     pipeline_dir = Path(__file__).resolve().parents[1] / "cohort_pipeline"
     release_script = pipeline_dir / "cohort_pipeline_release.sh"

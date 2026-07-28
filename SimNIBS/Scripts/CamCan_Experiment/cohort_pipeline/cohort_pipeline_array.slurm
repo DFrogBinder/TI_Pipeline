@@ -234,6 +234,13 @@ run_one_task() {
                 --simulation-validator "${TI_COMPLETION_CHECK_PY}"
                 --python-bin python
             )
+            if [ -n "${TI_INDIVIDUALIZED_TARGETS_CSV:-}" ]; then
+                : "${TI_EXPECTED_INDIVIDUALIZED_TARGETS_SHA256:?Missing TI_EXPECTED_INDIVIDUALIZED_TARGETS_SHA256.}"
+                command+=(
+                    --individualized-targets-csv "${TI_INDIVIDUALIZED_TARGETS_CSV}"
+                    --expected-individualized-targets-sha256 "${TI_EXPECTED_INDIVIDUALIZED_TARGETS_SHA256}"
+                )
+            fi
             ;;
     esac
     launch_command=("${command[@]}")

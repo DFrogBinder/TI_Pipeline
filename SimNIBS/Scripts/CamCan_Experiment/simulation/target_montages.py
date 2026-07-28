@@ -5,6 +5,13 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from utils.camcan_dataset import (
+    canonical_subject,
+    electrode_names_from_target_row,
+    load_individualized_target_row,
+    sha256_file,
+)
+
 
 TARGETS_CSV_PATH = Path(__file__).resolve().parents[2] / "utils" / "targets.csv"
 
@@ -138,3 +145,67 @@ def resolve_montage_preset(name: str) -> MontageSpec:
     except KeyError as exc:
         available = ", ".join(MONTAGE_CHOICES)
         raise ValueError(f"Unknown montage preset '{name}'. Available presets: {available}.") from exc
+
+
+def resolve_individualized_montage(
+    csv_path: str | Path,
+    *,
+    subject: str,
+    dataset_roi: str,
+    expected_targets_roi: str,
+    expected_montage_preset: str,
+    expected_sha256: str,
+) -> tuple[MontageSpec, dict[str, str]]:
+    path = Path(csv_path).expanduser().resolve(strict=True)
+    actual_sha256 = sha256_file(path)
+    if not expected_sha256 or actual_sha256 != expected_sha256:
+        raise ValueError(
+            "Individualized targets CSV hash mismatch: "
+            f"{actual_sha256} != {expected_sha256}"
+        )
+    row = load_individualized_target_row(
+        path,
+        subject=subject,
+        dataset_roi=dataset_roi,
+    )
+    if row["roi"].strip() != expected_targets_roi:
+        raise ValueError(
+            f"Individualized montage for {canonical_subject(subject)}/{dataset_roi} "
+            f"uses targets ROI {row['roi']!r}; expected {expected_targets_roi!r}."
+        )
+    selected_preset = normalize_montage_preset(row["montage_preset"])
+    expected_preset = normalize_montage_preset(expected_montage_preset)
+    if selected_preset != expected_preset:
+        raise ValueError(
+            f"Individualized montage preset {row['montage_preset']!r} does not "
+            f"match {dataset_roi}; expected {expected_montage_preset!r}."
+        )
+    if row["pareto_selection"].strip() != "TI_free.Emin":
+        raise ValueError(
+            "Individualized montage is not the predeclared TI_free.Emin "
+            f"Pareto solution: {canonical_subject(subject)}/{dataset_roi}"
+        )
+    pair1_anode, pair1_cathode, pair2_anode, pair2_cathode = (
+        electrode_names_from_target_row(row)
+    )
+    current1_ma = float(row["current1"])
+    current2_ma = float(row["current2"])
+    if not 0 < current1_ma <= 2.0 or not 0 < current2_ma <= 2.0:
+        raise ValueError(
+            "Individualized montage currents must be in (0, 2] mA: "
+            f"{current1_ma}, {current2_ma}"
+        )
+    montage = MontageSpec(
+        name=expected_preset,
+        description=(
+            f"{canonical_subject(subject)} {dataset_roi} individualized "
+            f"TI_free.Emin montage from {path.name}."
+        ),
+        roi=row["roi"].strip(),
+        e_target=float(row["E_target"]),
+        stimulated_volume=float(row["stimulated_volume"]),
+        configuration=int(row["configuration"]),
+        pair1=PairSpec(pair1_anode, pair1_cathode, current1_ma * 1e-3),
+        pair2=PairSpec(pair2_anode, pair2_cathode, current2_ma * 1e-3),
+    )
+    return montage, row

@@ -33,8 +33,11 @@ from simulation.validate_simulation_outputs import (  # noqa: E402
 from utils.camcan_dataset import (  # noqa: E402
     CAMCAN_ROI_CONFIGS,
     CONFIRMED_TARGETS_SHA256,
+    electrode_names_from_target_row,
     electrode_names_for_config,
+    load_individualized_target_row,
     sha256_file,
+    validate_individualized_target_table,
     validate_dataset_montage,
 )
 
@@ -148,9 +151,13 @@ def _read_collection(path: Path) -> dict[str, dict[str, str]]:
 
 
 def _required_electrodes(
-    rois: Sequence[str], repeats: Sequence[str], targets_csv: Path
-) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...]]:
-    by_roi: dict[str, tuple[str, ...]] = {}
+    rois: Sequence[str],
+    repeats: Sequence[str],
+    subjects: Sequence[str],
+    targets_csv: Path,
+    individualized_targets: Mapping[tuple[str, str], Mapping[str, str]] | None,
+) -> tuple[dict[tuple[str, str], tuple[str, ...]], tuple[str, ...]]:
+    by_subject_roi: dict[tuple[str, str], tuple[str, ...]] = {}
     combined: set[str] = set()
     for roi in rois:
         try:
@@ -159,10 +166,18 @@ def _required_electrodes(
             raise ValueError(f"unsupported ROI: {roi}") from exc
         dataset_names = [f"{roi}_Data_{repeat}" for repeat in repeats]
         validated = validate_dataset_montage(dataset_names, config.montage_preset)
-        names = tuple(electrode_names_for_config(validated, targets_csv))
-        by_roi[roi] = names
-        combined.update(names)
-    return by_roi, tuple(sorted(combined))
+        if individualized_targets is None:
+            names = tuple(electrode_names_for_config(validated, targets_csv))
+            for subject in subjects:
+                by_subject_roi[(subject, roi)] = names
+            combined.update(names)
+        else:
+            for subject in subjects:
+                row = individualized_targets[(subject, roi)]
+                names = tuple(electrode_names_from_target_row(row))
+                by_subject_roi[(subject, roi)] = names
+                combined.update(names)
+    return by_subject_roi, tuple(sorted(combined))
 
 
 def _legacy_scaffolds(path: Path | None) -> dict[str, dict[str, str]]:
@@ -368,8 +383,49 @@ def build_manifests(
             f"targets.csv hash mismatch: {targets_hash} != {expected_targets_hash}"
         )
 
-    by_roi_electrodes, all_electrodes = _required_electrodes(
-        configured_rois, configured_repeats, targets
+    individualized_targets_path: Path | None = None
+    individualized_targets_hash: str | None = None
+    individualized_targets: (
+        dict[tuple[str, str], dict[str, str]] | None
+    ) = None
+    raw_individualized_targets = str(
+        cohort.get("individualized_targets_csv", "")
+    ).strip()
+    if raw_individualized_targets:
+        individualized_targets_path = _resolve_config_relative(
+            cohort_path, raw_individualized_targets
+        )
+        individualized_targets_hash = sha256_file(
+            individualized_targets_path
+        )
+        expected_individualized_hash = str(
+            cohort.get("individualized_targets_csv_sha256", "")
+        ).strip()
+        if (
+            not expected_individualized_hash
+            or individualized_targets_hash != expected_individualized_hash
+        ):
+            raise ValueError(
+                "individualized targets CSV hash mismatch: "
+                f"{individualized_targets_hash} != "
+                f"{expected_individualized_hash}"
+            )
+        individualized_targets = validate_individualized_target_table(
+            individualized_targets_path,
+            subjects=subjects,
+            configs=tuple(ROI_BY_PREFIX[roi] for roi in configured_rois),
+        )
+    elif str(cohort.get("individualized_targets_csv_sha256", "")).strip():
+        raise ValueError(
+            "cohort declares an individualized targets hash without a CSV"
+        )
+
+    by_subject_roi_electrodes, all_electrodes = _required_electrodes(
+        configured_rois,
+        configured_repeats,
+        subjects,
+        targets,
+        individualized_targets,
     )
     corrected_maps = _read_collection(resolved_map_manifest)
     legacy = _legacy_scaffolds(resolved_legacy)
@@ -508,7 +564,7 @@ def build_manifests(
                             / f"{subject}.json"
                         ),
                         "required_electrodes": ",".join(
-                            by_roi_electrodes[roi]
+                            by_subject_roi_electrodes[(subject, roi)]
                         ),
                         "status": scaffold["status"],
                         "message": scaffold["message"],
@@ -547,6 +603,22 @@ def build_manifests(
         ),
         "targets_csv": str(targets),
         "targets_csv_sha256": targets_hash,
+        "individualized_targets_csv": (
+            str(individualized_targets_path)
+            if individualized_targets_path is not None
+            else None
+        ),
+        "individualized_targets_csv_sha256": individualized_targets_hash,
+        "montage_mode": (
+            "subject_roi_individualized"
+            if individualized_targets is not None
+            else "fixed_roi"
+        ),
+        "individualized_target_rows": (
+            len(individualized_targets)
+            if individualized_targets is not None
+            else 0
+        ),
         "scaffold_manifest": str(scaffold_manifest),
         "mesh_manifest": str(mesh_manifest),
         "simulation_manifest": str(simulation_manifest),
@@ -995,6 +1067,8 @@ def run_simulation_task(
     expected_targets_sha256: str,
     simulation_runner: str | Path,
     simulation_validator: str | Path,
+    individualized_targets_csv: str | Path | None = None,
+    expected_individualized_targets_sha256: str | None = None,
     python_bin: str = "python",
     command_runner: Callable[..., None] = approved._run_command,
 ) -> dict[str, object]:
@@ -1006,7 +1080,45 @@ def run_simulation_task(
     config = validate_dataset_montage(
         [row["dataset_name"]], row["montage_preset"]
     )
-    required = set(electrode_names_for_config(config, targets))
+    individualized_path: Path | None = None
+    individualized_hash: str | None = None
+    individualized_row: dict[str, str] | None = None
+    if individualized_targets_csv:
+        individualized_path = (
+            Path(individualized_targets_csv)
+            .expanduser()
+            .resolve(strict=True)
+        )
+        individualized_hash = sha256_file(individualized_path)
+        if (
+            not expected_individualized_targets_sha256
+            or individualized_hash
+            != expected_individualized_targets_sha256
+        ):
+            raise ValueError("individualized targets CSV hash mismatch")
+        individualized_row = load_individualized_target_row(
+            individualized_path,
+            subject=row["subject"],
+            dataset_roi=row["roi"],
+        )
+        if (
+            individualized_row["roi"].strip() != config.targets_roi
+            or individualized_row["pareto_selection"].strip()
+            != "TI_free.Emin"
+        ):
+            raise ValueError(
+                "individualized target row does not match the task ROI or "
+                "TI_free.Emin selection"
+            )
+        required = set(
+            electrode_names_from_target_row(individualized_row)
+        )
+    elif expected_individualized_targets_sha256:
+        raise ValueError(
+            "individualized targets hash supplied without a CSV"
+        )
+    else:
+        required = set(electrode_names_for_config(config, targets))
     mesh_marker = mesh_result_is_current(row)
     if mesh_marker is None:
         raise ValueError(f"mesh result is invalid: {row['mesh_result_path']}")
@@ -1028,6 +1140,8 @@ def run_simulation_task(
         == row["corrected_label_sha256"]
         and existing.get("montage_preset") == row["montage_preset"]
         and existing.get("targets_csv_sha256") == targets_hash
+        and existing.get("individualized_targets_csv_sha256")
+        == individualized_hash
         and validate_subject_outputs(
             row["dataset_root"],
             row["subject"],
@@ -1066,6 +1180,15 @@ def run_simulation_task(
         row["montage_preset"],
         "--reuse-existing-mesh",
     ]
+    if individualized_path is not None:
+        simulation_command.extend(
+            [
+                "--individualized-targets-csv",
+                str(individualized_path),
+                "--expected-individualized-targets-sha256",
+                str(individualized_hash),
+            ]
+        )
     started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     command_runner(
         simulation_command, cwd=Path(row["anat_dir"]), env=environment
@@ -1087,6 +1210,67 @@ def run_simulation_task(
         "montage_preset": row["montage_preset"],
         "targets_csv": str(targets),
         "targets_csv_sha256": targets_hash,
+        "individualized_targets_csv": (
+            str(individualized_path)
+            if individualized_path is not None
+            else None
+        ),
+        "individualized_targets_csv_sha256": individualized_hash,
+        "pareto_selection": (
+            individualized_row.get("pareto_selection")
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_configuration": (
+            int(individualized_row["configuration"])
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_e_target_v_per_m": (
+            float(individualized_row["E_target"])
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_stimulated_volume": (
+            float(individualized_row["stimulated_volume"])
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_pair1": (
+            individualized_row.get("pair1")
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_pair2": (
+            individualized_row.get("pair2")
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_current1_ma": (
+            float(individualized_row["current1"])
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_current2_ma": (
+            float(individualized_row["current2"])
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_source_target_id": (
+            individualized_row.get("source_target_id")
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_source_mat": (
+            individualized_row.get("source_mat")
+            if individualized_row is not None
+            else None
+        ),
+        "optimized_source_mat_sha256": (
+            individualized_row.get("source_mat_sha256")
+            if individualized_row is not None
+            else None
+        ),
         "simulation_command": simulation_command,
         "validation_command": validation_command,
         "segmentation_in_simulation_task": False,
@@ -1245,6 +1429,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--expected-targets-sha256",
         default=CONFIRMED_TARGETS_SHA256,
     )
+    simulation.add_argument("--individualized-targets-csv")
+    simulation.add_argument(
+        "--expected-individualized-targets-sha256"
+    )
     simulation.add_argument("--simulation-runner", required=True)
     simulation.add_argument("--simulation-validator", required=True)
     simulation.add_argument("--python-bin", default="python")
@@ -1306,6 +1494,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_targets_sha256=args.expected_targets_sha256,
                 simulation_runner=args.simulation_runner,
                 simulation_validator=args.simulation_validator,
+                individualized_targets_csv=args.individualized_targets_csv,
+                expected_individualized_targets_sha256=(
+                    args.expected_individualized_targets_sha256
+                ),
                 python_bin=args.python_bin,
             )
         elif args.command == "validate":

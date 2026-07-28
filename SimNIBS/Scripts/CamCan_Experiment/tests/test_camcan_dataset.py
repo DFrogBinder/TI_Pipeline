@@ -6,6 +6,7 @@ from utils.camcan_dataset import (
     CAMCAN_ROI_CONFIGS,
     electrode_names_for_config,
     parse_dataset_name,
+    validate_individualized_target_table,
     validate_dataset_montage,
 )
 from post.camcan_electrodes import resolve_camcan_post_electrodes
@@ -50,3 +51,24 @@ def test_post_electrodes_are_derived_from_batch_roi_and_targets_csv(tmp_path):
     assert "eeg_positions/EEG10-10_UI_Jurak_2007.csv" in (
         resolved.eeg_positions_path_template
     )
+
+
+def test_individualized_best_worst_table_is_complete_and_fail_closed():
+    cohort_dir = (
+        Path(__file__).resolve().parents[1]
+        / "cohort_pipeline"
+        / "cohorts"
+        / "optimized_best_worst_7"
+    )
+    subjects = (cohort_dir / "subjects.txt").read_text().splitlines()
+    rows = validate_individualized_target_table(
+        cohort_dir / "individualized_targets.csv",
+        subjects=subjects,
+    )
+
+    assert len(rows) == 28
+    assert rows[("sub-CC120795", "Right_DLPC")]["pair1"] == "F2-F4"
+    assert rows[("sub-CC120795", "Right_DLPC")]["pair2"] == "FT8-T8"
+    assert rows[("sub-CC420100", "Right_Thalamus")][
+        "pareto_selection"
+    ] == "TI_free.Emin"

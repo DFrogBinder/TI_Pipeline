@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cohort_id": "optimized_best_worst_7",
+  "status": "final",
+  "subjects_file": "subjects.txt",
+  "subjects_sha256": "fda1b5f0f29bb919f9448a889b157360865d3f7fa9e30d1d99e09cc327e45a21",
+  "expected_subjects": 7,
+  "individualized_targets_csv": "individualized_targets.csv",
+  "individualized_targets_csv_sha256": "7010f98e3fdd4a76ba544939d15a5804d4d4a61f7765b5859cb73f7383a02e38",
+  "selection_metric": "roi_median_v_per_m averaged after per-repeat calculation",
+  "selection": {
+    "Left_Hippocampus": {
+      "best": "sub-CC410182",
+      "worst": "sub-CC420100"
+    },
+    "Left_M1": {
+      "best": "sub-CC221775",
+      "worst": "sub-CC320776"
+    },
+    "Right_DLPC": {
+      "best": "sub-CC120795",
+      "worst": "sub-CC410387"
+    },
+    "Right_Thalamus": {
+      "best": "sub-CC610061",
+      "worst": "sub-CC420100"
+    }
+  },
+  "note": "Seven unique best/worst subjects across four ROIs. Each subject uses its own TI_free.Emin Pareto montage for all four ROIs and all ten independent remesh repeats."
+}

@@ -42,6 +42,7 @@ from utils.camcan_dataset import (
 from target_montages import (
     MONTAGE_PRESETS,
     TARGETS_CSV_PATH,
+    resolve_individualized_montage,
     resolve_montage_preset,
     targets_csv_sha256,
 )
@@ -407,6 +408,21 @@ def process_subject(subject_entry):
         electrode_thickness_mm=montage.electrode_thickness_mm,
         electrode_shape=montage.electrode_shape,
         electrode_conductivity=montage.electrode_conductivity,
+        individualized_targets_csv=os.environ.get(
+            "TI_INDIVIDUALIZED_TARGETS_CSV"
+        ),
+        individualized_targets_csv_sha256=os.environ.get(
+            "TI_EXPECTED_INDIVIDUALIZED_TARGETS_SHA256"
+        ),
+        individualized_pareto_selection=os.environ.get(
+            "TI_INDIVIDUALIZED_PARETO_SELECTION"
+        ),
+        individualized_source_mat=os.environ.get(
+            "TI_INDIVIDUALIZED_SOURCE_MAT"
+        ),
+        individualized_source_mat_sha256=os.environ.get(
+            "TI_INDIVIDUALIZED_SOURCE_MAT_SHA256"
+        ),
     )
 
     # Brain tissue tags (adjust if your labeling differs)
@@ -755,6 +771,21 @@ def main():
         default=DEFAULT_MESH_TIMEOUT_HOURS,
         help="Timeout for explicit --generate-charm-mesh mode; ignored for mesh reuse.",
     )
+    parser.add_argument(
+        "--individualized-targets-csv",
+        help=(
+            "Subject/ROI-specific Pareto montage table. When supplied, the "
+            "TI_free.Emin row for --subject and the dataset ROI replaces the "
+            "fixed cohort montage."
+        ),
+    )
+    parser.add_argument(
+        "--expected-individualized-targets-sha256",
+        help=(
+            "Required SHA-256 for --individualized-targets-csv. The runner "
+            "fails closed if it is absent or does not match."
+        ),
+    )
 
     args = parser.parse_args()
     if args.list_montage_presets:
@@ -793,9 +824,74 @@ def main():
     dataset_name = Path(rootDIR).name
     if REPEAT_DATASET_PATTERN.fullmatch(dataset_name):
         try:
-            validate_dataset_montage([dataset_name], SELECTED_MONTAGE.name)
+            dataset_config = validate_dataset_montage(
+                [dataset_name], SELECTED_MONTAGE.name
+            )
         except ValueError as exc:
             parser.error(str(exc))
+    else:
+        dataset_config = None
+    if args.individualized_targets_csv:
+        if not args.subject:
+            parser.error(
+                "--individualized-targets-csv requires single-subject "
+                "--subject mode."
+            )
+        if dataset_config is None:
+            parser.error(
+                "--individualized-targets-csv requires a CamCan "
+                "<ROI>_Data_<repeat> TI_SIM_ROOT."
+            )
+        if not args.expected_individualized_targets_sha256:
+            parser.error(
+                "--expected-individualized-targets-sha256 is required with "
+                "--individualized-targets-csv."
+            )
+        try:
+            SELECTED_MONTAGE, individualized_row = (
+                resolve_individualized_montage(
+                    args.individualized_targets_csv,
+                    subject=args.subject,
+                    dataset_roi=dataset_config.dataset_prefix,
+                    expected_targets_roi=dataset_config.targets_roi,
+                    expected_montage_preset=dataset_config.montage_preset,
+                    expected_sha256=args.expected_individualized_targets_sha256,
+                )
+            )
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+        individualized_path = str(
+            Path(args.individualized_targets_csv)
+            .expanduser()
+            .resolve(strict=True)
+        )
+        os.environ["TI_INDIVIDUALIZED_TARGETS_CSV"] = individualized_path
+        os.environ[
+            "TI_EXPECTED_INDIVIDUALIZED_TARGETS_SHA256"
+        ] = args.expected_individualized_targets_sha256
+        os.environ["TI_INDIVIDUALIZED_PARETO_SELECTION"] = individualized_row[
+            "pareto_selection"
+        ]
+        os.environ["TI_INDIVIDUALIZED_SOURCE_MAT"] = individualized_row.get(
+            "source_mat", ""
+        )
+        os.environ[
+            "TI_INDIVIDUALIZED_SOURCE_MAT_SHA256"
+        ] = individualized_row.get("source_mat_sha256", "")
+        log_event(
+            "individualized_montage_selected",
+            subject=args.subject,
+            dataset_roi=dataset_config.dataset_prefix,
+            targets_roi=dataset_config.targets_roi,
+            montage_preset=SELECTED_MONTAGE.name,
+            pareto_selection=individualized_row["pareto_selection"],
+            source_mat=individualized_row.get("source_mat"),
+            source_mat_sha256=individualized_row.get("source_mat_sha256"),
+            individualized_targets_csv=individualized_path,
+            individualized_targets_csv_sha256=(
+                args.expected_individualized_targets_sha256
+            ),
+        )
     log_event(
         "montage_preset_selected",
         preset=SELECTED_MONTAGE.name,

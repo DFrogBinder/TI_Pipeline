@@ -30,6 +30,14 @@ ROI_ORDER = [
     "Right_DLPC",
     "Right_Thalamus",
 ]
+# Two-column figures group deep targets in the left column and cortical
+# targets in the right column.
+PANEL_ROI_ORDER = [
+    "Left_Hippocampus",
+    "Left_M1",
+    "Right_Thalamus",
+    "Right_DLPC",
+]
 ROI_LABELS = {
     "Left_Hippocampus": "Left hippocampus",
     "Left_M1": "Left M1",
@@ -46,7 +54,7 @@ FIELD_METRICS = [
     ("roi_median_v_per_m", "Median", "#E69F00"),
     (
         "roi_robust_max_p99_9_v_per_m",
-        "Robust maximum (P99.9)",
+        "Maximum (P99.9)",
         "#CC79A7",
     ),
 ]
@@ -324,7 +332,7 @@ def _cohort_relationship_figure(
         wspace=0.30,
     )
     fit_rows: list[dict[str, float | str | int]] = []
-    for index, roi in enumerate(ROI_ORDER):
+    for index, roi in enumerate(PANEL_ROI_ORDER):
         axis = axes.flat[index]
         rows = subjects.loc[subjects["roi"] == roi]
         x = rows[x_metric].to_numpy(dtype=float)
@@ -386,7 +394,9 @@ def _cohort_relationship_figure(
         )
         axis.set_title(ROI_LABELS[roi], weight="bold")
         axis.set_xlabel(x_label)
-        axis.set_ylabel("Off-target coverage ≥ 0.20 V/m (%)")
+        axis.set_ylabel(
+            "Off-target coverage ≥ 0.20 V/m (%)" if index % 2 == 0 else ""
+        )
         if "coverage" in x_metric:
             axis.set_xlim(-3, 103)
         else:
@@ -448,9 +458,9 @@ def plot_population_target_field_distributions(
     """Show all four target-field summaries requested for validation."""
     figure, axes = plt.subplots(2, 2, figsize=(7.35, 5.8), sharex=True)
     figure.subplots_adjust(
-        left=0.085,
+        left=0.105,
         right=0.985,
-        top=0.91,
+        top=0.87,
         bottom=0.13,
         hspace=0.36,
         wspace=0.25,
@@ -522,7 +532,6 @@ def plot_population_target_field_distributions(
                 }
             )
         axis.set_title(label, weight="bold")
-        axis.set_ylabel("Target field (V/m)")
         axis.set_xticks(
             positions,
             ["Hippocampus", "M1", "DLPFC", "Thalamus"],
@@ -563,6 +572,19 @@ def plot_population_target_field_distributions(
         bbox_to_anchor=(0.5, 0.995),
         ncol=2,
         frameon=False,
+    )
+    figure.text(
+        0.5,
+        0.915,
+        "Each panel summarizes E-field magnitude across voxels inside the target ROI",
+        ha="center",
+        va="center",
+        fontsize=7.6,
+        color=GRAY,
+    )
+    figure.supylabel(
+        "E-field magnitude summary inside target ROI (V/m)",
+        x=0.015,
     )
     save_figure(
         figure,
@@ -622,6 +644,7 @@ def plot_population_ratio(
     target = "target_coverage_percent_ge_0p2"
     off_target = "off_target_coverage_percent_ge_0p2"
     figure, axis = plt.subplots(figsize=(7.35, 4.5))
+    figure.subplots_adjust(left=0.12, right=0.985, top=0.82, bottom=0.18)
     rng = np.random.default_rng(20260729)
     rows: list[dict[str, float | str | int]] = []
     finite_groups: list[np.ndarray] = []
@@ -696,11 +719,29 @@ def plot_population_ratio(
                 zorder=4,
             )
         tick_labels.append(
-            f"{ROI_LABELS[roi]}\n$n_0$={zero_count}/132"
+            f"{ROI_LABELS[roi]}\nZero target coverage: {zero_count}/132"
         )
     axis.set_yscale("symlog", linthresh=1e-4, linscale=0.6, base=10)
     axis.set_xticks(np.arange(1, 5), tick_labels, fontsize=7.1)
-    axis.set_ylabel("Off-target coverage / target coverage at 0.20 V/m")
+    axis.set_ylabel(
+        "Off-target coverage ÷ target coverage\n"
+        "(lower indicates less spillover)"
+    )
+    axis.set_title(
+        "Off-target exposure per unit of target coverage at 0.20 V/m",
+        weight="bold",
+        pad=30,
+    )
+    axis.text(
+        0.5,
+        1.05,
+        "Ratios are undefined when target coverage is zero; those failures are counted below each ROI.",
+        transform=axis.transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=7.4,
+        color=GRAY,
+    )
     axis.grid(axis="y", color=GRID, lw=0.55)
     axis.set_axisbelow(True)
     axis.legend(
@@ -713,15 +754,8 @@ def plot_population_ratio(
                 markerfacecolor=ORANGE,
                 label="MNI152 reference",
             ),
-            Line2D(
-                [0],
-                [0],
-                color="none",
-                lw=0,
-                label="$n_0$: target coverage=0; ratio undefined",
-            ),
         ],
-        loc="upper left",
+        loc="upper right",
         frameon=False,
     )
     save_figure(
@@ -742,7 +776,7 @@ def plot_mni_percentiles(
         ("Mean target field", "roi_mean_v_per_m", FIELD_METRICS[1][2]),
         ("Median target field", "roi_median_v_per_m", FIELD_METRICS[2][2]),
         (
-            "Robust maximum (P99.9)",
+            "Maximum (P99.9)",
             "roi_robust_max_p99_9_v_per_m",
             FIELD_METRICS[3][2],
         ),
@@ -752,14 +786,14 @@ def plot_mni_percentiles(
     records: list[dict[str, float | str]] = []
     figure, axes = plt.subplots(2, 2, figsize=(7.35, 6.5))
     figure.subplots_adjust(
-        left=0.15,
+        left=0.16,
         right=0.985,
         top=0.90,
         bottom=0.10,
         hspace=0.38,
-        wspace=0.31,
+        wspace=0.24,
     )
-    for index, roi in enumerate(ROI_ORDER):
+    for index, roi in enumerate(PANEL_ROI_ORDER):
         axis = axes.flat[index]
         rows = subjects.loc[subjects["roi"] == roi]
         percentiles = []
@@ -794,7 +828,10 @@ def plot_mni_percentiles(
             linewidth=0.7,
             zorder=3,
         )
-        axis.set_yticks(y, [item[0] for item in metrics])
+        axis.set_yticks(
+            y,
+            [item[0] for item in metrics] if index % 2 == 0 else [],
+        )
         axis.set_xlim(0, 100)
         axis.set_xlabel("MNI152 percentile within CamCan (%)")
         axis.set_title(ROI_LABELS[roi], weight="bold")
@@ -830,7 +867,7 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
         ("roi_median_v_per_m", "Median\n(V/m)"),
         (
             "roi_robust_max_p99_9_v_per_m",
-            "Robust maximum\n(P99.9; V/m)",
+            "Maximum\n(P99.9; V/m)",
         ),
         ("target_coverage_percent_ge_0p2", "Target coverage\n≥0.20 V/m (%)"),
         (
@@ -838,21 +875,21 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
             "Off-target coverage\n≥0.20 V/m (%)",
         ),
     ]
-    figure, axes = plt.subplots(4, 6, figsize=(7.35, 9.0), sharey=False)
-    figure.subplots_adjust(
-        left=0.16,
-        right=0.995,
-        top=0.94,
-        bottom=0.06,
-        hspace=0.34,
-        wspace=0.42,
-    )
-    for roi_index, roi in enumerate(ROI_ORDER):
+    for roi in ROI_ORDER:
+        figure, axes = plt.subplots(2, 3, figsize=(7.35, 5.45), sharey=False)
+        figure.subplots_adjust(
+            left=0.15,
+            right=0.985,
+            top=0.76,
+            bottom=0.10,
+            hspace=0.46,
+            wspace=0.34,
+        )
         subset = paired.loc[paired["roi"] == roi].sort_values("_subject_order")
         y = np.arange(len(subset))[::-1]
         labels = [short_subject(subject) for subject in subset["subject"]]
         for metric_index, (metric, title) in enumerate(panels):
-            axis = axes[roi_index, metric_index]
+            axis = axes.flat[metric_index]
             generic = subset[f"{metric}__generic_repeat_mean"].to_numpy(dtype=float)
             personalized = subset[
                 f"{metric}__personalized_repeat_mean"
@@ -889,10 +926,9 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                 capsize=1.5,
                 zorder=4,
             )
-            if roi_index == 0:
-                axis.set_title(title, weight="bold", pad=7, fontsize=7.5)
+            axis.set_title(title, weight="bold", pad=6)
             axis.set_yticks(y)
-            axis.set_yticklabels(labels if metric_index == 0 else [])
+            axis.set_yticklabels(labels if metric_index % 3 == 0 else [])
             axis.grid(axis="x", color=GRID, lw=0.55)
             if "coverage_percent" in metric:
                 axis.set_xlim(-5, 105)
@@ -910,37 +946,41 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                     max(0.0, float(values.min()) - padding),
                     float(values.max()) + padding,
                 )
-            if metric_index == 0:
-                axis.set_ylabel(ROI_LABELS[roi], weight="bold", labelpad=7)
-    figure.legend(
-        handles=[
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color=BLUE,
-                markerfacecolor="white",
-                label="Generic montage",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color=ORANGE,
-                markerfacecolor=ORANGE,
-                label="Personalized montage",
-            ),
-        ],
-        loc="upper center",
-        bbox_to_anchor=(0.58, 0.992),
-        ncol=2,
-        frameon=False,
-    )
-    save_figure(
-        figure,
-        figures_dir,
-        "figure_personalization_all_subject_changes",
-    )
+            axis.set_axisbelow(True)
+        figure.suptitle(
+            f"{ROI_LABELS[roi]}: generic and personalized target outcomes",
+            weight="bold",
+            y=0.975,
+        )
+        figure.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color=BLUE,
+                    markerfacecolor="white",
+                    label="Generic montage",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color=ORANGE,
+                    markerfacecolor=ORANGE,
+                    label="Personalized montage",
+                ),
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.885),
+            ncol=2,
+            frameon=False,
+        )
+        save_figure(
+            figure,
+            figures_dir,
+            f"figure_personalization_all_subject_changes_{roi.lower()}",
+        )
 
 
 def plot_personalized_trajectories(
@@ -959,7 +999,7 @@ def plot_personalized_trajectories(
         hspace=0.37,
         wspace=0.30,
     )
-    for index, roi in enumerate(ROI_ORDER):
+    for index, roi in enumerate(PANEL_ROI_ORDER):
         axis = axes.flat[index]
         subset = paired.loc[paired["roi"] == roi].sort_values("_subject_order")
         for _, row in subset.iterrows():
@@ -999,8 +1039,12 @@ def plot_personalized_trajectories(
         )
         y_padding = max(0.1, float(np.ptp(all_y)) * 0.08)
         axis.set_ylim(max(0.0, float(all_y.min()) - y_padding), float(all_y.max()) + y_padding)
-        axis.set_xlabel("Target coverage ≥ 0.20 V/m (%)")
-        axis.set_ylabel("Off-target coverage ≥ 0.20 V/m (%)")
+        axis.set_xlabel(
+            "Target coverage ≥ 0.20 V/m (%)" if index >= 2 else ""
+        )
+        axis.set_ylabel(
+            "Off-target coverage ≥ 0.20 V/m (%)" if index % 2 == 0 else ""
+        )
         axis.grid(color=GRID, lw=0.55)
         axis.text(
             0.01,
@@ -1060,18 +1104,15 @@ def plot_personalized_ratio(
     target = "target_coverage_percent_ge_0p2"
     off_target = "off_target_coverage_percent_ge_0p2"
     colors = _subject_colors(paired)
-    figure, axes = plt.subplots(2, 2, figsize=(7.35, 6.0), sharey=True)
-    figure.subplots_adjust(
-        left=0.15,
-        right=0.985,
-        top=0.84,
-        bottom=0.09,
-        hspace=0.35,
-        wspace=0.22,
-    )
     records: list[dict[str, float | str]] = []
-    for index, roi in enumerate(ROI_ORDER):
-        axis = axes.flat[index]
+    for roi in ROI_ORDER:
+        figure, axis = plt.subplots(figsize=(5.4, 3.7))
+        figure.subplots_adjust(
+            left=0.20,
+            right=0.98,
+            top=0.78,
+            bottom=0.19,
+        )
         subset = paired.loc[paired["roi"] == roi].sort_values("_subject_order")
         y = np.arange(len(subset))[::-1]
         for yi, (_, row) in zip(y, subset.iterrows()):
@@ -1115,49 +1156,47 @@ def plot_personalized_ratio(
             )
         axis.set_xscale("symlog", linthresh=0.5, linscale=0.6, base=10)
         axis.set_yticks(y, [short_subject(item) for item in subset["subject"]])
-        if index % 2:
-            axis.tick_params(axis="y", labelleft=False)
-        axis.set_title(ROI_LABELS[roi], weight="bold")
-        axis.set_xlabel("Target coverage / off-target coverage at 0.20 V/m")
-        axis.grid(axis="x", color=GRID, lw=0.55)
-        axis.text(
-            0.01,
-            1.03,
-            chr(ord("A") + index),
-            transform=axis.transAxes,
+        axis.set_title(
+            f"{ROI_LABELS[roi]}: thresholded target selectivity",
             weight="bold",
-            fontsize=10,
+            pad=28,
         )
-    figure.legend(
-        handles=[
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="none",
-                markerfacecolor="white",
-                markeredgecolor=GRAY,
-                label="Generic",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="o",
-                color="none",
-                markerfacecolor=GRAY,
-                label="Personalized",
-            ),
-        ],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.985),
-        ncol=2,
-        frameon=False,
-    )
-    save_figure(
-        figure,
-        figures_dir,
-        "figure_personalization_target_offtarget_ratio_ge_0p20",
-    )
+        axis.set_xlabel(
+            "Target coverage ÷ off-target coverage at 0.20 V/m\n"
+            "(higher indicates greater selectivity)"
+        )
+        axis.grid(axis="x", color=GRID, lw=0.55)
+        axis.set_axisbelow(True)
+        figure.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="none",
+                    markerfacecolor="white",
+                    markeredgecolor=GRAY,
+                    label="Generic",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="none",
+                    markerfacecolor=GRAY,
+                    label="Personalized",
+                ),
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.90),
+            ncol=2,
+            frameon=False,
+        )
+        save_figure(
+            figure,
+            figures_dir,
+            f"figure_personalization_target_offtarget_ratio_ge_0p20_{roi.lower()}",
+        )
     return pd.DataFrame(records)
 
 
@@ -1279,7 +1318,7 @@ def plot_repeat_field_summaries(
         frameon=False,
     )
     figure.suptitle(
-        f"{ROI_LABELS[roi]}: technical-repeat target-field summaries",
+        f"{ROI_LABELS[roi]}: repeat-to-repeat target E-field summaries",
         weight="bold",
         y=0.955,
         fontsize=9.4,
@@ -1287,7 +1326,7 @@ def plot_repeat_field_summaries(
     save_figure(
         figure,
         figures_dir,
-        f"figure_personalization_technical_repeats_{roi.lower()}",
+        f"figure_personalization_repeat_distributions_{roi.lower()}",
     )
 
 
@@ -1308,7 +1347,7 @@ def captions() -> dict[str, str]:
         "for outcome extremes in an earlier analysis and supports descriptive, "
         "not population-level, inference."
     )
-    result = {
+    result: dict[str, str] = {
         "figure_population_target_offtarget_relationship_ge_0p20": (
             "Target coverage and off-target exposure at 0.20 V/m. "
             f"{common_cohort} Blue points represent subjects and the orange "
@@ -1320,7 +1359,8 @@ def captions() -> dict[str, str]:
             "within each panel."
         ),
         "figure_population_mean_field_offtarget_relationship_ge_0p20": (
-            "Mean target field and off-target exposure at 0.20 V/m. "
+            "Mean E-field inside the target ROI and off-target exposure at "
+            "0.20 V/m. "
             f"{common_cohort} Horizontal position is the arithmetic mean field "
             "over finite target voxels; vertical position is off-target "
             "coverage. Blue points represent subjects and the orange diamond "
@@ -1328,15 +1368,35 @@ def captions() -> dict[str, str]:
             "targets; the separate model-comparison table audits whether an "
             "exponential model better describes either deep target."
         ),
+        "figure_population_minimum_field_offtarget_relationship_ge_0p20": (
+            "Minimum E-field inside the target ROI and off-target exposure at "
+            f"0.20 V/m. {common_cohort} Horizontal position is the lowest "
+            "finite E-field magnitude among voxels inside the target ROI; "
+            "vertical position is the percentage of finite brain voxels "
+            "outside the target reaching 0.20 V/m. Blue points represent "
+            "subjects, the orange diamond is MNI152, and solid lines are "
+            "descriptive linear fits."
+        ),
+        "figure_population_maximum_p99_9_field_offtarget_relationship_ge_0p20": (
+            "Maximum target-ROI E-field (P99.9) and off-target exposure at "
+            f"0.20 V/m. {common_cohort} Horizontal position is the 99.9th "
+            "percentile of finite E-field magnitudes inside the target ROI. "
+            "P99.9 is used instead of a single-voxel maximum to limit the "
+            "influence of isolated interpolation or meshing outliers. Vertical "
+            "position is off-target coverage. Blue points represent subjects, "
+            "the orange diamond is MNI152, and solid lines are descriptive "
+            "linear fits."
+        ),
         "figure_population_target_field_distributions": (
-            "Population distributions of four target-field summaries. "
+            "Population distributions of E-field magnitude summaries inside "
+            "the target ROI. "
             f"{common_cohort} Panels report the minimum, arithmetic mean, "
-            "median, and robust maximum (the 99.9th percentile, P99.9) of the "
-            "field inside the target. Violin envelopes show the population "
-            "density, thick bars show the interquartile range, white circles "
-            "show the population median, and orange diamonds show MNI152. "
-            "P99.9 is used instead of a single-voxel maximum to reduce "
-            "sensitivity to isolated interpolation or meshing outliers."
+            "median, and maximum (P99.9) calculated across voxels inside the "
+            "parcel-clipped target ROI. Thus the y-axis is an E-field "
+            "magnitude in V/m, not target size or spatial coverage. Violin "
+            "envelopes show the population density, thick bars show the "
+            "interquartile range, white circles show the population median, "
+            "and orange diamonds show MNI152."
         ),
         "figure_population_offtarget_target_ratio_ge_0p20": (
             "Population distribution of the off-target-to-target coverage "
@@ -1345,30 +1405,20 @@ def captions() -> dict[str, str]:
             "Boxes summarize subjects with non-zero target coverage; individual "
             "subjects are overlaid and orange diamonds show MNI152. A ratio is "
             "undefined when target coverage is zero, so these complete target "
-            "failures are not silently omitted: n₀ beneath each target gives "
-            "their count out of 132 subjects."
+            "failures are not silently omitted. Their plain-language count is "
+            "printed beneath each ROI. Lower finite ratios indicate less "
+            "off-target spillover per unit of target coverage."
         ),
         "figure_mni152_percentile_context_ge_0p20": (
             "Position of the MNI152 reference within the CamCan population. "
             f"{common_cohort} Each point is the percentile rank of the single "
             "MNI152 value within the 132 subject values for the indicated "
             "target and outcome. The six outcomes comprise target minimum, "
-            "mean, median, P99.9 robust maximum, target coverage, and "
+            "mean, median, P99.9 maximum, target coverage, and "
             "off-target coverage. The shaded band denotes the interquartile "
-            "range and the dashed line marks the population median."
-        ),
-        "figure_personalization_all_subject_changes": (
-            "Generic-versus-personalized changes across all 28 subject-target "
-            f"configurations. {common_personal} Rows are targets and columns "
-            "show minimum, mean, median and P99.9 robust maximum target field, "
-            "followed by target and off-target coverage at 0.20 V/m. Open blue "
-            "circles are generic "
-            "condition means, filled orange circles are personalized condition "
-            "means, and error bars show sample SD across ten repeats. No lines "
-            "connect conditions; rows identify the same subjects across "
-            "columns. Subjects are not "
-            "labelled best or worst because the historical ranking used a "
-            "different ROI definition and target-only criterion."
+            "range and the dashed line marks the population median. The left "
+            "column contains the two deep targets and the right column the two "
+            "cortical targets."
         ),
         "figure_personalization_effectiveness_spread_ge_0p20": (
             "Subject-level changes in target coverage and off-target exposure "
@@ -1377,25 +1427,37 @@ def captions() -> dict[str, str]:
             "connecting lines are drawn, reducing visual clutter; subject "
             "identity is encoded consistently by colour. Rightward position "
             "is greater target coverage and lower position is less off-target "
-            "coverage. "
-            "Subject identity is encoded consistently by colour across panels."
-        ),
-        "figure_personalization_target_offtarget_ratio_ge_0p20": (
-            "Subject-level change in target-to-off-target coverage ratio at "
-            f"0.20 V/m. {common_personal} The ratio divides percentage target "
-            "coverage by percentage off-target coverage, so higher values "
-            "indicate greater thresholded target selectivity. Open and filled "
-            "circles show generic and personalized condition means with a "
-            "small vertical offset and no connecting lines. A "
-            "symmetric-logarithmic x-axis is "
-            "used because ratios span several orders of magnitude and may be "
-            "zero when target coverage is zero."
+            "coverage. The left column contains deep targets and the right "
+            "column cortical targets."
         ),
     }
     for roi in ROI_ORDER:
-        result[f"figure_personalization_technical_repeats_{roi.lower()}"] = (
-            f"Technical-repeat distributions of minimum, mean, median and "
-            f"P99.9 robust maximum target field "
+        result[f"figure_personalization_all_subject_changes_{roi.lower()}"] = (
+            f"Generic-versus-personalized outcomes for {ROI_LABELS[roi]}. "
+            f"{common_personal} Panels show the minimum, mean, median and "
+            "P99.9 maximum E-field magnitude inside the target ROI, followed "
+            "by target and off-target coverage at 0.20 V/m. Open blue circles "
+            "are generic condition means, filled orange circles are "
+            "personalized condition means, and error bars show sample SD "
+            "across ten repeats. No lines connect conditions. Historical "
+            "best/worst labels are omitted because they used a different ROI "
+            "definition and a target-only selection criterion."
+        )
+        result[
+            f"figure_personalization_target_offtarget_ratio_ge_0p20_{roi.lower()}"
+        ] = (
+            f"Subject-level target-to-off-target coverage ratio for "
+            f"{ROI_LABELS[roi]} at 0.20 V/m. {common_personal} The ratio divides "
+            "percentage target coverage by percentage off-target coverage, so "
+            "higher values indicate greater thresholded target selectivity. "
+            "Open and filled circles show generic and personalized condition "
+            "means with a small vertical offset and no connecting lines. A "
+            "symmetric-logarithmic x-axis accommodates zero target coverage "
+            "and ratios spanning several orders of magnitude."
+        )
+        result[f"figure_personalization_repeat_distributions_{roi.lower()}"] = (
+            f"Repeat-to-repeat distributions of minimum, mean, median and "
+            f"P99.9 maximum target-ROI E-field "
             f"for {ROI_LABELS[roi]}. {common_personal} Each subject panel shows "
             "ten repeat-level values for the generic (G) and personalized (P) "
             "conditions. Boxes show interquartile ranges, internal white lines "
@@ -1429,7 +1491,7 @@ emails and the subsequent clarification.
 - Only the **0.20 V/m** evaluation threshold is presented.
 - Personalized generic-versus-personalized plots use **circles only**. No
   arrows or connecting subject-level line segments are drawn.
-- Target-field validation reports **minimum, mean, median, and robust maximum
+- Target-ROI E-field validation reports **minimum, mean, median, and maximum
   (P99.9)**. P99.9 is labelled explicitly and is used instead of a
   single-voxel maximum because isolated interpolation or meshing outliers can
   dominate the latter.
@@ -1438,14 +1500,18 @@ emails and the subsequent clarification.
 - A separate CSV compares linear and exponential fits for the two deep
   targets, preserving the proposed non-linearity check without replacing the
   requested main linear fits.
-- A separate population figure relates **mean target field** to off-target
-  coverage.
+- Separate population figures relate **minimum, mean, and maximum (P99.9)
+  target-ROI E-field** to off-target coverage.
 - The off-target/target coverage ratio is shown by ROI. Complete target
   failures (zero target coverage) are counted explicitly and are not silently
   treated as finite ratios.
 - Historical **best/worst labels are not used**, because those labels were
   selected using a different target definition and a target-only criterion.
 - Figure labels use **target**, not “optimizer target”.
+- Two-column figures group **deep targets in the left column** and cortical
+  targets in the right column.
+- Dense personalized summaries and selectivity-ratio plots are split into one
+  figure per ROI.
 - Every figure is supplied as a 400-dpi PNG and vector PDF with a
   self-contained caption and the supporting numerical tables.
 
@@ -1491,10 +1557,29 @@ def build(
         mni,
         figures_dir,
         x_metric="roi_mean_v_per_m",
-        x_label="Mean target field (V/m)",
+        x_label="Mean E-field inside target ROI (V/m)",
         stem="figure_population_mean_field_offtarget_relationship_ge_0p20",
     )
-    pd.concat([fit_coverage, fit_mean], ignore_index=True).to_csv(
+    fit_minimum = _cohort_relationship_figure(
+        subjects,
+        mni,
+        figures_dir,
+        x_metric="roi_min_v_per_m",
+        x_label="Minimum E-field inside target ROI (V/m)",
+        stem="figure_population_minimum_field_offtarget_relationship_ge_0p20",
+    )
+    fit_maximum = _cohort_relationship_figure(
+        subjects,
+        mni,
+        figures_dir,
+        x_metric="roi_robust_max_p99_9_v_per_m",
+        x_label="Maximum E-field inside target ROI (P99.9; V/m)",
+        stem="figure_population_maximum_p99_9_field_offtarget_relationship_ge_0p20",
+    )
+    pd.concat(
+        [fit_coverage, fit_mean, fit_minimum, fit_maximum],
+        ignore_index=True,
+    ).to_csv(
         tables_dir / "table_descriptive_fit_statistics.csv",
         index=False,
     )
@@ -1531,7 +1616,7 @@ def build(
     write_revision_audit(output_dir)
     result = {
         "status": "complete",
-        "figure_revision_schema_version": 2,
+        "figure_revision_schema_version": 3,
         "threshold_v_per_m": THRESHOLD,
         "cohort_analysis_schema_version": cohort_manifest[
             "analysis_schema_version"
@@ -1559,8 +1644,11 @@ def build(
             "minimum",
             "mean",
             "median",
-            "robust maximum (P99.9)",
+            "maximum (P99.9)",
         ],
+        "panel_roi_order": PANEL_ROI_ORDER,
+        "personalized_summary_split_by_roi": True,
+        "personalized_ratio_split_by_roi": True,
         "cohort_main_fit": "linear for all targets",
         "deep_target_sensitivity_analysis": (
             "linear and exponential models compared in a separate audit table"

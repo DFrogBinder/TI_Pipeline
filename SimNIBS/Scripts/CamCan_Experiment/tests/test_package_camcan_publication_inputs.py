@@ -47,8 +47,8 @@ def test_package_is_self_verifying_and_contains_exact_renderer(tmp_path, role):
 
     assert payload["status"] == "complete"
     assert payload["package_role"] == role
-    assert payload["expected_outputs"]["png_count"] == 12
-    assert payload["expected_outputs"]["pdf_count"] == 12
+    assert payload["expected_outputs"]["png_count"] == 20
+    assert payload["expected_outputs"]["pdf_count"] == 20
     packaged_renderer = results / "publication_tools" / publication.RENDERER_NAME
     assert packaged_renderer.read_bytes() == renderer.read_bytes()
     assert payload["renderer"]["sha256"] == hashlib.sha256(

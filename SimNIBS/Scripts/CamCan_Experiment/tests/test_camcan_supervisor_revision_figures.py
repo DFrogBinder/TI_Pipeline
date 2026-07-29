@@ -180,10 +180,18 @@ def test_supervisor_revision_builds_complete_figure_set(tmp_path):
         "minimum",
         "mean",
         "median",
-        "robust maximum (P99.9)",
+        "maximum (P99.9)",
     ]
-    assert len(list((output_dir / "figures").glob("*.png"))) == 12
-    assert len(list((output_dir / "figures").glob("*.pdf"))) == 12
+    assert result["panel_roi_order"] == [
+        "Left_Hippocampus",
+        "Left_M1",
+        "Right_Thalamus",
+        "Right_DLPC",
+    ]
+    assert result["personalized_summary_split_by_roi"] is True
+    assert result["personalized_ratio_split_by_roi"] is True
+    assert len(list((output_dir / "figures").glob("*.png"))) == 20
+    assert len(list((output_dir / "figures").glob("*.pdf"))) == 20
     assert (output_dir / "tables" / "table_descriptive_fit_statistics.csv").is_file()
     fits = pd.read_csv(output_dir / "tables" / "table_descriptive_fit_statistics.csv")
     assert set(fits["model"]) == {"linear"}

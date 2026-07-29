@@ -25,16 +25,24 @@ RENDERER_NAME = "build_camcan_supervisor_revision_figures.py"
 EXPECTED_FIGURE_STEMS = [
     "figure_population_target_offtarget_relationship_ge_0p20",
     "figure_population_mean_field_offtarget_relationship_ge_0p20",
+    "figure_population_minimum_field_offtarget_relationship_ge_0p20",
+    "figure_population_maximum_p99_9_field_offtarget_relationship_ge_0p20",
     "figure_population_target_field_distributions",
     "figure_population_offtarget_target_ratio_ge_0p20",
     "figure_mni152_percentile_context_ge_0p20",
-    "figure_personalization_all_subject_changes",
     "figure_personalization_effectiveness_spread_ge_0p20",
-    "figure_personalization_target_offtarget_ratio_ge_0p20",
-    "figure_personalization_technical_repeats_left_hippocampus",
-    "figure_personalization_technical_repeats_left_m1",
-    "figure_personalization_technical_repeats_right_dlpc",
-    "figure_personalization_technical_repeats_right_thalamus",
+    "figure_personalization_all_subject_changes_left_hippocampus",
+    "figure_personalization_all_subject_changes_left_m1",
+    "figure_personalization_all_subject_changes_right_dlpc",
+    "figure_personalization_all_subject_changes_right_thalamus",
+    "figure_personalization_target_offtarget_ratio_ge_0p20_left_hippocampus",
+    "figure_personalization_target_offtarget_ratio_ge_0p20_left_m1",
+    "figure_personalization_target_offtarget_ratio_ge_0p20_right_dlpc",
+    "figure_personalization_target_offtarget_ratio_ge_0p20_right_thalamus",
+    "figure_personalization_repeat_distributions_left_hippocampus",
+    "figure_personalization_repeat_distributions_left_m1",
+    "figure_personalization_repeat_distributions_right_dlpc",
+    "figure_personalization_repeat_distributions_right_thalamus",
 ]
 
 COMMON_METRICS = {
@@ -208,7 +216,7 @@ python3 cohort/publication_tools/{RENDERER_NAME} \\
 ```
 
 The renderer validates both analysis schemas and record counts before plotting.
-It writes 12 figures as 400-dpi PNG and vector PDF, self-contained captions,
+It writes 20 figures as 400-dpi PNG and vector PDF, self-contained captions,
 derived statistics tables, and `figure_revision_manifest.json`. Use `--force`
 only when intentionally replacing an existing output directory.
 

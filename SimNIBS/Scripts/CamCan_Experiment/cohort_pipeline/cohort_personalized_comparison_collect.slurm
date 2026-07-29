@@ -28,15 +28,21 @@ printf '%s\n' \
     "[INFO] Repeat pairing:           none across conditions" \
     "[INFO] Output:                   ${COMPARISON_ROOT}/results"
 
-"${PYTHON}" \
-    "${PIPELINE_DIR}/CamCan_Experiment/post/camcan_personalized_comparison.py" \
-    collect \
-    --allowlist "${COMPARISON_ROOT}/selection_allowlist.csv" \
-    --output-root "${COMPARISON_ROOT}" \
-    --thresholds "${THRESHOLDS}" \
-    --top-percentile "${COMPARISON_TOP_PERCENTILE:-95.0}" \
-    --robust-max-percentile "${COMPARISON_ROBUST_MAX_PERCENTILE:-99.9}" \
+COLLECT_COMMAND=(
+    "${PYTHON}"
+    "${PIPELINE_DIR}/CamCan_Experiment/post/camcan_personalized_comparison.py"
+    collect
+    --allowlist "${COMPARISON_ROOT}/selection_allowlist.csv"
+    --output-root "${COMPARISON_ROOT}"
+    --thresholds "${THRESHOLDS}"
+    --top-percentile "${COMPARISON_TOP_PERCENTILE:-95.0}"
+    --robust-max-percentile "${COMPARISON_ROBUST_MAX_PERCENTILE:-99.9}"
     --upper-tail-fraction "${COMPARISON_UPPER_TAIL_FRACTION:-0.01}"
+)
+if [ "$(basename "${PUBLICATION_PACKAGER}")" = "package_camcan_publication_inputs_v5.py" ]; then
+    COLLECT_COMMAND+=(--skip-legacy-figures)
+fi
+"${COLLECT_COMMAND[@]}"
 
 MANIFEST="${COMPARISON_ROOT}/results/analysis_manifest.json"
 test -s "${MANIFEST}"

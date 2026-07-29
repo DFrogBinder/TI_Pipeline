@@ -259,13 +259,24 @@ def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_pa
                     encoding="utf-8",
                 )
 
-    monkeypatch.setattr(comparison, "_write_paired_dumbbell", lambda *a, **k: None)
+    def unexpected_legacy_figure(*args, **kwargs):
+        raise AssertionError("legacy figure writer was called")
+
+    monkeypatch.setattr(
+        comparison,
+        "_write_paired_dumbbell",
+        unexpected_legacy_figure,
+    )
     monkeypatch.setattr(
         comparison,
         "_write_effectiveness_trajectories",
-        lambda *a, **k: None,
+        unexpected_legacy_figure,
     )
-    monkeypatch.setattr(comparison, "_write_repeat_distribution", lambda *a, **k: None)
+    monkeypatch.setattr(
+        comparison,
+        "_write_repeat_distribution",
+        unexpected_legacy_figure,
+    )
     manifest = comparison.collect_analysis(
         allowlist_path=allowlist_path,
         output_root=output_root,
@@ -273,6 +284,7 @@ def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_pa
         top_percentile=comparison.DEFAULT_TOP_PERCENTILE,
         robust_max_percentile=comparison.DEFAULT_ROBUST_MAX_PERCENTILE,
         upper_tail_fraction=comparison.DEFAULT_UPPER_TAIL_FRACTION,
+        write_legacy_figures=False,
     )
 
     assert manifest["status"] == "complete"
@@ -280,6 +292,7 @@ def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_pa
     assert manifest["repeat_level_records"] == 560
     assert manifest["condition_repeat_mean_records"] == 56
     assert manifest["excluded_personalized_simulations"] == 0
+    assert manifest["legacy_figures_written"] is False
     condition_frame = pd.read_csv(
         output_root / "results" / "condition_repeat_mean_metrics.csv"
     )

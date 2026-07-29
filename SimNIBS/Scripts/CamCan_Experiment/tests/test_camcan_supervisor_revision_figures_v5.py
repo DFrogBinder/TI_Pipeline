@@ -215,3 +215,17 @@ def test_mni_threshold_wrapper_uses_nonempty_command_arrays():
     assert '"${PERSONALIZED_COMMAND[@]}"' in text
     assert "COHORT_SOURCE_RECEIPT=" in text
     assert "MANUSCRIPT_SOURCE_VALIDATION_RECEIPT=" in text
+
+
+def test_v5_personalized_collector_skips_legacy_fixed_threshold_figures():
+    collector = (
+        Path(__file__).resolve().parents[1]
+        / "cohort_pipeline"
+        / "cohort_personalized_comparison_collect.slurm"
+    )
+    text = collector.read_text(encoding="utf-8")
+
+    assert "COLLECT_COMMAND=(" in text
+    assert "package_camcan_publication_inputs_v5.py" in text
+    assert "COLLECT_COMMAND+=(--skip-legacy-figures)" in text
+    assert '"${COLLECT_COMMAND[@]}"' in text

@@ -73,6 +73,9 @@ The renderer creates eight figures in PNG (400 dpi) and vector PDF:
 
 It does not create percentile-context, effectiveness/spread, repeat
 distribution, minimum-relationship, or maximum-relationship figures.
+The v5 personalized collector also suppresses the older fixed-0.2-V/m
+convenience plots; those legacy plots are neither scientifically applicable
+to ROI-specific thresholds nor required by the publication bundle.
 
 All axes are linear. Personalized markers are condition means across ten
 repeat-level measurements, joined by generic-to-personalized arrows without

@@ -1084,6 +1084,7 @@ def collect_analysis(
     top_percentile: float,
     robust_max_percentile: float,
     upper_tail_fraction: float,
+    write_legacy_figures: bool = True,
 ) -> dict[str, Any]:
     allowlist = pd.read_csv(allowlist_path)
     pair_count = len(allowlist)
@@ -1353,21 +1354,22 @@ def collect_analysis(
             results_dir / "validated_source_records.csv", index=False
         )
 
-    _write_paired_dumbbell(
-        condition_frame,
-        figures_dir / "paired_generic_vs_personalized_dumbbell",
-    )
-    for threshold in thresholds:
-        _write_effectiveness_trajectories(
+    if write_legacy_figures:
+        _write_paired_dumbbell(
             condition_frame,
-            threshold=float(threshold),
-            output_base=figures_dir
-            / f"effectiveness_off_target_trajectories_ge_{_threshold_slug(float(threshold))}",
+            figures_dir / "paired_generic_vs_personalized_dumbbell",
         )
-    _write_repeat_distribution(
-        repeat_frame,
-        figures_dir / "technical_repeat_roi_mean_distributions",
-    )
+        for threshold in thresholds:
+            _write_effectiveness_trajectories(
+                condition_frame,
+                threshold=float(threshold),
+                output_base=figures_dir
+                / f"effectiveness_off_target_trajectories_ge_{_threshold_slug(float(threshold))}",
+            )
+        _write_repeat_distribution(
+            repeat_frame,
+            figures_dir / "technical_repeat_roi_mean_distributions",
+        )
 
     manifest = {
         "comparison_schema_version": COMPARISON_SCHEMA_VERSION,
@@ -1416,6 +1418,7 @@ def collect_analysis(
             "per-repeat calculation in the generic final-132 cohort analysis"
         ),
         "current_optimizer_objective_metric": "roi_mean_v_per_m",
+        "legacy_figures_written": bool(write_legacy_figures),
         "outputs": [],
     }
     preflight_path = output_root / "preflight.json"
@@ -1494,6 +1497,14 @@ def build_parser() -> argparse.ArgumentParser:
     collect = commands.add_parser("collect")
     collect.add_argument("--allowlist", type=Path, required=True)
     collect.add_argument("--output-root", type=Path, required=True)
+    collect.add_argument(
+        "--skip-legacy-figures",
+        action="store_true",
+        help=(
+            "Write exact metric tables and the analysis manifest without the "
+            "legacy fixed-threshold convenience figures."
+        ),
+    )
     _common_metric_arguments(collect)
     return parser
 
@@ -1543,6 +1554,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             top_percentile=args.top_percentile,
             robust_max_percentile=args.robust_max_percentile,
             upper_tail_fraction=args.upper_tail_fraction,
+            write_legacy_figures=not args.skip_legacy_figures,
         )
     print(json.dumps(_json_ready(result), indent=2))
     return 0

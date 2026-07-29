@@ -216,13 +216,14 @@ bash CamCan_Experiment/cohort_pipeline/submit_cohort_manuscript_analysis.sh \
 ```
 
 The cohort launcher submits 40 resumable ROI/repeat jobs at up to 40-way concurrency,
-followed by one `afterok` collector. It preserves the established post-analysis
-resource profile (12 CPU, 24 GB, 8 hours per job). The analysis calculates:
+followed by one `afterok` collector. It uses 12 CPU, 24 GB, and a one-hour
+time limit for both metric extraction and collection. The analysis calculates:
 
 - target, off-target, and whole-brain coverage at 0.20, 0.18, and 0.15 V/m;
 - localization of suprathreshold and whole-brain top-5% voxels in the target;
-- minimum and median target field, plus the P99.9 robust maximum in the target,
-  whole brain, and off-target compartment;
+- mean and median target field as primary summaries, with the minimum and
+  P99.9 robust maximum retained for validation/QC in the target, whole brain,
+  and off-target compartment;
 - the median of the upper 1% as a robust-maximum sensitivity analysis;
 - the same metrics for each ROI-specific MNI152 baseline.
 

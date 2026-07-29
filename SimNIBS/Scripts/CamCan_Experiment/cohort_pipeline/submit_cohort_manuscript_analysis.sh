@@ -48,11 +48,11 @@ PARTITION="${PARTITION:-sheffield}"
 MANUSCRIPT_WORKERS="${MANUSCRIPT_WORKERS:-12}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-12}"
 MEMORY="${MEMORY:-24G}"
-TIME_LIMIT="${TIME_LIMIT:-08:00:00}"
+TIME_LIMIT="${TIME_LIMIT:-01:00:00}"
 MAX_CONCURRENT_DATASETS="${MAX_CONCURRENT_DATASETS:-40}"
 COLLECTOR_CPUS="${COLLECTOR_CPUS:-12}"
 COLLECTOR_MEMORY="${COLLECTOR_MEMORY:-24G}"
-COLLECTOR_TIME="${COLLECTOR_TIME:-08:00:00}"
+COLLECTOR_TIME="${COLLECTOR_TIME:-01:00:00}"
 MANUSCRIPT_THRESHOLDS_COLON="${MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 MANUSCRIPT_TOP_PERCENTILE="${MANUSCRIPT_TOP_PERCENTILE:-95.0}"
 MANUSCRIPT_ROBUST_MAX_PERCENTILE="${MANUSCRIPT_ROBUST_MAX_PERCENTILE:-99.9}"
@@ -219,6 +219,7 @@ printf '%s\n' \
     '  collector jobs: 1' \
     "  scheduler tasks total: ${SCHEDULER_TASKS}" \
     "  thresholds: ${MANUSCRIPT_THRESHOLDS_DISPLAY} V/m" \
+    '  target-field summaries: mean and median primary; minimum and robust maximum retained for QC' \
     "  robust maximum: P${MANUSCRIPT_ROBUST_MAX_PERCENTILE}" \
     "  robust sensitivity: median of upper $(python3 -c "print(${MANUSCRIPT_UPPER_TAIL_FRACTION} * 100)")%" \
     '  repeat aggregation: arithmetic mean after metric calculation' \

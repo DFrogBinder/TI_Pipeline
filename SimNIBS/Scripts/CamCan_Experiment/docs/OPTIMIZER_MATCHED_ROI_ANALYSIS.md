@@ -8,7 +8,7 @@ small spherical target centred on the parcel and clipped to the parcel. The two
 methods therefore summarized different tissue volumes, which made a successful
 optimization appear worse when judged by the full-parcel median.
 
-Analysis schema 3 makes the post-processing target match the target constructed
+Analysis schema 4 makes the post-processing target match the target constructed
 by the supervisor's `MakeROIs.m`.
 
 ## MATLAB-to-Python mapping
@@ -42,15 +42,18 @@ requested volume was reached.
 - Unprefixed metrics are the primary optimizer-matched target analysis.
 - `anatomical_`-prefixed metrics repeat the calculation over the complete
   anatomical parcel as a secondary compatibility/QC analysis.
-- `roi_min_v_per_m` is included because the personalized Pareto solution is
-  selected from `TI_free.Emin`.
+- `roi_mean_v_per_m` and `roi_median_v_per_m` are the primary target-field
+  summaries used in manuscript figures. The mean is included explicitly to
+  validate against the supervisor's mean-field optimization objective.
+- `roi_min_v_per_m` and robust-maximum metrics remain available as validation
+  and QC summaries rather than primary outcome panels.
 - Threshold analyses are calculated at 0.20, 0.18, and 0.15 V/m.
 - Every metric is calculated separately in each remeshing repeat and then
   arithmetic-mean aggregated across the ten repeats.
 
-Earlier schema-2 CSVs cannot be reaggregated into this analysis because they do
-not contain the spatial information needed to reconstruct the smaller target.
-The image-level extraction must be rerun; the FEM simulations remain read-only.
+Earlier schema-3 CSVs cannot be reaggregated into schema 4 because they do not
+contain the target-ROI mean. The image-level extraction must be rerun; the FEM
+simulations remain read-only.
 
 ## Production scopes
 

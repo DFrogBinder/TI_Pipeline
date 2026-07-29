@@ -48,7 +48,7 @@ from utils.roi_registry import (  # noqa: E402
 from utils.ti_utils import load_ti_as_scalar, vol_mm3  # noqa: E402
 
 
-ANALYSIS_SCHEMA_VERSION = 3
+ANALYSIS_SCHEMA_VERSION = 4
 METRIC_MARKER_FILENAME = "optimizer_matched_metrics.json"
 DEFAULT_THRESHOLDS_V_PER_M = (0.20, 0.18, 0.15)
 DEFAULT_TOP_PERCENTILE = 95.0
@@ -135,6 +135,7 @@ def manuscript_metric_names(
 ) -> list[str]:
     names = [
         "roi_min_v_per_m",
+        "roi_mean_v_per_m",
         "roi_median_v_per_m",
         "roi_robust_max_p99_9_v_per_m",
         "roi_upper_1_percent_median_v_per_m",
@@ -227,6 +228,7 @@ def compute_manuscript_metrics(
         "off_target_voxels": off_target_voxels,
         "voxel_volume_mm3": voxel_volume,
         "roi_min_v_per_m": float(np.min(roi_values)) if roi_values.size else math.nan,
+        "roi_mean_v_per_m": float(np.mean(roi_values)) if roi_values.size else math.nan,
         "roi_median_v_per_m": float(np.median(roi_values)) if roi_values.size else math.nan,
         "roi_robust_max_p99_9_v_per_m": _safe_percentile(
             roi_values, robust_max_percentile
@@ -780,22 +782,28 @@ def _compute_mni_record(
 
 METRIC_METADATA: dict[str, tuple[str, str, str]] = {
     "roi_min_v_per_m": (
-        "Minimum optimizer-target TI field",
+        "Minimum target-ROI TI field",
         "V/m",
         "Minimum over finite voxels in the optimizer-matched parcel-clipped sphere.",
     ),
+    "roi_mean_v_per_m": (
+        "Mean target-ROI TI field",
+        "V/m",
+        "Arithmetic mean over finite voxels in the optimizer-matched "
+        "parcel-clipped target ROI.",
+    ),
     "roi_median_v_per_m": (
-        "Median optimizer-target TI field",
+        "Median target-ROI TI field",
         "V/m",
         "Median over finite voxels in the optimizer-matched parcel-clipped sphere.",
     ),
     "roi_robust_max_p99_9_v_per_m": (
-        "Robust maximum optimizer-target TI field (P99.9)",
+        "Robust maximum target-ROI TI field (P99.9)",
         "V/m",
         "99.9th percentile over finite optimizer-target voxels; primary robust maximum.",
     ),
     "roi_upper_1_percent_median_v_per_m": (
-        "Median of upper 1% optimizer-target TI field",
+        "Median of upper 1% target-ROI TI field",
         "V/m",
         "Median among optimizer-target values at or above P99; sensitivity robust maximum.",
     ),
@@ -911,6 +919,7 @@ for _metric, (_label, _unit, _definition) in tuple(METRIC_METADATA.items()):
 
 MAIN_METRICS = (
     "roi_min_v_per_m",
+    "roi_mean_v_per_m",
     "roi_median_v_per_m",
     "roi_robust_max_p99_9_v_per_m",
     "target_coverage_percent_ge_0p2",

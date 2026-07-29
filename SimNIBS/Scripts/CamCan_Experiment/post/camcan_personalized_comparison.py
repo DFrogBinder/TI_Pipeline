@@ -54,7 +54,7 @@ from utils.roi_registry import match_fastsurfer_roi_from_directory  # noqa: E402
 from utils.ti_utils import load_ti_as_scalar  # noqa: E402
 
 
-COMPARISON_SCHEMA_VERSION = 2
+COMPARISON_SCHEMA_VERSION = 3
 CONDITIONS = ("generic", "personalized")
 REPEATS = tuple(f"{number:02d}" for number in range(1, 11))
 EXPECTED_SUBJECTS = 7
@@ -67,7 +67,7 @@ GENERIC_TARGET_BY_ROI = {
     "Right_Thalamus": "Right_Thalamus",
 }
 MAIN_METRICS = (
-    "roi_min_v_per_m",
+    "roi_mean_v_per_m",
     "roi_median_v_per_m",
     "roi_robust_max_p99_9_v_per_m",
     "roi_upper_1_percent_median_v_per_m",
@@ -787,14 +787,15 @@ def _metric_label(metric: str) -> tuple[str, str]:
         label, unit = _metric_label(metric.removeprefix("anatomical_"))
         return (f"Full anatomical parcel: {label}", unit)
     fixed = {
-        "roi_min_v_per_m": ("Minimum optimizer-target TI field", "V/m"),
-        "roi_median_v_per_m": ("Median optimizer-target TI field", "V/m"),
+        "roi_min_v_per_m": ("Minimum target-ROI TI field", "V/m"),
+        "roi_mean_v_per_m": ("Mean target-ROI TI field", "V/m"),
+        "roi_median_v_per_m": ("Median target-ROI TI field", "V/m"),
         "roi_robust_max_p99_9_v_per_m": (
-            "Optimizer-target robust maximum (P99.9)",
+            "Target-ROI robust maximum (P99.9)",
             "V/m",
         ),
         "roi_upper_1_percent_median_v_per_m": (
-            "Median of upper 1% optimizer-target TI field",
+            "Median of upper 1% target-ROI TI field",
             "V/m",
         ),
         "top_5_percent_target_coverage_percent": (
@@ -829,16 +830,16 @@ def _write_paired_dumbbell(condition_frame: pd.DataFrame, output_base: Path) -> 
     from matplotlib.lines import Line2D
 
     plot_metrics = (
-        "roi_min_v_per_m",
-        "target_coverage_percent_ge_0p18",
-        "off_target_coverage_percent_ge_0p18",
-        "threshold_localization_percent_in_roi_ge_0p18",
+        "roi_mean_v_per_m",
+        "roi_median_v_per_m",
+        "target_coverage_percent_ge_0p2",
+        "off_target_coverage_percent_ge_0p2",
     )
     pair_count = int(condition_frame["pair_index"].nunique())
     fig_height = max(8.0, 4.5 + 0.27 * pair_count)
     fig, axes = plt.subplots(2, 2, figsize=(12.5, fig_height))
     labels = [
-        f"{row.roi.replace('_', ' ')} – {row.selection_role}"
+        f"{row.roi.replace('_', ' ')} – {row.subject.replace('sub-', '')}"
         for row in condition_frame.drop_duplicates(
             ["pair_index", "roi", "selection_role"]
         )
@@ -902,7 +903,7 @@ def _write_paired_dumbbell(condition_frame: pd.DataFrame, output_base: Path) -> 
     plt.close(fig)
 
 
-def _write_effectiveness_arrows(
+def _write_effectiveness_trajectories(
     condition_frame: pd.DataFrame,
     *,
     threshold: float,
@@ -923,7 +924,6 @@ def _write_effectiveness_arrows(
     subject_colors = {
         subject: palette(index % 10) for index, subject in enumerate(subjects)
     }
-    role_markers = {"best": "^", "worst": "v", "cross_target": "o"}
     for axis, roi in zip(axes, ROI_ORDER):
         rows = condition_frame.loc[condition_frame["roi"] == roi]
         for pair_index in sorted(rows["pair_index"].unique()):
@@ -933,24 +933,19 @@ def _write_effectiveness_arrows(
             generic = pair_rows.loc["generic"]
             personalized = pair_rows.loc["personalized"]
             subject = str(generic["subject"])
-            role = str(generic["selection_role"])
             color = subject_colors[subject]
-            marker = role_markers.get(role, "o")
-            axis.annotate(
-                "",
-                xy=(personalized[x_metric], personalized[y_metric]),
-                xytext=(generic[x_metric], generic[y_metric]),
-                arrowprops={
-                    "arrowstyle": "->",
-                    "color": color,
-                    "lw": 1.8 if role in {"best", "worst"} else 1.1,
-                    "alpha": 0.9 if role in {"best", "worst"} else 0.65,
-                },
+            axis.plot(
+                [generic[x_metric], personalized[x_metric]],
+                [generic[y_metric], personalized[y_metric]],
+                color=color,
+                lw=1.2,
+                alpha=0.72,
+                zorder=2,
             )
             axis.scatter(
                 generic[x_metric],
                 generic[y_metric],
-                marker=marker,
+                marker="o",
                 facecolor="white",
                 edgecolor=color,
                 s=55,
@@ -960,7 +955,7 @@ def _write_effectiveness_arrows(
             axis.scatter(
                 personalized[x_metric],
                 personalized[y_metric],
-                marker=marker,
+                marker="o",
                 facecolor=color,
                 edgecolor=color,
                 s=55,
@@ -968,7 +963,7 @@ def _write_effectiveness_arrows(
             )
         axis.set_title(roi.replace("_", " "))
         axis.set_xlabel(
-            f"Optimizer-target coverage ≥ {threshold:.2f} V/m (%)"
+            f"Target coverage ≥ {threshold:.2f} V/m (%)"
         )
         axis.grid(True, color="#D9D9D9", linewidth=0.6)
     axes[0].set_ylabel(f"Off-target coverage ≥ {threshold:.2f} V/m (%)")
@@ -981,29 +976,20 @@ def _write_effectiveness_arrows(
             Line2D(
                 [0],
                 [0],
-                marker="^",
+                marker="o",
                 markerfacecolor="white",
                 markeredgecolor="#555555",
                 linestyle="none",
-                label="Originally selected best",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="v",
-                markerfacecolor="white",
-                markeredgecolor="#555555",
-                linestyle="none",
-                label="Originally selected worst",
+                label="Generic montage",
             ),
             Line2D(
                 [0],
                 [0],
                 marker="o",
-                markerfacecolor="white",
+                markerfacecolor="#555555",
                 markeredgecolor="#555555",
                 linestyle="none",
-                label="Cross-target configuration",
+                label="Personalized montage",
             ),
         ],
         loc="upper center",
@@ -1050,7 +1036,7 @@ def _write_repeat_distribution(repeat_frame: pd.DataFrame, output_base: Path) ->
             pair = rows.iloc[0]
             values = [
                 rows.loc[
-                    rows["condition"] == condition, "roi_min_v_per_m"
+                    rows["condition"] == condition, "roi_mean_v_per_m"
                 ].to_numpy()
                 for condition in CONDITIONS
             ]
@@ -1074,12 +1060,12 @@ def _write_repeat_distribution(repeat_frame: pd.DataFrame, output_base: Path) ->
                     zorder=3,
                 )
             axis.set_title(
-                f"{roi.replace('_', ' ')}\n{pair['selection_role']}: {subject}",
+                f"{roi.replace('_', ' ')}\n{subject.replace('sub-', '')}",
                 fontsize=8.2,
             )
             axis.grid(axis="y", color="#D9D9D9", linewidth=0.6)
             if column_index == 0:
-                axis.set_ylabel("Minimum target field (V/m)")
+                axis.set_ylabel("Mean target-ROI field (V/m)")
     fig.suptitle(
         "Technical-repeat distributions for all 28 optimized subject–ROI configurations"
     )
@@ -1372,15 +1358,15 @@ def collect_analysis(
         figures_dir / "paired_generic_vs_personalized_dumbbell",
     )
     for threshold in thresholds:
-        _write_effectiveness_arrows(
+        _write_effectiveness_trajectories(
             condition_frame,
             threshold=float(threshold),
             output_base=figures_dir
-            / f"effectiveness_off_target_arrows_ge_{_threshold_slug(float(threshold))}",
+            / f"effectiveness_off_target_trajectories_ge_{_threshold_slug(float(threshold))}",
         )
     _write_repeat_distribution(
         repeat_frame,
-        figures_dir / "technical_repeat_roi_median_distributions",
+        figures_dir / "technical_repeat_roi_mean_distributions",
     )
 
     manifest = {
@@ -1429,7 +1415,7 @@ def collect_analysis(
             "full-anatomical-parcel roi_median_v_per_m averaged after "
             "per-repeat calculation in the generic final-132 cohort analysis"
         ),
-        "current_optimizer_objective_metric": "roi_min_v_per_m",
+        "current_optimizer_objective_metric": "roi_mean_v_per_m",
         "outputs": [],
     }
     preflight_path = output_root / "preflight.json"

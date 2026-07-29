@@ -147,6 +147,7 @@ printf '%s\n' \
     '  collector jobs: 1' \
     '  scheduler tasks total: 29' \
     "  thresholds: ${THRESHOLDS_DISPLAY} V/m" \
+    '  target-field summaries: mean and median primary; minimum and robust maximum retained for QC' \
     "  robust maximum: P${COMPARISON_ROBUST_MAX_PERCENTILE}" \
     '  aggregation: calculate every metric per repeat, then mean within condition' \
     '  primary ROI: MakeROIs.m-equivalent parcel-clipped optimizer sphere' \

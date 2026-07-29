@@ -111,6 +111,7 @@ def test_manuscript_metrics_use_supplied_roi_denominator_and_all_thresholds():
 
     assert metrics["roi_voxels"] == 4
     assert metrics["roi_min_v_per_m"] == pytest.approx(0.15)
+    assert metrics["roi_mean_v_per_m"] == pytest.approx((0.20 + 0.18 + 0.15) / 3)
     assert metrics["roi_finite_voxels"] == 3
     assert metrics["roi_nonfinite_voxels"] == 1
     assert metrics["target_coverage_voxels_ge_0p18"] == 2
@@ -321,6 +322,7 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
         & (subject_frame["subject"] == "sub-01")
     ].iloc[0]
     assert row["roi_median_v_per_m"] == pytest.approx(6.5)
+    assert row["roi_mean_v_per_m"] == pytest.approx(6.5)
     assert row["repeat_count"] == 10
     assert (out_dir / "table_main_long.csv").is_file()
     assert (out_dir / "table_supplementary_descriptive_statistics.csv").is_file()
@@ -527,6 +529,8 @@ def test_manuscript_submitter_uses_40_resumable_jobs_then_one_collector():
     assert 'MAX_CONCURRENT_DATASETS="${MAX_CONCURRENT_DATASETS:-40}"' in text
     assert '--array="0-39%${MAX_CONCURRENT_DATASETS}"' in text
     assert '--dependency="afterok:${SUBJECT_JOB}"' in text
+    assert 'TIME_LIMIT="${TIME_LIMIT:-01:00:00}"' in text
+    assert 'COLLECTOR_TIME="${COLLECTOR_TIME:-01:00:00}"' in text
     assert "MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15" in text
     assert "optimizer_matched_analysis" in text
     assert "100 mm3 cortical; 200 mm3 subcortical" in text

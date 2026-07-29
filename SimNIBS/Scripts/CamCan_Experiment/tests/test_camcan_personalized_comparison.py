@@ -260,7 +260,11 @@ def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_pa
                 )
 
     monkeypatch.setattr(comparison, "_write_paired_dumbbell", lambda *a, **k: None)
-    monkeypatch.setattr(comparison, "_write_effectiveness_arrows", lambda *a, **k: None)
+    monkeypatch.setattr(
+        comparison,
+        "_write_effectiveness_trajectories",
+        lambda *a, **k: None,
+    )
     monkeypatch.setattr(comparison, "_write_repeat_distribution", lambda *a, **k: None)
     manifest = comparison.collect_analysis(
         allowlist_path=allowlist_path,
@@ -412,7 +416,10 @@ def test_comparison_figures_write_png_and_pdf(tmp_path):
                     "selection_role": role,
                     "condition": condition,
                     "roi_min_v_per_m": 0.08 + 0.02 * condition_index,
+                    "roi_mean_v_per_m": 0.09 + 0.02 * condition_index,
                     "roi_median_v_per_m": 0.10 + 0.02 * condition_index,
+                    "target_coverage_percent_ge_0p2": 18 + 10 * condition_index,
+                    "off_target_coverage_percent_ge_0p2": 7 - condition_index,
                     "target_coverage_percent_ge_0p18": 20 + 10 * condition_index,
                     "off_target_coverage_percent_ge_0p18": 8 - condition_index,
                     "threshold_localization_percent_in_roi_ge_0p18": 25
@@ -431,6 +438,9 @@ def test_comparison_figures_write_png_and_pdf(tmp_path):
                         "roi_min_v_per_m": (
                             0.08 + 0.02 * condition_index + repeat_number / 1000
                         ),
+                        "roi_mean_v_per_m": (
+                            0.09 + 0.02 * condition_index + repeat_number / 1000
+                        ),
                         "roi_median_v_per_m": (
                             0.10 + 0.02 * condition_index + repeat_number / 1000
                         ),
@@ -440,11 +450,11 @@ def test_comparison_figures_write_png_and_pdf(tmp_path):
     repeat_frame = pd.DataFrame(repeat_rows)
     bases = (
         tmp_path / "dumbbell",
-        tmp_path / "arrows",
+        tmp_path / "trajectories",
         tmp_path / "repeats",
     )
     comparison._write_paired_dumbbell(condition_frame, bases[0])
-    comparison._write_effectiveness_arrows(
+    comparison._write_effectiveness_trajectories(
         condition_frame,
         threshold=0.18,
         output_base=bases[1],

@@ -176,6 +176,7 @@ def test_supervisor_revision_builds_complete_figure_set(tmp_path):
     assert result["best_worst_visual_encoding"] is False
     assert result["trajectory_arrows"] is False
     assert result["condition_connecting_lines"] is False
+    assert result["subject_row_condition_offset"] is False
     assert result["field_summaries"] == [
         "minimum",
         "mean",

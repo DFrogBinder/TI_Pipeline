@@ -900,21 +900,21 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
             ].to_numpy(dtype=float)
             axis.errorbar(
                 generic,
-                y + 0.13,
+                y,
                 xerr=generic_sd,
                 fmt="o",
                 ms=4,
-                mfc="white",
+                mfc="none",
                 mec=BLUE,
                 mew=1.05,
                 ecolor=BLUE,
                 elinewidth=0.7,
                 capsize=1.5,
-                zorder=3,
+                zorder=4,
             )
             axis.errorbar(
                 personalized,
-                y - 0.13,
+                y,
                 xerr=personalized_sd,
                 fmt="o",
                 ms=4,
@@ -924,7 +924,7 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                 ecolor=ORANGE,
                 elinewidth=0.7,
                 capsize=1.5,
-                zorder=4,
+                zorder=3,
             )
             axis.set_title(title, weight="bold", pad=6)
             axis.set_yticks(y)
@@ -959,7 +959,8 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                     [0],
                     marker="o",
                     color=BLUE,
-                    markerfacecolor="white",
+                    markerfacecolor="none",
+                    linestyle="none",
                     label="Generic montage",
                 ),
                 Line2D(
@@ -968,6 +969,7 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                     marker="o",
                     color=ORANGE,
                     markerfacecolor=ORANGE,
+                    linestyle="none",
                     label="Personalized montage",
                 ),
             ],
@@ -1439,7 +1441,8 @@ def captions() -> dict[str, str]:
             "by target and off-target coverage at 0.20 V/m. Open blue circles "
             "are generic condition means, filled orange circles are "
             "personalized condition means, and error bars show sample SD "
-            "across ten repeats. No lines connect conditions. Historical "
+            "across ten repeats. Both conditions occupy the same horizontal "
+            "subject row, and no lines connect conditions. Historical "
             "best/worst labels are omitted because they used a different ROI "
             "definition and a target-only selection criterion."
         )
@@ -1512,6 +1515,9 @@ emails and the subsequent clarification.
   targets in the right column.
 - Dense personalized summaries and selectivity-ratio plots are split into one
   figure per ROI.
+- Generic and personalized markers in the subject-change summaries share the
+  exact same y-coordinate for each subject; their vertical position therefore
+  encodes subject identity only.
 - Every figure is supplied as a 400-dpi PNG and vector PDF with a
   self-contained caption and the supporting numerical tables.
 
@@ -1640,6 +1646,7 @@ def build(
         "best_worst_visual_encoding": False,
         "trajectory_arrows": False,
         "condition_connecting_lines": False,
+        "subject_row_condition_offset": False,
         "field_summaries": [
             "minimum",
             "mean",

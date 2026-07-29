@@ -71,6 +71,30 @@ simnibs_python simulation/TI_runner_MNI152.py \
 
 The MNI152 runner does not perform subject-specific CHARM meshing or segmentation replacement. It is intended for fast switching between template-only montage configurations while keeping the same downstream output layout expected by the post-processing code.
 
+### SimNIBS 4.0.1 versus 4.5.0 MNI152 validation
+
+The Stanage validation launcher reruns the four manuscript MNI152 montages with
+the cluster's `SimNIBS/4.0.1-foss-2023a` module while holding the MNI152 mesh,
+reference T1, montage parameters, conductivities, electrode geometry, and
+TImax workflow fixed. It writes to
+`/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_validation`; it does not
+replace the existing 4.5.0 baselines under
+`/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data`.
+
+Preflight and submit:
+
+```bash
+bash CamCan_Experiment/HPC_scripts/submit_mni152_simnibs401_validation.sh --preflight
+bash CamCan_Experiment/HPC_scripts/submit_mni152_simnibs401_validation.sh
+```
+
+The four-element array performs eight tDCS FEM solves and produces four TImax
+meshes and four brain-only TI NIfTIs. A dependent collector computes
+voxelwise and optimizer-matched ROI differences between SimNIBS 4.0.1 and
+4.5.0, then writes a compact downloadable archive and SHA-256 checksum to the
+isolated validation root. Raw FEM meshes remain on scratch and are not
+duplicated in the compact archive.
+
 ## Simulation repair workflow
 After a repeated simulation batch has partial failures, the easiest launch path
 is the Slurm repair launcher. All routine configuration is set in the block at

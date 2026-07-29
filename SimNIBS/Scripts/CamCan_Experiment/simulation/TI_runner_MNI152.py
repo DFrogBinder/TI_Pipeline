@@ -1,12 +1,15 @@
 #!/home/boyan/SimNIBS-4.5/bin/simnibs_python
 # -*- coding: utf-8 -*-
 import argparse
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 
 import nibabel as nib
@@ -20,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from utils.paths import sim_output_dir, simnibs_root
+from utils.paths import simnibs_root
 from utils.sim_utils import format_output_dir
 from target_montages import (
     MONTAGE_CHOICES,
@@ -28,6 +31,7 @@ from target_montages import (
     PairSpec,
     MontageSpec,
     resolve_montage_preset,
+    targets_csv_sha256,
 )
 
 
@@ -36,6 +40,16 @@ DEFAULT_ROOT_DIR = "/home/boyan/sandbox/Jake_Data/MNI152-data"
 DEFAULT_MNI_MESH_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/MNI152.msh"
 DEFAULT_REFERENCE_T1_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
 DEFAULT_ELEMENT_SIZE = 0.1
+OUTPUT_SUBJECT_PATTERN = re.compile(r"^MNI152(?:-[a-z0-9-]+)?$")
+CUSTOM_CONDUCTIVITIES = {
+    "WM": 0.126,
+    "GM": 0.276,
+    "CSF": 1.65,
+    "Skull": 0.01,
+    "Scalp": 0.465,
+    "Eye": 0.5,
+    "Muscle": 0.16,
+}
 
 
 def log_event(event: str, **fields) -> None:
@@ -52,6 +66,14 @@ def log_file_info(label: str, path: str | Path) -> None:
         exists=candidate.exists(),
         size_bytes=candidate.stat().st_size if candidate.exists() else None,
     )
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def run_cmd(cmd: list[str], *, cwd: str | None = None, label: str = "cmd") -> None:
@@ -182,9 +204,16 @@ def add_pair_to_session(
     cathode.thickness = electrode_thickness_mm
 
 
-def prepare_output_dirs(root_dir: str) -> tuple[Path, Path]:
-    output_root = simnibs_root(root_dir, SUBJECT)
-    pathfem = sim_output_dir(root_dir, SUBJECT)
+def prepare_output_dirs(root_dir: str, output_subject: str) -> tuple[Path, Path]:
+    if not OUTPUT_SUBJECT_PATTERN.fullmatch(output_subject):
+        raise ValueError(
+            "Output subject must be MNI152 or an ROI-specific MNI152-* name; "
+            f"got {output_subject!r}."
+        )
+    output_root = simnibs_root(root_dir, output_subject)
+    # Keep the established baseline layout:
+    # MNI152-<roi>/anat/SimNIBS/Output/MNI152/.
+    pathfem = output_root / "Output" / SUBJECT
     output_root.mkdir(parents=True, exist_ok=True)
     pathfem.mkdir(parents=True, exist_ok=True)
     format_output_dir(str(pathfem))
@@ -277,14 +306,121 @@ def save_brain_only_ti(
     return masked_output_path
 
 
+def write_provenance(
+    *,
+    args: argparse.Namespace,
+    montage: MontageSpec,
+    mesh_path: Path,
+    reference_t1_path: Path,
+    output_root: Path,
+    pathfem: Path,
+    brain_only_path: Path,
+    started_at: str,
+) -> Path:
+    mesh_1_path = pathfem / f"{SUBJECT}_TDCS_1_scalar.msh"
+    mesh_2_path = pathfem / f"{SUBJECT}_TDCS_2_scalar.msh"
+    ti_mesh_path = pathfem / "TI.msh"
+    finished_at = datetime.now(timezone.utc).isoformat()
+    simnibs_version = str(getattr(sim, "__version__", "unknown"))
+    provenance = {
+        "schema_version": 2,
+        "status": "complete",
+        "started_at_utc": started_at,
+        "finished_at_utc": finished_at,
+        "subject": SUBJECT,
+        "output_subject": args.output_subject,
+        "preset": montage.name,
+        "roi": montage.roi,
+        "configuration": montage.configuration,
+        "software": {
+            "simnibs_version": simnibs_version,
+            "python_version": sys.version,
+            "numpy_version": np.__version__,
+            "ti_method": "simnibs.utils.TI_utils.get_maxTI",
+        },
+        "inputs": {
+            "mni_mesh": str(mesh_path),
+            "mni_mesh_sha256": sha256_file(mesh_path),
+            "reference_t1": str(reference_t1_path),
+            "reference_t1_sha256": sha256_file(reference_t1_path),
+            "targets_csv_sha256": targets_csv_sha256(),
+        },
+        "stimulation": {
+            "pair1": {
+                "anode": montage.pair1.anode,
+                "cathode": montage.pair1.cathode,
+                "current_a": montage.pair1.current_amp,
+            },
+            "pair2": {
+                "anode": montage.pair2.anode,
+                "cathode": montage.pair2.cathode,
+                "current_a": montage.pair2.current_amp,
+            },
+            "electrode_radius_mm": montage.electrode_radius_mm,
+            "electrode_thickness_mm": montage.electrode_thickness_mm,
+            "electrode_shape": montage.electrode_shape,
+            "electrode_conductivity_s_per_m": montage.electrode_conductivity,
+            "element_size": args.element_size,
+            "conductivities_s_per_m": {
+                **CUSTOM_CONDUCTIVITIES,
+                "Saline": montage.electrode_conductivity,
+            },
+        },
+        "outputs": {
+            "ti_brain_only": {
+                "path": str(brain_only_path),
+                "size_bytes": brain_only_path.stat().st_size,
+                "sha256": sha256_file(brain_only_path),
+            },
+            "ti_mesh": {
+                "path": str(ti_mesh_path),
+                "size_bytes": ti_mesh_path.stat().st_size,
+            },
+            "tdcs_scalar_meshes": [
+                {"path": str(path), "size_bytes": path.stat().st_size}
+                for path in (mesh_1_path, mesh_2_path)
+            ],
+        },
+    }
+    provenance_path = output_root / "mni_baseline_provenance.json"
+    temporary_path = provenance_path.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary_path.replace(provenance_path)
+    log_file_info("provenance", provenance_path)
+    return provenance_path
+
+
 def run_mni152(args: argparse.Namespace) -> None:
+    started_at = datetime.now(timezone.utc).isoformat()
+    simnibs_version = str(getattr(sim, "__version__", "unknown"))
+    if (
+        args.expected_simnibs_version
+        and simnibs_version != args.expected_simnibs_version
+    ):
+        raise RuntimeError(
+            "Wrong SimNIBS runtime: "
+            f"{simnibs_version!r} != {args.expected_simnibs_version!r}."
+        )
     montage = build_montage(args)
     element_size = positive_scalar(args.element_size, "element size")
     mesh_path = Path(args.mni_mesh_path).expanduser().resolve()
     reference_t1_path = Path(args.reference_t1_path).expanduser().resolve()
-    output_root, pathfem = prepare_output_dirs(args.root_dir)
+    output_root, pathfem = prepare_output_dirs(
+        args.root_dir,
+        args.output_subject,
+    )
 
     print(f"[INFO] Starting dedicated MNI152 TI pipeline with preset '{args.preset}'.")
+    log_event(
+        "software",
+        simnibs_version=simnibs_version,
+        expected_simnibs_version=args.expected_simnibs_version,
+        python_version=sys.version,
+        numpy_version=np.__version__,
+    )
     log_file_info("mni_mesh", mesh_path)
     log_file_info("reference_t1", reference_t1_path)
     if not mesh_path.exists():
@@ -310,6 +446,7 @@ def run_mni152(args: argparse.Namespace) -> None:
         electrode_thickness_mm=montage.electrode_thickness_mm,
         electrode_shape=montage.electrode_shape,
         electrode_conductivity=montage.electrode_conductivity,
+        output_subject=args.output_subject,
         output_root=str(output_root),
     )
 
@@ -318,16 +455,11 @@ def run_mni152(args: argparse.Namespace) -> None:
     session.pathfem = str(pathfem)
     session.element_size = element_size
     session.map_to_vol = True
+    session.open_in_gmsh = False
 
     tdcs1 = session.add_tdcslist()
     custom_conductivities = {
-        "WM": 0.126,
-        "GM": 0.276,
-        "CSF": 1.65,
-        "Skull": 0.01,
-        "Scalp": 0.465,
-        "Eye": 0.5,
-        "Muscle": 0.16,
+        **CUSTOM_CONDUCTIVITIES,
         "Saline": montage.electrode_conductivity,
     }
     for conductivity in tdcs1.cond:
@@ -388,7 +520,21 @@ def run_mni152(args: argparse.Namespace) -> None:
         str(reference_t1_path),
         pathfem,
     )
-    save_brain_only_ti(label_file_path, ti_volume_path, output_root)
+    brain_only_path = save_brain_only_ti(
+        label_file_path,
+        ti_volume_path,
+        output_root,
+    )
+    write_provenance(
+        args=args,
+        montage=montage,
+        mesh_path=mesh_path,
+        reference_t1_path=reference_t1_path,
+        output_root=output_root,
+        pathfem=pathfem,
+        brain_only_path=brain_only_path,
+        started_at=started_at,
+    )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -401,7 +547,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_ROOT_DIR,
         help=(
             "Experiment root. Outputs are written under "
-            "<root-dir>/MNI152/anat/SimNIBS/."
+            "<root-dir>/<output-subject>/anat/SimNIBS/."
+        ),
+    )
+    parser.add_argument(
+        "--output-subject",
+        default=SUBJECT,
+        help=(
+            "Output directory name. The head model remains MNI152; this only "
+            "allows isolated ROI-specific baseline directories."
         ),
     )
     parser.add_argument(
@@ -470,6 +624,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_ELEMENT_SIZE,
         help="SimNIBS element size used for the session and electrode refinement.",
+    )
+    parser.add_argument(
+        "--expected-simnibs-version",
+        help="Fail before simulation unless the imported SimNIBS version matches.",
     )
     parser.add_argument(
         "--list-presets",

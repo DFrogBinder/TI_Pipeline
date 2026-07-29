@@ -39,6 +39,17 @@ bash CamCan_Experiment/cohort_pipeline/submit_mni_threshold_manuscript_reanalysi
 The two analyses may also be submitted independently by replacing `all` with
 `cohort` or `personalized`.
 
+For the cohort stage, this wrapper validates the completed schema-4 analysis
+manifest as a source-data receipt instead of performing another login-node
+metadata scan over all 5,280 unchanged source simulations. The receipt must
+confirm schema 4, complete full-image extraction, 132 subjects, four ROIs, ten
+repeats, 5,280 repeat records, 528 subject/ROI records, and four MNI baselines.
+The chain-completion receipt, the new SimNIBS 4.0.1 MNI baselines, Python
+dependencies, and MNI atlas are still checked live. Workers continue to fail
+visibly if a source file has been removed since the completed analysis.
+Invoking the generic cohort launcher directly without
+`MANUSCRIPT_SOURCE_VALIDATION_RECEIPT` retains its exhaustive live scan.
+
 The isolated HPC output directories are:
 
 - cohort:

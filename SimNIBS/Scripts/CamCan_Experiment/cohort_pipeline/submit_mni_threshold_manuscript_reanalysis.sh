@@ -20,6 +20,8 @@ THRESHOLD_TABLE="${CAMCAN_DIR}/post/mni152_simnibs401_roi_thresholds.csv"
 PACKAGER="${CAMCAN_DIR}/post/package_camcan_publication_inputs_v5.py"
 RENDERER="${CAMCAN_DIR}/post/build_camcan_supervisor_revision_figures_v5.py"
 MNI401_BASELINES="${MNI_BASELINE_PARENT:-/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_validation}"
+GENERIC_STUDY_ROOT="${GENERIC_STUDY_ROOT:-/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Four_ROI}"
+COHORT_SOURCE_RECEIPT="${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT:-${GENERIC_STUDY_ROOT}/campaigns/final_132/post_processing/optimizer_matched_analysis_schema4/results/analysis_manifest.json}"
 PERSONALIZED_STUDY_ROOT="${PERSONALIZED_STUDY_ROOT:-/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Individualized_Optimized}"
 COMPARISON_ROOT="${PERSONALIZED_STUDY_ROOT}/campaigns/optimized_best_worst_7/post_processing/optimizer_matched_personalized_vs_generic_mni_thresholds_v1"
 
@@ -48,6 +50,7 @@ printf '%s\n' \
     '  FEM simulations: none' \
     '  metric extraction: exact image-level coverage at all four thresholds' \
     '  output policy: isolated v1 directories; schema3/schema4 and v3/v4 figure outputs remain untouched' \
+    "  cohort source-validation receipt: ${COHORT_SOURCE_RECEIPT}" \
     "  renderer: ${RENDERER}" \
     "  threshold table: ${THRESHOLD_TABLE}"
 
@@ -67,6 +70,8 @@ fi
 
 if [[ "${MODE}" == "all" || "${MODE}" == "cohort" ]]; then
     ANALYSIS_SUBDIR=optimizer_matched_analysis_mni_thresholds_v1 \
+    STUDY_ROOT="${GENERIC_STUDY_ROOT}" \
+    MANUSCRIPT_SOURCE_VALIDATION_RECEIPT="${COHORT_SOURCE_RECEIPT}" \
     MNI_BASELINE_PARENT="${MNI401_BASELINES}" \
     MANUSCRIPT_THRESHOLDS_COLON="${THRESHOLDS}" \
     PUBLICATION_PACKAGER="${PACKAGER}" \

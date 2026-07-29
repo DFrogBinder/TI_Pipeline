@@ -40,11 +40,13 @@ ANALYSIS_PY="${ANALYSIS_PY:-${CAMCAN_DIR}/post/camcan_manuscript_analysis.py}"
 PUBLICATION_PACKAGER="${PUBLICATION_PACKAGER:-${CAMCAN_DIR}/post/package_camcan_publication_inputs.py}"
 PUBLICATION_RENDERER="${PUBLICATION_RENDERER:-${CAMCAN_DIR}/post/build_camcan_supervisor_revision_figures.py}"
 MNI_THRESHOLD_TABLE="${MNI_THRESHOLD_TABLE:-${CAMCAN_DIR}/post/mni152_simnibs401_roi_thresholds.csv}"
+SOURCE_RECEIPT_VALIDATOR="${SOURCE_RECEIPT_VALIDATOR:-${CAMCAN_DIR}/post/validate_camcan_analysis_receipt.py}"
 SUBJECT_SLURM="${SUBJECT_SLURM:-${SCRIPT_DIR}/cohort_post_manuscript_subjects.slurm}"
 COLLECT_SLURM="${COLLECT_SLURM:-${SCRIPT_DIR}/cohort_post_manuscript_collect.slurm}"
 FASTSURFER_ROOT="${FASTSURFER_ROOT:-/mnt/parscratch/users/cop23bi/ZIPs/atlases}"
 MNI_FIXED_ATLAS_PATH="${MNI_FIXED_ATLAS_PATH:-${FASTSURFER_ROOT}/sub-mni152.nii.gz}"
 MNI_BASELINE_PARENT="${MNI_BASELINE_PARENT:-/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data}"
+MANUSCRIPT_SOURCE_VALIDATION_RECEIPT="${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT:-}"
 PYTHON="${PYTHON:-/users/cop23bi/.conda/envs/ti-post/bin/python}"
 
 PARTITION="${PARTITION:-sheffield}"
@@ -76,6 +78,7 @@ for required_file in \
     "${PUBLICATION_PACKAGER}" \
     "${PUBLICATION_RENDERER}" \
     "${MNI_THRESHOLD_TABLE}" \
+    "${SOURCE_RECEIPT_VALIDATOR}" \
     "${SUBJECT_SLURM}" \
     "${COLLECT_SLURM}" \
     "${MNI_FIXED_ATLAS_PATH}"
@@ -85,6 +88,12 @@ do
         exit 2
     fi
 done
+if [ -n "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" ] && \
+   [ ! -s "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" ]
+then
+    echo "[ERROR] Source analysis receipt is missing or empty: ${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" >&2
+    exit 2
+fi
 for value_name in \
     MANUSCRIPT_WORKERS \
     CPUS_PER_TASK \
@@ -140,13 +149,25 @@ mkdir -p \
     "${ANALYSIS_ROOT}/dataset_summaries" \
     "${ANALYSIS_ROOT}/results"
 
-python3 "${WORKFLOW_PY}" validate \
-    --stage simulations \
-    --manifest "${SIMULATION_MANIFEST}" \
-    --summary "${ANALYSIS_ROOT}/simulations.tsv" \
-    --skip-hashes
 VALIDATION_JSON="${ANALYSIS_ROOT}/simulations.json"
 EXPECTED_RECORDS=$((EXPECTED_SUBJECTS * 4 * 10))
+if [ -n "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" ]; then
+    "${PYTHON}" "${SOURCE_RECEIPT_VALIDATOR}" \
+        --receipt "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" \
+        --expected-subjects "${EXPECTED_SUBJECTS}" \
+        --expected-records "${EXPECTED_RECORDS}" \
+        --expected-post-campaign-root "${POST_CAMPAIGN_ROOT}" \
+        --output-json "${VALIDATION_JSON}" \
+        --output-summary "${ANALYSIS_ROOT}/simulations.tsv"
+    SOURCE_VALIDATION_MODE="prior complete schema-4 analysis receipt"
+else
+    python3 "${WORKFLOW_PY}" validate \
+        --stage simulations \
+        --manifest "${SIMULATION_MANIFEST}" \
+        --summary "${ANALYSIS_ROOT}/simulations.tsv" \
+        --skip-hashes
+    SOURCE_VALIDATION_MODE="live metadata scan of every source simulation"
+fi
 VALIDATION_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${VALIDATION_JSON}")"
 VALIDATION_COMPLETE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["complete"])' "${VALIDATION_JSON}")"
 if [ "${VALIDATION_STATUS}" != "complete" ] || \
@@ -155,42 +176,50 @@ then
     echo "[ERROR] Simulation validation did not confirm all ${EXPECTED_RECORDS} inputs." >&2
     exit 2
 fi
-
-MISSING_ATLASES=0
-while read -r subject; do
-    [ -n "${subject}" ] || continue
-    if [ ! -s "${FASTSURFER_ROOT}/${subject}.nii" ] && \
-       [ ! -s "${FASTSURFER_ROOT}/${subject}.nii.gz" ]
-    then
-        echo "[ERROR] Missing subject-space atlas: ${FASTSURFER_ROOT}/${subject}.nii[.gz]" >&2
-        MISSING_ATLASES=$((MISSING_ATLASES + 1))
+ROIS=(Left_Hippocampus Left_M1 Right_DLPC Right_Thalamus)
+if [ -z "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" ]; then
+    MISSING_ATLASES=0
+    while read -r subject; do
+        [ -n "${subject}" ] || continue
+        if [ ! -s "${FASTSURFER_ROOT}/${subject}.nii" ] && \
+           [ ! -s "${FASTSURFER_ROOT}/${subject}.nii.gz" ]
+        then
+            echo "[ERROR] Missing subject-space atlas: ${FASTSURFER_ROOT}/${subject}.nii[.gz]" >&2
+            MISSING_ATLASES=$((MISSING_ATLASES + 1))
+        fi
+    done < "${SUBJECTS_FILE}"
+    if [ "${MISSING_ATLASES}" -ne 0 ]; then
+        echo "[ERROR] Missing ${MISSING_ATLASES} subject-space atlas file(s)." >&2
+        exit 2
     fi
-done < "${SUBJECTS_FILE}"
-if [ "${MISSING_ATLASES}" -ne 0 ]; then
-    echo "[ERROR] Missing ${MISSING_ATLASES} subject-space atlas file(s)." >&2
-    exit 2
+
+    MISSING_TI=0
+    for roi in "${ROIS[@]}"; do
+        for repeat_number in $(seq 1 10); do
+            repeat_id="$(printf '%02d' "${repeat_number}")"
+            dataset_root="${STUDY_ROOT}/runs/${roi}_Runs/${roi}_Data_${repeat_id}"
+            if [ ! -d "${dataset_root}" ]; then
+                echo "[ERROR] Missing repeat dataset: ${dataset_root}" >&2
+                MISSING_TI=$((MISSING_TI + EXPECTED_SUBJECTS))
+                continue
+            fi
+            while read -r subject; do
+                [ -n "${subject}" ] || continue
+                ti_path="${dataset_root}/${subject}/anat/SimNIBS/ti_brain_only.nii.gz"
+                if [ ! -s "${ti_path}" ]; then
+                    echo "[ERROR] Missing whole-brain TI field: ${ti_path}" >&2
+                    MISSING_TI=$((MISSING_TI + 1))
+                fi
+            done < "${SUBJECTS_FILE}"
+        done
+    done
+    if [ "${MISSING_TI}" -ne 0 ]; then
+        echo "[ERROR] Missing ${MISSING_TI} whole-brain subject TI NIfTI file(s)." >&2
+        exit 2
+    fi
 fi
 
-ROIS=(Left_Hippocampus Left_M1 Right_DLPC Right_Thalamus)
-MISSING_TI=0
 for roi in "${ROIS[@]}"; do
-    for repeat_number in $(seq 1 10); do
-        repeat_id="$(printf '%02d' "${repeat_number}")"
-        dataset_root="${STUDY_ROOT}/runs/${roi}_Runs/${roi}_Data_${repeat_id}"
-        if [ ! -d "${dataset_root}" ]; then
-            echo "[ERROR] Missing repeat dataset: ${dataset_root}" >&2
-            MISSING_TI=$((MISSING_TI + EXPECTED_SUBJECTS))
-            continue
-        fi
-        while read -r subject; do
-            [ -n "${subject}" ] || continue
-            ti_path="${dataset_root}/${subject}/anat/SimNIBS/ti_brain_only.nii.gz"
-            if [ ! -s "${ti_path}" ]; then
-                echo "[ERROR] Missing whole-brain TI field: ${ti_path}" >&2
-                MISSING_TI=$((MISSING_TI + 1))
-            fi
-        done < "${SUBJECTS_FILE}"
-    done
     baseline="$(post_mni_baseline_for_roi "${roi}")"
     if [ ! -d "${baseline}" ] || \
        [ "$(find "${baseline}" -maxdepth 5 -type f -path '*/anat/SimNIBS/ti_brain_only.nii.gz' 2>/dev/null | wc -l)" -lt 1 ]
@@ -199,18 +228,19 @@ for roi in "${ROIS[@]}"; do
         exit 2
     fi
 done
-if [ "${MISSING_TI}" -ne 0 ]; then
-    echo "[ERROR] Missing ${MISSING_TI} whole-brain subject TI NIfTI file(s)." >&2
-    exit 2
-fi
 
 "${PYTHON}" -c 'import matplotlib,nibabel,numpy,pandas; print("manuscript_analysis_dependencies=ready")'
 "${PYTHON}" "${ANALYSIS_PY}" validate-atlas --atlas "${MNI_FIXED_ATLAS_PATH}"
 
-EXISTING_COMPLETE="$(
-    find "${STUDY_ROOT}/runs" -type f -path '*/anat/post/optimizer_matched_metrics.json' \
-        -exec grep -lF '"status": "complete"' {} + 2>/dev/null | wc -l
-)"
+if [ -n "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" ]; then
+    EXISTING_COMPLETE_DISPLAY="not scanned in receipt mode"
+else
+    EXISTING_COMPLETE="$(
+        find "${STUDY_ROOT}/runs" -type f -path '*/anat/post/optimizer_matched_metrics.json' \
+            -exec grep -lF '"status": "complete"' {} + 2>/dev/null | wc -l
+    )"
+    EXISTING_COMPLETE_DISPLAY="${EXISTING_COMPLETE}/${EXPECTED_RECORDS}"
+fi
 MANUSCRIPT_THRESHOLDS_DISPLAY="${MANUSCRIPT_THRESHOLDS_COLON//:/ and }"
 SCHEDULER_TASKS=41
 printf '%s\n' \
@@ -237,7 +267,8 @@ printf '%s\n' \
     '  individualized optimization: excluded' \
     '  download contract: exact polished-figure source tables, SHA-256 checksums, instructions, and versioned renderer included' \
     '  execution: resumable metric-only analysis; existing simulations are read-only' \
-    '  reuse policy: schema 4 and the complete configuration fingerprint must match'
+    '  reuse policy: schema 4 and the complete configuration fingerprint must match' \
+    "  source preflight validation: ${SOURCE_VALIDATION_MODE}"
 
 echo "[INFO] Study root:          ${STUDY_ROOT}"
 echo "[INFO] Post campaign:        ${POST_CAMPAIGN_ROOT}"
@@ -248,7 +279,10 @@ echo "[INFO] Python:               ${PYTHON}"
 echo "[INFO] Resource profile:     ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
 echo "[INFO] Dataset concurrency:  ${MAX_CONCURRENT_DATASETS}"
 echo "[INFO] Workers per dataset:  ${MANUSCRIPT_WORKERS}"
-echo "[INFO] Complete markers (any schema): ${EXISTING_COMPLETE}/${EXPECTED_RECORDS}"
+echo "[INFO] Complete markers (any schema): ${EXISTING_COMPLETE_DISPLAY}"
+if [ -n "${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}" ]; then
+    echo "[INFO] Source validation receipt: ${MANUSCRIPT_SOURCE_VALIDATION_RECEIPT}"
+fi
 echo "[INFO] Worker validation: schema 4 + configuration fingerprint; older records are recomputed"
 echo "[INFO] Output:               ${ANALYSIS_ROOT}/results"
 

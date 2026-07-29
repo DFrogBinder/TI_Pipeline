@@ -213,3 +213,5 @@ def test_mni_threshold_wrapper_uses_nonempty_command_arrays():
     assert "PERSONALIZED_COMMAND=(" in text
     assert '"${COHORT_COMMAND[@]}"' in text
     assert '"${PERSONALIZED_COMMAND[@]}"' in text
+    assert "COHORT_SOURCE_RECEIPT=" in text
+    assert "MANUSCRIPT_SOURCE_VALIDATION_RECEIPT=" in text

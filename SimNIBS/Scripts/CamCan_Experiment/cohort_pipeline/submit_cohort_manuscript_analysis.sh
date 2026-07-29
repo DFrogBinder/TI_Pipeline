@@ -37,6 +37,8 @@ SIMULATION_MANIFEST="${SIMULATION_MANIFEST:-${CAMPAIGN_ROOT}/simulation_tasks.ts
 CHAIN_RECEIPT="${CHAIN_RECEIPT:-${CAMPAIGN_ROOT}/release_state/chain_complete.tsv}"
 WORKFLOW_PY="${WORKFLOW_PY:-${SCRIPT_DIR}/workflow.py}"
 ANALYSIS_PY="${ANALYSIS_PY:-${CAMCAN_DIR}/post/camcan_manuscript_analysis.py}"
+PUBLICATION_PACKAGER="${CAMCAN_DIR}/post/package_camcan_publication_inputs.py"
+PUBLICATION_RENDERER="${CAMCAN_DIR}/post/build_camcan_supervisor_revision_figures.py"
 SUBJECT_SLURM="${SUBJECT_SLURM:-${SCRIPT_DIR}/cohort_post_manuscript_subjects.slurm}"
 COLLECT_SLURM="${COLLECT_SLURM:-${SCRIPT_DIR}/cohort_post_manuscript_collect.slurm}"
 FASTSURFER_ROOT="${FASTSURFER_ROOT:-/mnt/parscratch/users/cop23bi/ZIPs/atlases}"
@@ -70,6 +72,8 @@ for required_file in \
     "${CHAIN_RECEIPT}" \
     "${WORKFLOW_PY}" \
     "${ANALYSIS_PY}" \
+    "${PUBLICATION_PACKAGER}" \
+    "${PUBLICATION_RENDERER}" \
     "${SUBJECT_SLURM}" \
     "${COLLECT_SLURM}" \
     "${MNI_FIXED_ATLAS_PATH}"
@@ -229,6 +233,7 @@ printf '%s\n' \
     '  primary spread: off-target volume excluding the optimizer-matched ROI' \
     '  companion spread: whole-brain volume including the ROI' \
     '  individualized optimization: excluded' \
+    '  download contract: exact polished-figure source tables, SHA-256 checksums, instructions, and versioned renderer included' \
     '  execution: resumable metric-only analysis; existing simulations are read-only' \
     '  reuse policy: schema 4 and the complete configuration fingerprint must match'
 

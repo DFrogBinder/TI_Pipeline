@@ -41,6 +41,18 @@ test -s "${MANIFEST}"
     'import json,sys; p=json.load(open(sys.argv[1])); assert p["status"]=="complete" and p["subject_roi_configurations"]==28 and p["repeat_level_records"]==560 and p["condition_repeat_mean_records"]==56 and p["excluded_personalized_simulations"]==0' \
     "${MANIFEST}"
 
+"${PYTHON}" \
+    "${PIPELINE_DIR}/CamCan_Experiment/post/package_camcan_publication_inputs.py" \
+    --role personalized \
+    --results-dir "${COMPARISON_ROOT}/results" \
+    --renderer "${PIPELINE_DIR}/CamCan_Experiment/post/build_camcan_supervisor_revision_figures.py"
+test -s "${COMPARISON_ROOT}/results/publication_figure_input_manifest.json"
+test -s "${COMPARISON_ROOT}/results/publication_inputs.sha256"
+(
+    cd "${COMPARISON_ROOT}/results"
+    sha256sum -c publication_inputs.sha256
+)
+
 ARCHIVE="${COMPARISON_ROOT}/optimized_best_worst_7_all_roi_optimizer_matched_results.tar.gz"
 rm -f "${ARCHIVE}" "${ARCHIVE}.sha256"
 tar -C "${COMPARISON_ROOT}/results" -czf "${ARCHIVE}" .
@@ -48,5 +60,6 @@ sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
 
 printf '%s\n' \
     "[INFO] Comparison completed successfully." \
+    "[INFO] Figure artifact contract: exact source tables + checksums + versioned renderer" \
     "[INFO] Compact result archive: ${ARCHIVE}" \
     "[INFO] Archive checksum:       ${ARCHIVE}.sha256"

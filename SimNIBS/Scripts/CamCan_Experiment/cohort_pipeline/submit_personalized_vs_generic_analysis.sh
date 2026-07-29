@@ -30,6 +30,8 @@ GENERIC_CHAIN_RECEIPT="${GENERIC_CHAIN_RECEIPT:-${GENERIC_STUDY_ROOT}/campaigns/
 PERSONALIZED_CHAIN_RECEIPT="${PERSONALIZED_CHAIN_RECEIPT:-${PERSONALIZED_STUDY_ROOT}/campaigns/${COHORT_ID}/release_state/chain_complete.tsv}"
 COMPARISON_ROOT="${COMPARISON_ROOT:-${PERSONALIZED_STUDY_ROOT}/campaigns/${COHORT_ID}/post_processing/optimizer_matched_personalized_vs_generic_schema3}"
 ANALYSIS_PY="${ANALYSIS_PY:-${CAMCAN_DIR}/post/camcan_personalized_comparison.py}"
+PUBLICATION_PACKAGER="${CAMCAN_DIR}/post/package_camcan_publication_inputs.py"
+PUBLICATION_RENDERER="${CAMCAN_DIR}/post/build_camcan_supervisor_revision_figures.py"
 PAIR_SLURM="${PAIR_SLURM:-${SCRIPT_DIR}/cohort_personalized_comparison_pair.slurm}"
 COLLECT_SLURM="${COLLECT_SLURM:-${SCRIPT_DIR}/cohort_personalized_comparison_collect.slurm}"
 PYTHON="${PYTHON:-/users/cop23bi/.conda/envs/ti-post/bin/python}"
@@ -59,6 +61,8 @@ for path in \
     "${GENERIC_CHAIN_RECEIPT}" \
     "${PERSONALIZED_CHAIN_RECEIPT}" \
     "${ANALYSIS_PY}" \
+    "${PUBLICATION_PACKAGER}" \
+    "${PUBLICATION_RENDERER}" \
     "${PAIR_SLURM}" \
     "${COLLECT_SLURM}"
 do
@@ -155,6 +159,7 @@ printf '%s\n' \
     '  repeat pairing across conditions: none' \
     '  population inference: none; descriptive seven-subject comparison' \
     '  source simulations: read-only' \
+    '  download contract: exact polished-figure source tables, SHA-256 checksums, instructions, and versioned renderer included' \
     '  reuse policy: comparison schema 3, manuscript schema 4, and the complete configuration fingerprint must match'
 
 echo "[INFO] Generic study:          ${GENERIC_STUDY_ROOT}"

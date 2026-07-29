@@ -46,10 +46,22 @@ printf '%s\n' \
     --upper-tail-fraction "${MANUSCRIPT_UPPER_TAIL_FRACTION:-0.01}"
 
 test -s "${OUTPUT_DIR}/analysis_manifest.json"
+"${PYTHON}" \
+    "${PIPELINE_DIR}/CamCan_Experiment/post/package_camcan_publication_inputs.py" \
+    --role cohort \
+    --results-dir "${OUTPUT_DIR}" \
+    --renderer "${PIPELINE_DIR}/CamCan_Experiment/post/build_camcan_supervisor_revision_figures.py"
+test -s "${OUTPUT_DIR}/publication_figure_input_manifest.json"
+test -s "${OUTPUT_DIR}/publication_inputs.sha256"
+(
+    cd "${OUTPUT_DIR}"
+    sha256sum -c publication_inputs.sha256
+)
 ARCHIVE="${ANALYSIS_ROOT}/${COHORT_ID}_optimizer_matched_analysis_results.tar.gz"
 rm -f "${ARCHIVE}" "${ARCHIVE}.sha256"
 tar -C "${OUTPUT_DIR}" -czf "${ARCHIVE}" .
 sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
 printf '%s\n' \
+    "[INFO] Figure artifact contract: exact source tables + checksums + versioned renderer" \
     "[INFO] Compact result archive: ${ARCHIVE}" \
     "[INFO] Archive checksum:       ${ARCHIVE}.sha256"

@@ -15,6 +15,9 @@ set -euo pipefail
 
 THRESHOLDS="${COMPARISON_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 THRESHOLDS="${THRESHOLDS//:/,}"
+PUBLICATION_PACKAGER="${PUBLICATION_PACKAGER:-${PIPELINE_DIR}/CamCan_Experiment/post/package_camcan_publication_inputs.py}"
+PUBLICATION_RENDERER="${PUBLICATION_RENDERER:-${PIPELINE_DIR}/CamCan_Experiment/post/build_camcan_supervisor_revision_figures.py}"
+MNI_THRESHOLD_TABLE="${MNI_THRESHOLD_TABLE:-${PIPELINE_DIR}/CamCan_Experiment/post/mni152_simnibs401_roi_thresholds.csv}"
 
 printf '%s\n' \
     "[INFO] All-configuration personalized-vs-generic collector" \
@@ -41,11 +44,15 @@ test -s "${MANIFEST}"
     'import json,sys; p=json.load(open(sys.argv[1])); assert p["status"]=="complete" and p["subject_roi_configurations"]==28 and p["repeat_level_records"]==560 and p["condition_repeat_mean_records"]==56 and p["excluded_personalized_simulations"]==0' \
     "${MANIFEST}"
 
-"${PYTHON}" \
-    "${PIPELINE_DIR}/CamCan_Experiment/post/package_camcan_publication_inputs.py" \
-    --role personalized \
-    --results-dir "${COMPARISON_ROOT}/results" \
-    --renderer "${PIPELINE_DIR}/CamCan_Experiment/post/build_camcan_supervisor_revision_figures.py"
+PACKAGER_ARGS=(
+    --role personalized
+    --results-dir "${COMPARISON_ROOT}/results"
+    --renderer "${PUBLICATION_RENDERER}"
+)
+if [ "$(basename "${PUBLICATION_PACKAGER}")" = "package_camcan_publication_inputs_v5.py" ]; then
+    PACKAGER_ARGS+=(--mni-threshold-table "${MNI_THRESHOLD_TABLE}")
+fi
+"${PYTHON}" "${PUBLICATION_PACKAGER}" "${PACKAGER_ARGS[@]}"
 test -s "${COMPARISON_ROOT}/results/publication_figure_input_manifest.json"
 test -s "${COMPARISON_ROOT}/results/publication_inputs.sha256"
 (

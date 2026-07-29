@@ -22,6 +22,9 @@ set -euo pipefail
 THRESHOLDS="${MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15}"
 THRESHOLDS="${THRESHOLDS//:/,}"
 OUTPUT_DIR="${ANALYSIS_ROOT}/results"
+PUBLICATION_PACKAGER="${PUBLICATION_PACKAGER:-${PIPELINE_DIR}/CamCan_Experiment/post/package_camcan_publication_inputs.py}"
+PUBLICATION_RENDERER="${PUBLICATION_RENDERER:-${PIPELINE_DIR}/CamCan_Experiment/post/build_camcan_supervisor_revision_figures.py}"
+MNI_THRESHOLD_TABLE="${MNI_THRESHOLD_TABLE:-${PIPELINE_DIR}/CamCan_Experiment/post/mni152_simnibs401_roi_thresholds.csv}"
 
 printf '%s\n' \
     "[INFO] CamCan manuscript analysis collector" \
@@ -46,11 +49,15 @@ printf '%s\n' \
     --upper-tail-fraction "${MANUSCRIPT_UPPER_TAIL_FRACTION:-0.01}"
 
 test -s "${OUTPUT_DIR}/analysis_manifest.json"
-"${PYTHON}" \
-    "${PIPELINE_DIR}/CamCan_Experiment/post/package_camcan_publication_inputs.py" \
-    --role cohort \
-    --results-dir "${OUTPUT_DIR}" \
-    --renderer "${PIPELINE_DIR}/CamCan_Experiment/post/build_camcan_supervisor_revision_figures.py"
+PACKAGER_ARGS=(
+    --role cohort
+    --results-dir "${OUTPUT_DIR}"
+    --renderer "${PUBLICATION_RENDERER}"
+)
+if [ "$(basename "${PUBLICATION_PACKAGER}")" = "package_camcan_publication_inputs_v5.py" ]; then
+    PACKAGER_ARGS+=(--mni-threshold-table "${MNI_THRESHOLD_TABLE}")
+fi
+"${PYTHON}" "${PUBLICATION_PACKAGER}" "${PACKAGER_ARGS[@]}"
 test -s "${OUTPUT_DIR}/publication_figure_input_manifest.json"
 test -s "${OUTPUT_DIR}/publication_inputs.sha256"
 (

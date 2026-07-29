@@ -37,8 +37,12 @@ from target_montages import (
 
 SUBJECT = "MNI152"
 DEFAULT_ROOT_DIR = "/home/boyan/sandbox/Jake_Data/MNI152-data"
-DEFAULT_MNI_MESH_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/MNI152.msh"
-DEFAULT_REFERENCE_T1_PATH = "/home/boyan/sandbox/simnibs4_exmaples/m2m_MNI152/T1.nii.gz"
+DEFAULT_MNI_HEAD_MODEL_ROOT = (
+    "/home/boyan/sandbox/Jake_Data/MNI152-data/m2m_MNI152"
+)
+DEFAULT_MNI_MESH_PATH = f"{DEFAULT_MNI_HEAD_MODEL_ROOT}/MNI152.msh"
+DEFAULT_REFERENCE_T1_PATH = f"{DEFAULT_MNI_HEAD_MODEL_ROOT}/T1.nii.gz"
+DEFAULT_EEG_CAP_NAME = "EEG10-10_UI_Jurak_2007.csv"
 DEFAULT_ELEMENT_SIZE = 0.1
 OUTPUT_SUBJECT_PATTERN = re.compile(r"^MNI152(?:-[a-z0-9-]+)?$")
 CUSTOM_CONDUCTIVITIES = {
@@ -312,6 +316,7 @@ def write_provenance(
     montage: MontageSpec,
     mesh_path: Path,
     reference_t1_path: Path,
+    eeg_cap_path: Path,
     output_root: Path,
     pathfem: Path,
     brain_only_path: Path,
@@ -323,7 +328,7 @@ def write_provenance(
     finished_at = datetime.now(timezone.utc).isoformat()
     simnibs_version = str(getattr(sim, "__version__", "unknown"))
     provenance = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "complete",
         "started_at_utc": started_at,
         "finished_at_utc": finished_at,
@@ -343,6 +348,9 @@ def write_provenance(
             "mni_mesh_sha256": sha256_file(mesh_path),
             "reference_t1": str(reference_t1_path),
             "reference_t1_sha256": sha256_file(reference_t1_path),
+            "eeg_cap": str(eeg_cap_path),
+            "eeg_cap_sha256": sha256_file(eeg_cap_path),
+            "head_model_manifest_sha256": args.head_model_manifest_sha256,
             "targets_csv_sha256": targets_csv_sha256(),
         },
         "stimulation": {
@@ -408,6 +416,10 @@ def run_mni152(args: argparse.Namespace) -> None:
     element_size = positive_scalar(args.element_size, "element size")
     mesh_path = Path(args.mni_mesh_path).expanduser().resolve()
     reference_t1_path = Path(args.reference_t1_path).expanduser().resolve()
+    eeg_cap_path = Path(
+        args.eeg_cap_path
+        or mesh_path.parent / "eeg_positions" / DEFAULT_EEG_CAP_NAME
+    ).expanduser().resolve()
     output_root, pathfem = prepare_output_dirs(
         args.root_dir,
         args.output_subject,
@@ -423,10 +435,13 @@ def run_mni152(args: argparse.Namespace) -> None:
     )
     log_file_info("mni_mesh", mesh_path)
     log_file_info("reference_t1", reference_t1_path)
+    log_file_info("eeg_cap", eeg_cap_path)
     if not mesh_path.exists():
         raise FileNotFoundError(f"MNI152 mesh not found: {mesh_path}")
     if not reference_t1_path.exists():
         raise FileNotFoundError(f"MNI152 reference T1 not found: {reference_t1_path}")
+    if not eeg_cap_path.exists():
+        raise FileNotFoundError(f"MNI152 EEG cap not found: {eeg_cap_path}")
 
     log_event(
         "montage_config",
@@ -452,6 +467,7 @@ def run_mni152(args: argparse.Namespace) -> None:
 
     session = sim_struct.SESSION()
     session.fnamehead = str(mesh_path)
+    session.eeg_cap = str(eeg_cap_path)
     session.pathfem = str(pathfem)
     session.element_size = element_size
     session.map_to_vol = True
@@ -530,6 +546,7 @@ def run_mni152(args: argparse.Namespace) -> None:
         montage=montage,
         mesh_path=mesh_path,
         reference_t1_path=reference_t1_path,
+        eeg_cap_path=eeg_cap_path,
         output_root=output_root,
         pathfem=pathfem,
         brain_only_path=brain_only_path,
@@ -567,6 +584,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--reference-t1-path",
         default=DEFAULT_REFERENCE_T1_PATH,
         help="Reference T1 used for msh2nii export.",
+    )
+    parser.add_argument(
+        "--eeg-cap-path",
+        help=(
+            "Exact EEG coordinate file used to resolve named electrode "
+            "centres. Defaults to the standard Jurak 10-10 cap next to the "
+            "selected MNI152 mesh."
+        ),
+    )
+    parser.add_argument(
+        "--head-model-manifest-sha256",
+        help=(
+            "SHA-256 of the external manifest used to verify the complete "
+            "staged MNI152 head-model bundle."
+        ),
     )
     parser.add_argument(
         "--preset",

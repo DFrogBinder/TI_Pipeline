@@ -17,11 +17,15 @@ fi
 
 : "${PIPELINE_DIR:?Set PIPELINE_DIR to the repository Scripts directory.}"
 : "${MNI401_OUTPUT_PARENT:?Set the isolated SimNIBS 4.0.1 output parent.}"
-: "${MNI45_BASELINE_PARENT:?Set the existing SimNIBS 4.5.0 baseline parent.}"
+: "${MNI_INPUT_ROOT:?Set the staged MNI152 head-model root.}"
+: "${MNI_INPUT_MANIFEST:?Set the MNI152 input checksum manifest.}"
+: "${MNI_INPUT_MANIFEST_SHA256:?Set the MNI152 input manifest SHA-256.}"
 : "${MNI_MESH_PATH:?Set the exact fixed MNI152 mesh path.}"
 : "${MNI_REFERENCE_T1_PATH:?Set the exact MNI152 reference T1 path.}"
+: "${MNI_EEG_CAP_PATH:?Set the exact fixed MNI152 EEG cap path.}"
 : "${MNI_EXPECTED_MESH_SHA256:?Set the expected MNI152 mesh SHA-256.}"
 : "${MNI_EXPECTED_T1_SHA256:?Set the expected reference T1 SHA-256.}"
+: "${MNI_EXPECTED_EEG_CAP_SHA256:?Set the expected MNI152 EEG cap SHA-256.}"
 : "${MNI_EXPECTED_TARGETS_SHA256:?Set the expected targets.csv SHA-256.}"
 
 case "${SLURM_ARRAY_TASK_ID}" in
@@ -57,16 +61,29 @@ SUMMARY="${MNI401_OUTPUT_PARENT}/validation_records/${OUTPUT_SUBJECT}.json"
 for required_file in \
     "${RUNNER}" \
     "${VALIDATOR}" \
+    "${MNI_INPUT_MANIFEST}" \
     "${MNI_MESH_PATH}" \
-    "${MNI_REFERENCE_T1_PATH}"
+    "${MNI_REFERENCE_T1_PATH}" \
+    "${MNI_EEG_CAP_PATH}"
 do
     if [ ! -s "${required_file}" ]; then
         echo "[ERROR] Required input is missing or empty: ${required_file}" >&2
         exit 2
     fi
 done
-if [ "${MNI401_OUTPUT_PARENT}" = "${MNI45_BASELINE_PARENT}" ]; then
-    echo "[ERROR] Validation output must not overwrite the 4.5.0 baseline tree." >&2
+if ! (
+    cd "${MNI_INPUT_ROOT}"
+    sha256sum --quiet --strict -c "${MNI_INPUT_MANIFEST}"
+); then
+    echo "[ERROR] Staged MNI152 head-model verification failed on the worker." >&2
+    exit 2
+fi
+if [ "$(sha256sum "${MNI_INPUT_MANIFEST}" | awk '{print $1}')" != "${MNI_INPUT_MANIFEST_SHA256}" ]; then
+    echo "[ERROR] The versioned MNI152 input manifest changed after submission." >&2
+    exit 2
+fi
+if [ "${MNI401_OUTPUT_PARENT}" = "${MNI_INPUT_ROOT}" ]; then
+    echo "[ERROR] Validation output must not overwrite the staged input tree." >&2
     exit 2
 fi
 
@@ -129,9 +146,11 @@ printf '%s\n' \
     "[INFO] Montage preset:        ${PRESET}" \
     "[INFO] Output subject:        ${OUTPUT_SUBJECT}" \
     "[INFO] Runtime required:      SimNIBS 4.0.1" \
+    "[INFO] Staged input root:     ${MNI_INPUT_ROOT}" \
+    "[INFO] Input manifest SHA:    ${MNI_INPUT_MANIFEST_SHA256}" \
     "[INFO] Fixed MNI mesh:        ${MNI_MESH_PATH}" \
     "[INFO] Fixed reference T1:    ${MNI_REFERENCE_T1_PATH}" \
-    "[INFO] Existing 4.5 baseline: ${MNI45_BASELINE_PARENT}" \
+    "[INFO] Fixed EEG cap:         ${MNI_EEG_CAP_PATH}" \
     "[INFO] New 4.0.1 output:      ${MNI401_OUTPUT_PARENT}" \
     "[INFO] Automatic retries:     none; failures remain visible"
 module list 2>&1
@@ -143,8 +162,10 @@ VALIDATION_ARGS=(
     --preset "${PRESET}"
     --reference-t1 "${MNI_REFERENCE_T1_PATH}"
     --expected-simnibs-version "4.0.1"
+    --expected-head-model-manifest-sha256 "${MNI_INPUT_MANIFEST_SHA256}"
     --expected-mni-mesh-sha256 "${MNI_EXPECTED_MESH_SHA256}"
     --expected-reference-t1-sha256 "${MNI_EXPECTED_T1_SHA256}"
+    --expected-eeg-cap-sha256 "${MNI_EXPECTED_EEG_CAP_SHA256}"
     --expected-targets-sha256 "${MNI_EXPECTED_TARGETS_SHA256}"
     --summary "${SUMMARY}"
 )
@@ -159,6 +180,8 @@ python -u "${RUNNER}" \
     --output-subject "${OUTPUT_SUBJECT}" \
     --mni-mesh-path "${MNI_MESH_PATH}" \
     --reference-t1-path "${MNI_REFERENCE_T1_PATH}" \
+    --eeg-cap-path "${MNI_EEG_CAP_PATH}" \
+    --head-model-manifest-sha256 "${MNI_INPUT_MANIFEST_SHA256}" \
     --preset "${PRESET}" \
     --expected-simnibs-version "4.0.1"
 

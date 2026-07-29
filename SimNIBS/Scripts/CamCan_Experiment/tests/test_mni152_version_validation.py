@@ -89,8 +89,10 @@ def test_mni_baseline_validator_checks_version_hashes_and_montage(tmp_path):
         "preset": "left-m1",
         "software": {"simnibs_version": "4.0.1"},
         "inputs": {
+            "head_model_manifest_sha256": "manifest-hash",
             "mni_mesh_sha256": "mesh-hash",
             "reference_t1_sha256": "t1-hash",
+            "eeg_cap_sha256": "cap-hash",
             "targets_csv_sha256": "targets-hash",
         },
         "stimulation": {
@@ -123,8 +125,10 @@ def test_mni_baseline_validator_checks_version_hashes_and_montage(tmp_path):
         preset="left-m1",
         reference_t1=reference_t1,
         expected_simnibs_version="4.0.1",
+        expected_head_model_manifest_sha256="manifest-hash",
         expected_mni_mesh_sha256="mesh-hash",
         expected_reference_t1_sha256="t1-hash",
+        expected_eeg_cap_sha256="cap-hash",
         expected_targets_sha256="targets-hash",
         summary=summary,
     )
@@ -152,8 +156,43 @@ def test_hpc_launcher_is_four_task_isolated_simnibs401_validation():
 
     assert '--array="0-3%${MAX_CONCURRENT}"' in submit
     assert 'MNI401_OUTPUT_PARENT="${MNI401_OUTPUT_PARENT:-' in submit
-    assert '[ "${MNI401_OUTPUT_PARENT}" = "${MNI45_BASELINE_PARENT}" ]' in submit
+    assert (
+        'MNI_INPUT_ROOT="${MNI_INPUT_ROOT:-/mnt/parscratch/users/cop23bi/'
+        'MNI152_SimNIBS401_inputs/m2m_MNI152}"'
+    ) in submit
+    assert "${MNI45_BASELINE_PARENT}/m2m_MNI152" not in submit
+    assert "mni152_head_model_manifest.sha256" in submit
+    assert "Upload the complete local directory before running preflight" in submit
+    assert "Existing 4.5.0 baseline is incomplete" not in submit
+    assert "MNI45_BASELINE_PARENT=" not in submit
     assert 'module load SimNIBS/4.0.1-foss-2023a' in worker
+    assert 'session.eeg_cap = str(eeg_cap_path)' in (
+        root / "simulation" / "TI_runner_MNI152.py"
+    ).read_text()
     assert '--expected-simnibs-version "4.0.1"' in worker
     assert "--output-subject" in worker
     assert "#SBATCH --requeue" not in worker
+    collector = (
+        root
+        / "HPC_scripts"
+        / "mni152_simnibs401_validation_collect.slurm"
+    ).read_text()
+    assert "mni152_simnibs_4p0p1_validated_results.tar.gz" in collector
+    assert "compare_mni152_baseline_versions.py" not in collector
+    assert "simnibs-4p5-parent" not in collector
+
+
+def test_mni152_head_model_manifest_covers_complete_local_bundle():
+    root = Path(__file__).resolve().parents[1]
+    manifest = (
+        root / "simulation" / "mni152_head_model_manifest.sha256"
+    ).read_text(encoding="utf-8").splitlines()
+
+    assert len(manifest) == 17
+    assert any(line.endswith("  MNI152.msh") for line in manifest)
+    assert any(line.endswith("  T1.nii.gz") for line in manifest)
+    assert any(
+        line.endswith("  eeg_positions/EEG10-10_UI_Jurak_2007.csv")
+        for line in manifest
+    )
+    assert any(line.endswith("  final_tissues.nii.gz") for line in manifest)

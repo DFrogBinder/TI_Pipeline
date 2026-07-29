@@ -96,6 +96,11 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         "SimNIBS version",
     )
     require_equal(
+        provenance.get("inputs", {}).get("head_model_manifest_sha256"),
+        args.expected_head_model_manifest_sha256,
+        "MNI152 head-model manifest SHA-256",
+    )
+    require_equal(
         provenance.get("inputs", {}).get("mni_mesh_sha256"),
         args.expected_mni_mesh_sha256,
         "MNI152 mesh SHA-256",
@@ -104,6 +109,11 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         provenance.get("inputs", {}).get("reference_t1_sha256"),
         args.expected_reference_t1_sha256,
         "reference T1 SHA-256",
+    )
+    require_equal(
+        provenance.get("inputs", {}).get("eeg_cap_sha256"),
+        args.expected_eeg_cap_sha256,
+        "MNI152 EEG cap SHA-256",
     )
     require_equal(
         provenance.get("inputs", {}).get("targets_csv_sha256"),
@@ -162,8 +172,10 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
         "output_subject": args.output_subject,
         "preset": args.preset,
         "simnibs_version": args.expected_simnibs_version,
+        "head_model_manifest_sha256": args.expected_head_model_manifest_sha256,
         "mni_mesh_sha256": args.expected_mni_mesh_sha256,
         "reference_t1_sha256": args.expected_reference_t1_sha256,
+        "eeg_cap_sha256": args.expected_eeg_cap_sha256,
         "targets_csv_sha256": args.expected_targets_sha256,
         "files": files,
         "nifti": {
@@ -192,8 +204,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preset", required=True)
     parser.add_argument("--reference-t1", type=Path, required=True)
     parser.add_argument("--expected-simnibs-version", required=True)
+    parser.add_argument("--expected-head-model-manifest-sha256", required=True)
     parser.add_argument("--expected-mni-mesh-sha256", required=True)
     parser.add_argument("--expected-reference-t1-sha256", required=True)
+    parser.add_argument("--expected-eeg-cap-sha256", required=True)
     parser.add_argument("--expected-targets-sha256", required=True)
     parser.add_argument("--summary", type=Path, required=True)
     return parser.parse_args()

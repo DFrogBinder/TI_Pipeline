@@ -71,28 +71,82 @@ simnibs_python simulation/TI_runner_MNI152.py \
 
 The MNI152 runner does not perform subject-specific CHARM meshing or segmentation replacement. It is intended for fast switching between template-only montage configurations while keeping the same downstream output layout expected by the post-processing code.
 
-### SimNIBS 4.0.1 versus 4.5.0 MNI152 validation
+### SimNIBS 4.0.1 MNI152 validation
 
-The Stanage validation launcher reruns the four manuscript MNI152 montages with
-the cluster's `SimNIBS/4.0.1-foss-2023a` module while holding the MNI152 mesh,
-reference T1, montage parameters, conductivities, electrode geometry, and
-TImax workflow fixed. It writes to
-`/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_validation`; it does not
-replace the existing 4.5.0 baselines under
-`/mnt/parscratch/users/cop23bi/ZIPs/MNI152-data`.
+The Stanage launcher reruns the four manuscript MNI152 montages with the
+cluster's `SimNIBS/4.0.1-foss-2023a` module. The source MNI152 head model is
+local-only and **must be uploaded before preflight**. Do not assume that the
+directory containing earlier 4.5.0 baseline outputs also contains the source
+mesh.
 
-Preflight and submit:
+The complete `m2m_MNI152` directory is required, rather than only
+`MNI152.msh` and `T1.nii.gz`. SimNIBS resolves named electrode centres through
+the head model's `eeg_positions` metadata. The runner explicitly selects
+`EEG10-10_UI_Jurak_2007.csv`, and preflight verifies all 17 files against the
+versioned SHA-256 manifest.
+
+First, from a **local terminal**, create the remote directory and upload the
+162 MB head-model bundle:
 
 ```bash
+ssh cop23bi@stanage.shef.ac.uk \
+  'mkdir -p /mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_inputs/m2m_MNI152'
+
+rsync -a --partial --info=progress2 \
+  /home/boyan/sandbox/Jake_Data/MNI152-data/m2m_MNI152/ \
+  cop23bi@stanage.shef.ac.uk:/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_inputs/m2m_MNI152/
+```
+
+If Stanage is reached through an SSH alias or gateway, replace
+`cop23bi@stanage.shef.ac.uk` with that configured destination. The trailing
+slashes are intentional.
+
+Then, from the **Stanage login node**, pull the corrected launcher and verify
+the transferred bundle before submission:
+
+```bash
+cd ~/Repos/TI_Pipeline/SimNIBS/Scripts
+git pull
+
+MNI_INPUT=/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_inputs/m2m_MNI152
+MNI_MANIFEST="$PWD/CamCan_Experiment/simulation/mni152_head_model_manifest.sha256"
+(cd "$MNI_INPUT" && sha256sum --strict -c "$MNI_MANIFEST")
+
 bash CamCan_Experiment/HPC_scripts/submit_mni152_simnibs401_validation.sh --preflight
 bash CamCan_Experiment/HPC_scripts/submit_mni152_simnibs401_validation.sh
 ```
 
+Preflight aborts before `sbatch` if the staged directory is absent, incomplete,
+or has a checksum mismatch. The scientific source directory is read-only
+during simulation. Outputs are isolated under
+`/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_validation`.
+
 The four-element array performs eight tDCS FEM solves and produces four TImax
-meshes and four brain-only TI NIfTIs. A dependent collector computes
-voxelwise and optimizer-matched ROI differences between SimNIBS 4.0.1 and
-4.5.0, then writes a compact downloadable archive and SHA-256 checksum to the
-isolated validation root. Raw FEM meshes remain on scratch and are not
+meshes and four brain-only TI NIfTIs. Its dependent collector validates and
+packages only the new 4.0.1 results:
+
+```bash
+A=/mnt/parscratch/users/cop23bi/MNI152_SimNIBS401_validation/mni152_simnibs_4p0p1_validated_results.tar.gz
+sha256sum -c "$A.sha256"
+ls -lh "$A" "$A.sha256"
+```
+
+The deleted HPC copy of the 4.5.0 outputs is not required. After downloading
+and extracting the 4.0.1 archive, compare it with the retained local 4.5.0
+baseline tree:
+
+```bash
+/home/boyan/anaconda3/envs/simnibs_post/bin/python \
+  CamCan_Experiment/post/compare_mni152_baseline_versions.py \
+  --simnibs-4p5-parent /path/to/local/extracted_4p5p0_parent \
+  --simnibs-4p0p1-parent /path/to/local/extracted_4p0p1_parent \
+  --mni-atlas /home/boyan/sandbox/Jake_Data/atlases/sub-mni152.nii.gz \
+  --out-dir /path/to/local/mni152_4p0p1_vs_4p5p0_comparison
+```
+
+Each version parent must directly contain `MNI152-left-m1`,
+`MNI152-right-dlpc`, `MNI152-left-hippocampus`, and
+`MNI152-right-thalamus`. Raw 4.0.1 FEM meshes remain on scratch and are not
 duplicated in the compact archive.
 
 ## Simulation repair workflow

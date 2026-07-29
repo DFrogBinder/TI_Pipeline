@@ -51,9 +51,18 @@ printf '%s\n' \
     "  renderer: ${RENDERER}" \
     "  threshold table: ${THRESHOLD_TABLE}"
 
-EXTRA_ARGS=()
+COHORT_COMMAND=(
+    bash
+    "${SCRIPT_DIR}/submit_cohort_manuscript_analysis.sh"
+    final_132
+)
+PERSONALIZED_COMMAND=(
+    bash
+    "${SCRIPT_DIR}/submit_personalized_vs_generic_analysis.sh"
+)
 if [ "${PREFLIGHT}" = "--preflight" ]; then
-    EXTRA_ARGS+=(--preflight)
+    COHORT_COMMAND+=(--preflight)
+    PERSONALIZED_COMMAND+=(--preflight)
 fi
 
 if [[ "${MODE}" == "all" || "${MODE}" == "cohort" ]]; then
@@ -63,8 +72,7 @@ if [[ "${MODE}" == "all" || "${MODE}" == "cohort" ]]; then
     PUBLICATION_PACKAGER="${PACKAGER}" \
     PUBLICATION_RENDERER="${RENDERER}" \
     MNI_THRESHOLD_TABLE="${THRESHOLD_TABLE}" \
-        bash "${SCRIPT_DIR}/submit_cohort_manuscript_analysis.sh" \
-        final_132 "${EXTRA_ARGS[@]}"
+        "${COHORT_COMMAND[@]}"
 fi
 
 if [[ "${MODE}" == "all" || "${MODE}" == "personalized" ]]; then
@@ -73,6 +81,5 @@ if [[ "${MODE}" == "all" || "${MODE}" == "personalized" ]]; then
     PUBLICATION_PACKAGER="${PACKAGER}" \
     PUBLICATION_RENDERER="${RENDERER}" \
     MNI_THRESHOLD_TABLE="${THRESHOLD_TABLE}" \
-        bash "${SCRIPT_DIR}/submit_personalized_vs_generic_analysis.sh" \
-        "${EXTRA_ARGS[@]}"
+        "${PERSONALIZED_COMMAND[@]}"
 fi

@@ -1046,14 +1046,19 @@ def mesh_result_is_current(
             marker.get("roast_involvement") is False,
             mesh.is_file(),
             mesh.stat().st_size == marker.get("mesh_bytes"),
-            sha256_file(label) == row["corrected_label_sha256"],
+            label.is_file(),
             scaffold is not None,
-            sha256_file(cap) == scaffold.get("eeg_cap_sha256"),
+            cap.is_file(),
         )
         if not all(checks):
             return None
-        if verify_hash and sha256_file(mesh) != marker.get("mesh_sha256"):
-            return None
+        if verify_hash:
+            if sha256_file(label) != row["corrected_label_sha256"]:
+                return None
+            if sha256_file(cap) != scaffold.get("eeg_cap_sha256"):
+                return None
+            if sha256_file(mesh) != marker.get("mesh_sha256"):
+                return None
         return marker
     except (FileNotFoundError, OSError, TypeError):
         return None

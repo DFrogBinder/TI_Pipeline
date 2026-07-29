@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -197,3 +198,18 @@ def test_refuses_old_fixed_threshold_aggregates(tmp_path):
         assert "does not contain required threshold" in str(error)
     else:
         raise AssertionError("fixed-threshold aggregates were accepted")
+
+
+def test_mni_threshold_wrapper_uses_nonempty_command_arrays():
+    wrapper = (
+        Path(__file__).resolve().parents[1]
+        / "cohort_pipeline"
+        / "submit_mni_threshold_manuscript_reanalysis.sh"
+    )
+    text = wrapper.read_text(encoding="utf-8")
+
+    assert "EXTRA_ARGS" not in text
+    assert "COHORT_COMMAND=(" in text
+    assert "PERSONALIZED_COMMAND=(" in text
+    assert '"${COHORT_COMMAND[@]}"' in text
+    assert '"${PERSONALIZED_COMMAND[@]}"' in text

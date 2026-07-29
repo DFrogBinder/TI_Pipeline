@@ -143,6 +143,65 @@ def _bootstrap_command_runner(scaffold_row, commands=None):
     return run
 
 
+def test_mesh_validation_skip_hashes_performs_no_content_hashing(
+    tmp_path, monkeypatch
+):
+    subject = "sub-CC000001"
+    m2m = tmp_path / "m2m"
+    mesh = _write(m2m / f"{subject}.msh", "mesh")
+    label = _write(
+        m2m / "label_prep" / workflow.MAP_BASENAME,
+        "label",
+    )
+    cap = _write(
+        m2m / "eeg_positions" / workflow.CAP_BASENAME,
+        "cap",
+    )
+    scaffold_result = _write(
+        tmp_path / "scaffold.json",
+        json.dumps({"status": "complete", "eeg_cap_sha256": "cap-hash"}),
+    )
+    mesh_result = _write(
+        tmp_path / "mesh.json",
+        json.dumps(
+            {
+                "status": "complete",
+                "subject": subject,
+                "roi": "Left_M1",
+                "repeat_id": "01",
+                "dataset_name": "Left_M1_Data_01",
+                "label_sha256_after": "label-hash",
+                "independent_repeat_mesh": True,
+                "scaffold_copy_mode": "physical",
+                "roast_involvement": False,
+                "mesh_bytes": mesh.stat().st_size,
+                "mesh_sha256": "mesh-hash",
+            }
+        ),
+    )
+    row = {
+        "subject": subject,
+        "roi": "Left_M1",
+        "repeat_id": "01",
+        "dataset_name": "Left_M1_Data_01",
+        "corrected_label_sha256": "label-hash",
+        "m2m_dir": str(m2m),
+        "mesh_path": str(mesh),
+        "mesh_result_path": str(mesh_result),
+        "scaffold_result_path": str(scaffold_result),
+    }
+
+    def unexpected_hash(_path):
+        raise AssertionError("skip-hashes attempted content hashing")
+
+    monkeypatch.setattr(workflow, "sha256_file", unexpected_hash)
+    result = workflow.mesh_result_is_current(row, verify_hash=False)
+
+    assert result is not None
+    assert label.is_file()
+    assert cap.is_file()
+
+
 def test_preflight_scales_four_rois_and_chunks_without_hardcoded_subject_count(
     tmp_path,
 ):

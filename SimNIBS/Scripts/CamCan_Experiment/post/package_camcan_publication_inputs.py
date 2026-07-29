@@ -39,10 +39,21 @@ EXPECTED_FIGURE_STEMS = [
     "figure_personalization_target_offtarget_ratio_ge_0p20_left_m1",
     "figure_personalization_target_offtarget_ratio_ge_0p20_right_dlpc",
     "figure_personalization_target_offtarget_ratio_ge_0p20_right_thalamus",
-    "figure_personalization_repeat_distributions_left_hippocampus",
-    "figure_personalization_repeat_distributions_left_m1",
-    "figure_personalization_repeat_distributions_right_dlpc",
-    "figure_personalization_repeat_distributions_right_thalamus",
+    *[
+        f"figure_personalization_repeat_distributions_{roi}_{statistic}"
+        for roi in (
+            "left_hippocampus",
+            "left_m1",
+            "right_dlpc",
+            "right_thalamus",
+        )
+        for statistic in (
+            "minimum",
+            "mean",
+            "median",
+            "maximum_p99_9",
+        )
+    ],
 ]
 
 COMMON_METRICS = {
@@ -216,7 +227,7 @@ python3 cohort/publication_tools/{RENDERER_NAME} \\
 ```
 
 The renderer validates both analysis schemas and record counts before plotting.
-It writes 20 figures as 400-dpi PNG and vector PDF, self-contained captions,
+It writes 32 figures as 400-dpi PNG and vector PDF, self-contained captions,
 derived statistics tables, and `figure_revision_manifest.json`. Use `--force`
 only when intentionally replacing an existing output directory.
 

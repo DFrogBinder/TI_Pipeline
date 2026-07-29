@@ -58,6 +58,12 @@ FIELD_METRICS = [
         "#CC79A7",
     ),
 ]
+FIELD_METRIC_STEMS = {
+    "roi_min_v_per_m": "minimum",
+    "roi_mean_v_per_m": "mean",
+    "roi_median_v_per_m": "median",
+    "roi_robust_max_p99_9_v_per_m": "maximum_p99_9",
+}
 
 BLUE = "#2F6B9A"
 ORANGE = "#D97706"
@@ -1209,17 +1215,23 @@ def plot_repeat_field_summaries(
 ) -> None:
     subset = repeats.loc[repeats["roi"] == roi]
     subjects = sorted(subset["subject"].unique())
-    figure, axes = plt.subplots(4, 7, figsize=(7.35, 6.45), squeeze=False)
-    figure.subplots_adjust(
-        left=0.10,
-        right=0.995,
-        top=0.90,
-        bottom=0.09,
-        hspace=0.28,
-        wspace=0.16,
-    )
-    rng = np.random.default_rng(20260729)
     for metric_index, (metric, metric_label, _) in enumerate(FIELD_METRICS):
+        figure, axes = plt.subplots(
+            2,
+            4,
+            figsize=(7.35, 4.25),
+            squeeze=False,
+            sharey=True,
+        )
+        figure.subplots_adjust(
+            left=0.08,
+            right=0.985,
+            top=0.78,
+            bottom=0.10,
+            hspace=0.42,
+            wspace=0.24,
+        )
+        rng = np.random.default_rng(20260729 + metric_index)
         metric_values = subset[metric].to_numpy(dtype=float)
         padding = max(0.004, float(np.ptp(metric_values)) * 0.07)
         limits = (
@@ -1227,7 +1239,7 @@ def plot_repeat_field_summaries(
             float(metric_values.max()) + padding,
         )
         for subject_index, subject in enumerate(subjects):
-            axis = axes[metric_index, subject_index]
+            axis = axes.flat[subject_index]
             rows = subset.loc[subset["subject"] == subject]
             groups = [
                 rows.loc[rows["condition"] == "generic", metric].to_numpy(dtype=float),
@@ -1270,66 +1282,70 @@ def plot_repeat_field_summaries(
                     linewidth=0.35,
                     zorder=4,
                 )
-            if metric_index == 0:
-                axis.set_title(short_subject(subject), fontsize=6.6, pad=5)
+            axis.set_title(short_subject(subject), fontsize=8.0, pad=5)
             axis.set_xlim(0.55, 2.45)
             axis.set_ylim(*limits)
-            axis.set_xticks(
-                [1, 2],
-                ["G", "P"] if metric_index == len(FIELD_METRICS) - 1 else ["", ""],
-            )
+            axis.set_xticks([1, 2], ["G", "P"])
             axis.grid(axis="y", color=GRID, lw=0.45)
             axis.set_axisbelow(True)
-            if subject_index:
+            if subject_index % 4:
                 axis.tick_params(axis="y", labelleft=False)
-            else:
-                axis.set_ylabel(f"{metric_label}\n(V/m)", fontsize=7.1)
-    figure.legend(
-        handles=[
-            Line2D(
-                [0],
-                [0],
-                marker="s",
-                color=BLUE,
-                markerfacecolor=BLUE,
-                lw=0,
-                label="Generic (G)",
+        for axis in axes.flat[len(subjects) :]:
+            axis.axis("off")
+        figure.supylabel(
+            f"{metric_label} E-field inside target ROI (V/m)",
+            x=0.012,
+            fontsize=8.2,
+        )
+        figure.legend(
+            handles=[
+                Line2D(
+                    [0],
+                    [0],
+                    marker="s",
+                    color=BLUE,
+                    markerfacecolor=BLUE,
+                    lw=0,
+                    label="Generic (G)",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="s",
+                    color=ORANGE,
+                    markerfacecolor=ORANGE,
+                    lw=0,
+                    label="Personalized (P)",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="D",
+                    color=GRAY,
+                    markerfacecolor=GRAY,
+                    lw=0,
+                    label="Mean across repeats",
+                ),
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.875),
+            ncol=3,
+            frameon=False,
+        )
+        figure.suptitle(
+            f"{ROI_LABELS[roi]}: {metric_label} target E-field across repeats",
+            weight="bold",
+            y=0.97,
+            fontsize=10.0,
+        )
+        save_figure(
+            figure,
+            figures_dir,
+            (
+                "figure_personalization_repeat_distributions_"
+                f"{roi.lower()}_{FIELD_METRIC_STEMS[metric]}"
             ),
-            Line2D(
-                [0],
-                [0],
-                marker="s",
-                color=ORANGE,
-                markerfacecolor=ORANGE,
-                lw=0,
-                label="Personalized (P)",
-            ),
-            Line2D(
-                [0],
-                [0],
-                marker="D",
-                color=GRAY,
-                markerfacecolor=GRAY,
-                lw=0,
-                label="Mean across repeats",
-            ),
-        ],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.985),
-        ncol=3,
-        frameon=False,
-    )
-    figure.suptitle(
-        f"{ROI_LABELS[roi]}: repeat-to-repeat target E-field summaries",
-        weight="bold",
-        y=0.955,
-        fontsize=9.4,
-    )
-    save_figure(
-        figure,
-        figures_dir,
-        f"figure_personalization_repeat_distributions_{roi.lower()}",
-    )
+        )
 
 
 def captions() -> dict[str, str]:
@@ -1458,16 +1474,20 @@ def captions() -> dict[str, str]:
             "symmetric-logarithmic x-axis accommodates zero target coverage "
             "and ratios spanning several orders of magnitude."
         )
-        result[f"figure_personalization_repeat_distributions_{roi.lower()}"] = (
-            f"Repeat-to-repeat distributions of minimum, mean, median and "
-            f"P99.9 maximum target-ROI E-field "
-            f"for {ROI_LABELS[roi]}. {common_personal} Each subject panel shows "
-            "ten repeat-level values for the generic (G) and personalized (P) "
-            "conditions. Boxes show interquartile ranges, internal white lines "
-            "show repeat medians, whiskers extend to 1.5 interquartile ranges, "
-            "open points are individual repeats, and diamonds are the "
-            "arithmetic means used in condition-level comparisons."
-        )
+        for metric, metric_label, _ in FIELD_METRICS:
+            result[
+                "figure_personalization_repeat_distributions_"
+                f"{roi.lower()}_{FIELD_METRIC_STEMS[metric]}"
+            ] = (
+                f"Repeat-to-repeat distribution of {metric_label.lower()} "
+                f"target-ROI E-field for {ROI_LABELS[roi]}. {common_personal} "
+                "Each subject panel shows ten repeat-level values for the "
+                "generic (G) and personalized (P) conditions. Boxes show "
+                "interquartile ranges, internal white lines show repeat "
+                "medians, whiskers extend to 1.5 interquartile ranges, open "
+                "points are individual repeats, and diamonds are the "
+                "arithmetic means used in condition-level comparisons."
+            )
     return result
 
 
@@ -1515,6 +1535,9 @@ emails and the subsequent clarification.
   targets in the right column.
 - Dense personalized summaries and selectivity-ratio plots are split into one
   figure per ROI.
+- Repeat-to-repeat target E-field distributions are split by both ROI and
+  statistic, yielding separate minimum, mean, median, and maximum (P99.9)
+  figures for every ROI.
 - Generic and personalized markers in the subject-change summaries share the
   exact same y-coordinate for each subject; their vertical position therefore
   encodes subject identity only.
@@ -1622,7 +1645,7 @@ def build(
     write_revision_audit(output_dir)
     result = {
         "status": "complete",
-        "figure_revision_schema_version": 3,
+        "figure_revision_schema_version": 4,
         "threshold_v_per_m": THRESHOLD,
         "cohort_analysis_schema_version": cohort_manifest[
             "analysis_schema_version"
@@ -1656,6 +1679,7 @@ def build(
         "panel_roi_order": PANEL_ROI_ORDER,
         "personalized_summary_split_by_roi": True,
         "personalized_ratio_split_by_roi": True,
+        "personalized_repeat_distributions_split_by_roi_and_statistic": True,
         "cohort_main_fit": "linear for all targets",
         "deep_target_sensitivity_analysis": (
             "linear and exponential models compared in a separate audit table"

@@ -191,8 +191,12 @@ def test_supervisor_revision_builds_complete_figure_set(tmp_path):
     ]
     assert result["personalized_summary_split_by_roi"] is True
     assert result["personalized_ratio_split_by_roi"] is True
-    assert len(list((output_dir / "figures").glob("*.png"))) == 20
-    assert len(list((output_dir / "figures").glob("*.pdf"))) == 20
+    assert (
+        result["personalized_repeat_distributions_split_by_roi_and_statistic"]
+        is True
+    )
+    assert len(list((output_dir / "figures").glob("*.png"))) == 32
+    assert len(list((output_dir / "figures").glob("*.pdf"))) == 32
     assert (output_dir / "tables" / "table_descriptive_fit_statistics.csv").is_file()
     fits = pd.read_csv(output_dir / "tables" / "table_descriptive_fit_statistics.csv")
     assert set(fits["model"]) == {"linear"}

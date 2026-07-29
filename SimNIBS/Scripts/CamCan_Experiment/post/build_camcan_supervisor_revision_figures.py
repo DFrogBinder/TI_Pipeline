@@ -40,6 +40,16 @@ DEEP_ROIS = {"Left_Hippocampus", "Right_Thalamus"}
 CONDITIONS = ("generic", "personalized")
 THRESHOLD = 0.20
 THRESHOLD_TOKEN = "0p2"
+FIELD_METRICS = [
+    ("roi_min_v_per_m", "Minimum", "#4C78A8"),
+    ("roi_mean_v_per_m", "Mean", "#009E73"),
+    ("roi_median_v_per_m", "Median", "#E69F00"),
+    (
+        "roi_robust_max_p99_9_v_per_m",
+        "Robust maximum (P99.9)",
+        "#CC79A7",
+    ),
+]
 
 BLUE = "#2F6B9A"
 ORANGE = "#D97706"
@@ -81,6 +91,8 @@ def set_style() -> None:
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
             "savefig.facecolor": "white",
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
         }
     )
 
@@ -142,8 +154,10 @@ def load_cohort(
     subjects = pd.read_csv(input_dir / "subject_level_repeat_mean_metrics.csv")
     mni = pd.read_csv(input_dir / "mni152_baseline_metrics.csv")
     columns = [
+        "roi_min_v_per_m",
         "roi_mean_v_per_m",
         "roi_median_v_per_m",
+        "roi_robust_max_p99_9_v_per_m",
         "target_coverage_percent_ge_0p2",
         "off_target_coverage_percent_ge_0p2",
     ]
@@ -181,8 +195,10 @@ def load_personalized(
     paired = pd.read_csv(input_dir / "paired_personalized_vs_generic.csv")
     repeats = pd.read_csv(input_dir / "repeat_level_metrics.csv")
     base_metrics = [
+        "roi_min_v_per_m",
         "roi_mean_v_per_m",
         "roi_median_v_per_m",
+        "roi_robust_max_p99_9_v_per_m",
         "target_coverage_percent_ge_0p2",
         "off_target_coverage_percent_ge_0p2",
     ]
@@ -199,7 +215,7 @@ def load_personalized(
     _require_columns(paired, paired_columns, "paired personalized metrics")
     _require_columns(
         repeats,
-        ["roi_mean_v_per_m", "roi_median_v_per_m"],
+        [item[0] for item in FIELD_METRICS],
         "personalized repeat metrics",
     )
     if (
@@ -313,11 +329,10 @@ def _cohort_relationship_figure(
         rows = subjects.loc[subjects["roi"] == roi]
         x = rows[x_metric].to_numpy(dtype=float)
         y = rows[y_metric].to_numpy(dtype=float)
-        exponential = roi in DEEP_ROIS
         grid, fitted, statistics = descriptive_fit(
             x,
             y,
-            exponential=exponential,
+            exponential=False,
         )
         fit_rows.append(
             {
@@ -342,7 +357,7 @@ def _cohort_relationship_figure(
             fitted,
             color=GRAY,
             lw=1.55,
-            linestyle="--" if not exponential else "-",
+            linestyle="-",
             zorder=3,
         )
         axis.scatter(
@@ -359,7 +374,7 @@ def _cohort_relationship_figure(
             0.04,
             0.96,
             (
-                f"{statistics['model'].capitalize()} fit\n"
+                "Linear fit\n"
                 rf"$R^2$={statistics['r_squared']:.2f}; "
                 rf"$\rho$={statistics['spearman_rho']:.2f}"
             ),
@@ -412,24 +427,191 @@ def _cohort_relationship_figure(
                 [0],
                 [0],
                 color=GRAY,
-                linestyle="--",
-                label="Linear fit (superficial targets)",
-            ),
-            Line2D(
-                [0],
-                [0],
-                color=GRAY,
                 linestyle="-",
-                label="Exponential fit (deep targets)",
+                label="Linear fit (all targets)",
             ),
         ],
         loc="upper center",
         bbox_to_anchor=(0.5, 0.99),
-        ncol=2,
+        ncol=3,
         frameon=False,
     )
     save_figure(figure, figures_dir, stem)
     return pd.DataFrame(fit_rows)
+
+
+def plot_population_target_field_distributions(
+    subjects: pd.DataFrame,
+    mni: pd.DataFrame,
+    figures_dir: Path,
+) -> pd.DataFrame:
+    """Show all four target-field summaries requested for validation."""
+    figure, axes = plt.subplots(2, 2, figsize=(7.35, 5.8), sharex=True)
+    figure.subplots_adjust(
+        left=0.085,
+        right=0.985,
+        top=0.91,
+        bottom=0.13,
+        hspace=0.36,
+        wspace=0.25,
+    )
+    rng = np.random.default_rng(20260729)
+    records: list[dict[str, float | str | int]] = []
+    positions = np.arange(1, 5)
+    for index, (metric, label, color) in enumerate(FIELD_METRICS):
+        axis = axes.flat[index]
+        groups = [
+            subjects.loc[subjects["roi"] == roi, metric].to_numpy(dtype=float)
+            for roi in ROI_ORDER
+        ]
+        violins = axis.violinplot(
+            groups,
+            positions=positions,
+            widths=0.72,
+            showmeans=False,
+            showmedians=False,
+            showextrema=False,
+        )
+        for body in violins["bodies"]:
+            body.set_facecolor(color)
+            body.set_edgecolor(color)
+            body.set_alpha(0.20)
+        for position, roi, values in zip(positions, ROI_ORDER, groups):
+            q1, median, q3 = np.quantile(values, [0.25, 0.5, 0.75])
+            axis.vlines(position, q1, q3, color=color, lw=5.0, zorder=3)
+            axis.scatter(
+                position,
+                median,
+                s=18,
+                facecolor="white",
+                edgecolor=color,
+                linewidth=0.9,
+                zorder=4,
+            )
+            sample = rng.choice(values, size=min(44, len(values)), replace=False)
+            axis.scatter(
+                position + rng.uniform(-0.16, 0.16, len(sample)),
+                sample,
+                s=5,
+                color=color,
+                alpha=0.22,
+                edgecolors="none",
+                zorder=2,
+            )
+            mni_value = float(mni.loc[roi, metric])
+            axis.scatter(
+                position,
+                mni_value,
+                marker="D",
+                s=39,
+                facecolor=ORANGE,
+                edgecolor="white",
+                linewidth=0.65,
+                zorder=5,
+            )
+            records.append(
+                {
+                    "roi": roi,
+                    "metric": metric,
+                    "metric_label": label,
+                    "subjects": int(len(values)),
+                    "cohort_median": float(median),
+                    "cohort_q1": float(q1),
+                    "cohort_q3": float(q3),
+                    "mni152_value": mni_value,
+                }
+            )
+        axis.set_title(label, weight="bold")
+        axis.set_ylabel("Target field (V/m)")
+        axis.set_xticks(
+            positions,
+            ["Hippocampus", "M1", "DLPFC", "Thalamus"],
+            rotation=18,
+            ha="right",
+        )
+        axis.grid(axis="y", color=GRID, lw=0.55)
+        axis.set_axisbelow(True)
+        axis.text(
+            0.01,
+            1.03,
+            chr(ord("A") + index),
+            transform=axis.transAxes,
+            weight="bold",
+            fontsize=10,
+        )
+    figure.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color=GRAY,
+                markerfacecolor="white",
+                lw=4,
+                label="CamCan median and interquartile range",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="D",
+                color="none",
+                markerfacecolor=ORANGE,
+                label="MNI152 reference",
+            ),
+        ],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=2,
+        frameon=False,
+    )
+    save_figure(
+        figure,
+        figures_dir,
+        "figure_population_target_field_distributions",
+    )
+    return pd.DataFrame(records)
+
+
+def deep_target_model_comparison(subjects: pd.DataFrame) -> pd.DataFrame:
+    """Retain the requested linear main fit while auditing deep-target curvature."""
+    rows: list[dict[str, float | str | int]] = []
+    y_metric = "off_target_coverage_percent_ge_0p2"
+    for x_metric in (
+        "target_coverage_percent_ge_0p2",
+        "roi_mean_v_per_m",
+    ):
+        for roi in sorted(DEEP_ROIS):
+            selected = subjects.loc[subjects["roi"] == roi]
+            x = selected[x_metric].to_numpy(dtype=float)
+            y = selected[y_metric].to_numpy(dtype=float)
+            for exponential in (False, True):
+                try:
+                    _, _, statistics = descriptive_fit(
+                        x,
+                        y,
+                        exponential=exponential,
+                    )
+                    rows.append(
+                        {
+                            "roi": roi,
+                            "x_metric": x_metric,
+                            "y_metric": y_metric,
+                            **statistics,
+                        }
+                    )
+                except (RuntimeError, ValueError):
+                    rows.append(
+                        {
+                            "roi": roi,
+                            "x_metric": x_metric,
+                            "y_metric": y_metric,
+                            "model": "exponential" if exponential else "linear",
+                            "n": int(len(x)),
+                            "r_squared": math.nan,
+                            "spearman_rho": float(spearmanr(x, y).statistic),
+                        }
+                    )
+    return pd.DataFrame(rows)
 
 
 def plot_population_ratio(
@@ -556,13 +738,19 @@ def plot_mni_percentiles(
     figures_dir: Path,
 ) -> pd.DataFrame:
     metrics = [
-        ("Mean target field", "roi_mean_v_per_m", BLUE),
-        ("Median target field", "roi_median_v_per_m", GREEN),
-        ("Target coverage ≥0.20", "target_coverage_percent_ge_0p2", ORANGE),
+        ("Minimum target field", "roi_min_v_per_m", FIELD_METRICS[0][2]),
+        ("Mean target field", "roi_mean_v_per_m", FIELD_METRICS[1][2]),
+        ("Median target field", "roi_median_v_per_m", FIELD_METRICS[2][2]),
+        (
+            "Robust maximum (P99.9)",
+            "roi_robust_max_p99_9_v_per_m",
+            FIELD_METRICS[3][2],
+        ),
+        ("Target coverage ≥0.20", "target_coverage_percent_ge_0p2", BLUE),
         ("Off-target coverage ≥0.20", "off_target_coverage_percent_ge_0p2", RED),
     ]
     records: list[dict[str, float | str]] = []
-    figure, axes = plt.subplots(2, 2, figsize=(7.35, 5.7))
+    figure, axes = plt.subplots(2, 2, figsize=(7.35, 6.5))
     figure.subplots_adjust(
         left=0.15,
         right=0.985,
@@ -637,22 +825,27 @@ def _subject_colors(paired: pd.DataFrame) -> dict[str, str]:
 
 def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
     panels = [
-        ("roi_mean_v_per_m", "Mean target field\n(V/m)"),
-        ("roi_median_v_per_m", "Median target field\n(V/m)"),
+        ("roi_min_v_per_m", "Minimum\n(V/m)"),
+        ("roi_mean_v_per_m", "Mean\n(V/m)"),
+        ("roi_median_v_per_m", "Median\n(V/m)"),
+        (
+            "roi_robust_max_p99_9_v_per_m",
+            "Robust maximum\n(P99.9; V/m)",
+        ),
         ("target_coverage_percent_ge_0p2", "Target coverage\n≥0.20 V/m (%)"),
         (
             "off_target_coverage_percent_ge_0p2",
             "Off-target coverage\n≥0.20 V/m (%)",
         ),
     ]
-    figure, axes = plt.subplots(4, 4, figsize=(7.35, 8.8), sharey="row")
+    figure, axes = plt.subplots(4, 6, figsize=(7.35, 9.0), sharey=False)
     figure.subplots_adjust(
-        left=0.17,
-        right=0.99,
-        top=0.92,
-        bottom=0.075,
+        left=0.16,
+        right=0.995,
+        top=0.94,
+        bottom=0.06,
         hspace=0.34,
-        wspace=0.28,
+        wspace=0.42,
     )
     for roi_index, roi in enumerate(ROI_ORDER):
         subset = paired.loc[paired["roi"] == roi].sort_values("_subject_order")
@@ -668,11 +861,9 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
             personalized_sd = subset[
                 f"{metric}__personalized_repeat_sd"
             ].to_numpy(dtype=float)
-            for yi, start, end in zip(y, generic, personalized):
-                axis.plot([start, end], [yi, yi], color=LIGHT_GRAY, lw=1.25)
             axis.errorbar(
                 generic,
-                y,
+                y + 0.13,
                 xerr=generic_sd,
                 fmt="o",
                 ms=4,
@@ -686,7 +877,7 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
             )
             axis.errorbar(
                 personalized,
-                y,
+                y - 0.13,
                 xerr=personalized_sd,
                 fmt="o",
                 ms=4,
@@ -699,12 +890,12 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                 zorder=4,
             )
             if roi_index == 0:
-                axis.set_title(title, weight="bold", pad=6)
+                axis.set_title(title, weight="bold", pad=7, fontsize=7.5)
             axis.set_yticks(y)
             axis.set_yticklabels(labels if metric_index == 0 else [])
             axis.grid(axis="x", color=GRID, lw=0.55)
             if "coverage_percent" in metric:
-                axis.set_xlim(-3, 103)
+                axis.set_xlim(-5, 105)
             else:
                 values = np.concatenate(
                     [
@@ -741,7 +932,7 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
             ),
         ],
         loc="upper center",
-        bbox_to_anchor=(0.58, 0.985),
+        bbox_to_anchor=(0.58, 0.992),
         ncol=2,
         frameon=False,
     )
@@ -778,7 +969,6 @@ def plot_personalized_trajectories(
             y0 = float(row[f"{y_metric}__generic_repeat_mean"])
             x1 = float(row[f"{x_metric}__personalized_repeat_mean"])
             y1 = float(row[f"{y_metric}__personalized_repeat_mean"])
-            axis.plot([x0, x1], [y0, y1], color=color, lw=1.3, alpha=0.78)
             axis.scatter(
                 x0,
                 y0,
@@ -823,7 +1013,14 @@ def plot_personalized_trajectories(
     figure.legend(
         handles=[
             *[
-                Line2D([0], [0], color=colors[s], lw=2, label=short_subject(s))
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="none",
+                    markerfacecolor=colors[s],
+                    label=short_subject(s),
+                )
                 for s in sorted(colors)
             ],
             Line2D(
@@ -898,15 +1095,9 @@ def plot_personalized_ratio(
                     "fold_change": personalized / generic if generic > 0 else math.nan,
                 }
             )
-            axis.plot(
-                [generic, personalized],
-                [yi, yi],
-                color=LIGHT_GRAY,
-                lw=1.25,
-            )
             axis.scatter(
                 generic,
-                yi,
+                yi + 0.11,
                 s=31,
                 facecolor="white",
                 edgecolor=color,
@@ -915,7 +1106,7 @@ def plot_personalized_ratio(
             )
             axis.scatter(
                 personalized,
-                yi,
+                yi - 0.11,
                 s=33,
                 facecolor=color,
                 edgecolor="white",
@@ -970,96 +1161,89 @@ def plot_personalized_ratio(
     return pd.DataFrame(records)
 
 
-def plot_repeat_mean_median(
+def plot_repeat_field_summaries(
     repeats: pd.DataFrame,
     figures_dir: Path,
     roi: str,
 ) -> None:
     subset = repeats.loc[repeats["roi"] == roi]
     subjects = sorted(subset["subject"].unique())
-    figure, axes = plt.subplots(2, 4, figsize=(7.35, 4.8), sharey=True)
+    figure, axes = plt.subplots(4, 7, figsize=(7.35, 6.45), squeeze=False)
     figure.subplots_adjust(
-        left=0.09,
-        right=0.985,
-        top=0.88,
-        bottom=0.14,
-        hspace=0.45,
-        wspace=0.18,
+        left=0.10,
+        right=0.995,
+        top=0.90,
+        bottom=0.09,
+        hspace=0.28,
+        wspace=0.16,
     )
     rng = np.random.default_rng(20260729)
-    all_values = subset[
-        ["roi_mean_v_per_m", "roi_median_v_per_m"]
-    ].to_numpy(dtype=float)
-    padding = max(0.006, float(np.ptp(all_values)) * 0.08)
-    limits = (
-        max(0.0, float(all_values.min()) - padding),
-        float(all_values.max()) + padding,
-    )
-    for index, subject in enumerate(subjects):
-        axis = axes.flat[index]
-        rows = subset.loc[subset["subject"] == subject]
-        groups = [
-            rows.loc[rows["condition"] == "generic", "roi_mean_v_per_m"].to_numpy(),
-            rows.loc[
-                rows["condition"] == "personalized", "roi_mean_v_per_m"
-            ].to_numpy(),
-            rows.loc[
-                rows["condition"] == "generic", "roi_median_v_per_m"
-            ].to_numpy(),
-            rows.loc[
-                rows["condition"] == "personalized", "roi_median_v_per_m"
-            ].to_numpy(),
-        ]
-        positions = [1, 2.2, 4.4, 5.8]
-        colors = [BLUE, ORANGE, BLUE, ORANGE]
-        box = axis.boxplot(
-            groups,
-            positions=positions,
-            widths=0.52,
-            showfliers=False,
-            patch_artist=True,
-            medianprops={"color": "white", "lw": 1.1},
-            boxprops={"edgecolor": GRAY, "lw": 0.7},
-            whiskerprops={"color": GRAY, "lw": 0.7},
-            capprops={"color": GRAY, "lw": 0.7},
+    for metric_index, (metric, metric_label, _) in enumerate(FIELD_METRICS):
+        metric_values = subset[metric].to_numpy(dtype=float)
+        padding = max(0.004, float(np.ptp(metric_values)) * 0.07)
+        limits = (
+            max(0.0, float(metric_values.min()) - padding),
+            float(metric_values.max()) + padding,
         )
-        for patch, color in zip(box["boxes"], colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.82)
-        for position, group, color in zip(positions, groups, colors):
-            jitter = rng.uniform(-0.08, 0.08, len(group))
-            axis.scatter(
-                position + jitter,
-                group,
-                s=11,
-                facecolor="white",
-                edgecolor=color,
-                linewidth=0.55,
-                zorder=3,
+        for subject_index, subject in enumerate(subjects):
+            axis = axes[metric_index, subject_index]
+            rows = subset.loc[subset["subject"] == subject]
+            groups = [
+                rows.loc[rows["condition"] == "generic", metric].to_numpy(dtype=float),
+                rows.loc[
+                    rows["condition"] == "personalized", metric
+                ].to_numpy(dtype=float),
+            ]
+            box = axis.boxplot(
+                groups,
+                positions=[1, 2],
+                widths=0.56,
+                showfliers=False,
+                patch_artist=True,
+                medianprops={"color": "white", "lw": 0.95},
+                boxprops={"edgecolor": GRAY, "lw": 0.6},
+                whiskerprops={"color": GRAY, "lw": 0.6},
+                capprops={"color": GRAY, "lw": 0.6},
             )
-            axis.scatter(
-                position,
-                float(np.mean(group)),
-                marker="D",
-                s=20,
-                facecolor=color,
-                edgecolor="white",
-                linewidth=0.5,
-                zorder=4,
+            for patch, color in zip(box["boxes"], [BLUE, ORANGE]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.82)
+            for position, group, color in zip([1, 2], groups, [BLUE, ORANGE]):
+                jitter = rng.uniform(-0.10, 0.10, len(group))
+                axis.scatter(
+                    position + jitter,
+                    group,
+                    s=6,
+                    facecolor="white",
+                    edgecolor=color,
+                    linewidth=0.4,
+                    zorder=3,
+                )
+                axis.scatter(
+                    position,
+                    float(np.mean(group)),
+                    marker="D",
+                    s=13,
+                    facecolor=color,
+                    edgecolor="white",
+                    linewidth=0.35,
+                    zorder=4,
+                )
+            if metric_index == 0:
+                axis.set_title(short_subject(subject), fontsize=6.6, pad=5)
+            axis.set_xlim(0.55, 2.45)
+            axis.set_ylim(*limits)
+            axis.set_xticks(
+                [1, 2],
+                ["G", "P"] if metric_index == len(FIELD_METRICS) - 1 else ["", ""],
             )
-        axis.set_title(short_subject(subject))
-        axis.set_xticks(
-            positions,
-            ["G\nmean", "P\nmean", "G\nmedian", "P\nmedian"],
-            fontsize=5.6,
-        )
-        axis.set_xlim(0.45, 6.35)
-        axis.set_ylim(*limits)
-        axis.grid(axis="y", color=GRID, lw=0.55)
-        if index % 4:
-            axis.tick_params(axis="y", labelleft=False)
-    axes.flat[-1].axis("off")
-    axes.flat[-1].legend(
+            axis.grid(axis="y", color=GRID, lw=0.45)
+            axis.set_axisbelow(True)
+            if subject_index:
+                axis.tick_params(axis="y", labelleft=False)
+            else:
+                axis.set_ylabel(f"{metric_label}\n(V/m)", fontsize=7.1)
+    figure.legend(
         handles=[
             Line2D(
                 [0],
@@ -1089,15 +1273,17 @@ def plot_repeat_mean_median(
                 label="Mean across repeats",
             ),
         ],
-        loc="center",
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.985),
+        ncol=3,
         frameon=False,
     )
     figure.suptitle(
-        f"{ROI_LABELS[roi]}: repeat distributions of target mean and median",
+        f"{ROI_LABELS[roi]}: technical-repeat target-field summaries",
         weight="bold",
-        y=0.97,
+        y=0.955,
+        fontsize=9.4,
     )
-    figure.supylabel("Target-ROI field (V/m)", x=0.02)
     save_figure(
         figure,
         figures_dir,
@@ -1129,9 +1315,8 @@ def captions() -> dict[str, str]:
             "diamond is the MNI152 reference. Target coverage is the percentage "
             "of target voxels reaching 0.20 V/m; off-target coverage is the "
             "percentage of finite brain voxels outside the target reaching the "
-            "same threshold. Dashed lines are descriptive linear fits for "
-            "superficial cortical targets; solid curves are descriptive "
-            "exponential fits for deep targets. R² and Spearman ρ are shown "
+            "same threshold. Solid lines are descriptive linear fits for all "
+            "four targets. R² and Spearman ρ are shown "
             "within each panel."
         ),
         "figure_population_mean_field_offtarget_relationship_ge_0p20": (
@@ -1139,8 +1324,19 @@ def captions() -> dict[str, str]:
             f"{common_cohort} Horizontal position is the arithmetic mean field "
             "over finite target voxels; vertical position is off-target "
             "coverage. Blue points represent subjects and the orange diamond "
-            "is MNI152. Fits use the same linear-superficial and "
-            "exponential-deep descriptive models as the coverage analysis."
+            "is MNI152. Solid lines are descriptive linear fits for all four "
+            "targets; the separate model-comparison table audits whether an "
+            "exponential model better describes either deep target."
+        ),
+        "figure_population_target_field_distributions": (
+            "Population distributions of four target-field summaries. "
+            f"{common_cohort} Panels report the minimum, arithmetic mean, "
+            "median, and robust maximum (the 99.9th percentile, P99.9) of the "
+            "field inside the target. Violin envelopes show the population "
+            "density, thick bars show the interquartile range, white circles "
+            "show the population median, and orange diamonds show MNI152. "
+            "P99.9 is used instead of a single-voxel maximum to reduce "
+            "sensitivity to isolated interpolation or meshing outliers."
         ),
         "figure_population_offtarget_target_ratio_ge_0p20": (
             "Population distribution of the off-target-to-target coverage "
@@ -1156,27 +1352,32 @@ def captions() -> dict[str, str]:
             "Position of the MNI152 reference within the CamCan population. "
             f"{common_cohort} Each point is the percentile rank of the single "
             "MNI152 value within the 132 subject values for the indicated "
-            "target and outcome. The shaded band denotes the interquartile "
+            "target and outcome. The six outcomes comprise target minimum, "
+            "mean, median, P99.9 robust maximum, target coverage, and "
+            "off-target coverage. The shaded band denotes the interquartile "
             "range and the dashed line marks the population median."
         ),
         "figure_personalization_all_subject_changes": (
             "Generic-versus-personalized changes across all 28 subject-target "
             f"configurations. {common_personal} Rows are targets and columns "
-            "show mean target field, median target field, target coverage and "
-            "off-target coverage at 0.20 V/m. Open blue circles are generic "
+            "show minimum, mean, median and P99.9 robust maximum target field, "
+            "followed by target and off-target coverage at 0.20 V/m. Open blue "
+            "circles are generic "
             "condition means, filled orange circles are personalized condition "
-            "means, gray segments connect conditions for the same subject, and "
-            "error bars show sample SD across ten repeats. Subjects are not "
+            "means, and error bars show sample SD across ten repeats. No lines "
+            "connect conditions; rows identify the same subjects across "
+            "columns. Subjects are not "
             "labelled best or worst because the historical ranking used a "
             "different ROI definition and target-only criterion."
         ),
         "figure_personalization_effectiveness_spread_ge_0p20": (
             "Subject-level changes in target coverage and off-target exposure "
-            f"at 0.20 V/m. {common_personal} An open point and filled point show "
-            "the generic and personalized condition means for one subject; a "
-            "thin line links the two conditions without implying a ranked "
-            "direction of improvement. Rightward movement is greater target "
-            "coverage and downward movement is less off-target coverage. "
+            f"at 0.20 V/m. {common_personal} Open and filled circles show the "
+            "generic and personalized condition means for one subject. No "
+            "connecting lines are drawn, reducing visual clutter; subject "
+            "identity is encoded consistently by colour. Rightward position "
+            "is greater target coverage and lower position is less off-target "
+            "coverage. "
             "Subject identity is encoded consistently by colour across panels."
         ),
         "figure_personalization_target_offtarget_ratio_ge_0p20": (
@@ -1184,15 +1385,17 @@ def captions() -> dict[str, str]:
             f"0.20 V/m. {common_personal} The ratio divides percentage target "
             "coverage by percentage off-target coverage, so higher values "
             "indicate greater thresholded target selectivity. Open and filled "
-            "points show generic and personalized condition means; gray "
-            "segments link the same subject. A symmetric-logarithmic x-axis is "
+            "circles show generic and personalized condition means with a "
+            "small vertical offset and no connecting lines. A "
+            "symmetric-logarithmic x-axis is "
             "used because ratios span several orders of magnitude and may be "
             "zero when target coverage is zero."
         ),
     }
     for roi in ROI_ORDER:
         result[f"figure_personalization_technical_repeats_{roi.lower()}"] = (
-            f"Technical-repeat distributions of mean and median target field "
+            f"Technical-repeat distributions of minimum, mean, median and "
+            f"P99.9 robust maximum target field "
             f"for {ROI_LABELS[roi]}. {common_personal} Each subject panel shows "
             "ten repeat-level values for the generic (G) and personalized (P) "
             "conditions. Boxes show interquartile ranges, internal white lines "
@@ -1212,6 +1415,44 @@ def write_captions(output_dir: Path, values: dict[str, str]) -> None:
     pd.DataFrame(rows).to_csv(output_dir / "figure_captions.csv", index=False)
     (output_dir / "figure_captions.md").write_text(
         "\n".join(lines),
+        encoding="utf-8",
+    )
+
+
+def write_revision_audit(output_dir: Path) -> None:
+    (output_dir / "SUPERVISOR_REQUEST_AUDIT.md").write_text(
+        """# Supervisor-request figure audit
+
+This publication set implements the figure requests from the two supervisor
+emails and the subsequent clarification.
+
+- Only the **0.20 V/m** evaluation threshold is presented.
+- Personalized generic-versus-personalized plots use **circles only**. No
+  arrows or connecting subject-level line segments are drawn.
+- Target-field validation reports **minimum, mean, median, and robust maximum
+  (P99.9)**. P99.9 is labelled explicitly and is used instead of a
+  single-voxel maximum because isolated interpolation or meshing outliers can
+  dominate the latter.
+- The main cohort relationship figures retain a **linear fit for every ROI**,
+  with R² and Spearman rho printed in each panel.
+- A separate CSV compares linear and exponential fits for the two deep
+  targets, preserving the proposed non-linearity check without replacing the
+  requested main linear fits.
+- A separate population figure relates **mean target field** to off-target
+  coverage.
+- The off-target/target coverage ratio is shown by ROI. Complete target
+  failures (zero target coverage) are counted explicitly and are not silently
+  treated as finite ratios.
+- Historical **best/worst labels are not used**, because those labels were
+  selected using a different target definition and a target-only criterion.
+- Figure labels use **target**, not “optimizer target”.
+- Every figure is supplied as a 400-dpi PNG and vector PDF with a
+  self-contained caption and the supporting numerical tables.
+
+The only point-connecting line in this set is the cohort-level fitted
+regression line; it is a statistical summary, not a generic-to-personalized
+subject trajectory.
+""",
         encoding="utf-8",
     )
 
@@ -1257,6 +1498,18 @@ def build(
         tables_dir / "table_descriptive_fit_statistics.csv",
         index=False,
     )
+    deep_target_model_comparison(subjects).to_csv(
+        tables_dir / "table_deep_target_linear_vs_exponential.csv",
+        index=False,
+    )
+    plot_population_target_field_distributions(
+        subjects,
+        mni,
+        figures_dir,
+    ).to_csv(
+        tables_dir / "table_population_target_field_distributions.csv",
+        index=False,
+    )
     plot_population_ratio(subjects, mni, figures_dir).to_csv(
         tables_dir / "table_population_offtarget_target_ratio.csv",
         index=False,
@@ -1272,12 +1525,13 @@ def build(
         index=False,
     )
     for roi in ROI_ORDER:
-        plot_repeat_mean_median(repeats, figures_dir, roi)
+        plot_repeat_field_summaries(repeats, figures_dir, roi)
     caption_values = captions()
     write_captions(output_dir, caption_values)
+    write_revision_audit(output_dir)
     result = {
         "status": "complete",
-        "figure_revision_schema_version": 1,
+        "figure_revision_schema_version": 2,
         "threshold_v_per_m": THRESHOLD,
         "cohort_analysis_schema_version": cohort_manifest[
             "analysis_schema_version"
@@ -1300,8 +1554,17 @@ def build(
         "captions": len(caption_values),
         "best_worst_visual_encoding": False,
         "trajectory_arrows": False,
-        "deep_target_fit": "exponential",
-        "superficial_target_fit": "linear",
+        "condition_connecting_lines": False,
+        "field_summaries": [
+            "minimum",
+            "mean",
+            "median",
+            "robust maximum (P99.9)",
+        ],
+        "cohort_main_fit": "linear for all targets",
+        "deep_target_sensitivity_analysis": (
+            "linear and exponential models compared in a separate audit table"
+        ),
         "ratio_zero_target_policy": (
             "off-target/target population ratio undefined when target coverage "
             "is zero; excluded from finite box and explicitly counted"

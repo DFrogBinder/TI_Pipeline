@@ -25,6 +25,7 @@ RENDERER_NAME = "build_camcan_supervisor_revision_figures.py"
 EXPECTED_FIGURE_STEMS = [
     "figure_population_target_offtarget_relationship_ge_0p20",
     "figure_population_mean_field_offtarget_relationship_ge_0p20",
+    "figure_population_target_field_distributions",
     "figure_population_offtarget_target_ratio_ge_0p20",
     "figure_mni152_percentile_context_ge_0p20",
     "figure_personalization_all_subject_changes",
@@ -37,8 +38,10 @@ EXPECTED_FIGURE_STEMS = [
 ]
 
 COMMON_METRICS = {
+    "roi_min_v_per_m",
     "roi_mean_v_per_m",
     "roi_median_v_per_m",
+    "roi_robust_max_p99_9_v_per_m",
     "target_coverage_percent_ge_0p2",
     "off_target_coverage_percent_ge_0p2",
 }
@@ -99,8 +102,10 @@ ROLE_CONFIG = {
                     "roi",
                     "condition",
                     "repeat",
+                    "roi_min_v_per_m",
                     "roi_mean_v_per_m",
                     "roi_median_v_per_m",
+                    "roi_robust_max_p99_9_v_per_m",
                 },
             },
         },
@@ -203,7 +208,7 @@ python3 cohort/publication_tools/{RENDERER_NAME} \\
 ```
 
 The renderer validates both analysis schemas and record counts before plotting.
-It writes 11 figures as 400-dpi PNG and vector PDF, self-contained captions,
+It writes 12 figures as 400-dpi PNG and vector PDF, self-contained captions,
 derived statistics tables, and `figure_revision_manifest.json`. Use `--force`
 only when intentionally replacing an existing output directory.
 

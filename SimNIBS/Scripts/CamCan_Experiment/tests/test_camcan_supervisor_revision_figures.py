@@ -40,8 +40,10 @@ def _write_synthetic_inputs(tmp_path):
                 {
                     "subject": f"sub-{subject_index:03d}",
                     "roi": roi,
+                    "roi_min_v_per_m": mean - 0.035,
                     "roi_mean_v_per_m": mean,
                     "roi_median_v_per_m": mean - 0.005,
+                    "roi_robust_max_p99_9_v_per_m": mean + 0.045,
                     "target_coverage_percent_ge_0p2": coverage,
                     "off_target_coverage_percent_ge_0p2": off_target,
                 }
@@ -50,8 +52,10 @@ def _write_synthetic_inputs(tmp_path):
             {
                 "subject": "MNI152",
                 "roi": roi,
+                "roi_min_v_per_m": 0.17 + roi_index * 0.01,
                 "roi_mean_v_per_m": 0.20 + roi_index * 0.01,
                 "roi_median_v_per_m": 0.195 + roi_index * 0.01,
+                "roi_robust_max_p99_9_v_per_m": 0.25 + roi_index * 0.01,
                 "target_coverage_percent_ge_0p2": 50.0,
                 "off_target_coverage_percent_ge_0p2": 2.0 + roi_index,
             }
@@ -94,8 +98,13 @@ def _write_synthetic_inputs(tmp_path):
                 "selection_role": "cross_target",
             }
             metrics = {
+                "roi_min_v_per_m": (0.12 + subject_index * 0.01, 0.16),
                 "roi_mean_v_per_m": (0.16 + subject_index * 0.01, 0.20),
                 "roi_median_v_per_m": (0.15 + subject_index * 0.01, 0.195),
+                "roi_robust_max_p99_9_v_per_m": (
+                    0.23 + subject_index * 0.01,
+                    0.27,
+                ),
                 "target_coverage_percent_ge_0p2": (
                     generic_target,
                     personalized_target,
@@ -120,12 +129,22 @@ def _write_synthetic_inputs(tmp_path):
                             "roi": roi,
                             "condition": condition,
                             "repeat": f"{repeat_index + 1:02d}",
+                            "roi_min_v_per_m": (
+                                metrics["roi_min_v_per_m"][condition_index]
+                                + repeat_index / 10_000
+                            ),
                             "roi_mean_v_per_m": (
                                 metrics["roi_mean_v_per_m"][condition_index]
                                 + repeat_index / 10_000
                             ),
                             "roi_median_v_per_m": (
                                 metrics["roi_median_v_per_m"][condition_index]
+                                + repeat_index / 10_000
+                            ),
+                            "roi_robust_max_p99_9_v_per_m": (
+                                metrics["roi_robust_max_p99_9_v_per_m"][
+                                    condition_index
+                                ]
                                 + repeat_index / 10_000
                             ),
                         }
@@ -156,7 +175,19 @@ def test_supervisor_revision_builds_complete_figure_set(tmp_path):
     assert result["status"] == "complete"
     assert result["best_worst_visual_encoding"] is False
     assert result["trajectory_arrows"] is False
-    assert len(list((output_dir / "figures").glob("*.png"))) == 11
-    assert len(list((output_dir / "figures").glob("*.pdf"))) == 11
+    assert result["condition_connecting_lines"] is False
+    assert result["field_summaries"] == [
+        "minimum",
+        "mean",
+        "median",
+        "robust maximum (P99.9)",
+    ]
+    assert len(list((output_dir / "figures").glob("*.png"))) == 12
+    assert len(list((output_dir / "figures").glob("*.pdf"))) == 12
     assert (output_dir / "tables" / "table_descriptive_fit_statistics.csv").is_file()
+    fits = pd.read_csv(output_dir / "tables" / "table_descriptive_fit_statistics.csv")
+    assert set(fits["model"]) == {"linear"}
+    assert (
+        output_dir / "tables" / "table_deep_target_linear_vs_exponential.csv"
+    ).is_file()
     assert (output_dir / "figure_captions.md").is_file()

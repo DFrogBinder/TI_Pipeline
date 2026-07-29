@@ -1334,6 +1334,12 @@ and off-target coverage are zero, the ratio is `0/0` and is genuinely
 undefined; those observations are counted separately and are not included in
 the finite violin density.
 
+MNI-relative ratios additionally require the MNI152 off-target coverage to be
+non-zero. If the MNI152 denominator itself is zero, subtracting an infinite MNI
+ratio is undefined; the renderer deliberately stops instead of applying an
+epsilon or inventing a finite baseline. That case would require a separate
+supervisor decision.
+
 Please confirm whether this censored-infinity convention should be retained in
 the manuscript. Alternatives would require an explicit methodological choice,
 such as reporting the two coverage components without a ratio or defining a

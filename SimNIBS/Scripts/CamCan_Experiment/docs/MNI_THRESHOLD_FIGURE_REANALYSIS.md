@@ -75,4 +75,6 @@ Positive target coverage divided by zero off-target coverage is represented as
 censored positive infinity at the finite plotting boundary. Zero divided by
 zero is undefined and is counted separately. Every rendered result includes
 `SUPERVISOR_NOTE_RATIO_ZERO_DENOMINATORS.md`, which requests confirmation of
-this convention.
+this convention. If the MNI152 off-target denominator itself is zero, an
+MNI-centred ratio is undefined; the renderer fails closed and requests a
+separate decision rather than introducing an arbitrary epsilon.

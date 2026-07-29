@@ -64,7 +64,7 @@ simulations remain read-only.
   concurrency.
 - Existing FEM fields and atlases are read-only.
 - Output is isolated under
-  `campaigns/final_132/post_processing/optimizer_matched_analysis/`.
+  `campaigns/final_132/post_processing/optimizer_matched_analysis_schema4/`.
 
 ### Personalized versus generic
 
@@ -77,6 +77,6 @@ simulations remain read-only.
   the same subject head and ROI.
 - Output is isolated under
   `campaigns/optimized_best_worst_7/post_processing/`
-  `optimizer_matched_personalized_vs_generic/`.
+  `optimizer_matched_personalized_vs_generic_schema3/`.
 - This is descriptive rather than population-inferential because the seven
   subjects were originally selected as outcome extremes.

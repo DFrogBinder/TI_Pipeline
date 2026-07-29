@@ -532,7 +532,7 @@ def test_manuscript_submitter_uses_40_resumable_jobs_then_one_collector():
     assert 'TIME_LIMIT="${TIME_LIMIT:-01:00:00}"' in text
     assert 'COLLECTOR_TIME="${COLLECTOR_TIME:-01:00:00}"' in text
     assert "MANUSCRIPT_THRESHOLDS_COLON:-0.20:0.18:0.15" in text
-    assert "optimizer_matched_analysis" in text
+    assert "optimizer_matched_analysis_schema4" in text
     assert "100 mm3 cortical; 200 mm3 subcortical" in text
     assert "MANUSCRIPT_ROBUST_MAX_PERCENTILE:-99.9" in text
     assert "existing simulations are read-only" in text

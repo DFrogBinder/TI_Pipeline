@@ -235,7 +235,7 @@ quartiles, IQR, range), effectiveness-versus-spread figures, an audit manifest,
 and a compact download archive under:
 
 ```text
-campaigns/final_132/post_processing/optimizer_matched_analysis/
+campaigns/final_132/post_processing/optimizer_matched_analysis_schema4/
 ```
 
 The completed individualized campaign contains the correct personalized

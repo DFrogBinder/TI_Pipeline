@@ -204,3 +204,99 @@ def test_supervisor_revision_builds_complete_figure_set(tmp_path):
         output_dir / "tables" / "table_deep_target_linear_vs_exponential.csv"
     ).is_file()
     assert (output_dir / "figure_captions.md").is_file()
+
+
+def test_mni_relative_v4_centres_metrics_without_mutating_sources(tmp_path):
+    cohort_dir, personalized_dir = _write_synthetic_inputs(tmp_path)
+    _, subjects, mni = revision.load_cohort(cohort_dir)
+    _, paired, repeats = revision.load_personalized(personalized_dir)
+    original_subjects = subjects.copy(deep=True)
+    original_mni = mni.copy(deep=True)
+    original_paired = paired.copy(deep=True)
+    original_repeats = repeats.copy(deep=True)
+
+    (
+        relative_subjects,
+        relative_mni,
+        relative_paired,
+        relative_repeats,
+        audit,
+    ) = revision.make_mni_relative_tables(subjects, mni, paired, repeats)
+
+    metrics = [
+        *(metric for metric, _, _ in revision.FIELD_METRICS),
+        "target_coverage_percent_ge_0p2",
+        "off_target_coverage_percent_ge_0p2",
+    ]
+    for roi in revision.ROI_ORDER:
+        subject_mask = subjects["roi"] == roi
+        paired_mask = paired["roi"] == roi
+        repeat_mask = repeats["roi"] == roi
+        for metric in metrics:
+            baseline = float(mni.loc[roi, metric])
+            assert float(relative_mni.loc[roi, metric]) == 0.0
+            np.testing.assert_allclose(
+                relative_subjects.loc[subject_mask, metric],
+                subjects.loc[subject_mask, metric] - baseline,
+            )
+            for condition in revision.CONDITIONS:
+                column = f"{metric}__{condition}_repeat_mean"
+                np.testing.assert_allclose(
+                    relative_paired.loc[paired_mask, column],
+                    paired.loc[paired_mask, column] - baseline,
+                )
+            if metric in repeats:
+                np.testing.assert_allclose(
+                    relative_repeats.loc[repeat_mask, metric],
+                    repeats.loc[repeat_mask, metric] - baseline,
+                )
+
+        target = subjects.loc[
+            subject_mask, "target_coverage_percent_ge_0p2"
+        ].to_numpy(dtype=float)
+        off_target = subjects.loc[
+            subject_mask, "off_target_coverage_percent_ge_0p2"
+        ].to_numpy(dtype=float)
+        mni_ratio = float(
+            mni.loc[roi, "off_target_coverage_percent_ge_0p2"]
+            / mni.loc[roi, "target_coverage_percent_ge_0p2"]
+        )
+        expected = np.full(len(target), np.nan)
+        valid = target > 0
+        expected[valid] = off_target[valid] / target[valid] - mni_ratio
+        np.testing.assert_allclose(
+            relative_subjects.loc[
+                subject_mask, revision.MNI_RELATIVE_RATIO_COHORT
+            ],
+            expected,
+            equal_nan=True,
+        )
+
+    assert len(audit) == len(revision.ROI_ORDER) * (len(metrics) + 2)
+    pd.testing.assert_frame_equal(subjects, original_subjects)
+    pd.testing.assert_frame_equal(mni, original_mni)
+    pd.testing.assert_frame_equal(paired, original_paired)
+    pd.testing.assert_frame_equal(repeats, original_repeats)
+
+    output_dir = tmp_path / "v4"
+    result = revision.build(
+        cohort_dir,
+        personalized_dir,
+        output_dir,
+        force=False,
+        mni_relative=True,
+    )
+    assert result["status"] == "complete"
+    assert result["figure_revision_schema_version"] == 5
+    assert result["figure_revision_variant"] == "mni_relative_v4"
+    assert result["mni_relative"] is True
+    assert result["threshold_v_per_m"] == 0.2
+    assert result["roi_specific_mni_mean_threshold_recalculation"] is False
+    assert len(list((output_dir / "figures").glob("*.png"))) == 32
+    assert len(list((output_dir / "figures").glob("*.pdf"))) == 32
+    assert (
+        output_dir / "tables" / "table_mni152_reference_values.csv"
+    ).is_file()
+    assert (
+        output_dir / "tables" / "table_mni_relative_transform_audit.csv"
+    ).is_file()

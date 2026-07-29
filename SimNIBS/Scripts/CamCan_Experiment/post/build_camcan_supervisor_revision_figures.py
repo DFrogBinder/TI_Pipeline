@@ -48,6 +48,12 @@ DEEP_ROIS = {"Left_Hippocampus", "Right_Thalamus"}
 CONDITIONS = ("generic", "personalized")
 THRESHOLD = 0.20
 THRESHOLD_TOKEN = "0p2"
+MNI_RELATIVE_RATIO_COHORT = (
+    "mni_relative_off_target_to_target_ratio_ge_0p2"
+)
+MNI_RELATIVE_RATIO_PERSONALIZED = (
+    "mni_relative_target_to_off_target_ratio_ge_0p2"
+)
 FIELD_METRICS = [
     ("roi_min_v_per_m", "Minimum", "#4C78A8"),
     ("roi_mean_v_per_m", "Mean", "#009E73"),
@@ -254,6 +260,156 @@ def load_personalized(
     return manifest, paired, repeats
 
 
+def make_mni_relative_tables(
+    subjects: pd.DataFrame,
+    mni: pd.DataFrame,
+    paired: pd.DataFrame,
+    repeats: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return plotting tables expressed as differences from MNI152.
+
+    The source frames are never mutated. Field magnitudes and 0.20 V/m
+    coverage percentages are translated independently within each ROI so the
+    corresponding MNI152 value is exactly zero. Ratios are calculated from
+    the original positive-denominator values before subtracting the MNI152
+    ratio; dividing already centred coverages would be scientifically invalid.
+    """
+
+    subjects_relative = subjects.copy(deep=True)
+    mni_relative = mni.copy(deep=True)
+    paired_relative = paired.copy(deep=True)
+    repeats_relative = repeats.copy(deep=True)
+    metrics = [
+        *(metric for metric, _, _ in FIELD_METRICS),
+        "target_coverage_percent_ge_0p2",
+        "off_target_coverage_percent_ge_0p2",
+    ]
+    audit_rows: list[dict[str, float | str]] = []
+
+    for roi in ROI_ORDER:
+        subject_mask = subjects_relative["roi"] == roi
+        paired_mask = paired_relative["roi"] == roi
+        repeat_mask = repeats_relative["roi"] == roi
+        for metric in metrics:
+            baseline = float(mni.loc[roi, metric])
+            subjects_relative.loc[subject_mask, metric] = (
+                subjects.loc[subject_mask, metric].to_numpy(dtype=float)
+                - baseline
+            )
+            mni_relative.loc[roi, metric] = 0.0
+            for condition in CONDITIONS:
+                mean_column = f"{metric}__{condition}_repeat_mean"
+                if mean_column in paired_relative:
+                    paired_relative.loc[paired_mask, mean_column] = (
+                        paired.loc[paired_mask, mean_column].to_numpy(dtype=float)
+                        - baseline
+                    )
+            if metric in repeats_relative:
+                repeats_relative.loc[repeat_mask, metric] = (
+                    repeats.loc[repeat_mask, metric].to_numpy(dtype=float)
+                    - baseline
+                )
+            audit_rows.append(
+                {
+                    "roi": roi,
+                    "metric": metric,
+                    "mni152_reference_value": baseline,
+                    "relative_definition": (
+                        f"{metric} minus the ROI-specific MNI152 value"
+                    ),
+                }
+            )
+
+        target = subjects.loc[
+            subject_mask, "target_coverage_percent_ge_0p2"
+        ].to_numpy(dtype=float)
+        off_target = subjects.loc[
+            subject_mask, "off_target_coverage_percent_ge_0p2"
+        ].to_numpy(dtype=float)
+        mni_target = float(
+            mni.loc[roi, "target_coverage_percent_ge_0p2"]
+        )
+        mni_off_target = float(
+            mni.loc[roi, "off_target_coverage_percent_ge_0p2"]
+        )
+        mni_cohort_ratio = (
+            mni_off_target / mni_target if mni_target > 0 else math.nan
+        )
+        cohort_ratio = np.full(len(target), np.nan, dtype=float)
+        valid_target = target > 0
+        cohort_ratio[valid_target] = (
+            off_target[valid_target] / target[valid_target]
+            - mni_cohort_ratio
+        )
+        subjects_relative.loc[
+            subject_mask, MNI_RELATIVE_RATIO_COHORT
+        ] = cohort_ratio
+        mni_relative.loc[roi, MNI_RELATIVE_RATIO_COHORT] = 0.0
+        audit_rows.append(
+            {
+                "roi": roi,
+                "metric": "off_target_to_target_coverage_ratio_ge_0p2",
+                "mni152_reference_value": mni_cohort_ratio,
+                "relative_definition": (
+                    "(off-target coverage / target coverage) minus the "
+                    "ROI-specific MNI152 ratio"
+                ),
+            }
+        )
+
+        mni_personalized_ratio = (
+            mni_target / mni_off_target if mni_off_target > 0 else math.nan
+        )
+        for condition in CONDITIONS:
+            target_column = (
+                "target_coverage_percent_ge_0p2"
+                f"__{condition}_repeat_mean"
+            )
+            off_target_column = (
+                "off_target_coverage_percent_ge_0p2"
+                f"__{condition}_repeat_mean"
+            )
+            output_column = (
+                f"{MNI_RELATIVE_RATIO_PERSONALIZED}"
+                f"__{condition}_repeat_mean"
+            )
+            condition_target = paired.loc[
+                paired_mask, target_column
+            ].to_numpy(dtype=float)
+            condition_off_target = paired.loc[
+                paired_mask, off_target_column
+            ].to_numpy(dtype=float)
+            condition_ratio = np.full(
+                len(condition_target), np.nan, dtype=float
+            )
+            valid_off_target = condition_off_target > 0
+            condition_ratio[valid_off_target] = (
+                condition_target[valid_off_target]
+                / condition_off_target[valid_off_target]
+                - mni_personalized_ratio
+            )
+            paired_relative.loc[paired_mask, output_column] = condition_ratio
+        audit_rows.append(
+            {
+                "roi": roi,
+                "metric": "target_to_off_target_coverage_ratio_ge_0p2",
+                "mni152_reference_value": mni_personalized_ratio,
+                "relative_definition": (
+                    "(target coverage / off-target coverage) minus the "
+                    "ROI-specific MNI152 ratio"
+                ),
+            }
+        )
+
+    return (
+        subjects_relative,
+        mni_relative,
+        paired_relative,
+        repeats_relative,
+        pd.DataFrame(audit_rows),
+    )
+
+
 def _exp_model(x: np.ndarray, c: float, a: float, b: float) -> np.ndarray:
     return c + a * np.expm1(b * x)
 
@@ -326,6 +482,7 @@ def _cohort_relationship_figure(
     x_metric: str,
     x_label: str,
     stem: str,
+    mni_relative: bool = False,
 ) -> pd.DataFrame:
     y_metric = "off_target_coverage_percent_ge_0p2"
     figure, axes = plt.subplots(2, 2, figsize=(7.35, 6.25))
@@ -333,7 +490,7 @@ def _cohort_relationship_figure(
         left=0.09,
         right=0.985,
         top=0.87,
-        bottom=0.09,
+        bottom=0.12,
         hspace=0.37,
         wspace=0.30,
     )
@@ -384,6 +541,9 @@ def _cohort_relationship_figure(
             linewidth=0.8,
             zorder=4,
         )
+        if mni_relative:
+            axis.axvline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
+            axis.axhline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
         axis.text(
             0.04,
             0.96,
@@ -399,17 +559,42 @@ def _cohort_relationship_figure(
             bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "none"},
         )
         axis.set_title(ROI_LABELS[roi], weight="bold")
-        axis.set_xlabel(x_label)
+        axis.set_xlabel("")
         axis.set_ylabel(
-            "Off-target coverage ≥ 0.20 V/m (%)" if index % 2 == 0 else ""
+            (
+                "Off-target coverage difference from MNI152\n"
+                "at 0.20 V/m (percentage points)"
+                if mni_relative
+                else "Off-target coverage ≥ 0.20 V/m (%)"
+            )
+            if index % 2 == 0
+            else ""
         )
         if "coverage" in x_metric:
-            axis.set_xlim(-3, 103)
+            if mni_relative:
+                padding = max(1.0, float(np.ptp(x)) * 0.05)
+                axis.set_xlim(float(x.min()) - padding, float(x.max()) + padding)
+            else:
+                axis.set_xlim(-3, 103)
         else:
             padding = max(0.005, float(np.ptp(x)) * 0.05)
-            axis.set_xlim(max(0.0, float(x.min()) - padding), float(x.max()) + padding)
+            axis.set_xlim(
+                (
+                    float(x.min()) - padding
+                    if mni_relative
+                    else max(0.0, float(x.min()) - padding)
+                ),
+                float(x.max()) + padding,
+            )
         y_padding = max(0.2, float(np.ptp(y)) * 0.08)
-        axis.set_ylim(max(0.0, float(y.min()) - y_padding), float(y.max()) + y_padding)
+        axis.set_ylim(
+            (
+                float(y.min()) - y_padding
+                if mni_relative
+                else max(0.0, float(y.min()) - y_padding)
+            ),
+            float(y.max()) + y_padding,
+        )
         axis.grid(color=GRID, lw=0.55)
         axis.set_axisbelow(True)
         axis.text(
@@ -420,6 +605,7 @@ def _cohort_relationship_figure(
             weight="bold",
             fontsize=10,
         )
+    figure.supxlabel(x_label, y=0.025, fontsize=8.6)
     figure.legend(
         handles=[
             Line2D(
@@ -437,7 +623,11 @@ def _cohort_relationship_figure(
                 marker="D",
                 color="none",
                 markerfacecolor=ORANGE,
-                label="MNI152 reference",
+                label=(
+                    "MNI152 reference (= 0)"
+                    if mni_relative
+                    else "MNI152 reference"
+                ),
             ),
             Line2D(
                 [0],
@@ -460,6 +650,8 @@ def plot_population_target_field_distributions(
     subjects: pd.DataFrame,
     mni: pd.DataFrame,
     figures_dir: Path,
+    *,
+    mni_relative: bool = False,
 ) -> pd.DataFrame:
     """Show all four target-field summaries requested for validation."""
     figure, axes = plt.subplots(2, 2, figsize=(7.35, 5.8), sharex=True)
@@ -537,6 +729,8 @@ def plot_population_target_field_distributions(
                     "mni152_value": mni_value,
                 }
             )
+        if mni_relative:
+            axis.axhline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
         axis.set_title(label, weight="bold")
         axis.set_xticks(
             positions,
@@ -571,7 +765,11 @@ def plot_population_target_field_distributions(
                 marker="D",
                 color="none",
                 markerfacecolor=ORANGE,
-                label="MNI152 reference",
+                label=(
+                    "MNI152 reference (= 0)"
+                    if mni_relative
+                    else "MNI152 reference"
+                ),
             ),
         ],
         loc="upper center",
@@ -582,14 +780,23 @@ def plot_population_target_field_distributions(
     figure.text(
         0.5,
         0.915,
-        "Each panel summarizes E-field magnitude across voxels inside the target ROI",
+        (
+            "Each panel shows the subject summary minus the ROI-specific "
+            "MNI152 summary"
+            if mni_relative
+            else "Each panel summarizes E-field magnitude across voxels inside the target ROI"
+        ),
         ha="center",
         va="center",
         fontsize=7.6,
         color=GRAY,
     )
     figure.supylabel(
-        "E-field magnitude summary inside target ROI (V/m)",
+        (
+            "Target-ROI E-field difference from MNI152 (V/m)"
+            if mni_relative
+            else "E-field magnitude summary inside target ROI (V/m)"
+        ),
         x=0.015,
     )
     save_figure(
@@ -646,6 +853,8 @@ def plot_population_ratio(
     subjects: pd.DataFrame,
     mni: pd.DataFrame,
     figures_dir: Path,
+    *,
+    mni_relative: bool = False,
 ) -> pd.DataFrame:
     target = "target_coverage_percent_ge_0p2"
     off_target = "off_target_coverage_percent_ge_0p2"
@@ -659,8 +868,15 @@ def plot_population_ratio(
         selected = subjects.loc[subjects["roi"] == roi]
         target_values = selected[target].to_numpy(dtype=float)
         off_values = selected[off_target].to_numpy(dtype=float)
-        valid = target_values > 0
-        ratio = off_values[valid] / target_values[valid]
+        if mni_relative:
+            relative_ratio = selected[
+                MNI_RELATIVE_RATIO_COHORT
+            ].to_numpy(dtype=float)
+            valid = np.isfinite(relative_ratio)
+            ratio = relative_ratio[valid]
+        else:
+            valid = target_values > 0
+            ratio = off_values[valid] / target_values[valid]
         finite_groups.append(ratio)
         zero_count = int((~valid).sum())
         zero_counts.append(zero_count)
@@ -708,11 +924,14 @@ def plot_population_ratio(
             zorder=3,
         )
         mni_target = float(mni.loc[roi, target])
-        mni_ratio = (
-            float(mni.loc[roi, off_target]) / mni_target
-            if mni_target > 0
-            else math.nan
-        )
+        if mni_relative:
+            mni_ratio = float(mni.loc[roi, MNI_RELATIVE_RATIO_COHORT])
+        else:
+            mni_ratio = (
+                float(mni.loc[roi, off_target]) / mni_target
+                if mni_target > 0
+                else math.nan
+            )
         if math.isfinite(mni_ratio):
             axis.scatter(
                 position,
@@ -730,11 +949,20 @@ def plot_population_ratio(
     axis.set_yscale("symlog", linthresh=1e-4, linscale=0.6, base=10)
     axis.set_xticks(np.arange(1, 5), tick_labels, fontsize=7.1)
     axis.set_ylabel(
-        "Off-target coverage ÷ target coverage\n"
-        "(lower indicates less spillover)"
+        (
+            "Difference from MNI152 in off-target ÷ target coverage\n"
+            "(negative indicates less spillover than MNI152)"
+            if mni_relative
+            else "Off-target coverage ÷ target coverage\n"
+            "(lower indicates less spillover)"
+        )
     )
     axis.set_title(
-        "Off-target exposure per unit of target coverage at 0.20 V/m",
+        (
+            "MNI152-relative off-target exposure per unit target coverage"
+            if mni_relative
+            else "Off-target exposure per unit of target coverage at 0.20 V/m"
+        ),
         weight="bold",
         pad=30,
     )
@@ -750,6 +978,8 @@ def plot_population_ratio(
     )
     axis.grid(axis="y", color=GRID, lw=0.55)
     axis.set_axisbelow(True)
+    if mni_relative:
+        axis.axhline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
     axis.legend(
         handles=[
             Line2D(
@@ -758,7 +988,11 @@ def plot_population_ratio(
                 marker="D",
                 color="none",
                 markerfacecolor=ORANGE,
-                label="MNI152 reference",
+                label=(
+                    "MNI152 reference (= 0)"
+                    if mni_relative
+                    else "MNI152 reference"
+                ),
             ),
         ],
         loc="upper right",
@@ -866,7 +1100,12 @@ def _subject_colors(paired: pd.DataFrame) -> dict[str, str]:
     return dict(zip(subjects, SUBJECT_PALETTE))
 
 
-def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
+def plot_personalized_summary(
+    paired: pd.DataFrame,
+    figures_dir: Path,
+    *,
+    mni_relative: bool = False,
+) -> None:
     panels = [
         ("roi_min_v_per_m", "Minimum\n(V/m)"),
         ("roi_mean_v_per_m", "Mean\n(V/m)"),
@@ -932,12 +1171,26 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                 capsize=1.5,
                 zorder=3,
             )
-            axis.set_title(title, weight="bold", pad=6)
+            axis.set_title(
+                f"Δ vs MNI152\n{title}" if mni_relative else title,
+                weight="bold",
+                pad=6,
+            )
             axis.set_yticks(y)
             axis.set_yticklabels(labels if metric_index % 3 == 0 else [])
             axis.grid(axis="x", color=GRID, lw=0.55)
+            if mni_relative:
+                axis.axvline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
             if "coverage_percent" in metric:
-                axis.set_xlim(-5, 105)
+                if mni_relative:
+                    values = np.concatenate([generic, personalized])
+                    padding = max(1.0, float(np.ptp(values)) * 0.07)
+                    axis.set_xlim(
+                        float(values.min()) - padding,
+                        float(values.max()) + padding,
+                    )
+                else:
+                    axis.set_xlim(-5, 105)
             else:
                 values = np.concatenate(
                     [
@@ -949,12 +1202,21 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
                 )
                 padding = max(0.005, float(np.ptp(values)) * 0.07)
                 axis.set_xlim(
-                    max(0.0, float(values.min()) - padding),
+                    (
+                        float(values.min()) - padding
+                        if mni_relative
+                        else max(0.0, float(values.min()) - padding)
+                    ),
                     float(values.max()) + padding,
                 )
             axis.set_axisbelow(True)
         figure.suptitle(
-            f"{ROI_LABELS[roi]}: generic and personalized target outcomes",
+            (
+                f"{ROI_LABELS[roi]}: generic and personalized outcomes "
+                "relative to MNI152"
+                if mni_relative
+                else f"{ROI_LABELS[roi]}: generic and personalized target outcomes"
+            ),
             weight="bold",
             y=0.975,
         )
@@ -994,6 +1256,8 @@ def plot_personalized_summary(paired: pd.DataFrame, figures_dir: Path) -> None:
 def plot_personalized_trajectories(
     paired: pd.DataFrame,
     figures_dir: Path,
+    *,
+    mni_relative: bool = False,
 ) -> None:
     x_metric = "target_coverage_percent_ge_0p2"
     y_metric = "off_target_coverage_percent_ge_0p2"
@@ -1036,7 +1300,26 @@ def plot_personalized_trajectories(
                 zorder=4,
             )
         axis.set_title(ROI_LABELS[roi], weight="bold")
-        axis.set_xlim(-3, 103)
+        if mni_relative:
+            all_x = np.concatenate(
+                [
+                    subset[
+                        f"{x_metric}__generic_repeat_mean"
+                    ].to_numpy(dtype=float),
+                    subset[
+                        f"{x_metric}__personalized_repeat_mean"
+                    ].to_numpy(dtype=float),
+                ]
+            )
+            x_padding = max(1.0, float(np.ptp(all_x)) * 0.08)
+            axis.set_xlim(
+                float(all_x.min()) - x_padding,
+                float(all_x.max()) + x_padding,
+            )
+            axis.axvline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
+            axis.axhline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
+        else:
+            axis.set_xlim(-3, 103)
         all_y = np.concatenate(
             [
                 subset[f"{y_metric}__generic_repeat_mean"].to_numpy(dtype=float),
@@ -1046,12 +1329,33 @@ def plot_personalized_trajectories(
             ]
         )
         y_padding = max(0.1, float(np.ptp(all_y)) * 0.08)
-        axis.set_ylim(max(0.0, float(all_y.min()) - y_padding), float(all_y.max()) + y_padding)
+        axis.set_ylim(
+            (
+                float(all_y.min()) - y_padding
+                if mni_relative
+                else max(0.0, float(all_y.min()) - y_padding)
+            ),
+            float(all_y.max()) + y_padding,
+        )
         axis.set_xlabel(
-            "Target coverage ≥ 0.20 V/m (%)" if index >= 2 else ""
+            (
+                "Target coverage difference from MNI152\n"
+                "at 0.20 V/m (percentage points)"
+                if mni_relative
+                else "Target coverage ≥ 0.20 V/m (%)"
+            )
+            if index >= 2
+            else ""
         )
         axis.set_ylabel(
-            "Off-target coverage ≥ 0.20 V/m (%)" if index % 2 == 0 else ""
+            (
+                "Off-target coverage difference from MNI152\n"
+                "at 0.20 V/m (percentage points)"
+                if mni_relative
+                else "Off-target coverage ≥ 0.20 V/m (%)"
+            )
+            if index % 2 == 0
+            else ""
         )
         axis.grid(color=GRID, lw=0.55)
         axis.text(
@@ -1108,6 +1412,8 @@ def plot_personalized_trajectories(
 def plot_personalized_ratio(
     paired: pd.DataFrame,
     figures_dir: Path,
+    *,
+    mni_relative: bool = False,
 ) -> pd.DataFrame:
     target = "target_coverage_percent_ge_0p2"
     off_target = "off_target_coverage_percent_ge_0p2"
@@ -1126,14 +1432,28 @@ def plot_personalized_ratio(
         for yi, (_, row) in zip(y, subset.iterrows()):
             subject = str(row["subject"])
             color = colors[subject]
-            generic = float(
-                row[f"{target}__generic_repeat_mean"]
-                / row[f"{off_target}__generic_repeat_mean"]
-            )
-            personalized = float(
-                row[f"{target}__personalized_repeat_mean"]
-                / row[f"{off_target}__personalized_repeat_mean"]
-            )
+            if mni_relative:
+                generic = float(
+                    row[
+                        f"{MNI_RELATIVE_RATIO_PERSONALIZED}"
+                        "__generic_repeat_mean"
+                    ]
+                )
+                personalized = float(
+                    row[
+                        f"{MNI_RELATIVE_RATIO_PERSONALIZED}"
+                        "__personalized_repeat_mean"
+                    ]
+                )
+            else:
+                generic = float(
+                    row[f"{target}__generic_repeat_mean"]
+                    / row[f"{off_target}__generic_repeat_mean"]
+                )
+                personalized = float(
+                    row[f"{target}__personalized_repeat_mean"]
+                    / row[f"{off_target}__personalized_repeat_mean"]
+                )
             records.append(
                 {
                     "subject": subject,
@@ -1165,16 +1485,27 @@ def plot_personalized_ratio(
         axis.set_xscale("symlog", linthresh=0.5, linscale=0.6, base=10)
         axis.set_yticks(y, [short_subject(item) for item in subset["subject"]])
         axis.set_title(
-            f"{ROI_LABELS[roi]}: thresholded target selectivity",
+            (
+                f"{ROI_LABELS[roi]}: target selectivity relative to MNI152"
+                if mni_relative
+                else f"{ROI_LABELS[roi]}: thresholded target selectivity"
+            ),
             weight="bold",
             pad=28,
         )
         axis.set_xlabel(
-            "Target coverage ÷ off-target coverage at 0.20 V/m\n"
-            "(higher indicates greater selectivity)"
+            (
+                "Difference from MNI152 in target ÷ off-target coverage\n"
+                "(positive indicates greater selectivity than MNI152)"
+                if mni_relative
+                else "Target coverage ÷ off-target coverage at 0.20 V/m\n"
+                "(higher indicates greater selectivity)"
+            )
         )
         axis.grid(axis="x", color=GRID, lw=0.55)
         axis.set_axisbelow(True)
+        if mni_relative:
+            axis.axvline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=1)
         figure.legend(
             handles=[
                 Line2D(
@@ -1212,6 +1543,8 @@ def plot_repeat_field_summaries(
     repeats: pd.DataFrame,
     figures_dir: Path,
     roi: str,
+    *,
+    mni_relative: bool = False,
 ) -> None:
     subset = repeats.loc[repeats["roi"] == roi]
     subjects = sorted(subset["subject"].unique())
@@ -1235,7 +1568,11 @@ def plot_repeat_field_summaries(
         metric_values = subset[metric].to_numpy(dtype=float)
         padding = max(0.004, float(np.ptp(metric_values)) * 0.07)
         limits = (
-            max(0.0, float(metric_values.min()) - padding),
+            (
+                float(metric_values.min()) - padding
+                if mni_relative
+                else max(0.0, float(metric_values.min()) - padding)
+            ),
             float(metric_values.max()) + padding,
         )
         for subject_index, subject in enumerate(subjects):
@@ -1287,13 +1624,19 @@ def plot_repeat_field_summaries(
             axis.set_ylim(*limits)
             axis.set_xticks([1, 2], ["G", "P"])
             axis.grid(axis="y", color=GRID, lw=0.45)
+            if mni_relative:
+                axis.axhline(0.0, color=LIGHT_GRAY, lw=0.7, zorder=1)
             axis.set_axisbelow(True)
             if subject_index % 4:
                 axis.tick_params(axis="y", labelleft=False)
         for axis in axes.flat[len(subjects) :]:
             axis.axis("off")
         figure.supylabel(
-            f"{metric_label} E-field inside target ROI (V/m)",
+            (
+                f"{metric_label} target E-field difference from MNI152 (V/m)"
+                if mni_relative
+                else f"{metric_label} E-field inside target ROI (V/m)"
+            ),
             x=0.012,
             fontsize=8.2,
         )
@@ -1333,7 +1676,12 @@ def plot_repeat_field_summaries(
             frameon=False,
         )
         figure.suptitle(
-            f"{ROI_LABELS[roi]}: {metric_label} target E-field across repeats",
+            (
+                f"{ROI_LABELS[roi]}: {metric_label} target E-field "
+                "relative to MNI152"
+                if mni_relative
+                else f"{ROI_LABELS[roi]}: {metric_label} target E-field across repeats"
+            ),
             weight="bold",
             y=0.97,
             fontsize=10.0,
@@ -1348,7 +1696,7 @@ def plot_repeat_field_summaries(
         )
 
 
-def captions() -> dict[str, str]:
+def captions(*, mni_relative: bool = False) -> dict[str, str]:
     common_cohort = (
         "The fixed MNI152-derived temporal-interference montage was simulated "
         "on 132 corrected CamCan heads. Each subject value is the arithmetic "
@@ -1488,6 +1836,39 @@ def captions() -> dict[str, str]:
                 "points are individual repeats, and diamonds are the "
                 "arithmetic means used in condition-level comparisons."
             )
+    if not mni_relative:
+        return result
+
+    reference_note = (
+        " For this MNI-relative version, each displayed field or coverage "
+        "value is the original value minus the corresponding ROI-specific "
+        "MNI152 value, so MNI152 is exactly zero. Coverage differences remain "
+        "based on the prespecified 0.20 V/m evaluation threshold and are "
+        "reported in percentage points."
+    )
+    for stem in list(result):
+        if stem != "figure_mni152_percentile_context_ge_0p20":
+            result[stem] = result[stem] + reference_note
+    result["figure_population_offtarget_target_ratio_ge_0p20"] = (
+        "Population distribution of the MNI152-relative off-target-to-target "
+        f"coverage ratio at 0.20 V/m. {common_cohort} The ratio is calculated "
+        "from the original coverage percentages before subtracting the "
+        "ROI-specific MNI152 ratio; MNI152 is therefore zero. Negative values "
+        "indicate less off-target spillover per unit target coverage than "
+        "MNI152. Ratios remain undefined when target coverage is zero, and "
+        "those failures are counted beneath each ROI."
+    )
+    for roi in ROI_ORDER:
+        result[
+            f"figure_personalization_target_offtarget_ratio_ge_0p20_{roi.lower()}"
+        ] = (
+            f"MNI152-relative target-to-off-target coverage ratio for "
+            f"{ROI_LABELS[roi]} at 0.20 V/m. {common_personal} Each ratio is "
+            "calculated from the original coverage percentages before "
+            "subtracting the ROI-specific MNI152 ratio. Positive values "
+            "therefore indicate greater target selectivity than MNI152. Open "
+            "and filled circles show generic and personalized condition means."
+        )
     return result
 
 
@@ -1504,7 +1885,33 @@ def write_captions(output_dir: Path, values: dict[str, str]) -> None:
     )
 
 
-def write_revision_audit(output_dir: Path) -> None:
+def write_revision_audit(
+    output_dir: Path,
+    *,
+    mni_relative: bool = False,
+) -> None:
+    mni_section = ""
+    if mni_relative:
+        mni_section = """
+
+## MNI152-relative v4 transformation
+
+- The v3 directory and all of its figures remain untouched.
+- Every field magnitude and 0.20 V/m coverage percentage shown in v4 is
+  translated within ROI as **observed value minus MNI152 value**. MNI152 is
+  therefore exactly zero and positive/negative values indicate outcomes above
+  or below the corresponding template result.
+- Coverage differences remain evaluated at the prespecified **0.20 V/m**
+  threshold. The downloaded aggregate tables contain coverage only at 0.20,
+  0.18, and 0.15 V/m; they cannot exactly reconstruct coverage at arbitrary
+  ROI-specific MNI mean-field thresholds. No interpolation is performed.
+- Coverage ratios are calculated from the original coverage percentages
+  before subtracting the ROI-specific MNI152 ratio. Dividing already-centred
+  coverage differences would be invalid.
+- `table_mni152_reference_values.csv` records the absolute MNI152 values used
+  for centring, and `table_mni_relative_transform_audit.csv` records every
+  transformation.
+"""
     (output_dir / "SUPERVISOR_REQUEST_AUDIT.md").write_text(
         """# Supervisor-request figure audit
 
@@ -1547,7 +1954,8 @@ emails and the subsequent clarification.
 The only point-connecting line in this set is the cohort-level fitted
 regression line; it is a statistical summary, not a generic-to-personalized
 subject trajectory.
-""",
+"""
+        + mni_section,
         encoding="utf-8",
     )
 
@@ -1558,6 +1966,7 @@ def build(
     output_dir: Path,
     *,
     force: bool,
+    mni_relative: bool = False,
 ) -> dict:
     if output_dir.exists():
         if not force:
@@ -1571,6 +1980,13 @@ def build(
     tables_dir.mkdir()
     cohort_manifest, subjects, mni = load_cohort(cohort_dir)
     personalized_manifest, paired, repeats = load_personalized(personalized_dir)
+    absolute_subjects = subjects.copy(deep=True)
+    absolute_mni = mni.copy(deep=True)
+    transform_audit = pd.DataFrame()
+    if mni_relative:
+        subjects, mni, paired, repeats, transform_audit = (
+            make_mni_relative_tables(subjects, mni, paired, repeats)
+        )
     set_style()
 
     fit_coverage = _cohort_relationship_figure(
@@ -1578,32 +1994,53 @@ def build(
         mni,
         figures_dir,
         x_metric="target_coverage_percent_ge_0p2",
-        x_label="Target coverage ≥ 0.20 V/m (%)",
+        x_label=(
+            "Target coverage difference from MNI152 at 0.20 V/m "
+            "(percentage points)"
+            if mni_relative
+            else "Target coverage ≥ 0.20 V/m (%)"
+        ),
         stem="figure_population_target_offtarget_relationship_ge_0p20",
+        mni_relative=mni_relative,
     )
     fit_mean = _cohort_relationship_figure(
         subjects,
         mni,
         figures_dir,
         x_metric="roi_mean_v_per_m",
-        x_label="Mean E-field inside target ROI (V/m)",
+        x_label=(
+            "Mean target E-field difference from MNI152 (V/m)"
+            if mni_relative
+            else "Mean E-field inside target ROI (V/m)"
+        ),
         stem="figure_population_mean_field_offtarget_relationship_ge_0p20",
+        mni_relative=mni_relative,
     )
     fit_minimum = _cohort_relationship_figure(
         subjects,
         mni,
         figures_dir,
         x_metric="roi_min_v_per_m",
-        x_label="Minimum E-field inside target ROI (V/m)",
+        x_label=(
+            "Minimum target E-field difference from MNI152 (V/m)"
+            if mni_relative
+            else "Minimum E-field inside target ROI (V/m)"
+        ),
         stem="figure_population_minimum_field_offtarget_relationship_ge_0p20",
+        mni_relative=mni_relative,
     )
     fit_maximum = _cohort_relationship_figure(
         subjects,
         mni,
         figures_dir,
         x_metric="roi_robust_max_p99_9_v_per_m",
-        x_label="Maximum E-field inside target ROI (P99.9; V/m)",
+        x_label=(
+            "Maximum target E-field difference from MNI152 (P99.9; V/m)"
+            if mni_relative
+            else "Maximum E-field inside target ROI (P99.9; V/m)"
+        ),
         stem="figure_population_maximum_p99_9_field_offtarget_relationship_ge_0p20",
+        mni_relative=mni_relative,
     )
     pd.concat(
         [fit_coverage, fit_mean, fit_minimum, fit_maximum],
@@ -1612,7 +2049,7 @@ def build(
         tables_dir / "table_descriptive_fit_statistics.csv",
         index=False,
     )
-    deep_target_model_comparison(subjects).to_csv(
+    deep_target_model_comparison(absolute_subjects).to_csv(
         tables_dir / "table_deep_target_linear_vs_exponential.csv",
         index=False,
     )
@@ -1620,11 +2057,17 @@ def build(
         subjects,
         mni,
         figures_dir,
+        mni_relative=mni_relative,
     ).to_csv(
         tables_dir / "table_population_target_field_distributions.csv",
         index=False,
     )
-    plot_population_ratio(subjects, mni, figures_dir).to_csv(
+    plot_population_ratio(
+        subjects,
+        mni,
+        figures_dir,
+        mni_relative=mni_relative,
+    ).to_csv(
         tables_dir / "table_population_offtarget_target_ratio.csv",
         index=False,
     )
@@ -1632,21 +2075,68 @@ def build(
         tables_dir / "table_mni152_percentile_context.csv",
         index=False,
     )
-    plot_personalized_summary(paired, figures_dir)
-    plot_personalized_trajectories(paired, figures_dir)
-    plot_personalized_ratio(paired, figures_dir).to_csv(
+    plot_personalized_summary(
+        paired,
+        figures_dir,
+        mni_relative=mni_relative,
+    )
+    plot_personalized_trajectories(
+        paired,
+        figures_dir,
+        mni_relative=mni_relative,
+    )
+    plot_personalized_ratio(
+        paired,
+        figures_dir,
+        mni_relative=mni_relative,
+    ).to_csv(
         tables_dir / "table_personalized_target_offtarget_ratio.csv",
         index=False,
     )
     for roi in ROI_ORDER:
-        plot_repeat_field_summaries(repeats, figures_dir, roi)
-    caption_values = captions()
+        plot_repeat_field_summaries(
+            repeats,
+            figures_dir,
+            roi,
+            mni_relative=mni_relative,
+        )
+    if mni_relative:
+        absolute_mni.reset_index().to_csv(
+            tables_dir / "table_mni152_reference_values.csv",
+            index=False,
+        )
+        transform_audit.to_csv(
+            tables_dir / "table_mni_relative_transform_audit.csv",
+            index=False,
+        )
+    caption_values = captions(mni_relative=mni_relative)
     write_captions(output_dir, caption_values)
-    write_revision_audit(output_dir)
+    write_revision_audit(output_dir, mni_relative=mni_relative)
     result = {
         "status": "complete",
-        "figure_revision_schema_version": 4,
+        "figure_revision_schema_version": 5 if mni_relative else 4,
+        "figure_revision_variant": (
+            "mni_relative_v4" if mni_relative else "absolute_0p20_v3"
+        ),
         "threshold_v_per_m": THRESHOLD,
+        "mni_relative": mni_relative,
+        "mni_relative_definition": (
+            "metric minus the ROI-specific MNI152 metric"
+            if mni_relative
+            else None
+        ),
+        "coverage_threshold_policy": (
+            "fixed 0.20 V/m; values are centred on MNI152 coverage at 0.20 V/m"
+            if mni_relative
+            else "fixed 0.20 V/m"
+        ),
+        "roi_specific_mni_mean_threshold_recalculation": False,
+        "roi_specific_threshold_limitation": (
+            "Downloaded aggregate tables contain 0.20, 0.18, and 0.15 V/m "
+            "coverage only; no interpolation to arbitrary MNI means."
+            if mni_relative
+            else None
+        ),
         "cohort_analysis_schema_version": cohort_manifest[
             "analysis_schema_version"
         ],
@@ -1703,6 +2193,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--personalized-dir", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--mni-relative",
+        action="store_true",
+        help=(
+            "Express plotted field, coverage, and ratio values as differences "
+            "from the corresponding ROI-specific MNI152 reference."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1713,6 +2211,7 @@ def main() -> int:
         args.personalized_dir.resolve(),
         args.out_dir.resolve(),
         force=args.force,
+        mni_relative=args.mni_relative,
     )
     return 0
 

@@ -536,6 +536,8 @@ def test_manuscript_submitter_uses_40_resumable_jobs_then_one_collector():
     assert "100 mm3 cortical; 200 mm3 subcortical" in text
     assert "MANUSCRIPT_ROBUST_MAX_PERCENTILE:-99.9" in text
     assert "existing simulations are read-only" in text
+    assert "Complete markers (any schema)" in text
+    assert "schema 4 + configuration fingerprint" in text
 
 
 def test_manuscript_submitter_preflight_accepts_complete_synthetic_scope(tmp_path):

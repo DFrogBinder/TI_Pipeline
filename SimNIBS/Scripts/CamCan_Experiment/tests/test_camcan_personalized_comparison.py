@@ -319,6 +319,8 @@ def test_submitter_declares_all_configuration_optimizer_scope():
     assert "MakeROIs.m-equivalent" in text
     assert "repeat pairing across conditions: none" in text
     assert "source simulations: read-only" in text
+    assert "Complete markers (any schema)" in text
+    assert "comparison schema 3 + manuscript schema 4" in text
 
 
 def test_submitter_preflight_validates_exact_synthetic_scope(tmp_path):

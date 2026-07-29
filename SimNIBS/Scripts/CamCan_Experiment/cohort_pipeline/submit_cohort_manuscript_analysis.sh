@@ -229,7 +229,8 @@ printf '%s\n' \
     '  primary spread: off-target volume excluding the optimizer-matched ROI' \
     '  companion spread: whole-brain volume including the ROI' \
     '  individualized optimization: excluded' \
-    '  execution: resumable metric-only analysis; existing simulations are read-only'
+    '  execution: resumable metric-only analysis; existing simulations are read-only' \
+    '  reuse policy: schema 4 and the complete configuration fingerprint must match'
 
 echo "[INFO] Study root:          ${STUDY_ROOT}"
 echo "[INFO] Post campaign:        ${POST_CAMPAIGN_ROOT}"
@@ -240,7 +241,8 @@ echo "[INFO] Python:               ${PYTHON}"
 echo "[INFO] Resource profile:     ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
 echo "[INFO] Dataset concurrency:  ${MAX_CONCURRENT_DATASETS}"
 echo "[INFO] Workers per dataset:  ${MANUSCRIPT_WORKERS}"
-echo "[INFO] Existing markers:     ${EXISTING_COMPLETE}/${EXPECTED_RECORDS}"
+echo "[INFO] Complete markers (any schema): ${EXISTING_COMPLETE}/${EXPECTED_RECORDS}"
+echo "[INFO] Worker validation: schema 4 + configuration fingerprint; older records are recomputed"
 echo "[INFO] Output:               ${ANALYSIS_ROOT}/results"
 
 if [ "${PREFLIGHT_ONLY}" -eq 1 ]; then

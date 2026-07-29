@@ -154,7 +154,8 @@ printf '%s\n' \
     '  secondary ROI: full anatomical parcel (anatomical_ metrics)' \
     '  repeat pairing across conditions: none' \
     '  population inference: none; descriptive seven-subject comparison' \
-    '  source simulations: read-only'
+    '  source simulations: read-only' \
+    '  reuse policy: comparison schema 3, manuscript schema 4, and the complete configuration fingerprint must match'
 
 echo "[INFO] Generic study:          ${GENERIC_STUDY_ROOT}"
 echo "[INFO] Personalized study:     ${PERSONALIZED_STUDY_ROOT}"
@@ -163,7 +164,8 @@ echo "[INFO] Selection allowlist:    ${COMPARISON_ROOT}/selection_allowlist.csv"
 echo "[INFO] Allowlist SHA256:       ${ALLOWLIST_SHA256}"
 echo "[INFO] Generic targets SHA:    ${GENERIC_TARGETS_SHA256}"
 echo "[INFO] Personalized table SHA: ${INDIVIDUALIZED_TARGETS_SHA256}"
-echo "[INFO] Existing valid markers: ${EXISTING_RECORDS}/560"
+echo "[INFO] Complete markers (any schema): ${EXISTING_RECORDS}/560"
+echo "[INFO] Worker validation: comparison schema 3 + manuscript schema 4 + configuration fingerprint; older records are recomputed"
 echo "[INFO] Resource profile:       ${PARTITION}, ${CPUS_PER_TASK} CPU, ${MEMORY}, ${TIME_LIMIT}"
 echo "[INFO] Comparison output:      ${COMPARISON_ROOT}"
 

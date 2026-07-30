@@ -12,6 +12,7 @@ import csv
 import hashlib
 import json
 import os
+import struct
 import subprocess
 from configparser import ConfigParser
 from pathlib import Path
@@ -268,6 +269,185 @@ def _count_msh_nodes(ti_msh: Path) -> float:
         if not np.isnan(fallback):
             log_event("mesh_fallback_used", path=str(ti_msh), nodes=fallback)
         return fallback
+
+
+GMSH_ELEMENT_NODE_COUNTS = {
+    1: 2,
+    2: 3,
+    3: 4,
+    4: 4,
+    5: 8,
+    6: 6,
+    7: 5,
+    8: 3,
+    9: 6,
+    10: 9,
+    11: 10,
+    12: 27,
+    13: 18,
+    14: 14,
+    15: 1,
+}
+
+
+def _tetra_volume_sums(
+    coordinates: np.ndarray,
+    tetrahedra: np.ndarray,
+    tissue_tags: np.ndarray,
+) -> tuple[dict[int, int], dict[int, float]]:
+    """Return tetrahedral counts and physical volumes grouped by tissue tag."""
+
+    counts: dict[int, int] = {}
+    volumes: dict[int, float] = {}
+    chunk_size = 250_000
+    for start in range(0, len(tetrahedra), chunk_size):
+        stop = min(start + chunk_size, len(tetrahedra))
+        nodes = tetrahedra[start:stop]
+        points = coordinates[nodes]
+        vector_1 = points[:, 1] - points[:, 0]
+        vector_2 = points[:, 2] - points[:, 0]
+        vector_3 = points[:, 3] - points[:, 0]
+        element_volumes = (
+            np.abs(
+                np.einsum(
+                    "ij,ij->i",
+                    np.cross(vector_1, vector_2),
+                    vector_3,
+                )
+            )
+            / 6.0
+        )
+        tags = tissue_tags[start:stop].astype(int, copy=False)
+        for tag in np.unique(tags):
+            selected = tags == tag
+            counts[int(tag)] = counts.get(int(tag), 0) + int(
+                selected.sum()
+            )
+            volumes[int(tag)] = volumes.get(int(tag), 0.0) + float(
+                element_volumes[selected].sum()
+            )
+    return counts, volumes
+
+
+def _gmsh22_binary_mesh_statistics(
+    ti_msh: Path,
+) -> tuple[float, float, dict[int, int], dict[int, float]]:
+    """Read node and tetrahedral tissue statistics from binary Gmsh 2.2."""
+
+    with ti_msh.open("rb") as handle:
+        if handle.readline().strip() != b"$MeshFormat":
+            raise ValueError("missing $MeshFormat")
+        version, binary_flag, data_size = handle.readline().split()
+        if version != b"2.2" or binary_flag != b"1" or data_size != b"8":
+            raise ValueError(
+                "fallback supports binary Gmsh 2.2 with 8-byte coordinates"
+            )
+        endian_test = handle.read(4)
+        if len(endian_test) != 4:
+            raise ValueError("truncated binary endianness marker")
+        if struct.unpack("<i", endian_test)[0] == 1:
+            byte_order = "<"
+        elif struct.unpack(">i", endian_test)[0] == 1:
+            byte_order = ">"
+        else:
+            raise ValueError("invalid binary endianness marker")
+        handle.readline()
+        if handle.readline().strip() != b"$EndMeshFormat":
+            raise ValueError("missing $EndMeshFormat")
+
+        line = handle.readline()
+        while line and line.strip() != b"$Nodes":
+            line = handle.readline()
+        if not line:
+            raise ValueError("missing $Nodes")
+        node_count = int(handle.readline())
+        node_dtype = np.dtype(
+            [
+                ("tag", f"{byte_order}i4"),
+                ("xyz", f"{byte_order}f8", (3,)),
+            ]
+        )
+        node_records = np.fromfile(handle, dtype=node_dtype, count=node_count)
+        if len(node_records) != node_count:
+            raise ValueError("truncated binary node block")
+        max_tag = int(node_records["tag"].max())
+        coordinates = np.full((max_tag + 1, 3), np.nan, dtype=float)
+        coordinates[node_records["tag"]] = node_records["xyz"]
+        if handle.readline().strip() != b"$EndNodes":
+            raise ValueError("missing $EndNodes")
+
+        line = handle.readline()
+        while line and line.strip() != b"$Elements":
+            line = handle.readline()
+        if not line:
+            raise ValueError("missing $Elements")
+        element_total = int(handle.readline())
+        processed = 0
+        tissue_counts: dict[int, int] = {}
+        tissue_volumes: dict[int, float] = {}
+        integer_dtype = np.dtype(f"{byte_order}i4")
+        while processed < element_total:
+            header = np.fromfile(handle, dtype=integer_dtype, count=3)
+            if len(header) != 3:
+                raise ValueError("truncated binary element header")
+            element_type, block_count, tag_count = map(int, header)
+            node_count_per_element = GMSH_ELEMENT_NODE_COUNTS.get(
+                element_type
+            )
+            if node_count_per_element is None:
+                raise ValueError(
+                    f"unsupported Gmsh element type {element_type}"
+                )
+            row_width = 1 + tag_count + node_count_per_element
+            block = np.fromfile(
+                handle,
+                dtype=integer_dtype,
+                count=block_count * row_width,
+            )
+            if len(block) != block_count * row_width:
+                raise ValueError("truncated binary element block")
+            block = block.reshape(block_count, row_width)
+            if element_type == 4:
+                if tag_count < 1:
+                    raise ValueError("tetrahedra have no physical tissue tag")
+                tags = block[:, 1].astype(int, copy=False)
+                tetrahedra = block[
+                    :, 1 + tag_count : 1 + tag_count + 4
+                ].astype(np.int64, copy=False)
+                counts, volumes = _tetra_volume_sums(
+                    coordinates,
+                    tetrahedra,
+                    tags,
+                )
+                for tag, value in counts.items():
+                    tissue_counts[tag] = tissue_counts.get(tag, 0) + value
+                for tag, value in volumes.items():
+                    tissue_volumes[tag] = (
+                        tissue_volumes.get(tag, 0.0) + value
+                    )
+            processed += block_count
+    return (
+        float(node_count),
+        float(sum(tissue_counts.values())),
+        tissue_counts,
+        tissue_volumes,
+    )
+
+
+def _mesh_statistics(
+    ti_msh: Path,
+) -> tuple[float, float, dict[int, int], dict[int, float]]:
+    """Return nodes, tetrahedra, tissue element counts, and tissue volumes."""
+
+    try:
+        return _gmsh22_binary_mesh_statistics(ti_msh)
+    except Exception as exc:
+        log_event(
+            "mesh_statistics_error",
+            path=str(ti_msh),
+            error=str(exc),
+        )
+        return _count_msh_nodes(ti_msh), float("nan"), {}, {}
 
 
 def _label_name(label_id: int) -> str:
@@ -1402,13 +1582,26 @@ def _run_subject_analysis(
 
         counts = np.bincount(labels.ravel(), minlength=max(TISSUE_LABELS) + 1)
         label_counts[repeat_tag] = {lab: int(counts[lab]) for lab in TISSUE_LABELS}
+        voxel_volume_mm3 = float(abs(np.linalg.det(label_img.affine[:3, :3])))
+        label_volume_mm3_by_tissue = {
+            lab: float(counts[lab]) * voxel_volume_mm3
+            for lab in TISSUE_LABELS
+        }
 
         ti_msh_path = anat_dir / "SimNIBS" / "Output" / subject / "TI.msh"
         if not ti_msh_path.exists():
             log_event("missing", subject=subject, kind="ti_msh", path=str(ti_msh_path))
             mesh_nodes = float("nan")
+            mesh_elements = float("nan")
+            mesh_elements_by_tissue = {}
+            mesh_volume_mm3_by_tissue = {}
         else:
-            mesh_nodes = _count_msh_nodes(ti_msh_path)
+            (
+                mesh_nodes,
+                mesh_elements,
+                mesh_elements_by_tissue,
+                mesh_volume_mm3_by_tissue,
+            ) = _mesh_statistics(ti_msh_path)
 
         summary_rows.append(
             {
@@ -1434,6 +1627,11 @@ def _run_subject_analysis(
                 "ti_scale_factor": ti_scale_factor,
                 "roi_ti_source": roi_ti_source,
                 "mesh_nodes": mesh_nodes,
+                "mesh_elements": mesh_elements,
+                "mesh_elements_by_tissue": mesh_elements_by_tissue,
+                "mesh_volume_mm3_by_tissue": mesh_volume_mm3_by_tissue,
+                "label_voxel_volume_mm3": voxel_volume_mm3,
+                "label_volume_mm3_by_tissue": label_volume_mm3_by_tissue,
                 "label_count": len(label_ids),
                 "dice_by_label": dice_by_label,
                 "diff_fraction_m1": diff_fraction_roi,
@@ -1475,6 +1673,11 @@ def _run_subject_analysis(
         "ti_scale_factor",
         "roi_ti_source",
         "mesh_nodes",
+        "mesh_elements",
+        "mesh_elements_by_tissue",
+        "mesh_volume_mm3_by_tissue",
+        "label_voxel_volume_mm3",
+        "label_volume_mm3_by_tissue",
         "label_count",
         "dice_by_label",
     ]
@@ -1520,6 +1723,7 @@ def _run_subject_analysis(
         "diff_fraction",
         "diff_fraction_roi",
         "mesh_nodes",
+        "mesh_elements",
     ]
     metric_stats_map = {
         metric: _metric_stats([row[metric] for row in summary_rows])

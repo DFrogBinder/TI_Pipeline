@@ -40,7 +40,7 @@ SEED_MANIFEST = "fixed_seed_manifest.csv"
 FIGURE_OUTPUTS = [
     "presentation_condition_summary.csv",
     "01_primary_median_roi_repeat_distributions.png",
-    "condition_median_roi_by_repeat.png",
+    "figure_captions.csv",
     "presentation_manifest.json",
 ]
 WORKFLOW_STEPS = (

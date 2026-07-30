@@ -5,13 +5,15 @@ This renderer implements the figure decisions from the supervisor meeting:
 
 * superficial ROIs precede deep ROIs;
 * each ROI is evaluated at its SimNIBS 4.0.1 MNI152 mean target field;
-* population outcomes are expressed relative to the corresponding MNI152
-  result;
-* the personalized figure contains target coverage, off-target coverage, and
-  target/off-target coverage ratio only;
-* repeat error bars, repeat-distribution plots, percentile-context plots,
-  effectiveness/spread scatter plots, and separate minimum/maximum
-  relationships are not generated;
+* mean target fields, coverage percentages, and coverage ratios are shown as
+  absolute values so that their physical and percentage context is retained;
+* MNI152 is plotted at its absolute ROI-specific value as the population
+  reference;
+* one combined personalized figure contains target coverage, off-target
+  coverage, and target/off-target coverage ratio for all four ROIs;
+* repeat error bars, repeat-distribution plots, standalone MNI field plots,
+  percentile-context plots, effectiveness/spread scatter plots, and separate
+  minimum/maximum relationships are not generated;
 * all axes are linear;
 * target/off-target ratios with a zero off-target denominator are drawn as
   censored infinity observations at the finite plotting boundary.
@@ -40,7 +42,7 @@ from matplotlib.lines import Line2D
 from scipy.stats import spearmanr
 
 
-FIGURE_SCHEMA_VERSION = 6
+FIGURE_SCHEMA_VERSION = 9
 ROI_ORDER = [
     "Left_M1",
     "Right_DLPC",
@@ -69,19 +71,9 @@ GRAY = "#5F6873"
 LIGHT_GRAY = "#CBD1D8"
 GRID = "#E4E8ED"
 BLACK = "#222222"
-FIELD_COLORS = {
-    "Minimum": BLUE,
-    "Mean": GREEN,
-    "Maximum (P99.9)": PURPLE,
-}
 EXPECTED_FIGURE_STEMS = [
-    "figure_mni152_absolute_field_summaries",
-    *[
-        "figure_personalization_subject_changes_"
-        f"{ROI_SLUGS[roi]}_at_mni_roi_threshold"
-        for roi in ROI_ORDER
-    ],
-    "figure_population_mean_field_and_target_offtarget_ratio_mni_relative",
+    "figure_personalization_subject_changes_all_rois_at_mni_roi_threshold",
+    "figure_population_mean_field_and_target_offtarget_ratio_absolute",
     "figure_population_mean_field_offtarget_relationship_at_mni_roi_threshold",
     "figure_population_target_offtarget_relationship_at_mni_roi_threshold",
 ]
@@ -129,17 +121,13 @@ def set_style() -> None:
 
 def save_figure(figure: plt.Figure, figures_dir: Path, stem: str) -> None:
     figures_dir.mkdir(parents=True, exist_ok=True)
-    for suffix, kwargs in (
-        (".png", {"dpi": 400}),
-        (".pdf", {}),
-    ):
-        figure.savefig(
-            figures_dir / f"{stem}{suffix}",
-            bbox_inches="tight",
-            pad_inches=0.04,
-            facecolor="white",
-            **kwargs,
-        )
+    figure.savefig(
+        figures_dir / f"{stem}.png",
+        dpi=400,
+        bbox_inches="tight",
+        pad_inches=0.04,
+        facecolor="white",
+    )
     plt.close(figure)
 
 
@@ -438,46 +426,26 @@ def plot_mni_absolute(
     figure, axis = plt.subplots(figsize=(7.3, 3.9))
     x = np.arange(len(ROI_ORDER), dtype=float)
     for index, roi in enumerate(ROI_ORDER):
-        values = {
-            "Minimum": float(mni.loc[roi, "roi_min_v_per_m"]),
-            "Mean": float(mni.loc[roi, "roi_mean_v_per_m"]),
-            "Maximum (P99.9)": float(
-                mni.loc[roi, "roi_robust_max_p99_9_v_per_m"]
-            ),
-        }
-        axis.vlines(
+        value = float(mni.loc[roi, "roi_mean_v_per_m"])
+        axis.scatter(
             index,
-            values["Minimum"],
-            values["Maximum (P99.9)"],
-            color=LIGHT_GRAY,
-            lw=5.0,
-            zorder=1,
+            value,
+            marker="D",
+            s=52,
+            color=ORANGE,
+            edgecolor="white",
+            linewidth=0.7,
+            zorder=3,
         )
-        for offset, (label, value) in zip(
-            (-0.11, 0.0, 0.11), values.items()
-        ):
-            axis.scatter(
-                index + offset,
-                value,
-                s=50 if label == "Mean" else 37,
-                color=FIELD_COLORS[label],
-                edgecolor="white",
-                linewidth=0.7,
-                zorder=3,
-            )
-            rows.append(
-                {
-                    "roi": roi,
-                    "summary": label,
-                    "value_v_per_m": value,
-                    "evaluation_threshold": (
-                        label == "Mean"
-                    ),
-                    "simnibs_version": thresholds.loc[
-                        roi, "simnibs_version"
-                    ],
-                }
-            )
+        rows.append(
+            {
+                "roi": roi,
+                "summary": "Mean",
+                "value_v_per_m": value,
+                "evaluation_threshold": True,
+                "simnibs_version": thresholds.loc[roi, "simnibs_version"],
+            }
+        )
     axis.axvline(1.5, color=LIGHT_GRAY, lw=0.8)
     axis.text(
         0.5,
@@ -502,34 +470,71 @@ def plot_mni_absolute(
     axis.set_xticks(x, [ROI_LABELS[roi] for roi in ROI_ORDER])
     axis.set_ylabel("E-field inside MNI152 target ROI (V/m)")
     axis.set_title(
-        "MNI152 target-field summaries used for ROI-specific evaluation",
+        "MNI152 mean target field used for ROI-specific evaluation",
         weight="bold",
         pad=24,
     )
     axis.grid(axis="y", color=GRID, lw=0.55)
     axis.set_axisbelow(True)
+    axis.axhline(
+        0.2,
+        color=GRAY,
+        lw=0.9,
+        ls=(0, (4, 3)),
+        zorder=1,
+        label="0.2 V/m optimization target",
+    )
     axis.legend(
         handles=[
             Line2D(
                 [0],
                 [0],
-                marker="o",
+                marker="D",
                 linestyle="none",
-                markerfacecolor=color,
+                markerfacecolor=ORANGE,
                 markeredgecolor="white",
-                label=label,
+                label="MNI152 mean",
                 markersize=6.5,
-            )
-            for label, color in FIELD_COLORS.items()
+            ),
+            Line2D(
+                [0],
+                [0],
+                color=GRAY,
+                lw=0.9,
+                ls=(0, (4, 3)),
+                label="0.2 V/m optimization target",
+            ),
         ],
         frameon=False,
-        ncol=3,
+        ncol=2,
         loc="upper center",
         bbox_to_anchor=(0.5, -0.16),
     )
     figure.subplots_adjust(left=0.10, right=0.985, top=0.82, bottom=0.25)
-    save_figure(figure, figures_dir, EXPECTED_FIGURE_STEMS[0])
+    save_figure(
+        figure,
+        figures_dir,
+        "figure_mni152_absolute_mean_target_field",
+    )
     return pd.DataFrame(rows)
+
+
+def mni_absolute_mean_table(
+    mni: pd.DataFrame,
+    thresholds: pd.DataFrame,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "roi": roi,
+                "summary": "Mean",
+                "value_v_per_m": float(mni.loc[roi, "roi_mean_v_per_m"]),
+                "evaluation_threshold": True,
+                "simnibs_version": thresholds.loc[roi, "simnibs_version"],
+            }
+            for roi in ROI_ORDER
+        ]
+    )
 
 
 def _arrow(
@@ -575,33 +580,23 @@ def plot_personalized_roi(
     figure.subplots_adjust(
         left=0.115,
         right=0.985,
-        top=0.82,
+        top=0.87,
         bottom=0.24,
         wspace=0.28,
     )
 
     coverage_specs = [
-        (
-            target_metric,
-            mni_target,
-            "Target coverage difference\nfrom MNI152 (percentage points)",
-        ),
-        (
-            off_metric,
-            mni_off,
-            "Off-target coverage difference\nfrom MNI152 (percentage points)",
-        ),
+        (target_metric, mni_target, "Target coverage (%)"),
+        (off_metric, mni_off, "Off-target coverage (%)"),
     ]
     for panel_index, (metric, baseline, label) in enumerate(coverage_specs):
         axis = axes[panel_index]
-        generic = (
-            rows[f"{metric}__generic_repeat_mean"].to_numpy(dtype=float)
-            - baseline
-        )
-        personalized = (
-            rows[f"{metric}__personalized_repeat_mean"].to_numpy(dtype=float)
-            - baseline
-        )
+        generic = rows[
+            f"{metric}__generic_repeat_mean"
+        ].to_numpy(dtype=float)
+        personalized = rows[
+            f"{metric}__personalized_repeat_mean"
+        ].to_numpy(dtype=float)
         for row_index, subject in enumerate(subjects):
             _arrow(axis, generic[row_index], personalized[row_index], y[row_index])
             for condition, value in (
@@ -616,9 +611,9 @@ def plot_personalized_roi(
                         if panel_index == 0
                         else "off_target_coverage",
                         "condition": condition,
-                        "mni_relative_value": value,
+                        "absolute_value": value,
                         "ratio_status": "",
-                        "mni_absolute_reference": baseline,
+                        "mni_reference": baseline,
                         "threshold_v_per_m": thresholds.loc[
                             roi, "threshold_v_per_m"
                         ],
@@ -642,7 +637,17 @@ def plot_personalized_roi(
             linewidth=0.7,
             zorder=4,
         )
-        axis.axvline(0.0, color=LIGHT_GRAY, lw=0.9, zorder=0)
+        if panel_index == 0:
+            axis.set_xlim(-4.0, 104.0)
+        else:
+            axis.set_xlim(
+                min(-0.05, float(min(generic.min(), personalized.min()))),
+                max(
+                    float(max(generic.max(), personalized.max(), baseline))
+                    * 1.08,
+                    0.5,
+                ),
+            )
         axis.set_xlabel(label)
         axis.grid(axis="x", color=GRID, lw=0.55)
         axis.set_axisbelow(True)
@@ -650,7 +655,15 @@ def plot_personalized_roi(
     ratio_axis = axes[2]
     ratio_by_condition: dict[str, np.ndarray] = {}
     status_by_condition: dict[str, np.ndarray] = {}
-    mni_ratio = math.nan
+    mni_ratio_values, mni_ratio_status = ratio_values(
+        np.asarray([mni_target]), np.asarray([mni_off])
+    )
+    if mni_ratio_status[0] != "finite":
+        raise RuntimeError(
+            f"Cannot plot the absolute MNI152 target/off-target ratio for "
+            f"{roi}: {mni_ratio_status[0]}"
+        )
+    mni_ratio = float(mni_ratio_values[0])
     for condition in CONDITIONS:
         target = rows[
             f"{target_metric}__{condition}_repeat_mean"
@@ -658,16 +671,9 @@ def plot_personalized_roi(
         off_target = rows[
             f"{off_metric}__{condition}_repeat_mean"
         ].to_numpy(dtype=float)
-        values, statuses, reference = centered_ratio(
-            target,
-            off_target,
-            mni_target=mni_target,
-            mni_off_target=mni_off,
-            roi=roi,
-        )
+        values, statuses = ratio_values(target, off_target)
         ratio_by_condition[condition] = values
         status_by_condition[condition] = statuses
-        mni_ratio = reference
     finite_values = np.concatenate(
         [
             values[status_by_condition[condition] == "finite"]
@@ -696,9 +702,9 @@ def plot_personalized_roi(
                     "roi": roi,
                     "panel": "target_to_off_target_ratio",
                     "condition": condition,
-                    "mni_relative_value": value,
+                    "absolute_value": value,
                     "ratio_status": status,
-                    "mni_absolute_reference": mni_ratio,
+                    "mni_reference": mni_ratio,
                     "threshold_v_per_m": thresholds.loc[
                         roi, "threshold_v_per_m"
                     ],
@@ -750,11 +756,8 @@ def plot_personalized_roi(
                 ha="left",
                 va="center",
             )
-    ratio_axis.axvline(0.0, color=LIGHT_GRAY, lw=0.9, zorder=0)
     ratio_axis.set_xlim(left_edge, right_edge + 0.02 * span)
-    ratio_axis.set_xlabel(
-        "Target/off-target coverage ratio\ndifference from MNI152"
-    )
+    ratio_axis.set_xlabel("Target/off-target coverage ratio")
     ratio_axis.grid(axis="x", color=GRID, lw=0.55)
     ratio_axis.set_axisbelow(True)
     if any(
@@ -789,16 +792,338 @@ def plot_personalized_roi(
         weight="bold",
         y=0.965,
     )
-    figure.text(
-        0.5,
-        0.875,
-        (
-            "Coverage evaluated at the MNI152 mean field "
-            f"({float(thresholds.loc[roi, 'threshold_v_per_m']):.3f} V/m)"
-        ),
-        ha="center",
-        color=GRAY,
-        fontsize=8,
+    figure.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="none",
+                markerfacecolor="white",
+                markeredgecolor=BLUE,
+                markeredgewidth=1.2,
+                label="Generic",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="none",
+                markerfacecolor=ORANGE,
+                markeredgecolor="white",
+                label="Personalized",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color=GRAY,
+                marker=">",
+                label="Generic → personalized",
+            ),
+            Line2D(
+                [],
+                [],
+                linestyle="none",
+                marker="",
+                label=(
+                    "Coverage threshold: MNI152 mean = "
+                    f"{float(thresholds.loc[roi, 'threshold_v_per_m']):.3f} V/m"
+                ),
+            ),
+        ],
+        frameon=False,
+        ncol=4,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.035),
+        handlelength=2.0,
+        columnspacing=1.25,
+    )
+    stem = (
+        "figure_personalization_subject_changes_"
+        f"{ROI_SLUGS[roi]}_at_mni_roi_threshold"
+    )
+    save_figure(figure, figures_dir, stem)
+    return pd.DataFrame(source)
+
+
+def plot_personalized_combined(
+    paired: pd.DataFrame,
+    mni: pd.DataFrame,
+    thresholds: pd.DataFrame,
+    figures_dir: Path,
+) -> pd.DataFrame:
+    """Combine the four three-panel personalization plots in one figure."""
+    figure, axes = plt.subplots(
+        len(ROI_ORDER),
+        3,
+        figsize=(10.9, 12.3),
+        squeeze=False,
+    )
+    figure.subplots_adjust(
+        left=0.105,
+        right=0.985,
+        top=0.895,
+        bottom=0.075,
+        hspace=0.54,
+        wspace=0.28,
+    )
+    source: list[dict] = []
+    panel_index = 0
+
+    for roi_index, roi in enumerate(ROI_ORDER):
+        rows = paired.loc[paired["roi"] == roi].sort_values("subject").copy()
+        subjects = rows["subject"].tolist()
+        y = np.arange(len(subjects), dtype=float)
+        target_metric, off_metric = coverage_columns(roi, thresholds)
+        mni_target = float(mni.loc[roi, target_metric])
+        mni_off = float(mni.loc[roi, off_metric])
+        row_axes = axes[roi_index]
+
+        coverage_specs = [
+            (target_metric, mni_target, "target_coverage"),
+            (off_metric, mni_off, "off_target_coverage"),
+        ]
+        for column_index, (metric, baseline, panel_name) in enumerate(
+            coverage_specs
+        ):
+            axis = row_axes[column_index]
+            generic = rows[
+                f"{metric}__generic_repeat_mean"
+            ].to_numpy(dtype=float)
+            personalized = rows[
+                f"{metric}__personalized_repeat_mean"
+            ].to_numpy(dtype=float)
+            for subject_index, subject in enumerate(subjects):
+                _arrow(
+                    axis,
+                    generic[subject_index],
+                    personalized[subject_index],
+                    y[subject_index],
+                )
+                for condition, value in (
+                    ("generic", generic[subject_index]),
+                    ("personalized", personalized[subject_index]),
+                ):
+                    source.append(
+                        {
+                            "subject": subject,
+                            "roi": roi,
+                            "panel": panel_name,
+                            "condition": condition,
+                            "absolute_value": value,
+                            "ratio_status": "",
+                            "mni_reference": baseline,
+                            "threshold_v_per_m": thresholds.loc[
+                                roi, "threshold_v_per_m"
+                            ],
+                        }
+                    )
+            axis.scatter(
+                generic,
+                y,
+                s=35,
+                facecolor="white",
+                edgecolor=BLUE,
+                linewidth=1.2,
+                zorder=3,
+            )
+            axis.scatter(
+                personalized,
+                y,
+                s=38,
+                facecolor=ORANGE,
+                edgecolor="white",
+                linewidth=0.7,
+                zorder=4,
+            )
+            if column_index == 0:
+                axis.set_xlim(-4.0, 104.0)
+            else:
+                axis.set_xlim(
+                    min(
+                        -0.05,
+                        float(min(generic.min(), personalized.min())),
+                    ),
+                    max(
+                        float(
+                            max(
+                                generic.max(),
+                                personalized.max(),
+                                baseline,
+                            )
+                        )
+                        * 1.08,
+                        0.5,
+                    ),
+                )
+            axis.grid(axis="x", color=GRID, lw=0.55)
+            axis.set_axisbelow(True)
+
+        ratio_axis = row_axes[2]
+        ratio_by_condition: dict[str, np.ndarray] = {}
+        status_by_condition: dict[str, np.ndarray] = {}
+        mni_ratio_values, mni_ratio_status = ratio_values(
+            np.asarray([mni_target]),
+            np.asarray([mni_off]),
+        )
+        if mni_ratio_status[0] != "finite":
+            raise RuntimeError(
+                "Cannot plot the absolute MNI152 target/off-target ratio "
+                f"for {roi}: {mni_ratio_status[0]}"
+            )
+        mni_ratio = float(mni_ratio_values[0])
+        for condition in CONDITIONS:
+            target = rows[
+                f"{target_metric}__{condition}_repeat_mean"
+            ].to_numpy(dtype=float)
+            off_target = rows[
+                f"{off_metric}__{condition}_repeat_mean"
+            ].to_numpy(dtype=float)
+            values, statuses = ratio_values(target, off_target)
+            ratio_by_condition[condition] = values
+            status_by_condition[condition] = statuses
+        finite_values = np.concatenate(
+            [
+                values[status_by_condition[condition] == "finite"]
+                for condition, values in ratio_by_condition.items()
+            ]
+        )
+        if finite_values.size == 0:
+            raise RuntimeError(f"No finite personalized ratios for {roi}")
+        span = max(float(np.ptp(finite_values)), 1.0)
+        right_edge = float(np.max(finite_values)) + 0.12 * span
+        left_edge = float(np.min(finite_values)) - 0.08 * span
+        for subject_index, subject in enumerate(subjects):
+            plotted: dict[str, float | None] = {}
+            for condition in CONDITIONS:
+                status = str(status_by_condition[condition][subject_index])
+                value = float(ratio_by_condition[condition][subject_index])
+                if status == "finite":
+                    plotted[condition] = value
+                elif status == "infinite":
+                    plotted[condition] = right_edge
+                else:
+                    plotted[condition] = None
+                source.append(
+                    {
+                        "subject": subject,
+                        "roi": roi,
+                        "panel": "target_to_off_target_ratio",
+                        "condition": condition,
+                        "absolute_value": value,
+                        "ratio_status": status,
+                        "mni_reference": mni_ratio,
+                        "threshold_v_per_m": thresholds.loc[
+                            roi, "threshold_v_per_m"
+                        ],
+                    }
+                )
+            if (
+                plotted["generic"] is not None
+                and plotted["personalized"] is not None
+            ):
+                _arrow(
+                    ratio_axis,
+                    float(plotted["generic"]),
+                    float(plotted["personalized"]),
+                    y[subject_index],
+                )
+        for condition, color, filled in (
+            ("generic", BLUE, False),
+            ("personalized", ORANGE, True),
+        ):
+            values = ratio_by_condition[condition]
+            statuses = status_by_condition[condition]
+            finite = statuses == "finite"
+            ratio_axis.scatter(
+                values[finite],
+                y[finite],
+                s=35 if condition == "generic" else 38,
+                facecolor=color if filled else "white",
+                edgecolor="white" if filled else color,
+                linewidth=0.7 if filled else 1.2,
+                zorder=4,
+            )
+            infinite = statuses == "infinite"
+            if infinite.any():
+                ratio_axis.scatter(
+                    np.full(int(infinite.sum()), right_edge),
+                    y[infinite],
+                    marker=">",
+                    s=48,
+                    facecolor=color if filled else "white",
+                    edgecolor=color,
+                    linewidth=1.1,
+                    zorder=5,
+                )
+            undefined = statuses == "undefined"
+            for y_value in y[undefined]:
+                ratio_axis.text(
+                    left_edge,
+                    y_value,
+                    "0/0",
+                    color=color,
+                    fontsize=6.5,
+                    ha="left",
+                    va="center",
+                )
+        ratio_axis.set_xlim(left_edge, right_edge + 0.02 * span)
+        ratio_axis.grid(axis="x", color=GRID, lw=0.55)
+        ratio_axis.set_axisbelow(True)
+        if any(
+            (status_by_condition[condition] == "infinite").any()
+            for condition in CONDITIONS
+        ):
+            ratio_axis.text(
+                right_edge,
+                1.025,
+                "∞ (censored)",
+                transform=ratio_axis.get_xaxis_transform(),
+                ha="right",
+                va="bottom",
+                fontsize=7,
+                color=GRAY,
+            )
+
+        row_axes[0].set_yticks(
+            y,
+            [short_subject(subject) for subject in subjects],
+        )
+        row_axes[0].set_ylabel(f"{ROI_LABELS[roi]}\nSubject")
+        row_axes[0].invert_yaxis()
+        for axis in row_axes[1:]:
+            axis.set_yticks(y)
+            axis.tick_params(axis="y", labelleft=False)
+            axis.set_ylim(row_axes[0].get_ylim())
+        for column_index, axis in enumerate(row_axes):
+            axis.text(
+                0.0,
+                1.035,
+                chr(ord("A") + panel_index),
+                transform=axis.transAxes,
+                weight="bold",
+                fontsize=10,
+            )
+            panel_index += 1
+        if roi_index == 0:
+            for axis, title in zip(
+                row_axes,
+                (
+                    "Target coverage (%)",
+                    "Off-target coverage (%)",
+                    "Target/off-target coverage ratio",
+                ),
+            ):
+                axis.set_title(title, weight="bold", pad=14)
+        else:
+            row_axes[0].set_xlabel("Target coverage (%)")
+            row_axes[1].set_xlabel("Off-target coverage (%)")
+            row_axes[2].set_xlabel("Target/off-target coverage ratio")
+
+    figure.suptitle(
+        "Generic-to-personalized changes across target regions",
+        weight="bold",
+        y=0.985,
     )
     figure.legend(
         handles=[
@@ -831,12 +1156,27 @@ def plot_personalized_roi(
         ],
         frameon=False,
         ncol=3,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.035),
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.963),
+        handlelength=2.0,
+        columnspacing=1.4,
+    )
+    threshold_text = "; ".join(
+        f"{ROI_LABELS[roi]} {float(thresholds.loc[roi, 'threshold_v_per_m']):.3f}"
+        for roi in ROI_ORDER
+    )
+    figure.text(
+        0.5,
+        0.928,
+        f"Coverage thresholds (V/m): {threshold_text}",
+        ha="center",
+        va="center",
+        fontsize=7.5,
+        color=GRAY,
     )
     stem = (
-        "figure_personalization_subject_changes_"
-        f"{ROI_SLUGS[roi]}_at_mni_roi_threshold"
+        "figure_personalization_subject_changes_all_rois_"
+        "at_mni_roi_threshold"
     )
     save_figure(figure, figures_dir, stem)
     return pd.DataFrame(source)
@@ -847,7 +1187,10 @@ def _violin(
     values_by_roi: list[np.ndarray],
     *,
     color: str,
-) -> None:
+    rng: np.random.Generator,
+    mni_values: np.ndarray,
+) -> dict[str, object]:
+    """Draw the established CamCAN violin style and absolute MNI references."""
     positions = np.arange(1, len(ROI_ORDER) + 1)
     parts = axis.violinplot(
         values_by_roi,
@@ -859,21 +1202,55 @@ def _violin(
     )
     for body in parts["bodies"]:
         body.set_facecolor(color)
-        body.set_edgecolor("white")
-        body.set_alpha(0.60)
-        body.set_linewidth(0.7)
+        body.set_edgecolor(color)
+        body.set_alpha(0.20)
+        body.set_linewidth(0.8)
+    iqr_artists = []
+    median_artists = []
+    sample_artists = []
     for position, values in zip(positions, values_by_roi):
         q1, median, q3 = np.percentile(values, [25, 50, 75])
-        axis.vlines(position, q1, q3, color=BLACK, lw=4.2, zorder=3)
-        axis.scatter(
+        iqr_artists.append(
+            axis.vlines(position, q1, q3, color=color, lw=5.0, zorder=3)
+        )
+        median_artists.append(axis.scatter(
             position,
             median,
-            s=22,
+            s=18,
             facecolor="white",
-            edgecolor=BLACK,
-            linewidth=0.7,
+            edgecolor=color,
+            linewidth=0.9,
             zorder=4,
+        ))
+        sample = rng.choice(
+            values, size=min(44, len(values)), replace=False
         )
+        sample_artists.append(axis.scatter(
+            position + rng.uniform(-0.16, 0.16, len(sample)),
+            sample,
+            s=5,
+            color=color,
+            alpha=0.22,
+            edgecolors="none",
+            zorder=2,
+        ))
+    mni_artist = axis.scatter(
+        positions,
+        np.asarray(mni_values, dtype=float),
+        marker="D",
+        s=39,
+        facecolor=ORANGE,
+        edgecolor="white",
+        linewidth=0.65,
+        zorder=5,
+    )
+    return {
+        "bodies": parts["bodies"],
+        "iqr": iqr_artists,
+        "medians": median_artists,
+        "samples": sample_artists,
+        "mni": mni_artist,
+    }
 
 
 def plot_population_summary(
@@ -896,23 +1273,26 @@ def plot_population_summary(
     ratio_audit: list[dict] = []
     ratio_statuses: dict[str, np.ndarray] = {}
     mni_ratios: dict[str, float] = {}
+    mni_fields: list[float] = []
     for roi in ROI_ORDER:
         roi_rows = subjects.loc[subjects["roi"] == roi]
-        field = (
-            roi_rows["roi_mean_v_per_m"].to_numpy(dtype=float)
-            - float(mni.loc[roi, "roi_mean_v_per_m"])
-        )
+        field = roi_rows["roi_mean_v_per_m"].to_numpy(dtype=float)
         field_values.append(field)
+        mni_fields.append(float(mni.loc[roi, "roi_mean_v_per_m"]))
         target_metric, off_metric = coverage_columns(roi, thresholds)
         target = roi_rows[target_metric].to_numpy(dtype=float)
         off_target = roi_rows[off_metric].to_numpy(dtype=float)
-        ratios, statuses, mni_ratio = centered_ratio(
-            target,
-            off_target,
-            mni_target=float(mni.loc[roi, target_metric]),
-            mni_off_target=float(mni.loc[roi, off_metric]),
-            roi=roi,
+        ratios, statuses = ratio_values(target, off_target)
+        mni_ratio_values, mni_ratio_status = ratio_values(
+            np.asarray([float(mni.loc[roi, target_metric])]),
+            np.asarray([float(mni.loc[roi, off_metric])]),
         )
+        if mni_ratio_status[0] != "finite":
+            raise RuntimeError(
+                f"Cannot plot the absolute MNI152 target/off-target ratio "
+                f"for {roi}: {mni_ratio_status[0]}"
+            )
+        mni_ratio = float(mni_ratio_values[0])
         finite = statuses == "finite"
         if not finite.any():
             raise RuntimeError(f"No finite cohort ratios for {roi}")
@@ -926,15 +1306,17 @@ def plot_population_summary(
                         "subject": subject,
                         "roi": roi,
                         "outcome": "mean_target_field",
-                        "mni_relative_value": field[index],
+                        "absolute_value": field[index],
                         "status": "finite",
+                        "mni_reference": mni_fields[-1],
                     },
                     {
                         "subject": subject,
                         "roi": roi,
                         "outcome": "target_to_off_target_coverage_ratio",
-                        "mni_relative_value": ratios[index],
+                        "absolute_value": ratios[index],
                         "status": statuses[index],
+                        "mni_reference": mni_ratio,
                     },
                 ]
             )
@@ -957,12 +1339,31 @@ def plot_population_summary(
             }
         )
 
-    _violin(axes[0], field_values, color=BLUE)
-    axes[0].axhline(0.0, color=ORANGE, lw=1.1, zorder=1)
-    axes[0].set_ylabel("Mean target E-field difference from MNI152 (V/m)")
+    rng = np.random.default_rng(20260729)
+    _violin(
+        axes[0],
+        field_values,
+        color=BLUE,
+        rng=rng,
+        mni_values=np.asarray(mni_fields),
+    )
+    axes[0].axhline(
+        0.2,
+        color=GRAY,
+        lw=0.9,
+        ls=(0, (4, 3)),
+        zorder=1,
+    )
+    axes[0].set_ylabel("Mean target E-field (V/m)")
     axes[0].set_title("Mean target field", weight="bold")
 
-    _violin(axes[1], ratio_values_by_roi, color=GREEN)
+    _violin(
+        axes[1],
+        ratio_values_by_roi,
+        color=GREEN,
+        rng=rng,
+        mni_values=np.asarray([mni_ratios[roi] for roi in ROI_ORDER]),
+    )
     all_finite_ratios = np.concatenate(ratio_values_by_roi)
     ratio_span = max(float(np.ptp(all_finite_ratios)), 1.0)
     ratio_edge = float(np.max(all_finite_ratios)) + 0.12 * ratio_span
@@ -1007,10 +1408,7 @@ def plot_population_summary(
                 color=GRAY,
                 rotation=90,
             )
-    axes[1].axhline(0.0, color=ORANGE, lw=1.1, zorder=1)
-    axes[1].set_ylabel(
-        "Target/off-target coverage ratio\ndifference from MNI152"
-    )
+    axes[1].set_ylabel("Target/off-target coverage ratio")
     axes[1].set_title("Thresholded target selectivity", weight="bold")
 
     for index, axis in enumerate(axes):
@@ -1032,26 +1430,40 @@ def plot_population_summary(
             fontsize=10,
         )
     figure.suptitle(
-        "CamCan population outcomes relative to MNI152",
+        "CamCan population outcomes with MNI152 reference",
         weight="bold",
         y=0.965,
     )
-    figure.text(
-        0.5,
-        0.06,
-        (
-            "Violin width denotes density; black bars show the interquartile "
-            "range; white circles show the median. Triangles mark censored "
-            "infinite ratios."
-        ),
-        ha="center",
-        fontsize=7.2,
-        color=GRAY,
+    figure.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color=GRAY,
+                markerfacecolor="white",
+                lw=4,
+                label="CamCAN median and interquartile range",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="D",
+                color="none",
+                markerfacecolor=ORANGE,
+                markeredgecolor="white",
+                label="MNI152 reference",
+            ),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.035),
+        ncol=2,
+        frameon=False,
     )
     save_figure(
         figure,
         figures_dir,
-        "figure_population_mean_field_and_target_offtarget_ratio_mni_relative",
+        "figure_population_mean_field_and_target_offtarget_ratio_absolute",
     )
     return pd.DataFrame(population_rows), pd.DataFrame(ratio_audit)
 
@@ -1088,24 +1500,16 @@ def plot_relationship(
         axis = axes.flat[index]
         roi_rows = subjects.loc[subjects["roi"] == roi]
         target_metric, off_metric = coverage_columns(roi, thresholds)
-        y = (
-            roi_rows[off_metric].to_numpy(dtype=float)
-            - float(mni.loc[roi, off_metric])
-        )
+        y = roi_rows[off_metric].to_numpy(dtype=float)
+        mni_y = float(mni.loc[roi, off_metric])
         if x_kind == "mean_field":
-            x = (
-                roi_rows["roi_mean_v_per_m"].to_numpy(dtype=float)
-                - float(mni.loc[roi, "roi_mean_v_per_m"])
-            )
-            x_label = "Mean target E-field difference from MNI152 (V/m)"
+            x = roi_rows["roi_mean_v_per_m"].to_numpy(dtype=float)
+            mni_x = float(mni.loc[roi, "roi_mean_v_per_m"])
+            x_label = "Mean target E-field (V/m)"
         else:
-            x = (
-                roi_rows[target_metric].to_numpy(dtype=float)
-                - float(mni.loc[roi, target_metric])
-            )
-            x_label = (
-                "Target coverage difference from MNI152 (percentage points)"
-            )
+            x = roi_rows[target_metric].to_numpy(dtype=float)
+            mni_x = float(mni.loc[roi, target_metric])
+            x_label = "Target coverage (%)"
         grid, fitted, statistics = _linear_fit(x, y)
         fit_rows.append(
             {
@@ -1127,8 +1531,10 @@ def plot_relationship(
                     "subject": subject,
                     "roi": roi,
                     "x_outcome": x_kind,
-                    "x_mni_relative_value": x_value,
-                    "off_target_coverage_mni_relative_pp": y_value,
+                    "x_absolute_value": x_value,
+                    "off_target_coverage_percent": y_value,
+                    "mni_x_reference": mni_x,
+                    "mni_off_target_coverage_percent": mni_y,
                     "threshold_v_per_m": thresholds.loc[
                         roi, "threshold_v_per_m"
                     ],
@@ -1145,8 +1551,8 @@ def plot_relationship(
         )
         axis.plot(grid, fitted, color=GRAY, lw=1.55, zorder=3)
         axis.scatter(
-            0.0,
-            0.0,
+            mni_x,
+            mni_y,
             marker="D",
             s=48,
             color=ORANGE,
@@ -1154,11 +1560,12 @@ def plot_relationship(
             linewidth=0.7,
             zorder=4,
         )
-        axis.axvline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=0)
-        axis.axhline(0.0, color=LIGHT_GRAY, lw=0.8, zorder=0)
         axis.set_title(ROI_LABELS[roi], weight="bold")
         axis.grid(color=GRID, lw=0.55)
         axis.set_axisbelow(True)
+        axis.set_ylim(bottom=0.0)
+        if x_kind == "target_coverage":
+            axis.set_xlim(0.0, 100.0)
         axis.text(
             0.04,
             0.96,
@@ -1183,10 +1590,7 @@ def plot_relationship(
             color=GRAY,
         )
         if index % 2 == 0:
-            axis.set_ylabel(
-                "Off-target coverage difference from MNI152\n"
-                "(percentage points)"
-            )
+            axis.set_ylabel("Off-target coverage (%)")
         axis.text(
             0.0,
             1.055,
@@ -1223,7 +1627,7 @@ def plot_relationship(
                 linestyle="none",
                 markerfacecolor=ORANGE,
                 markeredgecolor="white",
-                label="MNI152 (zero reference)",
+                label="MNI152",
             ),
             Line2D([0], [0], color=GRAY, lw=1.55, label="Linear fit"),
         ],
@@ -1242,57 +1646,44 @@ def captions(thresholds: pd.DataFrame) -> dict[str, str]:
         for roi in ROI_ORDER
     )
     result = {
-        "figure_mni152_absolute_field_summaries": (
-            "Absolute MNI152 E-field summaries inside each parcel-clipped "
-            "target ROI using SimNIBS 4.0.1. Points show the minimum, "
-            "arithmetic mean, and maximum (P99.9). The MNI152 mean for each "
-            "ROI defines that ROI's subsequent coverage threshold."
+        "figure_personalization_subject_changes_all_rois_at_mni_roi_threshold": (
+            "Generic-to-personalized changes for the seven personalized "
+            "subjects, with one row per target region. Columns show target "
+            "coverage, off-target coverage, and their target/off-target ratio. "
+            "Open blue circles are generic-montage values, filled orange "
+            "circles are personalized-montage values, and arrows connect the "
+            "two values for each subject. Coverage is evaluated at the "
+            f"ROI-specific MNI152 mean ({threshold_text}). A boundary triangle "
+            "labelled ∞ denotes positive target coverage with zero off-target "
+            "coverage; 0/0 denotes an undefined ratio."
         ),
-        "figure_population_mean_field_and_target_offtarget_ratio_mni_relative": (
-            "CamCan population distributions relative to MNI152. The left "
-            "panel shows each subject's mean target E-field minus the "
-            "ROI-specific MNI152 mean. The right panel shows target coverage "
-            "divided by off-target coverage, followed by subtraction of the "
-            "corresponding finite MNI152 ratio. Ratios with positive target "
-            "coverage and zero off-target coverage are positive infinity and "
-            "are censored at the upper linear-axis boundary; 0/0 observations "
-            "are undefined and counted separately. "
-            f"ROI-specific thresholds were {threshold_text}."
+        "figure_population_mean_field_and_target_offtarget_ratio_absolute": (
+            "CamCan distributions of mean target-ROI TI E-field (A) and "
+            "target/off-target coverage ratio (B). Pale violins show the "
+            "population density, thick bars the interquartile range, white "
+            "circles the median, and translucent points a representative "
+            "subject subset. Orange diamonds mark MNI152. The dashed line in "
+            "A marks 0.2 V/m. Ratios in B use coverage evaluated at each ROI's "
+            "MNI152 mean; boundary triangles labelled ∞ denote positive target "
+            "coverage with zero off-target coverage."
         ),
         "figure_population_mean_field_offtarget_relationship_at_mni_roi_threshold": (
-            "Relationship between mean target E-field and off-target coverage "
-            "across 132 CamCan subjects. Both axes show differences from the "
-            "corresponding MNI152 result. Coverage is evaluated separately at "
-            f"each ROI's MNI152 mean field ({threshold_text}). Solid lines "
-            "are descriptive linear fits; diamonds mark the MNI152 zero "
-            "reference."
+            "Mean target-ROI TI E-field versus off-target coverage for Left "
+            "M1 (A), Right DLPFC (B), Left hippocampus (C), and Right thalamus "
+            "(D). Blue points represent CamCan subjects, orange diamonds mark "
+            "MNI152, and grey lines are ordinary least-squares fits. Insets "
+            "report R² and Spearman's ρ. Off-target coverage is evaluated at "
+            f"the ROI-specific MNI152 mean ({threshold_text})."
         ),
         "figure_population_target_offtarget_relationship_at_mni_roi_threshold": (
-            "Relationship between target and off-target coverage across 132 "
-            "CamCan subjects. Both axes show percentage-point differences "
-            "from MNI152, with coverage evaluated at the ROI-specific MNI152 "
-            f"mean field ({threshold_text}). Solid lines are descriptive "
-            "linear fits; diamonds mark the MNI152 zero reference."
+            "Target coverage versus off-target coverage for Left M1 (A), "
+            "Right DLPFC (B), Left hippocampus (C), and Right thalamus (D). "
+            "Blue points represent CamCan subjects, orange diamonds mark "
+            "MNI152, and grey lines are ordinary least-squares fits. Insets "
+            "report R² and Spearman's ρ. Both coverage percentages are "
+            f"evaluated at the ROI-specific MNI152 mean ({threshold_text})."
         ),
     }
-    for roi in ROI_ORDER:
-        threshold = float(thresholds.loc[roi, "threshold_v_per_m"])
-        result[
-            "figure_personalization_subject_changes_"
-            f"{ROI_SLUGS[roi]}_at_mni_roi_threshold"
-        ] = (
-            f"Generic-to-personalized changes for {ROI_LABELS[roi]}. "
-            f"Coverage is evaluated at the MNI152 mean field ({threshold:.3f} "
-            "V/m). Target and off-target coverage are shown as "
-            "percentage-point differences from MNI152. Selectivity is target "
-            "coverage divided by off-target coverage and is shown relative "
-            "to the finite MNI152 ratio. Each marker is the arithmetic mean "
-            "of ten independently remeshed repeat-level metrics; repeat error "
-            "bars are omitted. Arrows connect the generic and personalized "
-            "condition means for the same subject. Right-edge triangles mark "
-            "ratios censored at positive infinity when off-target coverage is "
-            "zero."
-        )
     return result
 
 
@@ -1334,16 +1725,41 @@ and off-target coverage are zero, the ratio is `0/0` and is genuinely
 undefined; those observations are counted separately and are not included in
 the finite violin density.
 
-MNI-relative ratios additionally require the MNI152 off-target coverage to be
-non-zero. If the MNI152 denominator itself is zero, subtracting an infinite MNI
-ratio is undefined; the renderer deliberately stops instead of applying an
-epsilon or inventing a finite baseline. That case would require a separate
-supervisor decision.
+The absolute MNI152 ratio is also displayed when its denominator is non-zero.
+If the MNI152 off-target denominator is zero, the MNI152 reference itself is
+infinite and the renderer deliberately stops rather than applying an epsilon
+or inventing a finite value.
 
 Please confirm whether this censored-infinity convention should be retained in
 the manuscript. Alternatives would require an explicit methodological choice,
 such as reporting the two coverage components without a ratio or defining a
 pre-specified denominator regularization constant.
+""",
+        encoding="utf-8",
+    )
+    (output_dir / "SIMNIBS_CURRENT_CALIBRATION_ERROR_NOTE.md").write_text(
+        """# Where SimNIBS reports the current calibration error
+
+For each simulated tDCS electrode pair, SimNIBS integrates current flux at
+the active and reference electrodes. It estimates the calibration error as
+the absolute difference between the magnitudes of those two fluxes divided by
+their mean magnitude. SimNIBS then rescales the potential solution by the
+requested current divided by the estimated mean current.
+
+In SimNIBS 4.5 this is implemented in
+`simnibs/simulation/fem.py`, function `_sim_tdcs_pair`. The normal log message
+is:
+
+`Estimated current calibration error: ...`
+
+Errors above 10% are emitted as warnings. For a standard `SESSION` run, the
+message is written to:
+
+`<SESSION.pathfem>/simnibs_simulation_<timestamp>.log`
+
+This quantity describes FEM current calibration for each electrode-pair
+solve. It is not an uncertainty estimate for the later TI-max combination of
+the two electric fields.
 """,
         encoding="utf-8",
     )
@@ -1357,23 +1773,29 @@ pre-specified denominator regularization constant.
 - Coverage is calculated from the source images at each ROI's SimNIBS 4.0.1
   MNI152 mean target field. No interpolation from 0.20/0.18/0.15 V/m tables is
   permitted.
-- The MNI percentile-context figure is replaced by an absolute MNI152
-  minimum/mean/maximum (P99.9) target-field figure.
-- Each personalized ROI figure contains target coverage, off-target coverage,
-  and target/off-target coverage ratio only. It uses condition means and
-  generic-to-personalized arrows, with no repeat error bars.
+- The standalone MNI target-field figure is absent; its values are retained in
+  the source and manuscript tables.
+- One combined personalization figure contains target coverage, off-target
+  coverage, and target/off-target coverage ratio for all four ROIs. It uses
+  condition means and generic-to-personalized arrows, with no repeat error
+  bars.
 - The effectiveness/spread scatter and all repeat-distribution figures are
   absent.
 - The population field distribution reports mean only and is combined with a
   violin plot of the target/off-target coverage ratio.
-- Population relationship figures are MNI-centred. The mean-field and
-  target-coverage relationships are retained; separate minimum and maximum
-  relationships are absent.
+- Population violins retain the established presentation: pale coloured
+  density, translucent subject points, coloured interquartile-range bars,
+  white CamCAN median circles, and an orange MNI152 diamond at its absolute
+  value for every ROI.
+- Target E-field, target coverage, off-target coverage, and target/off-target
+  ratios are plotted as absolute values. The mean-field and target-coverage
+  relationships are retained; separate minimum and maximum relationships are
+  absent.
 - Target/off-target ratios with a zero off-target denominator are represented
   as censored positive infinity at the linear plotting boundary. Undefined
   0/0 cases are reported separately.
-- Figures are written as 400-dpi PNG and vector PDF with exact source tables
-  and self-contained captions.
+- Figures are written as 400-dpi PNG only, with exact source tables and concise
+  captions that describe the displayed plot without repeating the study design.
 """,
         encoding="utf-8",
     )
@@ -1411,17 +1833,16 @@ def build(
     ) = load_inputs(cohort_dir, personalized_dir, thresholds)
     set_style()
 
-    plot_mni_absolute(mni, thresholds, figures_dir).to_csv(
-        tables_dir / "table_mni152_absolute_field_summaries.csv",
+    mni_absolute_mean_table(mni, thresholds).to_csv(
+        tables_dir / "table_mni152_absolute_mean_target_field.csv",
         index=False,
     )
-    personalized_tables = [
-        plot_personalized_roi(
-            paired, mni, thresholds, roi, figures_dir
-        )
-        for roi in ROI_ORDER
-    ]
-    pd.concat(personalized_tables, ignore_index=True).to_csv(
+    plot_personalized_combined(
+        paired,
+        mni,
+        thresholds,
+        figures_dir,
+    ).to_csv(
         tables_dir / "table_personalization_subject_changes.csv",
         index=False,
     )
@@ -1468,7 +1889,7 @@ def build(
     result = {
         "status": "complete",
         "figure_revision_schema_version": FIGURE_SCHEMA_VERSION,
-        "figure_revision_variant": "mni401_roi_threshold_mni_relative_v5",
+        "figure_revision_variant": "mni401_roi_threshold_absolute_v7",
         "cohort_analysis_schema_version": cohort_manifest[
             "analysis_schema_version"
         ],
@@ -1483,8 +1904,13 @@ def build(
             roi: float(thresholds.loc[roi, "threshold_v_per_m"])
             for roi in ROI_ORDER
         },
-        "population_centering": (
-            "observed outcome minus ROI-specific MNI152 outcome"
+        "population_centering": "none; all outcomes are absolute values",
+        "population_mni_markers": (
+            "orange diamond at the absolute MNI152 value for every ROI"
+        ),
+        "population_violin_style": (
+            "pale density, deterministic subject subsample, coloured IQR, "
+            "white CamCAN median"
         ),
         "ratio_definition": "target coverage / off-target coverage",
         "ratio_infinite_policy": (
@@ -1501,7 +1927,9 @@ def build(
         "field_relationships": ["mean only"],
         "figures_removed": [
             "figure_mni152_percentile_context_ge_0p20",
+            "figure_mni152_absolute_mean_target_field",
             "figure_personalization_effectiveness_spread_ge_0p20",
+            "separate per-ROI personalization figures",
             "all figure_personalization_repeat_distributions_*",
             "separate minimum and maximum population relationships",
         ],

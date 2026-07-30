@@ -137,7 +137,7 @@ def _synthetic_inputs(tmp_path):
     return cohort, personalized, threshold_table
 
 
-def test_builds_only_final_eight_figures_and_audits_infinity(tmp_path):
+def test_builds_only_final_four_figures_and_audits_infinity(tmp_path):
     cohort, personalized, threshold_table = _synthetic_inputs(tmp_path)
     output = tmp_path / "figures_v5"
     payload = revision.build(
@@ -154,7 +154,7 @@ def test_builds_only_final_eight_figures_and_audits_infinity(tmp_path):
     assert sorted(path.stem for path in (output / "figures").glob("*.png")) == sorted(
         revision.EXPECTED_FIGURE_STEMS
     )
-    assert len(list((output / "figures").glob("*.pdf"))) == 8
+    assert not list((output / "figures").glob("*.pdf"))
     ratio_audit = pd.read_csv(
         output / "tables" / "table_ratio_zero_denominator_audit.csv"
     ).set_index("roi")
@@ -175,6 +175,55 @@ def test_builds_only_final_eight_figures_and_audits_infinity(tmp_path):
     ).read_text()
     assert "positive infinity" in note
     assert "0/0" in note
+    captions = (output / "figure_captions.md").read_text()
+    assert "Pale violins show the population density" in captions
+    assert "Generic-to-personalized changes" in captions
+    assert "ordinary least-squares fits" in captions
+    assert "The analysis contains 132 adults" not in captions
+    assert "independently remeshed simulations" not in captions
+    assert len(pd.read_csv(output / "figure_captions.csv")) == len(
+        revision.EXPECTED_FIGURE_STEMS
+    )
+    assert payload["figure_revision_schema_version"] == 9
+    assert payload["population_centering"].startswith("none")
+    assert "absolute MNI152 value" in payload["population_mni_markers"]
+    assert not (
+        output / "figures" / "figure_mni152_absolute_mean_target_field.png"
+    ).exists()
+    assert (
+        output
+        / "figures"
+        / (
+            "figure_personalization_subject_changes_all_rois_"
+            "at_mni_roi_threshold.png"
+        )
+    ).is_file()
+
+
+def test_population_violin_preserves_style_and_marks_absolute_mni():
+    figure, axis = revision.plt.subplots()
+    values = [
+        np.linspace(0.10 + index * 0.01, 0.25 + index * 0.01, 132)
+        for index in range(4)
+    ]
+    mni_values = np.asarray([0.17, 0.18, 0.19, 0.20])
+    artists = revision._violin(
+        axis,
+        values,
+        color=revision.BLUE,
+        rng=np.random.default_rng(20260729),
+        mni_values=mni_values,
+    )
+
+    assert len(artists["bodies"]) == 4
+    assert all(body.get_alpha() == 0.20 for body in artists["bodies"])
+    assert len(artists["samples"]) == 4
+    assert all(len(sample.get_offsets()) == 44 for sample in artists["samples"])
+    np.testing.assert_allclose(
+        artists["mni"].get_offsets(),
+        np.column_stack((np.arange(1, 5), mni_values)),
+    )
+    revision.plt.close(figure)
 
 
 def test_refuses_old_fixed_threshold_aggregates(tmp_path):

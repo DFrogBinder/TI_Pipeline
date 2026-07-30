@@ -18,6 +18,7 @@ from pipeline import provenance
 from pipeline import setup_final132_right_m1_repeatability as right_m1_setup
 from pipeline import staged_median_fixed_experiment as staged
 from post import aggregate_paired_analysis
+from post import extract_repeatability_mesh_metrics
 from post import make_presentation_figures
 from post import mesh_repeat_report
 from post import repeatability_experiment_report
@@ -1256,8 +1257,21 @@ def test_presentation_figures_from_synthetic_analysis(tmp_path):
     outputs = make_presentation_figures.make_figures(experiment_root=root)
 
     assert (root / "_figures" / "presentation" / "01_primary_median_roi_repeat_distributions.png").is_file()
-    assert (root / "_figures" / "presentation" / "condition_median_roi_by_repeat.png").is_file()
+    assert not (
+        root
+        / "_figures"
+        / "presentation"
+        / "condition_median_roi_by_repeat.png"
+    ).exists()
     assert (root / "_figures" / "presentation" / "presentation_condition_summary.csv").is_file()
+    caption_text = (
+        root / "_figures" / "presentation" / "figure_captions.md"
+    ).read_text(encoding="utf-8")
+    assert "Repeat-level median TI E-field" in caption_text
+    assert "All simulations otherwise use" not in caption_text
+    assert (
+        root / "_figures" / "presentation" / "figure_captions.csv"
+    ).is_file()
     summary_rows = list(csv.DictReader((root / "_figures" / "presentation" / "presentation_condition_summary.csv").open("r", encoding="utf-8", newline="")))
     assert "p95_roi" in summary_rows[0]
     assert "p95_head" in summary_rows[0]
@@ -1267,7 +1281,7 @@ def test_presentation_figures_from_synthetic_analysis(tmp_path):
     assert any(path.endswith("01_primary_median_roi_repeat_distributions.png") for path in outputs["figures"])
 
 
-def test_presentation_figures_use_legible_subject_panels(tmp_path):
+def test_presentation_figures_include_element_and_rank_outputs(tmp_path):
     root = tmp_path / "experiment"
     for subject_index in range(10):
         subject = f"sub-{subject_index:02d}"
@@ -1281,6 +1295,25 @@ def test_presentation_figures_use_legible_subject_panels(tmp_path):
                         "mean_roi": 0.2,
                         "peak_roi": 0.4,
                         "mesh_nodes": 300000 + repeat_index,
+                        "mesh_elements": (
+                            1_800_000
+                            + subject_index * 1_000
+                            + repeat_index * 10
+                        ),
+                        "mesh_elements_by_tissue": json.dumps(
+                            {
+                                1: 800_000 + repeat_index,
+                                2: 700_000 + repeat_index,
+                                3: 300_000 + repeat_index,
+                            }
+                        ),
+                        "mesh_volume_mm3_by_tissue": json.dumps(
+                            {
+                                1: 510_000 + repeat_index,
+                                2: 440_000 + 2 * repeat_index,
+                                3: 210_000 + 3 * repeat_index,
+                            }
+                        ),
                     }
                     for repeat_index in range(1, 41)
                 ],
@@ -1288,14 +1321,207 @@ def test_presentation_figures_use_legible_subject_panels(tmp_path):
 
     make_presentation_figures.make_figures(experiment_root=root)
 
-    figure = root / "_figures" / "presentation" / "condition_median_roi_by_repeat.png"
+    figure = (
+        root
+        / "_figures"
+        / "presentation"
+        / "01_primary_median_roi_repeat_distributions.png"
+    )
     with figure.open("rb") as handle:
         handle.seek(16)
         width, height = struct.unpack(">II", handle.read(8))
     if (width, height) == (900, 480):
         pytest.skip("Matplotlib unavailable; fallback renderer used")
-    assert 1200 <= width <= 3000
-    assert 1500 <= height <= 4000
+    assert 1200 <= width <= 4000
+    assert 700 <= height <= 3000
+    presentation = root / "_figures" / "presentation"
+    assert (
+        presentation / "02_single_repeat_subject_ranking_uncertainty.png"
+    ).is_file()
+    assert (
+        presentation / "03_primary_mesh_element_repeat_distributions.png"
+    ).is_file()
+    assert (
+        presentation / "04_tissue_element_repeat_distributions.png"
+    ).is_file()
+    assert (
+        presentation / "05_tissue_volume_repeat_distributions.png"
+    ).is_file()
+    assert (
+        presentation / "06_example_subject_tissue_composition.png"
+    ).is_file()
+    uncertainty = json.loads(
+        (
+            presentation / "single_repeat_ranking_uncertainty.json"
+        ).read_text(encoding="utf-8")
+    )
+    captions = (presentation / "figure_captions.md").read_text(
+        encoding="utf-8"
+    )
+    assert "20,000 random selections" in captions
+    assert "All simulations otherwise use" not in captions
+    assert "Tissue-specific tetrahedral element counts" in captions
+    assert "Tissue-specific tetrahedral mesh volume" in captions
+    assert "sums to 100%" in captions
+    assert uncertainty["random_single_repeat_selections"] == 20_000
+    assert 0.0 <= uncertainty[
+        "probability_of_any_subject_order_reversal"
+    ] <= 1.0
+
+
+def test_binary_gmsh22_mesh_statistics_include_tissue_volume(tmp_path):
+    mesh = tmp_path / "small.msh"
+    with mesh.open("wb") as handle:
+        handle.write(b"$MeshFormat\n2.2 1 8\n")
+        handle.write(struct.pack("<i", 1))
+        handle.write(b"\n$EndMeshFormat\n$Nodes\n5\n")
+        nodes = [
+            (1, 0.0, 0.0, 0.0),
+            (2, 1.0, 0.0, 0.0),
+            (3, 0.0, 1.0, 0.0),
+            (4, 0.0, 0.0, 1.0),
+            (5, 0.0, 0.0, 2.0),
+        ]
+        for node in nodes:
+            handle.write(struct.pack("<i3d", *node))
+        handle.write(b"$EndNodes\n$Elements\n2\n")
+        handle.write(struct.pack("<3i", 4, 2, 2))
+        handle.write(struct.pack("<7i", 1, 1, 1, 1, 2, 3, 4))
+        handle.write(struct.pack("<7i", 2, 2, 2, 1, 2, 3, 5))
+        handle.write(b"\n$EndElements\n")
+
+    nodes, elements, tissue_counts, tissue_volumes = (
+        mesh_repeat_report._gmsh22_binary_mesh_statistics(mesh)
+    )
+
+    assert nodes == 5
+    assert elements == 2
+    assert tissue_counts == {1: 1, 2: 1}
+    assert tissue_volumes[1] == pytest.approx(1.0 / 6.0)
+    assert tissue_volumes[2] == pytest.approx(1.0 / 3.0)
+
+
+def test_mesh_metric_refresh_collects_and_overlays_isolated_results(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "experiment"
+    config_path = root / "_pipeline" / "configs" / "paired_analysis.json"
+    subjects = ["sub-01", "sub-02"]
+    _write_config(
+        config_path,
+        experiment_root=root,
+        subjects=subjects,
+        repeat_count=2,
+    )
+    completion = root / "_pipeline" / "workflow" / "complete.json"
+    completion.parent.mkdir(parents=True, exist_ok=True)
+    completion.write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "scope": {
+                    "subject_count": 2,
+                    "repeats_per_condition": 2,
+                    "expected_ti_msh": 8,
+                    "roi": "left-hippocampus",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    for subject_index, subject in enumerate(subjects):
+        for condition in ("remesh", "fixed_mesh"):
+            summary_rows = []
+            for repeat_index in (1, 2):
+                tag = f"repeat_{repeat_index:03d}"
+                mesh = (
+                    root
+                    / f"{subject}_repeatability"
+                    / condition
+                    / "repeats"
+                    / tag
+                    / subject
+                    / "anat"
+                    / "SimNIBS"
+                    / "Output"
+                    / subject
+                    / "TI.msh"
+                )
+                mesh.parent.mkdir(parents=True, exist_ok=True)
+                mesh.write_bytes(b"mesh")
+                summary_rows.append(
+                    {
+                        "repeat_tag": tag,
+                        "median_roi": (
+                            0.2
+                            + subject_index / 100
+                            + repeat_index / 1000
+                        ),
+                        "mean_roi": 0.2,
+                        "peak_roi": 0.4,
+                        "mesh_nodes": 100,
+                    }
+                )
+            _write_summary(
+                root
+                / "_analysis"
+                / subject
+                / condition
+                / "summary.csv",
+                summary_rows,
+            )
+
+    monkeypatch.setattr(
+        mesh_repeat_report,
+        "_mesh_statistics",
+        lambda path: (
+            100.0,
+            200.0,
+            {1: 120, 2: 80},
+            {1: 30.0, 2: 20.0},
+        ),
+    )
+    output_root = root / "_post_processing" / "repeatability_mesh_metrics_v1"
+    preflight = extract_repeatability_mesh_metrics.preflight(
+        config_path=config_path,
+        output_root=output_root,
+    )
+    assert preflight["expected_meshes"] == 8
+    assert preflight["source_outputs_modified"] is False
+
+    for subject_index in range(2):
+        result = extract_repeatability_mesh_metrics.extract_subject(
+            config_path=config_path,
+            subject_index=subject_index,
+            output_root=output_root,
+        )
+        assert result["rows"] == 4
+
+    archive = output_root / "left_hippocampus_mesh_metrics.tar.gz"
+    collected = extract_repeatability_mesh_metrics.collect(
+        config_path=config_path,
+        output_root=output_root,
+        archive_path=archive,
+    )
+    assert collected["validation"]["rows"] == 8
+    assert collected["source_outputs_modified"] is False
+    assert archive.is_file()
+    assert archive.with_suffix(archive.suffix + ".sha256").is_file()
+
+    figures = make_presentation_figures.make_figures(
+        experiment_root=root,
+        output_dir=root / "_figures" / "mesh_overlay",
+        mesh_metrics_csv=output_root / "mesh_metrics.csv",
+    )
+    assert figures["mesh_metrics_csv"] == str(
+        output_root / "mesh_metrics.csv"
+    )
+    assert figures["data_availability"]["mesh_elements"] is True
+    assert any(
+        path.endswith("03_primary_mesh_element_repeat_distributions.png")
+        for path in figures["figures"]
+    )
 
 
 def test_aggregate_paired_summary_from_per_subject_outputs(tmp_path):

@@ -41,6 +41,7 @@ KEY_COMPARISON_METRICS = [
     "diff_fraction",
     "diff_fraction_roi",
     "mesh_nodes",
+    "mesh_elements",
 ]
 
 
@@ -86,6 +87,7 @@ def _load_summary_rows(path: str | Path) -> list[dict[str, object]]:
         "hotspot_distance_roi_mm",
         "ti_scale_factor",
         "mesh_nodes",
+        "mesh_elements",
         "label_count",
     }
     for row in rows:
@@ -515,6 +517,12 @@ def analyze_subject(
             condition_rows=condition_summary_rows,
             metric="mesh_nodes",
             ylabel="Mesh nodes",
+        )
+        _plot_condition_lines(
+            out_path=subject_output_root / "mesh_elements_by_condition.png",
+            condition_rows=condition_summary_rows,
+            metric="mesh_elements",
+            ylabel="Tetrahedral mesh elements",
         )
 
     return comparison_payload

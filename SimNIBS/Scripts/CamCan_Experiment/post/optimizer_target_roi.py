@@ -23,8 +23,6 @@ from typing import Any
 import nibabel as nib
 import numpy as np
 
-from utils.ti_utils import vol_mm3
-
 
 ROI_DEFINITION_SCHEMA_VERSION = 1
 START_RADIUS_MM = 3.0
@@ -69,6 +67,8 @@ def build_optimizer_target_roi(
     anatomical_mask: np.ndarray,
     reference_img: nib.spatialimages.SpatialImage,
     roi: str,
+    target_volume_mm3: float | None = None,
+    roi_class: str | None = None,
     start_radius_mm: float = START_RADIUS_MM,
     radius_step_mm: float = RADIUS_STEP_MM,
     radius_cap_mm: float = RADIUS_CAP_MM,
@@ -93,8 +93,21 @@ def build_optimizer_target_roi(
     if radius_cap_mm <= start_radius_mm:
         raise ValueError("Sphere radius cap must exceed the start radius.")
 
-    requested_volume = optimizer_target_volume_mm3(roi)
-    voxel_volume = float(vol_mm3(reference_img))
+    requested_volume = (
+        optimizer_target_volume_mm3(roi)
+        if target_volume_mm3 is None
+        else float(target_volume_mm3)
+    )
+    if not np.isfinite(requested_volume) or requested_volume <= 0:
+        raise ValueError("Target ROI volume must be a positive finite value.")
+    resolved_roi_class = (
+        ("cortical" if roi in CORTICAL_ROIS else "subcortical")
+        if roi_class is None
+        else str(roi_class).strip().lower()
+    )
+    if resolved_roi_class not in {"cortical", "subcortical"}:
+        raise ValueError("ROI class must be 'cortical' or 'subcortical'.")
+    voxel_volume = float(np.prod(reference_img.header.get_zooms()[:3]))
     if not np.isfinite(voxel_volume) or voxel_volume <= 0:
         raise ValueError(f"Invalid NIfTI voxel volume: {voxel_volume!r}.")
 
@@ -152,7 +165,7 @@ def build_optimizer_target_roi(
             "because NIfTI voxel volume is constant"
         ),
         "roi": roi,
-        "roi_class": "cortical" if roi in CORTICAL_ROIS else "subcortical",
+        "roi_class": resolved_roi_class,
         "anatomical_parcel_voxels": int(np.count_nonzero(anatomical)),
         "anatomical_parcel_volume_mm3": float(
             np.count_nonzero(anatomical) * voxel_volume

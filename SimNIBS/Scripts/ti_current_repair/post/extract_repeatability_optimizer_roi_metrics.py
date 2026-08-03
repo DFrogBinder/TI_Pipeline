@@ -37,7 +37,7 @@ from experiment_config import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ROI_SPECS = {
     "left-hippocampus": {
         "roi": "Left_Hippocampus",
@@ -71,6 +71,8 @@ ROW_FIELDS = [
     "roi_p95_v_per_m",
     "roi_max_v_per_m",
     "finite_roi_voxels",
+    "nonfinite_roi_voxels",
+    "finite_roi_fraction",
     "ti_path",
     "ti_size_bytes",
     "atlas_path",
@@ -291,14 +293,15 @@ def extract_subject(
                 )
                 roi_cache[key] = (optimizer_roi.mask, optimizer_roi.metadata)
             roi_mask, roi_metadata = roi_cache[key]
-            values = ti_data[roi_mask & np.isfinite(ti_data)]
-            if values.size != int(roi_metadata["target_voxels"]):
+            roi_voxels = int(roi_metadata["target_voxels"])
+            finite_roi_mask = roi_mask & np.isfinite(ti_data)
+            values = ti_data[finite_roi_mask]
+            finite_roi_voxels = int(values.size)
+            nonfinite_roi_voxels = roi_voxels - finite_roi_voxels
+            if finite_roi_voxels == 0:
                 raise RuntimeError(
-                    f"{subject}/{condition.name}/{tag}: non-finite ROI values"
-                )
-            if values.size == 0:
-                raise RuntimeError(
-                    f"{subject}/{condition.name}/{tag}: optimizer ROI is empty"
+                    f"{subject}/{condition.name}/{tag}: optimizer ROI has no "
+                    "finite field values"
                 )
             summaries = {
                 "roi_min_v_per_m": float(np.min(values)),
@@ -323,10 +326,12 @@ def extract_subject(
                     "requested_roi_volume_mm3": spec["target_volume_mm3"],
                     "achieved_roi_volume_mm3": roi_metadata["achieved_volume_mm3"],
                     "roi_radius_mm": roi_metadata["radius_mm"],
-                    "roi_voxels": roi_metadata["target_voxels"],
+                    "roi_voxels": roi_voxels,
                     "voxel_volume_mm3": roi_metadata["voxel_volume_mm3"],
                     **summaries,
-                    "finite_roi_voxels": int(values.size),
+                    "finite_roi_voxels": finite_roi_voxels,
+                    "nonfinite_roi_voxels": nonfinite_roi_voxels,
+                    "finite_roi_fraction": finite_roi_voxels / roi_voxels,
                     "ti_path": str(ti_path),
                     "ti_size_bytes": ti_path.stat().st_size,
                     "atlas_path": str(atlas_path),
@@ -353,6 +358,15 @@ def extract_subject(
         "rows": len(rows),
         "optimizer_roi": spec,
         "grid_realizations": len(roi_cache),
+        "runs_with_nonfinite_roi_values": sum(
+            int(row["nonfinite_roi_voxels"]) > 0 for row in rows
+        ),
+        "minimum_finite_roi_fraction": min(
+            float(row["finite_roi_fraction"]) for row in rows
+        ),
+        "maximum_nonfinite_roi_voxels": max(
+            int(row["nonfinite_roi_voxels"]) for row in rows
+        ),
         "subject_csv": str(subject_csv),
         "subject_csv_sha256": _sha256_file(subject_csv),
         "source_outputs_modified": False,
@@ -376,6 +390,8 @@ def _validate_rows(*, rows: list[dict[str, str]], config) -> dict[str, object]:
     ]
     if len(set(keys)) != len(keys):
         raise RuntimeError("Duplicate subject/condition/run records")
+    finite_fractions: list[float] = []
+    nonfinite_counts: list[int] = []
     for subject in config.subjects:
         for condition, expected in expected_by_condition.items():
             selected = [
@@ -402,13 +418,40 @@ def _validate_rows(*, rows: list[dict[str, str]], config) -> dict[str, object]:
                 ):
                     if not math.isfinite(float(row[field])):
                         raise RuntimeError(f"Non-finite {field}")
-                if int(row["roi_voxels"]) != int(row["finite_roi_voxels"]):
-                    raise RuntimeError("ROI voxel count differs from finite field count")
+                roi_voxels = int(row["roi_voxels"])
+                finite_roi_voxels = int(row["finite_roi_voxels"])
+                nonfinite_roi_voxels = int(row["nonfinite_roi_voxels"])
+                finite_roi_fraction = float(row["finite_roi_fraction"])
+                if roi_voxels <= 0:
+                    raise RuntimeError("Optimizer ROI has no voxels")
+                if not 0 < finite_roi_voxels <= roi_voxels:
+                    raise RuntimeError("Invalid finite optimizer-ROI voxel count")
+                if nonfinite_roi_voxels != roi_voxels - finite_roi_voxels:
+                    raise RuntimeError("Invalid non-finite optimizer-ROI voxel count")
+                expected_fraction = finite_roi_voxels / roi_voxels
+                if not math.isclose(
+                    finite_roi_fraction,
+                    expected_fraction,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    raise RuntimeError("Invalid finite optimizer-ROI fraction")
+                finite_fractions.append(finite_roi_fraction)
+                nonfinite_counts.append(nonfinite_roi_voxels)
+    runs_with_nonfinite = sum(value > 0 for value in nonfinite_counts)
     return {
         "rows": len(rows),
         "expected_rows": expected_total,
         "unique_keys": len(set(keys)),
-        "all_roi_values_finite": True,
+        "all_runs_have_finite_roi_values": True,
+        "all_roi_values_finite": runs_with_nonfinite == 0,
+        "runs_with_nonfinite_roi_values": runs_with_nonfinite,
+        "minimum_finite_roi_fraction": min(finite_fractions),
+        "maximum_nonfinite_roi_voxels": max(nonfinite_counts),
+        "roi_support_policy": (
+            "Scalar summaries use finite optimizer-ROI voxels. A run is invalid "
+            "only when the ROI contains no finite field values."
+        ),
     }
 
 
@@ -435,6 +478,8 @@ def collect(
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         if receipt.get("status") != "complete":
             raise RuntimeError(f"Incomplete subject receipt: {receipt_path}")
+        if int(receipt.get("schema_version", -1)) != SCHEMA_VERSION:
+            raise RuntimeError(f"Subject receipt schema mismatch: {receipt_path}")
         if receipt.get("subject_csv_sha256") != _sha256_file(subject_csv):
             raise RuntimeError(f"Subject CSV checksum mismatch: {subject_csv}")
         rows.extend(_read_csv(subject_csv))

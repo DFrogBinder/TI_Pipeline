@@ -188,3 +188,92 @@ def test_missing_target_label_fails_visible(tmp_path: Path) -> None:
             subject_index=0,
             output_root=root / "output",
         )
+
+
+def test_partial_nonfinite_roi_support_is_audited_not_rejected(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "partial-nonfinite"
+    config_path = _write_experiment(
+        root,
+        roi_preset="left-hippocampus",
+        label_id=17,
+        run_count=1,
+    )
+    ti_path = (
+        root
+        / "sub-test_repeatability"
+        / "remesh"
+        / "repeats"
+        / "repeat_001"
+        / "sub-test"
+        / "anat"
+        / "SimNIBS"
+        / "ti_brain_only.nii.gz"
+    )
+    image = nib.load(str(ti_path))
+    data = np.asarray(image.dataobj, dtype=np.float32).copy()
+    data[5, 5, 5] = np.nan
+    nib.save(nib.Nifti1Image(data, image.affine, image.header), str(ti_path))
+
+    output_root = root / "output"
+    receipt = extractor.extract_subject(
+        config_path=config_path,
+        subject_index=0,
+        output_root=output_root,
+    )
+    assert receipt["runs_with_nonfinite_roi_values"] == 1
+    assert receipt["maximum_nonfinite_roi_voxels"] == 1
+    assert 0.0 < receipt["minimum_finite_roi_fraction"] < 1.0
+
+    manifest = extractor.collect(
+        config_path=config_path,
+        output_root=output_root,
+        archive_path=None,
+    )
+    validation = manifest["validation"]
+    assert validation["all_runs_have_finite_roi_values"] is True
+    assert validation["all_roi_values_finite"] is False
+    assert validation["runs_with_nonfinite_roi_values"] == 1
+    assert validation["maximum_nonfinite_roi_voxels"] == 1
+
+    rows = extractor._read_csv(output_root / "optimizer_roi_metrics.csv")
+    affected = next(
+        row
+        for row in rows
+        if row["condition"] == "remesh" and row["repeat_tag"] == "repeat_001"
+    )
+    assert int(affected["nonfinite_roi_voxels"]) == 1
+    assert int(affected["finite_roi_voxels"]) == int(affected["roi_voxels"]) - 1
+    assert float(affected["roi_median_v_per_m"]) == 2.0
+
+
+def test_completely_nonfinite_roi_still_fails_visible(tmp_path: Path) -> None:
+    root = tmp_path / "all-nonfinite"
+    config_path = _write_experiment(
+        root,
+        roi_preset="right-m1",
+        label_id=12129,
+        run_count=1,
+    )
+    ti_path = (
+        root
+        / "sub-test_repeatability"
+        / "remesh"
+        / "repeats"
+        / "repeat_001"
+        / "sub-test"
+        / "anat"
+        / "SimNIBS"
+        / "ti_brain_only.nii.gz"
+    )
+    image = nib.load(str(ti_path))
+    data = np.full(image.shape, np.nan, dtype=np.float32)
+    nib.save(nib.Nifti1Image(data, image.affine, image.header), str(ti_path))
+
+    with pytest.raises(RuntimeError, match="has no finite field values"):
+        extractor.extract_subject(
+            config_path=config_path,
+            subject_index=0,
+            output_root=root / "output",
+        )

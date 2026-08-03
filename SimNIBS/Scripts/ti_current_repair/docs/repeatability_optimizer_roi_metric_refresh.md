@@ -12,7 +12,11 @@ montage optimization:
 
 Each sphere is centred on the subject parcel centroid and grown from 3 mm in
 0.01 mm increments until it reaches the requested volume. Metrics are
-calculated from all existing runs in both conditions. Outputs are written to
+calculated from all existing runs in both conditions. Scalar field summaries
+use the finite field values inside the anatomical target mask, consistent with
+the established CamCAN analysis. The output records the finite and non-finite
+ROI voxel counts and their fraction for every run. A run is rejected only when
+the entire ROI contains no finite field values. Outputs are written to
 `_post_processing/repeatability_optimizer_roi_metrics_v1` under each completed
 experiment.
 

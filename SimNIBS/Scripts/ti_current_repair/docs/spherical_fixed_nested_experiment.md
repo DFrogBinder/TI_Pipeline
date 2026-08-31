@@ -114,10 +114,15 @@ without submitting:
 bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh all --prepare-only
 ```
 
-Stanage rejects Slurm arrays with more than 1,000 tasks. Production submission
-must also keep the 800-task spherical fixed correction and the 1,600-task
-nested experiment operationally separate. Mode `all` is therefore restricted
-to `--preflight` and `--prepare-only`.
+Stanage enforces two separate scheduler limits: an array may contain at most
+1,000 elements, and all submitted array elements count against the per-user
+submitted-job QOS. A 1,000-element array is therefore not a safe chunk size
+for a multi-stage workflow because it leaves no QOS slot for a dependent
+continuation job. This launcher uses 875-element production chunks, matching
+the previously validated QOS-safe Stanage pattern. Production submission must
+also keep the 800-task spherical fixed correction and the 1,600-task nested
+experiment operationally separate. Mode `all` is therefore restricted to
+`--preflight` and `--prepare-only`.
 
 Submit the spherical fixed correction first:
 
@@ -131,14 +136,16 @@ Submit the nested experiment separately:
 bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh nested
 ```
 
-The commands submit resumable simulation arrays. Arrays are split at 1,000
-local tasks and sequentially dependency-gated so the global concurrency limit
-remains 50:
+The commands submit resumable simulation arrays. Arrays are split at 875 local
+tasks and sequentially released so the global concurrency limit remains 50.
+Only the active array and one small `afterok` release controller are submitted
+at the first step; the controller submits the next chunk and downstream jobs
+after its predecessor succeeds:
 
 - left-hippocampus spherical fixed correction: `0-399%50`;
 - right-M1 spherical fixed correction: `0-399%50`;
-- persisted nested case chunk 1: local `0-999%50`, global tasks `0-999`;
-- persisted nested case chunk 2: local `0-599%50`, global tasks `1000-1599`,
+- persisted nested case chunk 1: local `0-874%50`, global tasks `0-874`;
+- persisted nested case chunk 2: local `0-724%50`, global tasks `875-1599`,
   after successful completion of chunk 1.
 
 The array runner adds `TASK_OFFSET` to the local Slurm index before resolving
@@ -171,6 +178,26 @@ The workflow archives the previous job receipt, reuses the same selection and
 mesh caches, and skips tasks whose complete outputs and stimulation provenance
 already validate. `RESUBMIT=1` must not be used while the prior jobs are still
 active.
+
+### Recovery from the accepted 1,000-task nested chunk
+
+Commit `32518ab` submitted global tasks `0-999` as job `11420510`, but Stanage
+rejected the simultaneous 600-task chunk with
+`QOSMaxSubmitJobPerUserLimit`. Keep job `11420510`; its outputs are valid and
+resumable. Once at least one element has completed and released one submitted-
+job QOS slot, attach the QOS-safe continuation without resubmitting tasks
+`0-999`:
+
+```bash
+bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh nested --attach-continuation --continue-offset=1000 --previous-job=11420510
+```
+
+The one-task controller waits on `afterok:11420510`. After all first-chunk
+elements succeed, it submits local `0-599%50` with `TASK_OFFSET=1000`, followed
+by finalization, spherical ROI extraction, collection, and nested variance
+analysis. If the attachment command itself reports
+`QOSMaxSubmitJobPerUserLimit`, no controller was recorded and the same command
+is safe to retry after another first-chunk element completes.
 
 ## Analysis products
 

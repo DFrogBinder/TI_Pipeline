@@ -297,7 +297,7 @@ def test_finalize_writes_optimizer_extractor_compatible_receipt(tmp_path: Path) 
     assert (output / "_pipeline/workflow/complete.json").is_file()
 
 
-def test_nested_submitter_chunks_large_array_with_global_offsets(tmp_path: Path) -> None:
+def test_nested_submitter_releases_large_arrays_qos_safely(tmp_path: Path) -> None:
     fake_python = tmp_path / "fake-python"
     fake_python.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
     fake_python.chmod(0o755)
@@ -334,7 +334,7 @@ def test_nested_submitter_chunks_large_array_with_global_offsets(tmp_path: Path)
             "LEFT_METRICS_CSV": str(tmp_path / "left.csv"),
             "RIGHT_METRICS_CSV": str(tmp_path / "right.csv"),
             "NESTED_OUTPUT_ROOT": str(nested_output),
-            "MAX_ARRAY_TASKS": "1000",
+            "MAX_ARRAY_TASKS": "875",
             "SIM_MAX_CONCURRENT": "50",
         }
     )
@@ -347,26 +347,111 @@ def test_nested_submitter_chunks_large_array_with_global_offsets(tmp_path: Path)
     )
 
     calls = sbatch_log.read_text(encoding="utf-8").splitlines()
-    assert len(calls) == 6
-    assert "--array=0-999%50" in calls[0]
+    assert len(calls) == 2
+    assert "--array=0-874%50" in calls[0]
     assert "TASK_OFFSET=0" in calls[0]
-    assert "--array=0-599%50" in calls[1]
-    assert "TASK_OFFSET=1000" in calls[1]
+    assert "spherical_fixed_nested_release.slurm" in calls[1]
+    assert "CONTINUE_OFFSET=875" in calls[1]
+    assert "PREVIOUS_JOB=7001" in calls[1]
     assert "--dependency=afterok:7001" in calls[1]
-    assert "--dependency=afterok:7002" in calls[2]
     assert "simulation chunk 1/2: 7001" in completed.stdout
-    assert "simulation chunk 2/2: 7002" in completed.stdout
+    assert "continuation controller: 7002" in completed.stdout
 
     receipt = (
         nested_output / "_pipeline/submitted_job_ids.tsv"
     ).read_text(encoding="utf-8")
     assert "simulation_chunk_001\t7001\t" in receipt
-    assert "simulation_chunk_002\t7002\tafterok:7001" in receipt
-    assert "finalize\t7003\tafterok:7002" in receipt
+    assert "release_controller_001\t7002\tafterok:7001" in receipt
+
+    released = subprocess.run(
+        [
+            "bash",
+            str(SUBMITTER),
+            "nested",
+            "--internal-release",
+            "--continue-offset=875",
+            "--previous-job=7001",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    calls = sbatch_log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 7
+    assert "--array=0-724%50" in calls[2]
+    assert "TASK_OFFSET=875" in calls[2]
+    assert "--dependency=afterok:7003" in calls[3]
+    assert "simulation chunk 2/2: 7003" in released.stdout
+
+    receipt = (
+        nested_output / "_pipeline/submitted_job_ids.tsv"
+    ).read_text(encoding="utf-8")
+    assert "simulation_chunk_002\t7003\t" in receipt
+    assert "finalize\t7004\tafterok:7003" in receipt
+    assert "nested_analysis\t7007\tafterok:7006" in receipt
 
     runner_source = ARRAY_RUNNER.read_text(encoding="utf-8")
     assert 'TASK_INDEX=$((TASK_OFFSET + SLURM_ARRAY_TASK_ID))' in runner_source
     assert '--task-index "${TASK_INDEX}"' in runner_source
+
+
+def test_nested_submitter_attaches_to_existing_1000_task_chunk(tmp_path: Path) -> None:
+    fake_sbatch = tmp_path / "fake-sbatch"
+    fake_sbatch.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        'printf "CALL" >> "$FAKE_SBATCH_LOG"\n'
+        'for argument in "$@"; do printf "\\t%s" "$argument" >> "$FAKE_SBATCH_LOG"; done\n'
+        'printf "\\n" >> "$FAKE_SBATCH_LOG"\n'
+        'printf "8001\\n"\n',
+        encoding="utf-8",
+    )
+    fake_sbatch.chmod(0o755)
+    sbatch_log = tmp_path / "sbatch.log"
+    nested_output = tmp_path / "nested-output"
+    receipt = nested_output / "_pipeline/submitted_job_ids.tsv"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        "stage\tjob_id\tdependency\n"
+        "simulation_chunk_001\t11420510\t\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PIPELINE_DIR": str(SCRIPT.parents[1]),
+            "SBATCH_BIN": str(fake_sbatch),
+            "FAKE_SBATCH_LOG": str(sbatch_log),
+            "NESTED_OUTPUT_ROOT": str(nested_output),
+        }
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SUBMITTER),
+            "nested",
+            "--attach-continuation",
+            "--continue-offset=1000",
+            "--previous-job=11420510",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    call = sbatch_log.read_text(encoding="utf-8")
+    assert "--dependency=afterok:11420510" in call
+    assert "CONTINUE_OFFSET=1000" in call
+    assert "PREVIOUS_JOB=11420510" in call
+    assert "submit no simulation array" in completed.stdout
+    assert "existing simulation work was not resubmitted" in completed.stdout
+    assert "release_controller_001\t8001\tafterok:11420510" in receipt.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_submitter_requires_separate_production_modes() -> None:
@@ -394,3 +479,18 @@ def test_submitter_enforces_stanage_array_cap() -> None:
 
     assert completed.returncode == 2
     assert "cannot exceed Stanage's 1,000-task array cap" in completed.stderr
+
+
+def test_nested_submitter_enforces_qos_safe_chunk_limit() -> None:
+    env = os.environ.copy()
+    env["MAX_ARRAY_TASKS"] = "1000"
+    completed = subprocess.run(
+        ["bash", str(SUBMITTER), "nested", "--preflight"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 2
+    assert "QOS-safe 875-task chunk limit" in completed.stderr

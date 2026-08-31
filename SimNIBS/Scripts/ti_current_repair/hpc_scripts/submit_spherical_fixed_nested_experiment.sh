@@ -21,7 +21,10 @@ SIM_CPUS="${SIM_CPUS:-8}"
 SIM_MEMORY="${SIM_MEMORY:-32G}"
 SIM_TIME="${SIM_TIME:-08:00:00}"
 SIM_MAX_CONCURRENT="${SIM_MAX_CONCURRENT:-50}"
-MAX_ARRAY_TASKS="${MAX_ARRAY_TASKS:-1000}"
+# Keep enough Stanage submitted-job QOS headroom for one dependent release
+# controller and the small downstream jobs.  The scheduler's hard array cap is
+# 1,000, but a 1,000-element array leaves no slot for its continuation job.
+MAX_ARRAY_TASKS="${MAX_ARRAY_TASKS:-875}"
 ROI_CPUS="${ROI_CPUS:-4}"
 ROI_MEMORY="${ROI_MEMORY:-16G}"
 ROI_TIME="${ROI_TIME:-02:00:00}"
@@ -35,10 +38,15 @@ ROI_ARRAY="$PIPELINE_DIR/hpc_scripts/repeatability_optimizer_roi_metrics_array.s
 ROI_COLLECT="$PIPELINE_DIR/hpc_scripts/repeatability_optimizer_roi_metrics_collect.slurm"
 ROI_EXTRACTOR="$PIPELINE_DIR/post/extract_repeatability_optimizer_roi_metrics.py"
 NESTED_ANALYSIS="$PIPELINE_DIR/hpc_scripts/nested_repeatability_analysis.slurm"
+RELEASE_CONTROLLER="$PIPELINE_DIR/hpc_scripts/spherical_fixed_nested_release.slurm"
 
 MODE="all"
 PREFLIGHT_ONLY=0
 PREPARE_ONLY=0
+ATTACH_CONTINUATION=0
+INTERNAL_RELEASE=0
+CONTINUE_OFFSET=""
+PREVIOUS_JOB=""
 for argument in "$@"; do
     case "$argument" in
         all|fixed|nested)
@@ -49,6 +57,18 @@ for argument in "$@"; do
             ;;
         --prepare-only)
             PREPARE_ONLY=1
+            ;;
+        --attach-continuation)
+            ATTACH_CONTINUATION=1
+            ;;
+        --internal-release)
+            INTERNAL_RELEASE=1
+            ;;
+        --continue-offset=*)
+            CONTINUE_OFFSET="${argument#*=}"
+            ;;
+        --previous-job=*)
+            PREVIOUS_JOB="${argument#*=}"
             ;;
         *)
             echo "[ERROR] Unknown argument: $argument" >&2
@@ -62,6 +82,28 @@ if [ "$PREFLIGHT_ONLY" = "1" ] && [ "$PREPARE_ONLY" = "1" ]; then
     echo "[ERROR] Use only one of --preflight or --prepare-only." >&2
     exit 2
 fi
+if [ "$ATTACH_CONTINUATION" = "1" ] && [ "$INTERNAL_RELEASE" = "1" ]; then
+    echo "[ERROR] --attach-continuation and --internal-release are mutually exclusive." >&2
+    exit 2
+fi
+if [ "$ATTACH_CONTINUATION" = "1" ] || [ "$INTERNAL_RELEASE" = "1" ]; then
+    if [ "$MODE" != "nested" ]; then
+        echo "[ERROR] Continuation modes are supported only for mode 'nested'." >&2
+        exit 2
+    fi
+    if [ "$PREFLIGHT_ONLY" = "1" ] || [ "$PREPARE_ONLY" = "1" ]; then
+        echo "[ERROR] Continuation modes cannot be combined with preflight/prepare-only." >&2
+        exit 2
+    fi
+    if ! [[ "$CONTINUE_OFFSET" =~ ^[1-9][0-9]*$ ]] || [ "$CONTINUE_OFFSET" -ge 1600 ]; then
+        echo "[ERROR] --continue-offset must be an integer in 1-1599." >&2
+        exit 2
+    fi
+    if ! [[ "$PREVIOUS_JOB" =~ ^[0-9]+$ ]]; then
+        echo "[ERROR] --previous-job must be a numeric Slurm job ID." >&2
+        exit 2
+    fi
+fi
 if ! [[ "$SIM_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] SIM_MAX_CONCURRENT must be a positive integer." >&2
     exit 2
@@ -72,6 +114,11 @@ if ! [[ "$MAX_ARRAY_TASKS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if [ "$MAX_ARRAY_TASKS" -gt 1000 ]; then
     echo "[ERROR] MAX_ARRAY_TASKS cannot exceed Stanage's 1,000-task array cap." >&2
+    exit 2
+fi
+if { [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; } && [ "$MAX_ARRAY_TASKS" -gt 875 ]; then
+    echo "[ERROR] Nested MAX_ARRAY_TASKS cannot exceed the QOS-safe 875-task chunk limit." >&2
+    echo "[INFO] Stanage counts submitted array elements toward QOSMaxSubmitJobPerUserLimit; headroom is required for the release controller." >&2
     exit 2
 fi
 if ! [[ "$ROI_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]]; then
@@ -99,7 +146,8 @@ for required in \
     "$ROI_ARRAY" \
     "$ROI_COLLECT" \
     "$ROI_EXTRACTOR" \
-    "$NESTED_ANALYSIS"; do
+    "$NESTED_ANALYSIS" \
+    "$RELEASE_CONTROLLER"; do
     if [ ! -f "$required" ]; then
         echo "[ERROR] Required workflow file is missing: $required" >&2
         exit 2
@@ -109,6 +157,7 @@ done
 describe_array_chunks() {
     local label="$1"
     local task_count="$2"
+    local global_base="${3:-0}"
     local task_offset=0
     local chunk_index=1
     local chunk_count=$(((task_count + MAX_ARRAY_TASKS - 1) / MAX_ARRAY_TASKS))
@@ -120,8 +169,9 @@ describe_array_chunks() {
         if [ "$remaining" -lt "$chunk_tasks" ]; then
             chunk_tasks="$remaining"
         fi
-        local global_end=$((task_offset + chunk_tasks - 1))
-        echo "    chunk ${chunk_index}: local 0-$((chunk_tasks - 1))%${SIM_MAX_CONCURRENT}; global ${task_offset}-${global_end}"
+        local global_start=$((global_base + task_offset))
+        local global_end=$((global_start + chunk_tasks - 1))
+        echo "    chunk ${chunk_index}: local 0-$((chunk_tasks - 1))%${SIM_MAX_CONCURRENT}; global ${global_start}-${global_end}"
         task_offset=$((task_offset + chunk_tasks))
         chunk_index=$((chunk_index + 1))
     done
@@ -145,7 +195,17 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
     echo "  nested outer meshes: 40"
     echo "  nested repeats per mesh: 40"
     echo "  nested simulations: 1600"
-    describe_array_chunks "nested" 1600
+    if [ "$ATTACH_CONTINUATION" = "1" ]; then
+        echo "  completed/running chunk ownership: global 0-$((CONTINUE_OFFSET - 1)); job $PREVIOUS_JOB"
+        echo "  remaining simulations after controller gate: $((1600 - CONTINUE_OFFSET))"
+        echo "  action now: attach one afterok release controller; submit no simulation array"
+    elif [ "$INTERNAL_RELEASE" = "1" ]; then
+        echo "  validated predecessor: global 0-$((CONTINUE_OFFSET - 1)); job $PREVIOUS_JOB"
+        echo "  remaining simulations: $((1600 - CONTINUE_OFFSET))"
+        describe_array_chunks "remaining nested" "$((1600 - CONTINUE_OFFSET))" "$CONTINUE_OFFSET"
+    else
+        describe_array_chunks "nested" 1600
+    fi
     echo "  nested expected TI outputs: 1600"
 fi
 if [ "$MODE" = "all" ]; then
@@ -155,7 +215,8 @@ fi
 echo "  execution: full requested scope; no smoke or reduced subset"
 echo "  source remesh outputs: read-only"
 echo "  retry policy: same persisted selection, skip complete tasks, unlimited task requeue"
-echo "  scheduler array task cap: $MAX_ARRAY_TASKS"
+echo "  scheduler hard array task cap: 1000"
+echo "  campaign array chunk limit: $MAX_ARRAY_TASKS"
 echo "  simulation chunks are sequential to preserve global concurrency: $SIM_MAX_CONCURRENT"
 echo "Resources:"
 echo "  simulation module: SimNIBS/4.0.1-foss-2023a"
@@ -189,13 +250,109 @@ nested_command() {
         --inner-repeat-count 40
 }
 
-if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
+append_receipt_row() {
+    local receipt="$1"
+    local stage="$2"
+    local job_id="$3"
+    local dependency="$4"
+    local lock_file="${receipt}.lock"
+    (
+        flock -x 9
+        if awk -F '\t' -v stage="$stage" '$1 == stage { found = 1 } END { exit !found }' "$receipt"; then
+            echo "[ERROR] Receipt already contains stage $stage: $receipt" >&2
+            exit 2
+        fi
+        printf "%s\t%s\t%s\n" "$stage" "$job_id" "$dependency" >> "$receipt"
+    ) 9>"$lock_file"
+}
+
+validate_continuation_receipt() {
+    local receipt="$NESTED_OUTPUT_ROOT/_pipeline/submitted_job_ids.tsv"
+    if [ ! -f "$receipt" ]; then
+        echo "[ERROR] Nested submission receipt is missing: $receipt" >&2
+        exit 2
+    fi
+    if ! awk -F '\t' -v job="$PREVIOUS_JOB" '
+        $1 ~ /^simulation_chunk_[0-9]+$/ && $2 == job { found = 1 }
+        END { exit !found }
+    ' "$receipt"; then
+        echo "[ERROR] Receipt does not identify $PREVIOUS_JOB as a submitted simulation chunk." >&2
+        exit 2
+    fi
+    if awk -F '\t' '$1 == "finalize" || $1 == "optimizer_roi_extract" || $1 == "optimizer_roi_collect" || $1 == "nested_analysis" { found = 1 } END { exit !found }' "$receipt"; then
+        echo "[ERROR] Downstream nested stages are already recorded; refusing continuation attachment." >&2
+        exit 2
+    fi
+}
+
+submit_release_controller() {
+    local label="$1"
+    local root="$2"
+    local receipt="$3"
+    local previous_job="$4"
+    local continue_offset="$5"
+    local release_number
+    local release_stage
+    local release_export
+    local release_job_raw
+    local release_job
+
+    release_number=$(awk -F '\t' '$1 ~ /^release_controller_[0-9]+$/ { count++ } END { print count + 1 }' "$receipt")
+    printf -v release_stage "release_controller_%03d" "$release_number"
+    release_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_SOURCE_ROOT=$LEFT_SOURCE_ROOT,RIGHT_SOURCE_ROOT=$RIGHT_SOURCE_ROOT,LEFT_METRICS_CSV=$LEFT_METRICS_CSV,RIGHT_METRICS_CSV=$RIGHT_METRICS_CSV,NESTED_OUTPUT_ROOT=$NESTED_OUTPUT_ROOT,SELECTION_SEED=$SELECTION_SEED,NESTED_TARGET=$NESTED_TARGET,SIM_CPUS=$SIM_CPUS,SIM_MEMORY=$SIM_MEMORY,SIM_TIME=$SIM_TIME,SIM_MAX_CONCURRENT=$SIM_MAX_CONCURRENT,MAX_ARRAY_TASKS=$MAX_ARRAY_TASKS,ROI_CPUS=$ROI_CPUS,ROI_MEMORY=$ROI_MEMORY,ROI_TIME=$ROI_TIME,ROI_MAX_CONCURRENT=$ROI_MAX_CONCURRENT,SBATCH_BIN=$SBATCH_BIN,CONTINUE_OFFSET=$continue_offset,PREVIOUS_JOB=$previous_job"
+    release_job_raw="$(
+        "$SBATCH_BIN" \
+            --parsable \
+            --job-name="ti_${label}_release" \
+            --partition="$PARTITION" \
+            --cpus-per-task=1 \
+            --mem=1G \
+            --time=01:00:00 \
+            --dependency="afterok:$previous_job" \
+            --output="$root/_pipeline/logs/release-%j.out" \
+            --error="$root/_pipeline/logs/release-%j.err" \
+            --export="$release_export" \
+            "$RELEASE_CONTROLLER"
+    )"
+    release_job="${release_job_raw%%;*}"
+    if ! [[ "$release_job" =~ ^[0-9]+$ ]]; then
+        echo "[ERROR] Could not parse release-controller job ID from: $release_job_raw" >&2
+        exit 2
+    fi
+    append_receipt_row "$receipt" "$release_stage" "$release_job" "afterok:$previous_job"
+    echo "[INFO] $label continuation controller: $release_job"
+    echo "[INFO] $label continuation dependency: afterok:$previous_job"
+    echo "[INFO] $label continuation global offset: $continue_offset"
+}
+
+if [ "$ATTACH_CONTINUATION" = "1" ]; then
+    validate_continuation_receipt
+    receipt="$NESTED_OUTPUT_ROOT/_pipeline/submitted_job_ids.tsv"
+    if awk -F '\t' '$1 ~ /^release_controller_[0-9]+$/ { found = 1 } END { exit !found }' "$receipt"; then
+        echo "[ERROR] A nested release controller is already recorded: $receipt" >&2
+        exit 2
+    fi
+    submit_release_controller \
+        "nested_40x40" \
+        "$NESTED_OUTPUT_ROOT" \
+        "$receipt" \
+        "$PREVIOUS_JOB" \
+        "$CONTINUE_OFFSET"
+    echo "[INFO] Continuation attached; existing simulation work was not resubmitted."
+    exit 0
+fi
+
+if [ "$INTERNAL_RELEASE" = "1" ]; then
+    validate_continuation_receipt
+fi
+
+if [ "$INTERNAL_RELEASE" = "0" ] && { [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; }; then
     echo "[INFO] Preflight: left-hippocampus spherical-median fixed correction"
     fixed_command preflight-fixed "$LEFT_SOURCE_ROOT" "$LEFT_METRICS_CSV" "$LEFT_OUTPUT_ROOT"
     echo "[INFO] Preflight: right-M1 spherical-median fixed correction"
     fixed_command preflight-fixed "$RIGHT_SOURCE_ROOT" "$RIGHT_METRICS_CSV" "$RIGHT_OUTPUT_ROOT"
 fi
-if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
+if [ "$INTERNAL_RELEASE" = "0" ] && { [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; }; then
     echo "[INFO] Preflight: persisted random 40x40 nested case"
     nested_command preflight-nested
 fi
@@ -205,13 +362,13 @@ if [ "$PREFLIGHT_ONLY" = "1" ]; then
     exit 0
 fi
 
-if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
+if [ "$INTERNAL_RELEASE" = "0" ] && { [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; }; then
     echo "[INFO] Preparing isolated left-hippocampus correction root"
     fixed_command prepare-fixed "$LEFT_SOURCE_ROOT" "$LEFT_METRICS_CSV" "$LEFT_OUTPUT_ROOT"
     echo "[INFO] Preparing isolated right-M1 correction root"
     fixed_command prepare-fixed "$RIGHT_SOURCE_ROOT" "$RIGHT_METRICS_CSV" "$RIGHT_OUTPUT_ROOT"
 fi
-if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
+if [ "$INTERNAL_RELEASE" = "0" ] && { [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; }; then
     echo "[INFO] Persisting/reusing the nested case and preparing 40 mesh caches"
     nested_command prepare-nested
 fi
@@ -231,11 +388,11 @@ check_submission_receipt() {
     fi
 }
 
-if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
+if [ "$INTERNAL_RELEASE" = "0" ] && { [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; }; then
     check_submission_receipt "$LEFT_OUTPUT_ROOT"
     check_submission_receipt "$RIGHT_OUTPUT_ROOT"
 fi
-if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
+if [ "$INTERNAL_RELEASE" = "0" ] && { [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; }; then
     check_submission_receipt "$NESTED_OUTPUT_ROOT"
 fi
 
@@ -246,6 +403,8 @@ submit_study() {
     local simulation_tasks="$4"
     local subjects="$5"
     local is_nested="$6"
+    local start_offset="${7:-0}"
+    local append_receipt="${8:-0}"
     local receipt="$root/_pipeline/submitted_job_ids.tsv"
     local log_root="$root/_pipeline/logs"
     local optimizer_root="$root/_post_processing/optimizer_roi_metrics_v1"
@@ -258,7 +417,7 @@ submit_study() {
     local sim_stage
     local simulation_chunk_count=$(((simulation_tasks + MAX_ARRAY_TASKS - 1) / MAX_ARRAY_TASKS))
     local simulation_chunk_index=1
-    local task_offset=0
+    local task_offset="$start_offset"
     local finalize_export
     local finalize_job
     local roi_export
@@ -266,16 +425,24 @@ submit_study() {
     local collect_job
     local analysis_job=""
 
-    if [ -f "$receipt" ] && [ "$RESUBMIT" != "1" ]; then
-        echo "[ERROR] Submission receipt already exists: $receipt" >&2
-        echo "[INFO] Inspect active jobs first. Set RESUBMIT=1 only for a deliberate resumable relaunch." >&2
-        exit 2
-    fi
-    if [ -f "$receipt" ]; then
-        mv "$receipt" "${receipt%.tsv}.previous.$(date -u +%Y%m%dT%H%M%SZ).tsv"
-    fi
     mkdir -p "$log_root" "$optimizer_root/logs"
-    printf "stage\tjob_id\tdependency\n" > "$receipt"
+    if [ "$append_receipt" = "1" ]; then
+        if [ ! -f "$receipt" ]; then
+            echo "[ERROR] Cannot continue without the existing receipt: $receipt" >&2
+            exit 2
+        fi
+        simulation_chunk_index=$(awk -F '\t' '$1 ~ /^simulation_chunk_[0-9]+$/ || $1 == "simulation" { count++ } END { print count + 1 }' "$receipt")
+    else
+        if [ -f "$receipt" ] && [ "$RESUBMIT" != "1" ]; then
+            echo "[ERROR] Submission receipt already exists: $receipt" >&2
+            echo "[INFO] Inspect active jobs first. Set RESUBMIT=1 only for a deliberate resumable relaunch." >&2
+            exit 2
+        fi
+        if [ -f "$receipt" ]; then
+            mv "$receipt" "${receipt%.tsv}.previous.$(date -u +%Y%m%dT%H%M%SZ).tsv"
+        fi
+        printf "stage\tjob_id\tdependency\n" > "$receipt"
+    fi
 
     while [ "$task_offset" -lt "$simulation_tasks" ]; do
         local remaining=$((simulation_tasks - task_offset))
@@ -328,6 +495,17 @@ submit_study() {
         sim_dependency="$sim_job"
         task_offset=$((task_offset + chunk_tasks))
         simulation_chunk_index=$((simulation_chunk_index + 1))
+        if [ "$task_offset" -lt "$simulation_tasks" ]; then
+            submit_release_controller \
+                "$label" \
+                "$root" \
+                "$receipt" \
+                "$sim_job" \
+                "$task_offset"
+            echo "[INFO] $label submission log:   $receipt"
+            echo "[INFO] Later chunks and downstream stages will be released automatically."
+            return 0
+        fi
     done
 
     finalize_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config"
@@ -423,6 +601,8 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
         "$LEFT_OUTPUT_ROOT/_pipeline/configs/fixed_mesh_spherical_median.json" \
         400 \
         10 \
+        0 \
+        0 \
         0
     submit_study \
         "spherical_fixed_rm1" \
@@ -430,14 +610,30 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
         "$RIGHT_OUTPUT_ROOT/_pipeline/configs/fixed_mesh_spherical_median.json" \
         400 \
         10 \
+        0 \
+        0 \
         0
 fi
 if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
-    submit_study \
-        "nested_40x40" \
-        "$NESTED_OUTPUT_ROOT" \
-        "$NESTED_OUTPUT_ROOT/_pipeline/configs/nested_40x40.json" \
-        1600 \
-        1 \
-        1
+    if [ "$INTERNAL_RELEASE" = "1" ]; then
+        submit_study \
+            "nested_40x40" \
+            "$NESTED_OUTPUT_ROOT" \
+            "$NESTED_OUTPUT_ROOT/_pipeline/configs/nested_40x40.json" \
+            1600 \
+            1 \
+            1 \
+            "$CONTINUE_OFFSET" \
+            1
+    else
+        submit_study \
+            "nested_40x40" \
+            "$NESTED_OUTPUT_ROOT" \
+            "$NESTED_OUTPUT_ROOT/_pipeline/configs/nested_40x40.json" \
+            1600 \
+            1 \
+            1 \
+            0 \
+            0
+    fi
 fi

@@ -1,6 +1,6 @@
 # Current-Repair and Mesh-Repeat HPC Runbook
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 This document records the end-to-end launch procedure for two related workflows:
 
@@ -14,17 +14,22 @@ code path, with corrected pair-2 injection currents.
 
 ## Stanage Scheduler Invariant
 
-Stanage rejects Slurm arrays with more than 1,000 tasks. Every launcher must
-keep each local array at `0-999` or smaller. Experiments with more than 1,000
-tasks must use multiple array chunks and pass an explicit `TASK_OFFSET` so
-local array indices map to unique global experiment tasks.
+Stanage rejects Slurm arrays with more than 1,000 tasks. It also counts every
+submitted array element against `QOSMaxSubmitJobPerUserLimit`, so a full
+1,000-element array leaves no slot for a dependent continuation job. Every
+multi-stage launcher must therefore keep each local production chunk below
+that ceiling; the validated default is 875 elements. Experiments with more
+than 875 tasks use multiple array chunks and pass an explicit `TASK_OFFSET` so
+local array indices map to unique global experiment tasks. At most one large
+array plus one small dependency-gated release controller is submitted at once.
 
 For the spherical-median repeatability update, production work is submitted as
 two separate operations:
 
 1. spherical fixed-mesh correction: two independent 400-task arrays;
-2. nested experiment: a 1,000-task chunk followed by a dependency-gated
-   600-task chunk.
+2. nested experiment: an 875-task chunk plus an `afterok` release controller;
+   the controller later submits the remaining 725-task chunk and downstream
+   analysis jobs.
 
 The combined `all` mode is allowed only for read-only preflight and preparation;
 it must not submit production jobs. This separation prevents a nested scheduler

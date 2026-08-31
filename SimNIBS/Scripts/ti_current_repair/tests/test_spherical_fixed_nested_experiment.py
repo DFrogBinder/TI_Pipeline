@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +19,9 @@ assert SPEC and SPEC.loader
 workflow = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = workflow
 SPEC.loader.exec_module(workflow)
+
+SUBMITTER = SCRIPT.parents[1] / "hpc_scripts/submit_spherical_fixed_nested_experiment.sh"
+ARRAY_RUNNER = SCRIPT.parents[1] / "hpc_scripts/repeatability_experiment_array.slurm"
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -290,3 +295,102 @@ def test_finalize_writes_optimizer_extractor_compatible_receipt(tmp_path: Path) 
     assert receipt["scope"]["repeats_per_condition"] == 4
     assert receipt["scope"]["expected_ti_nifti"] == 4
     assert (output / "_pipeline/workflow/complete.json").is_file()
+
+
+def test_nested_submitter_chunks_large_array_with_global_offsets(tmp_path: Path) -> None:
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    fake_sbatch = tmp_path / "fake-sbatch"
+    fake_sbatch.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        'counter=$(cat "$FAKE_SBATCH_COUNTER")\n'
+        "counter=$((counter + 1))\n"
+        'printf "%s\\n" "$counter" > "$FAKE_SBATCH_COUNTER"\n'
+        'printf "CALL" >> "$FAKE_SBATCH_LOG"\n'
+        'for argument in "$@"; do printf "\\t%s" "$argument" >> "$FAKE_SBATCH_LOG"; done\n'
+        'printf "\\n" >> "$FAKE_SBATCH_LOG"\n'
+        'printf "%s\\n" "$counter"\n',
+        encoding="utf-8",
+    )
+    fake_sbatch.chmod(0o755)
+    counter = tmp_path / "counter.txt"
+    counter.write_text("7000\n", encoding="utf-8")
+    sbatch_log = tmp_path / "sbatch.log"
+
+    nested_output = tmp_path / "nested-output"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PIPELINE_DIR": str(SCRIPT.parents[1]),
+            "PYTHON_BIN": str(fake_python),
+            "SBATCH_BIN": str(fake_sbatch),
+            "FAKE_SBATCH_COUNTER": str(counter),
+            "FAKE_SBATCH_LOG": str(sbatch_log),
+            "LEFT_SOURCE_ROOT": str(tmp_path / "left-source"),
+            "RIGHT_SOURCE_ROOT": str(tmp_path / "right-source"),
+            "LEFT_METRICS_CSV": str(tmp_path / "left.csv"),
+            "RIGHT_METRICS_CSV": str(tmp_path / "right.csv"),
+            "NESTED_OUTPUT_ROOT": str(nested_output),
+            "MAX_ARRAY_TASKS": "1000",
+            "SIM_MAX_CONCURRENT": "50",
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(SUBMITTER), "nested"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    calls = sbatch_log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 6
+    assert "--array=0-999%50" in calls[0]
+    assert "TASK_OFFSET=0" in calls[0]
+    assert "--array=0-599%50" in calls[1]
+    assert "TASK_OFFSET=1000" in calls[1]
+    assert "--dependency=afterok:7001" in calls[1]
+    assert "--dependency=afterok:7002" in calls[2]
+    assert "simulation chunk 1/2: 7001" in completed.stdout
+    assert "simulation chunk 2/2: 7002" in completed.stdout
+
+    receipt = (
+        nested_output / "_pipeline/submitted_job_ids.tsv"
+    ).read_text(encoding="utf-8")
+    assert "simulation_chunk_001\t7001\t" in receipt
+    assert "simulation_chunk_002\t7002\tafterok:7001" in receipt
+    assert "finalize\t7003\tafterok:7002" in receipt
+
+    runner_source = ARRAY_RUNNER.read_text(encoding="utf-8")
+    assert 'TASK_INDEX=$((TASK_OFFSET + SLURM_ARRAY_TASK_ID))' in runner_source
+    assert '--task-index "${TASK_INDEX}"' in runner_source
+
+
+def test_submitter_requires_separate_production_modes() -> None:
+    completed = subprocess.run(
+        ["bash", str(SUBMITTER), "all"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "split into separate fixed and nested commands" in completed.stderr
+
+
+def test_submitter_enforces_stanage_array_cap() -> None:
+    env = os.environ.copy()
+    env["MAX_ARRAY_TASKS"] = "1001"
+    completed = subprocess.run(
+        ["bash", str(SUBMITTER), "nested", "--preflight"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 2
+    assert "cannot exceed Stanage's 1,000-task array cap" in completed.stderr

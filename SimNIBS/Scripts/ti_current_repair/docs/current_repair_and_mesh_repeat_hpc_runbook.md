@@ -1,6 +1,6 @@
 # Current-Repair and Mesh-Repeat HPC Runbook
 
-Last updated: 2026-07-27
+Last updated: 2026-08-31
 
 This document records the end-to-end launch procedure for two related workflows:
 
@@ -11,6 +11,25 @@ The current-repair workflow is the manuscript-specific staged pipeline. It recor
 stage state under the experiment root and submits simulation and report work as
 Slurm arrays. The original mesh-repeat workflow uses the restored mesh-repeat
 code path, with corrected pair-2 injection currents.
+
+## Stanage Scheduler Invariant
+
+Stanage rejects Slurm arrays with more than 1,000 tasks. Every launcher must
+keep each local array at `0-999` or smaller. Experiments with more than 1,000
+tasks must use multiple array chunks and pass an explicit `TASK_OFFSET` so
+local array indices map to unique global experiment tasks.
+
+For the spherical-median repeatability update, production work is submitted as
+two separate operations:
+
+1. spherical fixed-mesh correction: two independent 400-task arrays;
+2. nested experiment: a 1,000-task chunk followed by a dependency-gated
+   600-task chunk.
+
+The combined `all` mode is allowed only for read-only preflight and preparation;
+it must not submit production jobs. This separation prevents a nested scheduler
+limit failure from causing an ambiguous partial re-submission of the fixed
+correction.
 
 ## Preconditions
 

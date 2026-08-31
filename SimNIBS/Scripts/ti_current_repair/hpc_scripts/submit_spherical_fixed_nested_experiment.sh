@@ -21,6 +21,7 @@ SIM_CPUS="${SIM_CPUS:-8}"
 SIM_MEMORY="${SIM_MEMORY:-32G}"
 SIM_TIME="${SIM_TIME:-08:00:00}"
 SIM_MAX_CONCURRENT="${SIM_MAX_CONCURRENT:-50}"
+MAX_ARRAY_TASKS="${MAX_ARRAY_TASKS:-1000}"
 ROI_CPUS="${ROI_CPUS:-4}"
 ROI_MEMORY="${ROI_MEMORY:-16G}"
 ROI_TIME="${ROI_TIME:-02:00:00}"
@@ -65,6 +66,14 @@ if ! [[ "$SIM_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] SIM_MAX_CONCURRENT must be a positive integer." >&2
     exit 2
 fi
+if ! [[ "$MAX_ARRAY_TASKS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[ERROR] MAX_ARRAY_TASKS must be a positive integer." >&2
+    exit 2
+fi
+if [ "$MAX_ARRAY_TASKS" -gt 1000 ]; then
+    echo "[ERROR] MAX_ARRAY_TASKS cannot exceed Stanage's 1,000-task array cap." >&2
+    exit 2
+fi
 if ! [[ "$ROI_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] ROI_MAX_CONCURRENT must be a positive integer." >&2
     exit 2
@@ -75,6 +84,11 @@ if ! [[ "$SELECTION_SEED" =~ ^-?[0-9]+$ ]]; then
 fi
 if [ "$NESTED_TARGET" != "left-hippocampus" ] && [ "$NESTED_TARGET" != "right-m1" ]; then
     echo "[ERROR] NESTED_TARGET must be left-hippocampus or right-m1." >&2
+    exit 2
+fi
+if [ "$MODE" = "all" ] && [ "$PREFLIGHT_ONLY" = "0" ] && [ "$PREPARE_ONLY" = "0" ]; then
+    echo "[ERROR] Production submission must be split into separate fixed and nested commands." >&2
+    echo "[INFO] Run mode 'fixed' and mode 'nested' separately; mode 'all' is only for --preflight or --prepare-only." >&2
     exit 2
 fi
 
@@ -92,6 +106,27 @@ for required in \
     fi
 done
 
+describe_array_chunks() {
+    local label="$1"
+    local task_count="$2"
+    local task_offset=0
+    local chunk_index=1
+    local chunk_count=$(((task_count + MAX_ARRAY_TASKS - 1) / MAX_ARRAY_TASKS))
+
+    echo "  ${label} array chunks: ${chunk_count} sequential"
+    while [ "$task_offset" -lt "$task_count" ]; do
+        local remaining=$((task_count - task_offset))
+        local chunk_tasks="$MAX_ARRAY_TASKS"
+        if [ "$remaining" -lt "$chunk_tasks" ]; then
+            chunk_tasks="$remaining"
+        fi
+        local global_end=$((task_offset + chunk_tasks - 1))
+        echo "    chunk ${chunk_index}: local 0-$((chunk_tasks - 1))%${SIM_MAX_CONCURRENT}; global ${task_offset}-${global_end}"
+        task_offset=$((task_offset + chunk_tasks))
+        chunk_index=$((chunk_index + 1))
+    done
+}
+
 echo "Scope:"
 echo "  mode: $MODE"
 if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
@@ -100,7 +135,8 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "fixed" ]; then
     echo "  correction condition: fixed_mesh only"
     echo "  correction repeats: 40 per case"
     echo "  correction simulations: 800"
-    echo "  correction arrays: 2 x 0-399%$SIM_MAX_CONCURRENT"
+    echo "  correction targets each use the following plan:"
+    describe_array_chunks "correction" 400
     echo "  correction expected TI outputs: 800"
 fi
 if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
@@ -109,7 +145,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "nested" ]; then
     echo "  nested outer meshes: 40"
     echo "  nested repeats per mesh: 40"
     echo "  nested simulations: 1600"
-    echo "  nested array: 0-1599%$SIM_MAX_CONCURRENT"
+    describe_array_chunks "nested" 1600
     echo "  nested expected TI outputs: 1600"
 fi
 if [ "$MODE" = "all" ]; then
@@ -119,6 +155,8 @@ fi
 echo "  execution: full requested scope; no smoke or reduced subset"
 echo "  source remesh outputs: read-only"
 echo "  retry policy: same persisted selection, skip complete tasks, unlimited task requeue"
+echo "  scheduler array task cap: $MAX_ARRAY_TASKS"
+echo "  simulation chunks are sequential to preserve global concurrency: $SIM_MAX_CONCURRENT"
 echo "Resources:"
 echo "  simulation module: SimNIBS/4.0.1-foss-2023a"
 echo "  simulation partition: $PARTITION"
@@ -214,6 +252,13 @@ submit_study() {
     local optimizer_archive="$optimizer_root/${label}_optimizer_roi_metrics_v1.tar.gz"
     local sim_export
     local sim_job
+    local sim_job_raw
+    local sim_job_name
+    local sim_dependency=""
+    local sim_stage
+    local simulation_chunk_count=$(((simulation_tasks + MAX_ARRAY_TASKS - 1) / MAX_ARRAY_TASKS))
+    local simulation_chunk_index=1
+    local task_offset=0
     local finalize_export
     local finalize_job
     local roi_export
@@ -230,22 +275,60 @@ submit_study() {
         mv "$receipt" "${receipt%.tsv}.previous.$(date -u +%Y%m%dT%H%M%SZ).tsv"
     fi
     mkdir -p "$log_root" "$optimizer_root/logs"
+    printf "stage\tjob_id\tdependency\n" > "$receipt"
 
-    sim_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_root/simulation,TI_MESH_TIMEOUT_HOURS=4,TI_MESH_MAX_RETRIES=0,OVERWRITE_OUTPUT=0,FORCE_MESH=0"
-    sim_job="$(
-        "$SBATCH_BIN" \
-            --parsable \
-            --job-name="ti_${label}" \
-            --partition="$PARTITION" \
-            --cpus-per-task="$SIM_CPUS" \
-            --mem="$SIM_MEMORY" \
-            --time="$SIM_TIME" \
-            --array="0-$((simulation_tasks - 1))%$SIM_MAX_CONCURRENT" \
-            --output="$log_root/simulation-%A_%a.out" \
-            --error="$log_root/simulation-%A_%a.err" \
-            --export="$sim_export" \
-            "$SIM_ARRAY"
-    )"
+    while [ "$task_offset" -lt "$simulation_tasks" ]; do
+        local remaining=$((simulation_tasks - task_offset))
+        local chunk_tasks="$MAX_ARRAY_TASKS"
+        if [ "$remaining" -lt "$chunk_tasks" ]; then
+            chunk_tasks="$remaining"
+        fi
+        local array_spec="0-$((chunk_tasks - 1))%$SIM_MAX_CONCURRENT"
+        local global_end=$((task_offset + chunk_tasks - 1))
+        local sim_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_root/simulation,TI_MESH_TIMEOUT_HOURS=4,TI_MESH_MAX_RETRIES=0,OVERWRITE_OUTPUT=0,FORCE_MESH=0,TASK_OFFSET=$task_offset"
+        local sim_submit=(
+            "$SBATCH_BIN"
+            --parsable
+            --partition="$PARTITION"
+            --cpus-per-task="$SIM_CPUS"
+            --mem="$SIM_MEMORY"
+            --time="$SIM_TIME"
+            --array="$array_spec"
+            --output="$log_root/simulation-%A_%a.out"
+            --error="$log_root/simulation-%A_%a.err"
+            --export="$sim_export"
+        )
+
+        if [ "$simulation_chunk_count" -eq 1 ]; then
+            sim_job_name="ti_${label}"
+            sim_stage="simulation"
+        else
+            printf -v sim_job_name "ti_%s_c%03d" "$label" "$simulation_chunk_index"
+            printf -v sim_stage "simulation_chunk_%03d" "$simulation_chunk_index"
+        fi
+        sim_submit+=(--job-name="$sim_job_name")
+        if [ -n "$sim_dependency" ]; then
+            sim_submit+=(--dependency="afterok:$sim_dependency")
+        fi
+        sim_submit+=("$SIM_ARRAY")
+
+        sim_job_raw="$("${sim_submit[@]}")"
+        sim_job="${sim_job_raw%%;*}"
+        if ! [[ "$sim_job" =~ ^[0-9]+$ ]]; then
+            echo "[ERROR] Could not parse simulation job ID from: $sim_job_raw" >&2
+            exit 2
+        fi
+        if [ -n "$sim_dependency" ]; then
+            printf "%s\t%s\tafterok:%s\n" "$sim_stage" "$sim_job" "$sim_dependency" >> "$receipt"
+        else
+            printf "%s\t%s\t\n" "$sim_stage" "$sim_job" >> "$receipt"
+        fi
+        echo "[INFO] $label simulation chunk ${simulation_chunk_index}/${simulation_chunk_count}: $sim_job (local $array_spec; global $task_offset-$global_end)"
+
+        sim_dependency="$sim_job"
+        task_offset=$((task_offset + chunk_tasks))
+        simulation_chunk_index=$((simulation_chunk_index + 1))
+    done
 
     finalize_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config"
     finalize_job="$(
@@ -315,17 +398,15 @@ submit_study() {
     fi
 
     {
-        printf "stage\tjob_id\tdependency\n"
-        printf "simulation\t%s\t\n" "$sim_job"
         printf "finalize\t%s\tafterok:%s\n" "$finalize_job" "$sim_job"
         printf "optimizer_roi_extract\t%s\tafterok:%s\n" "$roi_job" "$finalize_job"
         printf "optimizer_roi_collect\t%s\tafterok:%s\n" "$collect_job" "$roi_job"
         if [ -n "$analysis_job" ]; then
             printf "nested_analysis\t%s\tafterok:%s\n" "$analysis_job" "$collect_job"
         fi
-    } > "$receipt"
+    } >> "$receipt"
 
-    echo "[INFO] $label simulation array: $sim_job"
+    echo "[INFO] $label final simulation chunk: $sim_job"
     echo "[INFO] $label finalizer:        $finalize_job"
     echo "[INFO] $label ROI extraction:   $roi_job"
     echo "[INFO] $label ROI collector:    $collect_job"

@@ -114,29 +114,41 @@ without submitting:
 bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh all --prepare-only
 ```
 
-Submit the full scope:
+Stanage rejects Slurm arrays with more than 1,000 tasks. Production submission
+must also keep the 800-task spherical fixed correction and the 1,600-task
+nested experiment operationally separate. Mode `all` is therefore restricted
+to `--preflight` and `--prepare-only`.
+
+Submit the spherical fixed correction first:
 
 ```bash
-bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh all
+bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh fixed
 ```
 
-The command submits three resumable simulation arrays:
+Submit the nested experiment separately:
+
+```bash
+bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh nested
+```
+
+The commands submit resumable simulation arrays. Arrays are split at 1,000
+local tasks and sequentially dependency-gated so the global concurrency limit
+remains 50:
 
 - left-hippocampus spherical fixed correction: `0-399%50`;
 - right-M1 spherical fixed correction: `0-399%50`;
-- persisted nested case: `0-1599%50`.
+- persisted nested case chunk 1: local `0-999%50`, global tasks `0-999`;
+- persisted nested case chunk 2: local `0-599%50`, global tasks `1000-1599`,
+  after successful completion of chunk 1.
+
+The array runner adds `TASK_OFFSET` to the local Slurm index before resolving
+the experiment task. This avoids Stanage's array-index limit without changing
+the 1,600-task nested design.
 
 Each array uses the established SimNIBS 4.0.1 launcher with 8 CPUs, 32 GB,
 8 hours, 4-hour per-attempt timeout, and unlimited task requeue. Each is
 dependency-gated into completion validation and optimizer-sphere metric
 extraction. The nested chain additionally runs the variance decomposition.
-
-To run only one part:
-
-```bash
-bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh fixed
-bash ti_current_repair/hpc_scripts/submit_spherical_fixed_nested_experiment.sh nested
-```
 
 ## Failure and resume semantics
 

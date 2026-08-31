@@ -60,9 +60,16 @@ set -euo pipefail
 
 MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
 MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
+TASK_OFFSET="${TASK_OFFSET:-0}"
 MESH_TIMEOUT_EXIT_CODE=124
 SIM_INCOMPLETE_EXIT_CODE=125
 SIM_INPUT_EXIT_CODE=126
+
+if ! [[ "${TASK_OFFSET}" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] TASK_OFFSET must be a non-negative integer; got '${TASK_OFFSET}'." >&2
+    exit 2
+fi
+TASK_INDEX=$((TASK_OFFSET + SLURM_ARRAY_TASK_ID))
 
 if ! [[ "${MESH_MAX_RETRIES}" =~ ^-?[0-9]+$ ]]; then
     echo "[ERROR] TI_MESH_MAX_RETRIES must be an integer; got '${MESH_MAX_RETRIES}'." >&2
@@ -123,7 +130,9 @@ fi
 
 echo "[INFO] Pipeline root:     ${SCRIPT_DIR}"
 echo "[INFO] Experiment config: ${EXPERIMENT_CONFIG}"
-echo "[INFO] Array index:       ${SLURM_ARRAY_TASK_ID}"
+echo "[INFO] Local array index: ${SLURM_ARRAY_TASK_ID}"
+echo "[INFO] Task offset:       ${TASK_OFFSET}"
+echo "[INFO] Global task index: ${TASK_INDEX}"
 echo "[INFO] CPUs:              ${SLURM_CPUS_PER_TASK}"
 echo "[INFO] Log file:          ${LOG_FILE}"
 echo "[INFO] Completion check:  ${COMPLETION_CHECK_PY}"
@@ -139,7 +148,7 @@ requeue_or_fail() {
 
     if [ "$MESH_MAX_RETRIES" -le 0 ] || [ "$MESH_RETRY_COUNT" -lt "$MESH_MAX_RETRIES" ]; then
         printf '%s\n' "$next_retry_count" > "$RETRY_FILE"
-        echo "[WARN] ${reason}; requeueing task index ${SLURM_ARRAY_TASK_ID} (retry ${next_retry_count}/${MESH_RETRY_LIMIT_LABEL})."
+        echo "[WARN] ${reason}; requeueing global task index ${TASK_INDEX} (retry ${next_retry_count}/${MESH_RETRY_LIMIT_LABEL})."
 
         set +e
         REQUEUE_OUTPUT=$(scontrol requeue "${SLURM_JOB_ID}" 2>&1)
@@ -148,14 +157,14 @@ requeue_or_fail() {
         echo "$REQUEUE_OUTPUT"
 
         if [ "$REQUEUE_EXIT" -ne 0 ]; then
-            echo "[ERROR] Failed to requeue task index ${SLURM_ARRAY_TASK_ID}."
+            echo "[ERROR] Failed to requeue global task index ${TASK_INDEX}."
             exit "$REQUEUE_EXIT"
         fi
 
         exit 0
     fi
 
-    echo "[ERROR] Task retries exhausted for array index ${SLURM_ARRAY_TASK_ID} after ${MESH_RETRY_COUNT} retry/retries."
+    echo "[ERROR] Task retries exhausted for global task index ${TASK_INDEX} after ${MESH_RETRY_COUNT} retry/retries."
     echo "[ERROR] Last incomplete reason: ${reason}"
     exit "$final_exit_code"
 }
@@ -164,7 +173,7 @@ PYTHON_CMD=(
     python -u "${SCRIPT_DIR}/simulation_runners/repeatability_experiment.py"
     run-task
     --config "${EXPERIMENT_CONFIG}"
-    --task-index "${SLURM_ARRAY_TASK_ID}"
+    --task-index "${TASK_INDEX}"
 )
 if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
     PYTHON_CMD+=("${EXTRA_ARGS[@]}")
@@ -176,10 +185,10 @@ PY_EXIT=${PIPESTATUS[0]}
 set -e
 
 if [ "$PY_EXIT" -eq "$SIM_INPUT_EXIT_CODE" ]; then
-    echo "[WARN] Required simulation inputs are missing for task index ${SLURM_ARRAY_TASK_ID}; dropping task without requeue."
+    echo "[WARN] Required simulation inputs are missing for global task index ${TASK_INDEX}; dropping task without requeue."
     printf '%s\t%s\t%s\t%s\n' \
         "$(date -Is)" \
-        "${SLURM_ARRAY_TASK_ID}" \
+        "${TASK_INDEX}" \
         "${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}" \
         "${PY_EXIT}" >> "$SKIPPED_INPUTS_LOG"
     rm -f "$RETRY_FILE"
@@ -190,7 +199,7 @@ if [ -f "$COMPLETION_CHECK_PY" ]; then
     set +e
     python -u "$COMPLETION_CHECK_PY" \
         --config "$EXPERIMENT_CONFIG" \
-        --task-index "$SLURM_ARRAY_TASK_ID" 2>&1 | tee -a "$LOG_FILE"
+        --task-index "$TASK_INDEX" 2>&1 | tee -a "$LOG_FILE"
     VALIDATION_EXIT=${PIPESTATUS[0]}
     set -e
 else

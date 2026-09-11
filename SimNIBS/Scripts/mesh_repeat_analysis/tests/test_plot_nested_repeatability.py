@@ -79,6 +79,11 @@ def _write_nested_inputs(
 def test_run_writes_hierarchical_figure_and_values(tmp_path: Path) -> None:
     metrics, variance = _write_nested_inputs(tmp_path)
     output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    obsolete_png = output_dir / "nested_within_mesh_residual_matrix_supplement.png"
+    obsolete_svg = output_dir / "nested_within_mesh_residual_matrix_supplement.svg"
+    obsolete_png.write_bytes(b"obsolete")
+    obsolete_svg.write_text("obsolete", encoding="utf-8")
 
     result = analysis.run(
         metrics_csv=metrics,
@@ -96,16 +101,29 @@ def test_run_writes_hierarchical_figure_and_values(tmp_path: Path) -> None:
     for name in (
         "nested_mesh_by_solver_repeatability.png",
         "nested_mesh_by_solver_repeatability.svg",
-        "nested_within_mesh_residual_matrix_supplement.png",
-        "nested_within_mesh_residual_matrix_supplement.svg",
+        "nested_per_mesh_repeatability.csv",
+        "nested_variance_components.csv",
         "nested_figure_values.json",
         "nested_figure_caption.md",
         "nested_figure_manifest.json",
     ):
         assert (output_dir / name).is_file()
+    assert not obsolete_png.exists()
+    assert not obsolete_svg.exists()
+    with (output_dir / "nested_per_mesh_repeatability.csv").open(newline="") as handle:
+        per_mesh = list(csv.DictReader(handle))
+    assert len(per_mesh) == 4
+    assert [int(row["ordered_position"]) for row in per_mesh] == [1, 2, 3, 4]
+    assert all(float(row["within_mesh_cv_percent"]) > 0 for row in per_mesh)
+    with (output_dir / "nested_variance_components.csv").open(newline="") as handle:
+        components = list(csv.DictReader(handle))
+    assert [row["variation_source"] for row in components] == [
+        "between_mesh_generation",
+        "within_mesh_solver_pipeline",
+    ]
     caption = (output_dir / "nested_figure_caption.md").read_text()
-    assert "one mean for each" in caption
-    assert "Supplementary figure caption" in caption
+    assert "Each point is the coefficient of variation" in caption
+    assert "residual matrix" not in caption
 
 
 def test_run_rejects_variance_result_that_does_not_match_metrics(

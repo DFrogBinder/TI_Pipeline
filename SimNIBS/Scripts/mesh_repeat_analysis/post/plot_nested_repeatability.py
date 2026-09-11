@@ -11,7 +11,7 @@ import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 
@@ -49,6 +49,21 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    temporary.replace(path)
+
+
+def _write_csv_atomic(
+    path: Path,
+    *,
+    fieldnames: list[str],
+    rows: list[dict[str, object]],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    with temporary.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
     temporary.replace(path)
 
 
@@ -148,6 +163,40 @@ def _variance_components(values: list[list[float]]) -> dict[str, float]:
     }
 
 
+def _per_mesh_summaries(
+    *,
+    mesh_tags: list[str],
+    values: list[list[float]],
+) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for mesh_tag, group in zip(mesh_tags, values):
+        if len(group) < 2:
+            raise ValueError("Each mesh requires at least two fixed-mesh repeats")
+        mesh_mean = mean(group)
+        if mesh_mean == 0.0:
+            raise ValueError(f"Cannot calculate a CV for zero-valued {mesh_tag}")
+        within_variance = sum((value - mesh_mean) ** 2 for value in group) / (
+            len(group) - 1
+        )
+        within_sd = math.sqrt(within_variance)
+        summaries.append(
+            {
+                "mesh_tag": mesh_tag,
+                "repeat_count": len(group),
+                "mesh_mean_v_per_m": mesh_mean,
+                "within_mesh_sd_v_per_m": within_sd,
+                "within_mesh_cv_percent": 100.0 * within_sd / abs(mesh_mean),
+            }
+        )
+    ordered = sorted(
+        summaries,
+        key=lambda row: (float(row["mesh_mean_v_per_m"]), str(row["mesh_tag"])),
+    )
+    for position, row in enumerate(ordered, start=1):
+        row["ordered_position"] = position
+    return ordered
+
+
 def _assert_close(actual: float, expected: object, *, label: str) -> None:
     expected_float = _finite(expected, label=label)
     if not math.isclose(actual, expected_float, rel_tol=1e-8, abs_tol=1e-12):
@@ -204,13 +253,11 @@ def _validate_existing_analysis(
 
 def _render_figure(
     *,
-    values: list[list[float]],
+    per_mesh: list[dict[str, object]],
     metadata: dict[str, str],
     components: dict[str, float],
     png_path: Path,
     svg_path: Path,
-    supplementary_png_path: Path,
-    supplementary_svg_path: Path,
 ) -> None:
     import matplotlib
 
@@ -218,171 +265,83 @@ def _render_figure(
     import matplotlib.pyplot as plt
     import numpy as np
 
-    array = np.asarray(values, dtype=float)
-    mesh_means = array.mean(axis=1)
-    residual_micro = (array - mesh_means[:, None]) * 1_000_000.0
-    residual_limit = max(float(np.max(np.abs(residual_micro))), 1e-12)
-    residual_flat = residual_micro.ravel()
-    residual_low, residual_high = np.quantile(residual_flat, [0.025, 0.975])
-    residual_x_ticks = np.unique(
-        np.rint(np.linspace(1, array.shape[1], min(5, array.shape[1]))).astype(int)
+    positions = np.arange(1, len(per_mesh) + 1)
+    mesh_cvs = np.asarray(
+        [float(row["within_mesh_cv_percent"]) for row in per_mesh], dtype=float
     )
-    residual_y_ticks = np.unique(
-        np.rint(np.linspace(1, array.shape[0], min(5, array.shape[0]))).astype(int)
-    )
+    repeat_count = int(per_mesh[0]["repeat_count"])
+    pooled_cv = components["within_mesh_cv_percent"]
+    upper_limit = max(float(mesh_cvs.max()), pooled_cv) * 1.22
+    if upper_limit <= 0.0:
+        upper_limit = 1e-6
 
-    figure, (field_axis, residual_axis) = plt.subplots(
-        1,
-        2,
-        figsize=(12.8, 5.8),
-        layout="constrained",
-        gridspec_kw={"width_ratios": (1.05, 1.0)},
+    figure, axis = plt.subplots(figsize=(11.2, 6.3))
+    axis.vlines(
+        positions,
+        0.0,
+        mesh_cvs,
+        color="#9ecae1",
+        linewidth=1.1,
+        zorder=1,
     )
-    rng = np.random.default_rng(20260831)
-    mesh_jitter = rng.uniform(-0.15, 0.15, size=len(mesh_means))
-    box = field_axis.boxplot(
-        mesh_means,
-        vert=False,
-        positions=[0.0],
-        widths=0.30,
-        patch_artist=True,
-        showfliers=False,
-        medianprops={"color": "#08306b", "linewidth": 1.4},
-        boxprops={"facecolor": "#deebf7", "edgecolor": "#6baed6"},
-        whiskerprops={"color": "#6baed6"},
-        capprops={"color": "#6baed6"},
-    )
-    for artist in box["boxes"]:
-        artist.set_zorder(1)
-    field_axis.scatter(
-        mesh_means,
-        mesh_jitter,
-        s=34,
+    axis.scatter(
+        positions,
+        mesh_cvs,
+        s=48,
         color="#2171b5",
-        alpha=0.80,
-        edgecolor="white",
-        linewidth=0.45,
-        zorder=3,
-    )
-    field_axis.axvline(
-        components["grand_mean"],
-        color="#b35806",
-        linestyle="--",
-        linewidth=1.4,
-        label="Grand mean across meshes",
-        zorder=2,
-    )
-    field_axis.set_ylim(-0.55, 0.55)
-    field_axis.set_yticks([])
-    field_axis.set_xlabel("Median TIS field in spherical ROI (V/m)")
-    field_axis.set_title("A  Across independently generated meshes", loc="left")
-    field_axis.grid(axis="x", color="#dddddd", linewidth=0.7)
-    field_axis.spines[["top", "right", "left"]].set_visible(False)
-    field_axis.tick_params(axis="y", length=0)
-    field_axis.legend(frameon=False, loc="upper left")
-    field_axis.text(
-        0.02,
-        0.06,
-        (
-            f"{array.shape[0]} dots = {array.shape[0]} mesh means\n"
-            f"Each mean summarizes {array.shape[1]} fixed-mesh repeats"
-        ),
-        transform=field_axis.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=10,
-        color="#333333",
-    )
-
-    weights = np.full(residual_flat.shape, 100.0 / residual_flat.size)
-    residual_axis.hist(
-        residual_flat,
-        bins=35,
-        weights=weights,
-        color="#fdb863",
         edgecolor="white",
         linewidth=0.7,
-        alpha=0.95,
+        label=f"One mesh ({repeat_count} repeats)",
+        zorder=3,
     )
-    residual_axis.axvspan(
-        residual_low,
-        residual_high,
-        color="#e66101",
-        alpha=0.12,
-        label="Central 95% of residuals",
+    axis.axhline(
+        pooled_cv,
+        color="#b35806",
+        linestyle="--",
+        linewidth=1.5,
+        label="Pooled within-mesh CV",
+        zorder=2,
     )
-    residual_axis.axvline(0.0, color="#7f2704", linewidth=1.1)
-    residual_axis.set_xlabel("Deviation from that mesh's mean (µV/m)")
-    residual_axis.set_ylabel("Measurements (%)")
-    residual_axis.set_title("B  Within each mesh, across repeated solves", loc="left")
-    residual_axis.grid(axis="y", color="#dddddd", linewidth=0.7)
-    residual_axis.spines[["top", "right"]].set_visible(False)
-    residual_axis.legend(frameon=False, loc="upper right")
-    residual_axis.text(
-        0.98,
-        0.76,
-        (
-            f"Between-mesh SD: {components['between_mesh_sd'] * 1_000:.2f} mV/m\n"
-            f"Within-mesh SD: {components['within_mesh_sd'] * 1_000_000:.2f} µV/m\n"
-            f"SD ratio: {components['sd_ratio_between_over_within']:.0f}×\n"
-            f"Mesh variance share: {100.0 * components['mesh_variance_fraction']:.4f}%"
-        ),
-        transform=residual_axis.transAxes,
-        ha="right",
-        va="top",
-        fontsize=10,
-        bbox={
-            "boxstyle": "round,pad=0.45",
-            "facecolor": "white",
-            "edgecolor": "#cccccc",
-            "alpha": 0.92,
-        },
+    ticks = np.unique(
+        np.rint(np.linspace(1, len(per_mesh), min(9, len(per_mesh)))).astype(int)
     )
+    axis.set_xlim(0.3, len(per_mesh) + 0.7)
+    axis.set_ylim(0.0, upper_limit)
+    axis.set_xticks(ticks)
+    axis.set_xlabel("Meshes ordered by mean spherical-ROI field (lowest → highest)")
+    axis.set_ylabel(f"CV across {repeat_count} fixed-mesh repeats (%)")
+    axis.grid(axis="y", color="#dddddd", linewidth=0.7)
+    axis.spines[["top", "right"]].set_visible(False)
+    axis.legend(frameon=False, loc="upper left", ncol=2)
 
     participant = metadata["subject"].removeprefix("sub-")
     roi = metadata["roi"].replace("_", " ")
     figure.suptitle(
-        (
-            "Nested repeatability separates mesh and fixed-mesh variation\n"
-            f"{participant}, {roi} | {array.shape[0]} meshes × "
-            f"{array.shape[1]} fixed-mesh repeats"
-        ),
-        fontsize=15,
+        "Fixed-mesh repeatability across independently generated meshes\n"
+        f"{participant}, {roi}",
+        fontsize=15.5,
+        y=0.98,
     )
+    figure.text(
+        0.5,
+        0.875,
+        (
+            f"Between-mesh CV: {components['between_mesh_cv_percent']:.3f}%   |   "
+            f"Pooled within-mesh CV: {pooled_cv:.4f}%   |   "
+            f"SD ratio: {components['sd_ratio_between_over_within']:.0f}×   |   "
+            "Mesh variance share: "
+            f"{100.0 * components['mesh_variance_fraction']:.4f}%"
+        ),
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color="#333333",
+    )
+    figure.subplots_adjust(top=0.80, bottom=0.15, left=0.10, right=0.98)
     png_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(png_path, dpi=300, bbox_inches="tight")
     figure.savefig(svg_path, bbox_inches="tight")
     plt.close(figure)
-
-    supplementary_figure, supplementary_axis = plt.subplots(
-        figsize=(10.2, 7.8), layout="constrained"
-    )
-    image = supplementary_axis.imshow(
-        residual_micro,
-        origin="lower",
-        aspect="auto",
-        interpolation="nearest",
-        cmap="RdBu_r",
-        vmin=-residual_limit,
-        vmax=residual_limit,
-    )
-    supplementary_axis.set_xticks(residual_x_ticks - 1, residual_x_ticks)
-    supplementary_axis.set_yticks(residual_y_ticks - 1, residual_y_ticks)
-    supplementary_axis.set_xlabel("Fixed-mesh repeat")
-    supplementary_axis.set_ylabel("Independently generated mesh")
-    supplementary_axis.set_title(
-        "Supplementary diagnostic: within-mesh residual matrix\n"
-        f"{participant}, {roi} | each cell is one of {array.size:,} measurements"
-    )
-    colorbar = supplementary_figure.colorbar(
-        image, ax=supplementary_axis, fraction=0.047, pad=0.03
-    )
-    colorbar.set_label("Deviation from that mesh's mean (µV/m)")
-    supplementary_figure.savefig(
-        supplementary_png_path, dpi=300, bbox_inches="tight"
-    )
-    supplementary_figure.savefig(supplementary_svg_path, bbox_inches="tight")
-    plt.close(supplementary_figure)
 
 
 def run(
@@ -405,6 +364,7 @@ def run(
         expected_repeats=expected_repeats,
     )
     components = _variance_components(values)
+    per_mesh = _per_mesh_summaries(mesh_tags=mesh_tags, values=values)
     existing = _read_json(variance_json)
     _validate_existing_analysis(
         result=existing,
@@ -417,21 +377,65 @@ def run(
 
     png_path = output_dir / "nested_mesh_by_solver_repeatability.png"
     svg_path = output_dir / "nested_mesh_by_solver_repeatability.svg"
-    supplementary_png_path = (
-        output_dir / "nested_within_mesh_residual_matrix_supplement.png"
-    )
-    supplementary_svg_path = (
-        output_dir / "nested_within_mesh_residual_matrix_supplement.svg"
-    )
+    obsolete_outputs = [
+        output_dir / "nested_within_mesh_residual_matrix_supplement.png",
+        output_dir / "nested_within_mesh_residual_matrix_supplement.svg",
+    ]
+    removed_obsolete_outputs = []
+    for obsolete_path in obsolete_outputs:
+        if obsolete_path.is_file():
+            obsolete_path.unlink()
+            removed_obsolete_outputs.append(obsolete_path.name)
     _render_figure(
-        values=values,
+        per_mesh=per_mesh,
         metadata=metadata,
         components=components,
         png_path=png_path,
         svg_path=svg_path,
-        supplementary_png_path=supplementary_png_path,
-        supplementary_svg_path=supplementary_svg_path,
     )
+    per_mesh_path = output_dir / "nested_per_mesh_repeatability.csv"
+    _write_csv_atomic(
+        per_mesh_path,
+        fieldnames=[
+            "ordered_position",
+            "mesh_tag",
+            "repeat_count",
+            "mesh_mean_v_per_m",
+            "within_mesh_sd_v_per_m",
+            "within_mesh_cv_percent",
+        ],
+        rows=per_mesh,
+    )
+    variance_component_path = output_dir / "nested_variance_components.csv"
+    _write_csv_atomic(
+        variance_component_path,
+        fieldnames=[
+            "variation_source",
+            "variance_v_per_m_squared",
+            "sd_v_per_m",
+            "cv_percent",
+            "fraction_of_total_variance",
+        ],
+        rows=[
+            {
+                "variation_source": "between_mesh_generation",
+                "variance_v_per_m_squared": components["between_mesh_variance"],
+                "sd_v_per_m": components["between_mesh_sd"],
+                "cv_percent": components["between_mesh_cv_percent"],
+                "fraction_of_total_variance": components["mesh_variance_fraction"],
+            },
+            {
+                "variation_source": "within_mesh_solver_pipeline",
+                "variance_v_per_m_squared": components["within_mesh_variance"],
+                "sd_v_per_m": components["within_mesh_sd"],
+                "cv_percent": components["within_mesh_cv_percent"],
+                "fraction_of_total_variance": components[
+                    "within_variance_fraction"
+                ],
+            },
+        ],
+    )
+    per_mesh_cvs = [float(row["within_mesh_cv_percent"]) for row in per_mesh]
     figure_values = {
         "schema_version": 1,
         "status": "complete",
@@ -443,6 +447,11 @@ def run(
         "inner_repeats_per_mesh": len(repeat_tags),
         "observations": len(mesh_tags) * len(repeat_tags),
         **components,
+        "per_mesh_within_cv_percent": {
+            "minimum": min(per_mesh_cvs),
+            "median": median(per_mesh_cvs),
+            "maximum": max(per_mesh_cvs),
+        },
         "interpretation_boundary": (
             "This nested analysis separates variation among mesh realizations "
             "from repeat variation conditional on each mesh for one randomly "
@@ -455,20 +464,16 @@ def run(
     caption_path.write_text(
         (
             "# Figure caption\n\n"
-            "Nested mesh-by-solver repeatability for one randomly selected "
-            f"participant ({metadata['subject']}). Panel A shows one mean for "
-            f"each of {len(mesh_tags)} independently generated meshes. Each "
-            f"mean summarizes {len(repeat_tags)} fixed-mesh repeats, and the "
-            "box plot summarizes their distribution. Panel B shows all "
-            f"{len(mesh_tags) * len(repeat_tags):,} observations after each "
-            "mesh-specific mean was subtracted, isolating repeat variation "
-            "conditional on a fixed mesh. The annotations report variance "
-            "components from a balanced one-way random-effects decomposition.\n"
-            "\n# Supplementary figure caption\n\n"
-            "Within-mesh residual matrix for the same nested experiment. Rows "
-            "are independently generated meshes, columns are fixed-mesh "
-            "repeats, and each cell shows its deviation from the corresponding "
-            "mesh mean.\n"
+            "Fixed-mesh repeatability across independently generated meshes "
+            f"for one randomly selected participant ({metadata['subject']}). "
+            f"Each point is the coefficient of variation (CV) among "
+            f"{len(repeat_tags)} repeated solutions on one mesh. The "
+            f"{len(mesh_tags)} meshes are ordered by their mean spherical-ROI "
+            "field solely to aid display. The dashed line is the pooled "
+            "within-mesh CV from the balanced one-way random-effects model. "
+            "The header reports the between-mesh CV, pooled within-mesh CV, "
+            "ratio of component standard deviations, and fraction of total "
+            "variance attributed to mesh generation.\n"
         ),
         encoding="utf-8",
     )
@@ -484,11 +489,12 @@ def run(
         "outputs": {
             "png": png_path.name,
             "svg": svg_path.name,
-            "supplementary_png": supplementary_png_path.name,
-            "supplementary_svg": supplementary_svg_path.name,
+            "per_mesh_table": per_mesh_path.name,
+            "variance_component_table": variance_component_path.name,
             "values": values_path.name,
             "caption": caption_path.name,
         },
+        "removed_obsolete_outputs": removed_obsolete_outputs,
     }
     manifest_path = output_dir / "nested_figure_manifest.json"
     _write_json_atomic(manifest_path, result)

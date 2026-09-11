@@ -16,7 +16,7 @@ components for one participant and is not a population estimate.
 ## Recommended complete run
 
 The complete analysis reads 1,600 corrected cohort rows and 1,600 nested rows,
-creates eight figure files, and runs no meshing or FEM simulations. All source
+creates six figure files, and runs no meshing or FEM simulations. All source
 experiment directories are read only. Outputs are written to the isolated
 `final_132_repeatability_paper_update_v1` directory.
 
@@ -37,8 +37,8 @@ download bundle and matching SHA-256 file at:
 ```
 
 The bundle contains the corrected input tables, complete statistical outputs,
-four corrected fixed-mesh PNG figures, the main nested figure in PNG and SVG
-formats, and a supplementary residual matrix in PNG and SVG formats.
+four corrected fixed-mesh PNG figures and the nested figure in PNG and SVG
+formats. It also contains the nested per-mesh and variance-component tables.
 
 ## Corrected fixed-mesh inputs
 
@@ -73,17 +73,15 @@ fixed-mesh inputs.
 
 ## Nested figure
 
-The paper-facing nested figure has two panels, with one panel assigned to each
-level of the experimental hierarchy:
-
-1. the 40 outer-mesh means, where each point summarizes the 40 repeats on that
-   mesh
-2. the distribution of all 1,600 within-mesh deviations, expressed in µV/m so
-   the much smaller conditional solver/pipeline variation remains visible
-
-The variance comparison is reported directly in the second panel rather than
-through a separate logarithmic plot. The complete 40 × 40 residual matrix is
-retained as a supplementary diagnostic figure.
+The paper-facing nested figure contains one coefficient of variation (CV) for
+each of the 40 independently generated meshes. Each point summarizes the 40
+fixed-mesh repeats on that mesh, and the meshes are ordered by their mean
+spherical-ROI field solely to aid display. A horizontal line shows the pooled
+within-mesh CV. The between-mesh CV, pooled within-mesh CV, ratio of component
+standard deviations, and mesh variance share are reported directly above the
+plot. The 1,600 individual observations and the balanced random-effects
+decomposition remain the basis of the calculations, but raw residual and matrix
+plots are not generated.
 
 Full analysis scope:
 
@@ -105,5 +103,6 @@ Run:
 
 The renderer independently recomputes the balanced one-way random-effects
 decomposition and refuses to produce a figure if it differs from the completed
-nested analysis. PNG and SVG versions, plotted values, a caption draft, input
-hashes, and a manifest are written into the isolated output directory.
+nested analysis. PNG and SVG versions, a 40-row per-mesh table, a two-row
+variance-component table, plotted values, a caption draft, input hashes, and a
+manifest are written into the isolated output directory.

@@ -164,8 +164,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         / "figures/right_m1/02_single_repeat_subject_ranking_uncertainty.png",
         nested_analysis_dir / "nested_mesh_by_solver_repeatability.png",
         nested_analysis_dir / "nested_mesh_by_solver_repeatability.svg",
-        nested_analysis_dir / "nested_within_mesh_residual_matrix_supplement.png",
-        nested_analysis_dir / "nested_within_mesh_residual_matrix_supplement.svg",
     ]
     missing = [str(path) for path in expected_figures if not path.is_file()]
     if missing:

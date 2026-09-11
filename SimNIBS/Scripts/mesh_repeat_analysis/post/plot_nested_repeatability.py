@@ -209,6 +209,8 @@ def _render_figure(
     components: dict[str, float],
     png_path: Path,
     svg_path: Path,
+    supplementary_png_path: Path,
+    supplementary_svg_path: Path,
 ) -> None:
     import matplotlib
 
@@ -218,14 +220,10 @@ def _render_figure(
 
     array = np.asarray(values, dtype=float)
     mesh_means = array.mean(axis=1)
-    mesh_min = array.min(axis=1)
-    mesh_max = array.max(axis=1)
     residual_micro = (array - mesh_means[:, None]) * 1_000_000.0
     residual_limit = max(float(np.max(np.abs(residual_micro))), 1e-12)
-    x = np.arange(1, len(values) + 1)
-    field_ticks = np.unique(
-        np.rint(np.linspace(1, len(values), min(9, len(values)))).astype(int)
-    )
+    residual_flat = residual_micro.ravel()
+    residual_low, residual_high = np.quantile(residual_flat, [0.025, 0.975])
     residual_x_ticks = np.unique(
         np.rint(np.linspace(1, array.shape[1], min(5, array.shape[1]))).astype(int)
     )
@@ -233,53 +231,133 @@ def _render_figure(
         np.rint(np.linspace(1, array.shape[0], min(5, array.shape[0]))).astype(int)
     )
 
-    figure = plt.figure(figsize=(13.2, 9.2), layout="constrained")
-    grid = figure.add_gridspec(2, 2, height_ratios=(1.05, 1.0))
-    field_axis = figure.add_subplot(grid[0, :])
-    residual_axis = figure.add_subplot(grid[1, 0])
-    component_axis = figure.add_subplot(grid[1, 1])
-
-    rng = np.random.default_rng(20260831)
-    for index, group in enumerate(array):
-        jitter = rng.uniform(-0.10, 0.10, size=len(group))
-        field_axis.scatter(
-            np.full(len(group), x[index]) + jitter,
-            group,
-            s=10,
-            color="#9ecae1",
-            alpha=0.30,
-            edgecolors="none",
-            zorder=2,
-        )
-    field_axis.vlines(x, mesh_min, mesh_max, color="#6baed6", linewidth=0.8, zorder=3)
-    field_axis.scatter(
-        x,
-        mesh_means,
-        s=28,
-        facecolor="white",
-        edgecolor="#08519c",
-        linewidth=1.2,
-        label="Mesh mean",
-        zorder=4,
+    figure, (field_axis, residual_axis) = plt.subplots(
+        1,
+        2,
+        figsize=(12.8, 5.8),
+        layout="constrained",
+        gridspec_kw={"width_ratios": (1.05, 1.0)},
     )
-    field_axis.axhline(
+    rng = np.random.default_rng(20260831)
+    mesh_jitter = rng.uniform(-0.15, 0.15, size=len(mesh_means))
+    box = field_axis.boxplot(
+        mesh_means,
+        vert=False,
+        positions=[0.0],
+        widths=0.30,
+        patch_artist=True,
+        showfliers=False,
+        medianprops={"color": "#08306b", "linewidth": 1.4},
+        boxprops={"facecolor": "#deebf7", "edgecolor": "#6baed6"},
+        whiskerprops={"color": "#6baed6"},
+        capprops={"color": "#6baed6"},
+    )
+    for artist in box["boxes"]:
+        artist.set_zorder(1)
+    field_axis.scatter(
+        mesh_means,
+        mesh_jitter,
+        s=34,
+        color="#2171b5",
+        alpha=0.80,
+        edgecolor="white",
+        linewidth=0.45,
+        zorder=3,
+    )
+    field_axis.axvline(
         components["grand_mean"],
         color="#b35806",
         linestyle="--",
         linewidth=1.4,
-        label="Grand mean",
-        zorder=1,
+        label="Grand mean across meshes",
+        zorder=2,
     )
-    field_axis.set_xlim(0.3, len(values) + 0.7)
-    field_axis.set_xticks(field_ticks)
-    field_axis.set_xlabel("Outer mesh realization")
-    field_axis.set_ylabel("Median TIS field in target ROI (V/m)")
-    field_axis.set_title("A  Field estimates conditional on each mesh", loc="left")
-    field_axis.grid(axis="y", color="#dddddd", linewidth=0.7)
-    field_axis.spines[["top", "right"]].set_visible(False)
-    field_axis.legend(frameon=False, ncol=2, loc="best")
+    field_axis.set_ylim(-0.55, 0.55)
+    field_axis.set_yticks([])
+    field_axis.set_xlabel("Median TIS field in spherical ROI (V/m)")
+    field_axis.set_title("A  Across independently generated meshes", loc="left")
+    field_axis.grid(axis="x", color="#dddddd", linewidth=0.7)
+    field_axis.spines[["top", "right", "left"]].set_visible(False)
+    field_axis.tick_params(axis="y", length=0)
+    field_axis.legend(frameon=False, loc="upper left")
+    field_axis.text(
+        0.02,
+        0.06,
+        (
+            f"{array.shape[0]} dots = {array.shape[0]} mesh means\n"
+            f"Each mean summarizes {array.shape[1]} fixed-mesh repeats"
+        ),
+        transform=field_axis.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=10,
+        color="#333333",
+    )
 
-    image = residual_axis.imshow(
+    weights = np.full(residual_flat.shape, 100.0 / residual_flat.size)
+    residual_axis.hist(
+        residual_flat,
+        bins=35,
+        weights=weights,
+        color="#fdb863",
+        edgecolor="white",
+        linewidth=0.7,
+        alpha=0.95,
+    )
+    residual_axis.axvspan(
+        residual_low,
+        residual_high,
+        color="#e66101",
+        alpha=0.12,
+        label="Central 95% of residuals",
+    )
+    residual_axis.axvline(0.0, color="#7f2704", linewidth=1.1)
+    residual_axis.set_xlabel("Deviation from that mesh's mean (µV/m)")
+    residual_axis.set_ylabel("Measurements (%)")
+    residual_axis.set_title("B  Within each mesh, across repeated solves", loc="left")
+    residual_axis.grid(axis="y", color="#dddddd", linewidth=0.7)
+    residual_axis.spines[["top", "right"]].set_visible(False)
+    residual_axis.legend(frameon=False, loc="upper right")
+    residual_axis.text(
+        0.98,
+        0.76,
+        (
+            f"Between-mesh SD: {components['between_mesh_sd'] * 1_000:.2f} mV/m\n"
+            f"Within-mesh SD: {components['within_mesh_sd'] * 1_000_000:.2f} µV/m\n"
+            f"SD ratio: {components['sd_ratio_between_over_within']:.0f}×\n"
+            f"Mesh variance share: {100.0 * components['mesh_variance_fraction']:.4f}%"
+        ),
+        transform=residual_axis.transAxes,
+        ha="right",
+        va="top",
+        fontsize=10,
+        bbox={
+            "boxstyle": "round,pad=0.45",
+            "facecolor": "white",
+            "edgecolor": "#cccccc",
+            "alpha": 0.92,
+        },
+    )
+
+    participant = metadata["subject"].removeprefix("sub-")
+    roi = metadata["roi"].replace("_", " ")
+    figure.suptitle(
+        (
+            "Nested repeatability separates mesh and fixed-mesh variation\n"
+            f"{participant}, {roi} | {array.shape[0]} meshes × "
+            f"{array.shape[1]} fixed-mesh repeats"
+        ),
+        fontsize=15,
+    )
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(png_path, dpi=300, bbox_inches="tight")
+    figure.savefig(svg_path, bbox_inches="tight")
+    plt.close(figure)
+
+    supplementary_figure, supplementary_axis = plt.subplots(
+        figsize=(10.2, 7.8), layout="constrained"
+    )
+    image = supplementary_axis.imshow(
         residual_micro,
         origin="lower",
         aspect="auto",
@@ -288,72 +366,23 @@ def _render_figure(
         vmin=-residual_limit,
         vmax=residual_limit,
     )
-    residual_axis.set_xticks(residual_x_ticks - 1, residual_x_ticks)
-    residual_axis.set_yticks(residual_y_ticks - 1, residual_y_ticks)
-    residual_axis.set_xlabel("Within-mesh solver/pipeline repeat")
-    residual_axis.set_ylabel("Outer mesh realization")
-    residual_axis.set_title("B  Within-mesh residuals", loc="left")
-    colorbar = figure.colorbar(image, ax=residual_axis, fraction=0.047, pad=0.03)
-    colorbar.set_label("Deviation from mesh mean (µV/m)")
-
-    labels = ["Between meshes", "Within mesh"]
-    cvs = np.asarray(
-        [
-            components["between_mesh_cv_percent"],
-            components["within_mesh_cv_percent"],
-        ]
+    supplementary_axis.set_xticks(residual_x_ticks - 1, residual_x_ticks)
+    supplementary_axis.set_yticks(residual_y_ticks - 1, residual_y_ticks)
+    supplementary_axis.set_xlabel("Fixed-mesh repeat")
+    supplementary_axis.set_ylabel("Independently generated mesh")
+    supplementary_axis.set_title(
+        "Supplementary diagnostic: within-mesh residual matrix\n"
+        f"{participant}, {roi} | each cell is one of {array.size:,} measurements"
     )
-    component_axis.scatter(
-        cvs,
-        [1, 0],
-        s=90,
-        color=["#08519c", "#b35806"],
-        edgecolors="white",
-        linewidths=0.8,
-        zorder=3,
+    colorbar = supplementary_figure.colorbar(
+        image, ax=supplementary_axis, fraction=0.047, pad=0.03
     )
-    component_axis.set_xscale("log")
-    component_axis.set_yticks([1, 0], labels)
-    component_axis.set_ylim(-0.7, 1.7)
-    component_axis.set_xlim(cvs.min() / 3.0, cvs.max() * 3.0)
-    component_axis.set_xlabel("Coefficient of variation (%) on logarithmic scale")
-    component_axis.set_title("C  Estimated variance components", loc="left")
-    component_axis.grid(axis="x", which="both", color="#dddddd", linewidth=0.7)
-    component_axis.spines[["top", "right", "left"]].set_visible(False)
-    component_axis.tick_params(axis="y", length=0)
-    for value, position in zip(cvs, [1, 0]):
-        component_axis.annotate(
-            f"{value:.4g}%",
-            (value, position),
-            xytext=(8, 0),
-            textcoords="offset points",
-            va="center",
-        )
-    component_axis.text(
-        0.02,
-        0.05,
-        (
-            f"Between-mesh fraction: "
-            f"{100.0 * components['mesh_variance_fraction']:.6f}%\n"
-            f"Mesh ICC: {components['mesh_icc']:.6f}\n"
-            f"SD ratio: {components['sd_ratio_between_over_within']:.1f}×"
-        ),
-        transform=component_axis.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=10.5,
+    colorbar.set_label("Deviation from that mesh's mean (µV/m)")
+    supplementary_figure.savefig(
+        supplementary_png_path, dpi=300, bbox_inches="tight"
     )
-
-    participant = metadata["subject"].removeprefix("sub-")
-    roi = metadata["roi"].replace("_", " ")
-    figure.suptitle(
-        f"Nested mesh-by-solver repeatability for {participant}, {roi}",
-        fontsize=16,
-    )
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(png_path, dpi=300, bbox_inches="tight")
-    figure.savefig(svg_path, bbox_inches="tight")
-    plt.close(figure)
+    supplementary_figure.savefig(supplementary_svg_path, bbox_inches="tight")
+    plt.close(supplementary_figure)
 
 
 def run(
@@ -388,12 +417,20 @@ def run(
 
     png_path = output_dir / "nested_mesh_by_solver_repeatability.png"
     svg_path = output_dir / "nested_mesh_by_solver_repeatability.svg"
+    supplementary_png_path = (
+        output_dir / "nested_within_mesh_residual_matrix_supplement.png"
+    )
+    supplementary_svg_path = (
+        output_dir / "nested_within_mesh_residual_matrix_supplement.svg"
+    )
     _render_figure(
         values=values,
         metadata=metadata,
         components=components,
         png_path=png_path,
         svg_path=svg_path,
+        supplementary_png_path=supplementary_png_path,
+        supplementary_svg_path=supplementary_svg_path,
     )
     figure_values = {
         "schema_version": 1,
@@ -419,16 +456,19 @@ def run(
         (
             "# Figure caption\n\n"
             "Nested mesh-by-solver repeatability for one randomly selected "
-            f"participant ({metadata['subject']}). Panel A shows all "
-            f"{len(mesh_tags) * len(repeat_tags):,} spherical-ROI median field "
-            f"estimates grouped by the {len(mesh_tags)} independently generated "
-            "meshes, with "
-            "mesh means and the grand mean. Panel B shows each estimate after "
-            "subtracting its mesh-specific mean, which exposes the much smaller "
-            "within-mesh solver/pipeline variation. Panel C compares the "
-            "between-mesh and within-mesh coefficients of variation on a "
-            "logarithmic scale. The variance components were estimated with a "
-            "balanced one-way random-effects decomposition.\n"
+            f"participant ({metadata['subject']}). Panel A shows one mean for "
+            f"each of {len(mesh_tags)} independently generated meshes. Each "
+            f"mean summarizes {len(repeat_tags)} fixed-mesh repeats, and the "
+            "box plot summarizes their distribution. Panel B shows all "
+            f"{len(mesh_tags) * len(repeat_tags):,} observations after each "
+            "mesh-specific mean was subtracted, isolating repeat variation "
+            "conditional on a fixed mesh. The annotations report variance "
+            "components from a balanced one-way random-effects decomposition.\n"
+            "\n# Supplementary figure caption\n\n"
+            "Within-mesh residual matrix for the same nested experiment. Rows "
+            "are independently generated meshes, columns are fixed-mesh "
+            "repeats, and each cell shows its deviation from the corresponding "
+            "mesh mean.\n"
         ),
         encoding="utf-8",
     )
@@ -444,6 +484,8 @@ def run(
         "outputs": {
             "png": png_path.name,
             "svg": svg_path.name,
+            "supplementary_png": supplementary_png_path.name,
+            "supplementary_svg": supplementary_svg_path.name,
             "values": values_path.name,
             "caption": caption_path.name,
         },

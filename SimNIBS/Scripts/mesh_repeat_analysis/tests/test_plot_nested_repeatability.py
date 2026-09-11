@@ -96,11 +96,16 @@ def test_run_writes_hierarchical_figure_and_values(tmp_path: Path) -> None:
     for name in (
         "nested_mesh_by_solver_repeatability.png",
         "nested_mesh_by_solver_repeatability.svg",
+        "nested_within_mesh_residual_matrix_supplement.png",
+        "nested_within_mesh_residual_matrix_supplement.svg",
         "nested_figure_values.json",
         "nested_figure_caption.md",
         "nested_figure_manifest.json",
     ):
         assert (output_dir / name).is_file()
+    caption = (output_dir / "nested_figure_caption.md").read_text()
+    assert "one mean for each" in caption
+    assert "Supplementary figure caption" in caption
 
 
 def test_run_rejects_variance_result_that_does_not_match_metrics(

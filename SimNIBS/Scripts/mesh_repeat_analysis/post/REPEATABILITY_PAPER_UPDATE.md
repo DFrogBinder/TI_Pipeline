@@ -16,7 +16,7 @@ components for one participant and is not a population estimate.
 ## Recommended complete run
 
 The complete analysis reads 1,600 corrected cohort rows and 1,600 nested rows,
-creates six figure files, and runs no meshing or FEM simulations. All source
+creates eight figure files, and runs no meshing or FEM simulations. All source
 experiment directories are read only. Outputs are written to the isolated
 `final_132_repeatability_paper_update_v1` directory.
 
@@ -37,8 +37,8 @@ download bundle and matching SHA-256 file at:
 ```
 
 The bundle contains the corrected input tables, complete statistical outputs,
-four corrected fixed-mesh PNG figures, and the nested figure in PNG and SVG
-formats.
+four corrected fixed-mesh PNG figures, the main nested figure in PNG and SVG
+formats, and a supplementary residual matrix in PNG and SVG formats.
 
 ## Corrected fixed-mesh inputs
 
@@ -73,15 +73,17 @@ fixed-mesh inputs.
 
 ## Nested figure
 
-The paper-facing nested figure has three complementary panels:
+The paper-facing nested figure has two panels, with one panel assigned to each
+level of the experimental hierarchy:
 
-1. all 1,600 measurements grouped by outer mesh, with mesh-specific means and
-   the grand mean
-2. a 40 × 40 heatmap of within-mesh residuals, expressed in µV/m so the small
-   conditional solver/pipeline variation remains visible
-3. the between-mesh and within-mesh coefficients of variation on a logarithmic
-   scale, accompanied by the mesh variance fraction, intraclass correlation,
-   and ratio of component standard deviations
+1. the 40 outer-mesh means, where each point summarizes the 40 repeats on that
+   mesh
+2. the distribution of all 1,600 within-mesh deviations, expressed in µV/m so
+   the much smaller conditional solver/pipeline variation remains visible
+
+The variance comparison is reported directly in the second panel rather than
+through a separate logarithmic plot. The complete 40 × 40 residual matrix is
+retained as a supplementary diagnostic figure.
 
 Full analysis scope:
 

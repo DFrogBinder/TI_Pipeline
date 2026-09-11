@@ -121,7 +121,7 @@ def _load_nested_module():
     return module
 
 
-def test_full_analysis_writes_six_figures_and_download_bundle(tmp_path: Path) -> None:
+def test_full_analysis_writes_eight_figures_and_download_bundle(tmp_path: Path) -> None:
     inputs = {}
     for stem, roi in (
         ("left", "Left_Hippocampus"),
@@ -154,7 +154,7 @@ def test_full_analysis_writes_six_figures_and_download_bundle(tmp_path: Path) ->
     assert result["source_outputs_modified"] is False
     assert result["scope"]["corrected_fixed_analysis_rows"] == 1600
     assert result["scope"]["nested_analysis_rows"] == 1600
-    assert len(result["figures"]) == 6
+    assert len(result["figures"]) == 8
     assert all(Path(path).is_file() for path in result["figures"])
     bundle = Path(result["download_bundle"]["path"])
     assert bundle.is_file()
@@ -162,6 +162,10 @@ def test_full_analysis_writes_six_figures_and_download_bundle(tmp_path: Path) ->
     with tarfile.open(bundle, "r:gz") as archive:
         names = archive.getnames()
     assert any(name.endswith("nested_mesh_by_solver_repeatability.svg") for name in names)
+    assert any(
+        name.endswith("nested_within_mesh_residual_matrix_supplement.svg")
+        for name in names
+    )
     assert any(name.endswith("analysis_manifest.json") for name in names)
     assert "paper_analysis_summary.json" in names
     manifest = json.loads((output / "paper_analysis_manifest.json").read_text())

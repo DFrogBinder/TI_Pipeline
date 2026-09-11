@@ -199,6 +199,25 @@ analysis. If the attachment command itself reports
 `QOSMaxSubmitJobPerUserLimit`, no controller was recorded and the same command
 is safe to retry after another first-chunk element completes.
 
+## Final read-only audit
+
+After all jobs have left the queue, validate the two spherical-fixed datasets
+and the nested dataset together:
+
+```bash
+python3 ti_current_repair/post/audit_spherical_fixed_nested_results.py
+```
+
+The command does not alter or regenerate data. It requires exactly 400 complete
+left-hippocampus fixed simulations, 400 complete right-M1 fixed simulations,
+and 1,600 complete nested simulations. It also verifies mesh-cache hashes,
+the 20 spherical-median selections and their seeded geometries, all collected
+optimizer-ROI metric rows and checksums, the persisted `sub-CC320616`
+selection, the balanced 40-by-40 nested keys, and the three nested variance
+products. A valid study exits zero with top-level `"status": "complete"` and
+`"observed_complete_simulations": 2400`; any failed invariant exits nonzero and
+is listed under `failures`.
+
 ## Analysis products
 
 Each correction root receives an isolated spherical metric table at:

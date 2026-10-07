@@ -1,0 +1,25 @@
+entry	classification	action	reason
+CamCan_Approved_Wave_1	completed_legacy_output	migrate	Superseded by the complete corrected-v4 scaffold root; legacy import is optional.
+CamCan_Corrected_v4_Atlases	completed_recovery_workspace	migrate	Contains 87 completed FreeSurfer reconstructions; final 132 flat atlases are in protected ZIPs/atlases, so archive this root and delete the parscratch copy only after checksum and live flat-atlas validation.
+CamCan_Corrected_v4_Four_ROI	completed_study_output	migrate	Completed corrected-v4 four-ROI meshes, simulations, and post-processing outputs.
+CamCan_Corrected_v4_Individualized_Optimized	completed_study_output	migrate	Completed individualized optimized study outputs.
+CamCan_Corrected_v4_Scaffolds	core_input	keep_parscratch	Reusable corrected-v4 head-model scaffolds used to stage future cohorts.
+CamCanMRI	core_input	keep_parscratch	Primary subject T1/T2 and FastSurfer source root used by cohort launchers.
+CamCanMRI_cleanup_20260718T071134Z.tsv	metadata	migrate	Cleanup receipt only; not a simulation or post-processing input root.
+charm_segmentation_install	completed_workspace	migrate	Completed installation reports and receipts; installed reusable maps live in protected roots.
+charm_segmentations	core_input	keep_parscratch	Reusable collected CHARM segmentation source maps.
+charm_segmentations_corrected_v4_csf7_open3_lcc_no_blood	core_input	keep_parscratch	Corrected-v4 segmentation manifest and maps consumed by current cohort launchers.
+defacing_sub_CCMe	core_input_and_future_study	keep_parscratch	Contains defacing source MRI plus the pilot study used to support future defacing work.
+deletion_job_logs	metadata	migrate	Filesystem-maintenance logs and receipts only.
+final_132_post_processing_analysis_results.manifest.txt	metadata	migrate	Analysis-results manifest only.
+final_132_repeatability_balanced_10	active_repeatability	keep_parscratch	Historical left-hippocampus remesh metrics and geometries used by the active paper correction.
+final_132_repeatability_balanced_10_right_m1	active_repeatability	keep_parscratch	Historical right-M1 remesh metrics and geometries used by the active paper correction.
+final_132_repeatability_balanced_10_right_m1_spherical_fixed_v1	active_repeatability	keep_parscratch	Corrected spherical-median right-M1 fixed-mesh simulations and metrics.
+final_132_repeatability_balanced_10_spherical_fixed_v1	active_repeatability	keep_parscratch	Corrected spherical-median left-hippocampus fixed-mesh simulations and metrics.
+final_132_repeatability_nested_40x40_v1	active_repeatability	keep_parscratch	Completed 40-by-40 nested subject simulation and analysis inputs.
+final_132_repeatability_paper_update_v1	active_repeatability	keep_parscratch	Current repeatability-paper analysis output root.
+MNI152_SimNIBS401_inputs	core_input	keep_parscratch	Reusable worker-visible MNI152 SimNIBS 4.0.1 input model.
+MNI152_SimNIBS401_validation	completed_study_output	migrate	Completed MNI152 version-validation outputs.
+ti_dataset	core_input	keep_parscratch	Primary subject T1/T2 and FastSurfer source root used by cohort launchers.
+ti_dataset_final_132_balanced_10_corrected	core_input	keep_parscratch	Staged corrected source MRI/segmentation dataset required for repeatability reruns.
+ZIPs	core_input	keep_parscratch	Worker-visible subject atlases, MNI baselines, and reusable staged input archives.

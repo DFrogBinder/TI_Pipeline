@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "cohort_id": "defacing_balanced_20",
+  "status": "proposed",
+  "subjects_file": "subjects.txt",
+  "selection_manifest": "selection_manifest.csv",
+  "expected_subjects": 20,
+  "source_cohort": "final_132",
+  "source_cohort_subjects_sha256": "522e5085f4eee25cd4a2c01ad9ca885b5a214333c8da38dec9f918c965d4f607",
+  "source_demographics_sha256": "2c72303f82617349bd64c1a44ade6a62cc61e8a593215bf0cc5c63802af4b510",
+  "selection_rule": "Within each of five predefined age bands, select the two female and two male records nearest to the band midpoint. Break ties by lower age and then lexical CCID.",
+  "age_bands_years": [
+    [18.75, 32.30],
+    [32.30, 45.85],
+    [45.85, 59.40],
+    [59.40, 72.95],
+    [72.95, 86.50]
+  ],
+  "recorded_female": 10,
+  "recorded_male": 10,
+  "age_range_years": [23.08, 81.67],
+  "source_t1_t2_pairs_verified": 20,
+  "note": "Proposed minimum CamCAN cohort for the multi-strategy defacing experiment. This cohort is not approved for execution or manuscript reporting until investigator review."
+}

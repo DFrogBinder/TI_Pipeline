@@ -1,0 +1,84 @@
+{
+  "created_utc": "2026-10-05T09:40:39.149216+00:00",
+  "script": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/reports/repeatability_bayesian_stability/run_bayesian_stability.py",
+  "input": "/home/boyan/sandbox/repeatability_paper_analysis_v1/corrected_fixed_analysis/subject_condition_summary.csv",
+  "input_sha256": "da22242a0b1a9659016cb4ee2f75dd88e543ebc1f6f753ac39bc9fdb87c0e0d0",
+  "inferential_unit": "participant",
+  "outcome": "paired participant-level remesh CV percent",
+  "n_participants": 10,
+  "targets": [
+    "left_hippocampus",
+    "right_m1"
+  ],
+  "technical_repeats_per_participant_target": 40,
+  "draws_per_fit": 40000,
+  "seed": 20261005,
+  "max_total_n": 50,
+  "delta_grid_cv_percentage_points": [
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55,
+    0.6,
+    0.65,
+    0.7,
+    0.75,
+    0.8,
+    0.85,
+    0.9,
+    0.95,
+    1.0
+  ],
+  "model": "bivariate lognormal population model with Normal-Inverse-Wishart prior",
+  "priors": [
+    {
+      "name": "reference_weak",
+      "description": "Weak proper prior: 0.05 participant-equivalents on the population mean, centred at 2.5% CV; broad log-SD 0.75.",
+      "center_cv_percent": [
+        2.5,
+        2.5
+      ],
+      "kappa0": 0.05,
+      "nu0": 5.0,
+      "expected_log_sd": 0.75,
+      "correlation": 0.0
+    },
+    {
+      "name": "diffuse_weak",
+      "description": "More diffuse weak prior: 0.005 participant-equivalents on the population mean and log-SD 1.50.",
+      "center_cv_percent": [
+        2.5,
+        2.5
+      ],
+      "kappa0": 0.005,
+      "nu0": 5.0,
+      "expected_log_sd": 1.5,
+      "correlation": 0.0
+    },
+    {
+      "name": "low_variability_challenge",
+      "description": "Deliberately more informative sensitivity challenge: 0.5 participant-equivalents centred at 1% CV; log-SD 0.50.",
+      "center_cv_percent": [
+        1.0,
+        1.0
+      ],
+      "kappa0": 0.5,
+      "nu0": 5.0,
+      "expected_log_sd": 0.5,
+      "correlation": 0.0
+    }
+  ],
+  "limitations": [
+    "Internal validation cannot establish representation of anatomies absent from the cohort.",
+    "Expansion probabilities are conditional on the lognormal population model and prior.",
+    "Technical-repeat uncertainty in each estimated CV is conditioned on, not explicitly propagated.",
+    "The fixed-mesh arm is descriptive because its CV distribution is near-degenerate at zero."
+  ]
+}

@@ -1,0 +1,10 @@
+# Reusable worker-visible inputs for current and future simulation/post-processing.
+CamCanMRI
+CamCan_Corrected_v4_Scaffolds
+MNI152_SimNIBS401_inputs
+ZIPs
+charm_segmentations
+charm_segmentations_corrected_v4_csf7_open3_lcc_no_blood
+defacing_sub_CCMe
+ti_dataset
+ti_dataset_final_132_balanced_10_corrected

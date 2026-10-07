@@ -41,6 +41,7 @@ REPEATABILITY_ROIS = {
 }
 CAMCAN_FIGURE_STEMS = {
     "figure_personalization_subject_changes_all_rois_at_mni_roi_threshold",
+    "figure_personalization_subject_changes_by_subject_at_mni_roi_threshold",
     "figure_population_mean_field_and_target_offtarget_ratio_absolute",
     "figure_population_mean_field_offtarget_relationship_at_mni_roi_threshold",
     "figure_population_target_offtarget_relationship_at_mni_roi_threshold",
@@ -49,6 +50,7 @@ REPEATABILITY_FIGURE_STEMS = {
     "01_primary_median_roi_repeat_distributions",
     "02_single_repeat_subject_ranking_uncertainty",
     "03_primary_mesh_element_repeat_distributions",
+    "06_example_subject_tissue_composition",
 }
 
 
@@ -837,8 +839,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     out_root = args.out_root.expanduser().resolve()
     out_root.mkdir(parents=True, exist_ok=True)
-    camcan_output = out_root / "camcan_paper_package_v3"
-    repeatability_output = out_root / "repeatability_paper_package_v3"
+    camcan_output = out_root / "camcan_paper_package"
+    repeatability_output = out_root / "repeatability_paper_package"
     build_camcan_package(
         args.camcan_source.expanduser().resolve(),
         camcan_output,

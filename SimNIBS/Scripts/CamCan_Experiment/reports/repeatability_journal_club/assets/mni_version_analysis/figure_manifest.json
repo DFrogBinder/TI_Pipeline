@@ -1,0 +1,86 @@
+{
+  "comparison": "SimNIBS 4.0.1 minus SimNIBS 4.5.0",
+  "created_at_utc": "2026-07-29T18:37:06.773375+00:00",
+  "figure_schema_version": 1,
+  "inputs": {
+    "comparison_dir": "/home/boyan/sandbox/Jake_Data/MNI152-data/SimNIBS-version-comparison",
+    "mni_atlas": "/home/boyan/sandbox/Jake_Data/Archive/atlases_a2009s/sub-mni152-cw256.nii.gz",
+    "simnibs_4p0p1_parent": "/home/boyan/sandbox/Jake_Data/MNI152-data/SimNIBS-4.0.1/mni152_simnibs_4p0p1_validated_results",
+    "simnibs_4p5_parent": "/home/boyan/sandbox/Jake_Data/MNI152-data/SimNIBS-4.5.0"
+  },
+  "outputs": [
+    {
+      "path": "figure_01_mean_roi_field_by_version.png",
+      "sha256": "8321e393dff257cafa5b240b3d0ce229e7ac2823d9596eacf8c85011ec117769",
+      "size_bytes": 154686
+    },
+    {
+      "path": "figure_01_mean_roi_field_by_version.pdf",
+      "sha256": "a2e74670661c26fa158433adbb528df4c85581af5d7d4cee442664b268c53799",
+      "size_bytes": 16409
+    },
+    {
+      "path": "figure_02_continuous_roi_metrics_by_version.png",
+      "sha256": "8cac6620d7bc5a1485f7a67db82bb3db3537d504d64660b5f8aee0e40d243bc6",
+      "size_bytes": 387895
+    },
+    {
+      "path": "figure_02_continuous_roi_metrics_by_version.pdf",
+      "sha256": "ea9681fd8c2944e9f625f1bab21e326ce9e0707546df84b2da43caead290422b",
+      "size_bytes": 19761
+    },
+    {
+      "path": "figure_03_continuous_metric_percent_change.png",
+      "sha256": "f93361149e3a4633f72219ddb8fd8ed17e110ab1c961e9c8a3e0437984fc207b",
+      "size_bytes": 186966
+    },
+    {
+      "path": "figure_03_continuous_metric_percent_change.pdf",
+      "sha256": "23ff99837971f98422350712c9a06c5c5d6fb0c9e0d7ad36a4c2b652c4b660dd",
+      "size_bytes": 22527
+    },
+    {
+      "path": "figure_04_voxelwise_agreement_summary.png",
+      "sha256": "65fb6fb36dd1641caebe65da75588a8688db6828d3693522257a5ea33db08148",
+      "size_bytes": 279992
+    },
+    {
+      "path": "figure_04_voxelwise_agreement_summary.pdf",
+      "sha256": "b9d4dfb2b796e098755c1b596f8a0d9c2f36547de0200951a78d4d36674b9ecc",
+      "size_bytes": 16889
+    },
+    {
+      "path": "figure_05_voxelwise_field_identity.png",
+      "sha256": "98c1d135bf71cab954aac8dae793d02bc0682f61c3a842d20528cd48ac7407da",
+      "size_bytes": 451694
+    },
+    {
+      "path": "figure_05_voxelwise_field_identity.pdf",
+      "sha256": "6f84b678211c06a862200e609fdf83f68641f5ccd76081409d83cd433986267f",
+      "size_bytes": 27772
+    },
+    {
+      "path": "continuous_roi_metric_comparison.csv",
+      "sha256": "35e7d742f7471a228cb11e6332d10bbb84edaad5b806c64cfcc5f87f9e09beac",
+      "size_bytes": 1857
+    },
+    {
+      "path": "voxelwise_agreement.csv",
+      "sha256": "ee256468c3c4b38ef255863e9a08e04d707aeef42ab4d048213693b90f5c12e1",
+      "size_bytes": 1704
+    },
+    {
+      "path": "README_FOR_SUPERVISOR.md",
+      "sha256": "24cce2bb0299e87fbc9a850b619069d4fa797d5179ebaa34faefd7ac55cd6a5e",
+      "size_bytes": 1898
+    }
+  ],
+  "roi_order": [
+    "Left_M1",
+    "Right_DLPC",
+    "Left_Hippocampus",
+    "Right_Thalamus"
+  ],
+  "scope": "Continuous ROI field metrics and whole-brain voxelwise agreement only; no optimization-objective or threshold-based evaluation.",
+  "status": "complete"
+}

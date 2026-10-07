@@ -18,7 +18,7 @@ conversion.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 import nibabel as nib
 import numpy as np
@@ -28,8 +28,14 @@ ROI_DEFINITION_SCHEMA_VERSION = 1
 START_RADIUS_MM = 3.0
 RADIUS_STEP_MM = 0.01
 RADIUS_CAP_MM = 10.0
+DISTANCE_COMPARATOR = "<"
+ROI_DEFINITION_METHOD = (
+    "voxel-grid equivalent of MakeROIs.m: sphere centred on the "
+    "anatomical parcel volume centroid and clipped to that parcel"
+)
+ROI_SOURCE_REPRESENTATION = "subject-space atlas resampled to TI NIfTI grid"
 
-CORTICAL_ROIS = frozenset({"Left_M1", "Right_DLPC"})
+CORTICAL_ROIS = frozenset({"Left_M1", "Right_M1", "Right_DLPC"})
 SUBCORTICAL_ROIS = frozenset({"Left_Hippocampus", "Right_Thalamus"})
 TARGET_VOLUME_MM3_BY_ROI = {
     **{roi: 100.0 for roi in CORTICAL_ROIS},
@@ -60,6 +66,71 @@ def optimizer_target_volume_mm3(roi: str) -> float:
             f"Unknown CamCan ROI {roi!r}; expected one of "
             f"{sorted(TARGET_VOLUME_MM3_BY_ROI)}."
         ) from exc
+
+
+def optimizer_target_class(roi: str) -> str:
+    """Return the optimizer target class without silently guessing."""
+
+    if roi in CORTICAL_ROIS:
+        return "cortical"
+    if roi in SUBCORTICAL_ROIS:
+        return "subcortical"
+    raise ValueError(
+        f"Unknown CamCan ROI {roi!r}; expected one of "
+        f"{sorted(TARGET_VOLUME_MM3_BY_ROI)}."
+    )
+
+
+def validate_optimizer_target_metadata(
+    metadata: Mapping[str, Any] | Any,
+    *,
+    roi: str,
+) -> None:
+    """Fail closed unless metadata proves the optimizer-matched ROI contract.
+
+    This guard is deliberately independent of metric values.  It prevents a
+    complete-looking full-anatomical-parcel record from being collected into
+    manuscript tables under the unprefixed, optimizer-matched metric names.
+    """
+
+    if not isinstance(metadata, Mapping):
+        raise ValueError("Optimizer ROI metadata must be a mapping.")
+    expected = {
+        "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
+        "method": ROI_DEFINITION_METHOD,
+        "source_representation": ROI_SOURCE_REPRESENTATION,
+        "roi": roi,
+        "roi_class": optimizer_target_class(roi),
+        "requested_volume_mm3": optimizer_target_volume_mm3(roi),
+        "start_radius_mm": START_RADIUS_MM,
+        "radius_step_mm": RADIUS_STEP_MM,
+        "radius_cap_mm": RADIUS_CAP_MM,
+        "distance_comparator": DISTANCE_COMPARATOR,
+        "clipped_to_anatomical_parcel": True,
+    }
+    for key, expected_value in expected.items():
+        if key not in metadata:
+            raise ValueError(f"Optimizer ROI metadata is missing {key!r}.")
+        actual = metadata[key]
+        if isinstance(expected_value, float):
+            try:
+                matches = bool(
+                    np.isclose(
+                        float(actual),
+                        expected_value,
+                        rtol=0.0,
+                        atol=1e-12,
+                    )
+                )
+            except (TypeError, ValueError):
+                matches = False
+        else:
+            matches = actual == expected_value
+        if not matches:
+            raise ValueError(
+                f"Optimizer ROI metadata has {key}={actual!r}; "
+                f"expected {expected_value!r} for {roi}."
+            )
 
 
 def build_optimizer_target_roi(
@@ -101,7 +172,7 @@ def build_optimizer_target_roi(
     if not np.isfinite(requested_volume) or requested_volume <= 0:
         raise ValueError("Target ROI volume must be a positive finite value.")
     resolved_roi_class = (
-        ("cortical" if roi in CORTICAL_ROIS else "subcortical")
+        optimizer_target_class(roi)
         if roi_class is None
         else str(roi_class).strip().lower()
     )
@@ -155,11 +226,8 @@ def build_optimizer_target_roi(
 
     metadata: dict[str, Any] = {
         "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
-        "method": (
-            "voxel-grid equivalent of MakeROIs.m: sphere centred on the "
-            "anatomical parcel volume centroid and clipped to that parcel"
-        ),
-        "source_representation": "subject-space atlas resampled to TI NIfTI grid",
+        "method": ROI_DEFINITION_METHOD,
+        "source_representation": ROI_SOURCE_REPRESENTATION,
         "centroid_weighting": (
             "world-space voxel-centre mean; equivalent to volume weighting "
             "because NIfTI voxel volume is constant"
@@ -184,7 +252,7 @@ def build_optimizer_target_roi(
         "start_radius_mm": float(start_radius_mm),
         "radius_step_mm": float(radius_step_mm),
         "radius_cap_mm": float(radius_cap_mm),
-        "distance_comparator": "<",
+        "distance_comparator": DISTANCE_COMPARATOR,
         "target_volume_reached": target_reached,
         "clipped_to_anatomical_parcel": True,
     }

@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
 
 from post.post_functions import roi_masks_on_ti_grid  # noqa: E402
 from post.optimizer_target_roi import (  # noqa: E402
+    DISTANCE_COMPARATOR,
     RADIUS_CAP_MM,
     RADIUS_STEP_MM,
     ROI_DEFINITION_SCHEMA_VERSION,
@@ -40,6 +41,7 @@ from post.optimizer_target_roi import (  # noqa: E402
     TARGET_VOLUME_MM3_BY_ROI,
     build_optimizer_target_roi,
     flatten_roi_metadata,
+    validate_optimizer_target_metadata,
 )
 from utils.roi_registry import (  # noqa: E402
     match_fastsurfer_roi_from_directory,
@@ -466,19 +468,27 @@ def validate_atlas_rois(atlas_path: Path) -> dict[str, Any]:
     }
 
 
-def _load_existing_complete(path: Path, fingerprint: str) -> dict[str, Any] | None:
+def _load_existing_complete(
+    path: Path,
+    fingerprint: str,
+    roi: str,
+) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if (
+    if not (
         isinstance(payload, dict)
         and payload.get("status") == "complete"
         and payload.get("analysis_schema_version") == ANALYSIS_SCHEMA_VERSION
         and payload.get("config_fingerprint") == fingerprint
     ):
-        return payload
-    return None
+        return None
+    try:
+        validate_optimizer_target_metadata(payload.get("roi_definition"), roi=roi)
+    except ValueError:
+        return None
+    return payload
 
 
 @dataclass(frozen=True)
@@ -525,7 +535,7 @@ def _extract_subject(task: ExtractionTask) -> dict[str, Any]:
         upper_tail_fraction=task.upper_tail_fraction,
     )
     if not task.force:
-        existing = _load_existing_complete(output_path, fingerprint)
+        existing = _load_existing_complete(output_path, fingerprint, task.roi)
         if existing is not None:
             return {
                 "subject": task.subject,
@@ -707,6 +717,11 @@ def extract_dataset(
 
 
 def _flatten_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("analysis_schema_version") != ANALYSIS_SCHEMA_VERSION:
+        raise ValueError(
+            "Manuscript metrics payload does not use the current "
+            f"optimizer-matched analysis schema {ANALYSIS_SCHEMA_VERSION}."
+        )
     record = {
         "subject": payload["subject"],
         "roi": payload["roi"],
@@ -717,12 +732,66 @@ def _flatten_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     roi_definition = payload.get("roi_definition")
     if not isinstance(roi_definition, Mapping):
         raise ValueError("Manuscript metrics payload has no ROI-definition object.")
+    validate_optimizer_target_metadata(
+        dict(roi_definition),
+        roi=str(payload["roi"]),
+    )
     record.update(flatten_roi_metadata(dict(roi_definition)))
     metrics = payload.get("metrics")
     if not isinstance(metrics, Mapping):
         raise ValueError("Manuscript metrics payload has no metrics object.")
     record.update(metrics)
     return record
+
+
+_REQUIRED_OPTIMIZER_ROI_METADATA_FIELDS = (
+    "roi_definition_schema_version",
+    "method",
+    "source_representation",
+    "roi",
+    "roi_class",
+    "requested_volume_mm3",
+    "start_radius_mm",
+    "radius_step_mm",
+    "radius_cap_mm",
+    "distance_comparator",
+    "clipped_to_anatomical_parcel",
+)
+
+
+def _validate_flattened_optimizer_roi_contract(
+    frame: pd.DataFrame,
+    *,
+    table_name: str,
+) -> None:
+    """Verify that a collected/CSV-loaded table still proves ROI alignment."""
+
+    columns = {
+        field: f"optimizer_roi_{field}"
+        for field in _REQUIRED_OPTIMIZER_ROI_METADATA_FIELDS
+    }
+    missing = set(columns.values()).difference(frame.columns)
+    if missing:
+        raise RuntimeError(
+            f"{table_name} is missing optimizer-ROI provenance columns: "
+            f"{sorted(missing)}"
+        )
+    for index, row in frame.iterrows():
+        metadata = {field: row[column] for field, column in columns.items()}
+        clipped = metadata["clipped_to_anatomical_parcel"]
+        if isinstance(clipped, str):
+            normalized = clipped.strip().lower()
+            if normalized in {"true", "1"}:
+                metadata["clipped_to_anatomical_parcel"] = True
+            elif normalized in {"false", "0"}:
+                metadata["clipped_to_anatomical_parcel"] = False
+        try:
+            validate_optimizer_target_metadata(metadata, roi=str(row["roi"]))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"{table_name} row {index} does not prove the "
+                f"optimizer-matched spherical ROI: {exc}"
+            ) from exc
 
 
 def _find_baseline_ti(root: Path) -> Path:
@@ -1085,6 +1154,14 @@ def _write_analysis_outputs(
         raise RuntimeError("Collected subject set does not match the cohort subject file.")
     if set(mni_frame["roi"]) != set(ROI_ORDER) or len(mni_frame) != len(ROI_ORDER):
         raise RuntimeError("MNI baseline table must contain exactly one row for each planned ROI.")
+    _validate_flattened_optimizer_roi_contract(
+        repeat_frame,
+        table_name="Repeat-level metric table",
+    )
+    _validate_flattened_optimizer_roi_contract(
+        mni_frame,
+        table_name="MNI baseline metric table",
+    )
 
     metric_columns = [
         name
@@ -1282,11 +1359,13 @@ def _write_analysis_outputs(
             "full anatomical atlas parcel; metrics carry the anatomical_ prefix"
         ),
         "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
-        "roi_target_volumes_mm3": TARGET_VOLUME_MM3_BY_ROI,
+        "roi_target_volumes_mm3": {
+            roi: TARGET_VOLUME_MM3_BY_ROI[roi] for roi in ROI_ORDER
+        },
         "roi_sphere_start_radius_mm": START_RADIUS_MM,
         "roi_sphere_radius_step_mm": RADIUS_STEP_MM,
         "roi_sphere_radius_cap_mm": RADIUS_CAP_MM,
-        "roi_distance_comparator": "<",
+        "roi_distance_comparator": DISTANCE_COMPARATOR,
         "roi_representation_note": (
             "The tetrahedral MakeROIs.m construction is reproduced on the "
             "voxelized subject-space atlas/TI grid. Constant NIfTI voxel volume "
@@ -1348,6 +1427,21 @@ def collect_analysis(
                 if payload.get("status") != "complete":
                     missing.append(str(path))
                     continue
+                expected_identity = {
+                    "subject": subject,
+                    "roi": roi,
+                    "canonical_roi": match_fastsurfer_roi_from_directory(
+                        dataset_root
+                    ).canonical_name,
+                }
+                identity_mismatch = any(
+                    payload.get(key) != value
+                    for key, value in expected_identity.items()
+                ) or str(payload.get("repeat")).zfill(2) != repeat
+                if identity_mismatch:
+                    raise RuntimeError(
+                        f"Manuscript metric record identity mismatch: {path}"
+                    )
                 records.append(_flatten_payload(payload))
 
     expected_records = len(subjects) * len(ROI_ORDER) * 10

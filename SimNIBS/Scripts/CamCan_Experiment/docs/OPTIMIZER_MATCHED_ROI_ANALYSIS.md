@@ -37,6 +37,14 @@ Every repeat record stores the centroid, requested and achieved volume, voxel
 volume, selected voxel count, final radius, growth constants, and whether the
 requested volume was reached.
 
+The cohort-variability and repeatability re-analysis paths both import
+`post/optimizer_target_roi.py`; target class and requested volume are resolved
+there rather than maintained as independent copies. Cache reuse, collection,
+receipt reuse, and publication packaging validate the stored ROI-definition
+schema, method, parcel clipping, target volume, radii, and strict distance
+comparator. A complete-looking anatomical-parcel record therefore cannot be
+published under the unprefixed optimizer-matched metric names.
+
 ## Metric scopes
 
 - Unprefixed metrics are the primary optimizer-matched target analysis.

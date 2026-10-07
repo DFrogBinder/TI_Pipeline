@@ -8,6 +8,25 @@ import hashlib
 import json
 from pathlib import Path
 
+try:
+    from .optimizer_target_roi import (
+        DISTANCE_COMPARATOR,
+        RADIUS_CAP_MM,
+        RADIUS_STEP_MM,
+        ROI_DEFINITION_SCHEMA_VERSION,
+        START_RADIUS_MM,
+        TARGET_VOLUME_MM3_BY_ROI,
+    )
+except ImportError:  # Direct script execution.
+    from optimizer_target_roi import (  # type: ignore[no-redef]
+        DISTANCE_COMPARATOR,
+        RADIUS_CAP_MM,
+        RADIUS_STEP_MM,
+        ROI_DEFINITION_SCHEMA_VERSION,
+        START_RADIUS_MM,
+        TARGET_VOLUME_MM3_BY_ROI,
+    )
+
 
 EXPECTED_ROIS = [
     "Left_Hippocampus",
@@ -72,6 +91,20 @@ def validate_receipt(
         "execution_mode",
         "full_image_metric_extraction_and_aggregation",
     )
+    require_equal(
+        payload,
+        "roi_definition_schema_version",
+        ROI_DEFINITION_SCHEMA_VERSION,
+    )
+    require_equal(
+        payload,
+        "roi_target_volumes_mm3",
+        {roi: TARGET_VOLUME_MM3_BY_ROI[roi] for roi in EXPECTED_ROIS},
+    )
+    require_equal(payload, "roi_sphere_start_radius_mm", START_RADIUS_MM)
+    require_equal(payload, "roi_sphere_radius_step_mm", RADIUS_STEP_MM)
+    require_equal(payload, "roi_sphere_radius_cap_mm", RADIUS_CAP_MM)
+    require_equal(payload, "roi_distance_comparator", DISTANCE_COMPARATOR)
 
     return {
         "complete": expected_records,

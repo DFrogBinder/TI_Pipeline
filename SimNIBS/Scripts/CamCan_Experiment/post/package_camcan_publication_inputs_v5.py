@@ -12,6 +12,25 @@ import platform
 import shutil
 from pathlib import Path
 
+try:
+    from .optimizer_target_roi import (
+        DISTANCE_COMPARATOR,
+        RADIUS_CAP_MM,
+        RADIUS_STEP_MM,
+        ROI_DEFINITION_SCHEMA_VERSION,
+        START_RADIUS_MM,
+        TARGET_VOLUME_MM3_BY_ROI,
+    )
+except ImportError:  # Direct script execution.
+    from optimizer_target_roi import (  # type: ignore[no-redef]
+        DISTANCE_COMPARATOR,
+        RADIUS_CAP_MM,
+        RADIUS_STEP_MM,
+        ROI_DEFINITION_SCHEMA_VERSION,
+        START_RADIUS_MM,
+        TARGET_VOLUME_MM3_BY_ROI,
+    )
+
 
 PACKAGE_SCHEMA_VERSION = 2
 RENDERER_NAME = "build_camcan_supervisor_revision_figures_v5.py"
@@ -22,6 +41,16 @@ ROI_ORDER = [
     "Left_Hippocampus",
     "Right_Thalamus",
 ]
+ROI_CONTRACT_EXPECTATIONS = {
+    "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
+    "roi_target_volumes_mm3": {
+        roi: TARGET_VOLUME_MM3_BY_ROI[roi] for roi in ROI_ORDER
+    },
+    "roi_sphere_start_radius_mm": START_RADIUS_MM,
+    "roi_sphere_radius_step_mm": RADIUS_STEP_MM,
+    "roi_sphere_radius_cap_mm": RADIUS_CAP_MM,
+    "roi_distance_comparator": DISTANCE_COMPARATOR,
+}
 EXPECTED_FIGURE_STEMS = [
     "figure_mni152_absolute_field_summaries",
     "figure_personalization_subject_changes_left_m1_at_mni_roi_threshold",
@@ -143,6 +172,7 @@ def role_contract(role: str, threshold_slugs: list[str]) -> dict:
                 "repeat_level_records": 5280,
                 "subject_level_records": 528,
                 "mni_baselines": 4,
+                **ROI_CONTRACT_EXPECTATIONS,
             },
             "tables": {
                 "subject_level_repeat_mean_metrics.csv": (
@@ -170,6 +200,7 @@ def role_contract(role: str, threshold_slugs: list[str]) -> dict:
                 "subject_roi_configurations": 28,
                 "repeat_level_records": 560,
                 "condition_repeat_mean_records": 56,
+                **ROI_CONTRACT_EXPECTATIONS,
             },
             "tables": {
                 "paired_personalized_vs_generic.csv": (

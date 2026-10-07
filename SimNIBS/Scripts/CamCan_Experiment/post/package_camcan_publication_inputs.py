@@ -19,6 +19,25 @@ import platform
 import shutil
 from pathlib import Path
 
+try:
+    from .optimizer_target_roi import (
+        DISTANCE_COMPARATOR,
+        RADIUS_CAP_MM,
+        RADIUS_STEP_MM,
+        ROI_DEFINITION_SCHEMA_VERSION,
+        START_RADIUS_MM,
+        TARGET_VOLUME_MM3_BY_ROI,
+    )
+except ImportError:  # Direct script execution.
+    from optimizer_target_roi import (  # type: ignore[no-redef]
+        DISTANCE_COMPARATOR,
+        RADIUS_CAP_MM,
+        RADIUS_STEP_MM,
+        ROI_DEFINITION_SCHEMA_VERSION,
+        START_RADIUS_MM,
+        TARGET_VOLUME_MM3_BY_ROI,
+    )
+
 
 PACKAGE_SCHEMA_VERSION = 1
 RENDERER_NAME = "build_camcan_supervisor_revision_figures.py"
@@ -72,6 +91,23 @@ PAIRED_COLUMNS = {
     for summary in ("mean", "sd")
 }
 
+MANUSCRIPT_ROIS = (
+    "Left_Hippocampus",
+    "Left_M1",
+    "Right_DLPC",
+    "Right_Thalamus",
+)
+ROI_CONTRACT_EXPECTATIONS = {
+    "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
+    "roi_target_volumes_mm3": {
+        roi: TARGET_VOLUME_MM3_BY_ROI[roi] for roi in MANUSCRIPT_ROIS
+    },
+    "roi_sphere_start_radius_mm": START_RADIUS_MM,
+    "roi_sphere_radius_step_mm": RADIUS_STEP_MM,
+    "roi_sphere_radius_cap_mm": RADIUS_CAP_MM,
+    "roi_distance_comparator": DISTANCE_COMPARATOR,
+}
+
 ROLE_CONFIG = {
     "cohort": {
         "manifest_expectations": {
@@ -82,6 +118,7 @@ ROLE_CONFIG = {
             "subject_level_records": 528,
             "mni_baselines": 4,
             "thresholds_v_per_m": [0.2, 0.18, 0.15],
+            **ROI_CONTRACT_EXPECTATIONS,
         },
         "tables": {
             "subject_level_repeat_mean_metrics.csv": {
@@ -108,6 +145,7 @@ ROLE_CONFIG = {
             "repeat_level_records": 560,
             "condition_repeat_mean_records": 56,
             "thresholds_v_per_m": [0.2, 0.18, 0.15],
+            **ROI_CONTRACT_EXPECTATIONS,
         },
         "tables": {
             "paired_personalized_vs_generic.csv": {

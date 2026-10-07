@@ -46,8 +46,14 @@ from post.camcan_manuscript_analysis import (  # noqa: E402
     manuscript_metric_names,
 )
 from post.optimizer_target_roi import (  # noqa: E402
+    DISTANCE_COMPARATOR,
+    RADIUS_CAP_MM,
+    RADIUS_STEP_MM,
     ROI_DEFINITION_SCHEMA_VERSION,
+    START_RADIUS_MM,
+    TARGET_VOLUME_MM3_BY_ROI,
     flatten_roi_metadata,
+    validate_optimizer_target_metadata,
 )
 from post.post_functions import roi_masks_on_ti_grid  # noqa: E402
 from utils.roi_registry import match_fastsurfer_roi_from_directory  # noqa: E402
@@ -610,9 +616,21 @@ def _extract_repeat(task: RepeatTask) -> dict[str, Any]:
         if (
             isinstance(existing, Mapping)
             and existing.get("status") == "complete"
+            and existing.get("comparison_schema_version")
+            == COMPARISON_SCHEMA_VERSION
+            and existing.get("manuscript_analysis_schema_version")
+            == ANALYSIS_SCHEMA_VERSION
             and existing.get("config_fingerprint") == fingerprint
         ):
-            return {"status": "skipped", "output": str(output_path)}
+            try:
+                validate_optimizer_target_metadata(
+                    existing.get("roi_definition"),
+                    roi=str(task.pair["roi"]),
+                )
+            except ValueError:
+                pass
+            else:
+                return {"status": "skipped", "output": str(output_path)}
 
     ti_path = Path(source["ti_path"])
     ti_img = nib.load(str(ti_path))
@@ -758,12 +776,23 @@ def extract_pair(
 
 
 def _flatten_record(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("comparison_schema_version") != COMPARISON_SCHEMA_VERSION:
+        raise ValueError("Repeat record uses the wrong comparison schema.")
+    if payload.get("manuscript_analysis_schema_version") != ANALYSIS_SCHEMA_VERSION:
+        raise ValueError(
+            "Repeat record does not use the current optimizer-matched "
+            "manuscript-analysis schema."
+        )
     metrics = payload.get("metrics")
     if not isinstance(metrics, Mapping):
         raise ValueError("Repeat record has no metrics mapping.")
     roi_definition = payload.get("roi_definition")
     if not isinstance(roi_definition, Mapping):
         raise ValueError("Repeat record has no optimizer ROI-definition mapping.")
+    validate_optimizer_target_metadata(
+        dict(roi_definition),
+        roi=str(payload["roi"]),
+    )
     return {
         "pair_index": int(payload["pair_index"]),
         "subject": payload["subject"],
@@ -1418,6 +1447,14 @@ def collect_analysis(
             "per-repeat calculation in the generic final-132 cohort analysis"
         ),
         "current_optimizer_objective_metric": "roi_mean_v_per_m",
+        "roi_definition_schema_version": ROI_DEFINITION_SCHEMA_VERSION,
+        "roi_target_volumes_mm3": {
+            roi: TARGET_VOLUME_MM3_BY_ROI[roi] for roi in ROI_ORDER
+        },
+        "roi_sphere_start_radius_mm": START_RADIUS_MM,
+        "roi_sphere_radius_step_mm": RADIUS_STEP_MM,
+        "roi_sphere_radius_cap_mm": RADIUS_CAP_MM,
+        "roi_distance_comparator": DISTANCE_COMPARATOR,
         "legacy_figures_written": bool(write_legacy_figures),
         "outputs": [],
     }

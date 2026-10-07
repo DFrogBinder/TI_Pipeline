@@ -2,6 +2,17 @@
 
 This directory contains the post-processing and repeatability-analysis code for the TI simulation workflow used in the CamCAN experiment pipeline.
 
+> **Publication ROI boundary:** the general `subject_metrics.json` pipeline
+> resolves the complete anatomical parcel and is retained for compatibility,
+> QC, and exploratory anatomy-linked analyses. It must not supply the primary
+> target metrics for the variability manuscript. Use
+> `camcan_manuscript_analysis.py` via
+> `submit_cohort_manuscript_analysis.sh`; its unprefixed metrics use the
+> optimizer-matched, parcel-clipped spherical ROI. Full-parcel results are
+> retained only under the explicit `anatomical_` prefix. The manuscript
+> collectors reject records that do not carry the exact spherical-ROI
+> construction provenance.
+
 The code answers four different analysis questions:
 
 1. **Subject level**

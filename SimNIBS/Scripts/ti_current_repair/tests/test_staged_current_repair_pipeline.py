@@ -1360,9 +1360,12 @@ def test_presentation_figures_include_element_and_rank_outputs(tmp_path):
     )
     assert "20,000 random selections" in captions
     assert "All simulations otherwise use" not in captions
+    assert "difference from that subject's 40-repeat remesh mean" in captions
+    assert "single fixed-mesh element count" in captions
     assert "Tissue-specific tetrahedral element counts" in captions
     assert "Tissue-specific tetrahedral mesh volume" in captions
-    assert "sums to 100%" in captions
+    assert "difference from that tissue's 40-repeat mean" in captions
+    assert "sums to 100%" not in captions
     assert uncertainty["random_single_repeat_selections"] == 20_000
     assert 0.0 <= uncertainty[
         "probability_of_any_subject_order_reversal"

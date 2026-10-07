@@ -404,6 +404,8 @@ def _write_primary_repeat_distribution(
     metric: str = "median_roi",
     ylabel: str | None = None,
     title: str | None = None,
+    fixed_mesh_single_value: bool = False,
+    difference_from_remesh_mean: bool = False,
 ) -> bool:
     groups: dict[str, dict[str, list[float]]] = {}
     for row in rows:
@@ -457,17 +459,32 @@ def _write_primary_repeat_distribution(
         for index, subject in enumerate(subjects):
             remesh = groups[subject]["remesh"]
             fixed = groups[subject]["fixed_mesh"]
+            remesh_reference = statistics.fmean(remesh)
+            remesh_plot_values = (
+                [value - remesh_reference for value in remesh]
+                if difference_from_remesh_mean
+                else remesh
+            )
             remesh_x = [
                 x_positions[index] - 0.055 + rng.gauss(0.0, 0.028)
-                for _ in remesh
+                for _ in remesh_plot_values
             ]
+            fixed_plot_values = (
+                [statistics.fmean(fixed)]
+                if fixed_mesh_single_value
+                else fixed
+            )
+            if difference_from_remesh_mean:
+                fixed_plot_values = [
+                    value - remesh_reference for value in fixed_plot_values
+                ]
             fixed_x = [
                 x_positions[index] + 0.085 + rng.gauss(0.0, 0.028)
-                for _ in fixed
+                for _ in fixed_plot_values
             ]
             axis.scatter(
                 remesh_x,
-                remesh,
+                remesh_plot_values,
                 color=blue,
                 alpha=0.28,
                 s=31,
@@ -476,17 +493,31 @@ def _write_primary_repeat_distribution(
             )
             axis.scatter(
                 fixed_x,
-                fixed,
-                color=orange,
-                alpha=0.32,
-                s=27,
-                linewidths=0,
-                label="Fixed-mesh repeats" if index == 0 else None,
+                fixed_plot_values,
+                color=dark_orange if fixed_mesh_single_value else orange,
+                alpha=0.90 if fixed_mesh_single_value else 0.32,
+                s=52 if fixed_mesh_single_value else 27,
+                marker="D" if fixed_mesh_single_value else "o",
+                edgecolors="white" if fixed_mesh_single_value else "none",
+                linewidths=0.9 if fixed_mesh_single_value else 0,
+                label=(
+                    "Fixed-mesh element count"
+                    if fixed_mesh_single_value and index == 0
+                    else (
+                        "Fixed-mesh repeats"
+                        if not fixed_mesh_single_value and index == 0
+                        else None
+                    )
+                ),
             )
             axis.errorbar(
                 x_positions[index] - 0.055,
-                statistics.fmean(remesh),
-                yerr=statistics.stdev(remesh) if len(remesh) > 1 else 0.0,
+                statistics.fmean(remesh_plot_values),
+                yerr=(
+                    statistics.stdev(remesh_plot_values)
+                    if len(remesh_plot_values) > 1
+                    else 0.0
+                ),
                 color=dark_blue,
                 marker="o",
                 markerfacecolor="white",
@@ -496,26 +527,39 @@ def _write_primary_repeat_distribution(
                 capsize=4.5,
                 capthick=2.4,
                 linewidth=2.4,
-                label="Remesh mean +/- SD" if index == 0 else None,
+                label="Remesh mean ± SD" if index == 0 else None,
                 zorder=5,
             )
-            axis.errorbar(
-                x_positions[index] + 0.085,
-                statistics.fmean(fixed),
-                yerr=statistics.stdev(fixed) if len(fixed) > 1 else 0.0,
-                color=dark_orange,
-                marker="D",
-                markerfacecolor="white",
-                markeredgecolor=dark_orange,
-                markeredgewidth=2.0,
-                markersize=8.0,
-                capsize=4.5,
-                capthick=2.4,
-                linewidth=2.4,
-                label="Fixed-mesh mean +/- SD" if index == 0 else None,
-                zorder=5,
-            )
+            if not fixed_mesh_single_value:
+                axis.errorbar(
+                    x_positions[index] + 0.085,
+                    statistics.fmean(fixed_plot_values),
+                    yerr=(
+                        statistics.stdev(fixed_plot_values)
+                        if len(fixed_plot_values) > 1
+                        else 0.0
+                    ),
+                    color=dark_orange,
+                    marker="D",
+                    markerfacecolor="white",
+                    markeredgecolor=dark_orange,
+                    markeredgewidth=2.0,
+                    markersize=8.0,
+                    capsize=4.5,
+                    capthick=2.4,
+                    linewidth=2.4,
+                    label="Fixed-mesh mean ± SD" if index == 0 else None,
+                    zorder=5,
+                )
 
+        if difference_from_remesh_mean:
+            axis.axhline(
+                0.0,
+                color="#6b7280",
+                linewidth=1.2,
+                linestyle="--",
+                zorder=1,
+            )
         axis.set_title(
             (
                 title.format(roi=roi_display_name)
@@ -852,9 +896,15 @@ def _write_tissue_repeat_distributions(
         )
         for condition in ("remesh", "fixed_mesh")
     ]
-    figure.legend(handles=handles, loc="upper center", ncol=2, frameon=False)
-    figure.suptitle(title, fontsize=17, y=1.0)
-    figure.tight_layout(rect=(0, 0, 1, 0.965))
+    figure.suptitle(title, fontsize=17, y=0.995)
+    figure.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.972),
+        ncol=2,
+        frameon=False,
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.925))
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(figure)
@@ -865,7 +915,7 @@ def _write_example_tissue_composition(
     path: Path,
     rows: list[dict[str, object]],
 ) -> bool:
-    """Show 100% tissue composition over repeats for one variable subject."""
+    """Show tissue-composition deviations for one variable subject."""
     records = []
     for row in rows:
         if str(row.get("condition")) != "remesh":
@@ -911,45 +961,65 @@ def _write_example_tissue_composition(
         if any(mapping.get(tissue, 0.0) > 0 for _repeat, mapping in subject_rows)
     ]
     x = np.arange(len(subject_rows))
-    bottom = np.zeros(len(subject_rows), dtype=float)
-    colors = plt.get_cmap("tab10").colors
-    figure, axis = plt.subplots(figsize=(12.6, 5.2))
-    for index, tissue in enumerate(tissue_ids):
-        fractions = np.asarray(
+    fractions_by_tissue = {
+        tissue: np.asarray(
             [
                 100.0 * mapping.get(tissue, 0.0) / sum(mapping.values())
                 for _repeat, mapping in subject_rows
-            ]
+            ],
+            dtype=float,
         )
-        axis.bar(
-            x,
-            fractions,
-            bottom=bottom,
-            width=0.84,
-            color=colors[index % len(colors)],
-            label=TISSUE_NAMES.get(tissue, f"Tissue {tissue}"),
-        )
-        bottom += fractions
-    axis.set_ylim(0, 100)
-    axis.set_ylabel("Mesh volume composition (%)")
-    axis.set_xlabel("Remesh repeat")
+        for tissue in tissue_ids
+    }
     tick_step = max(1, len(x) // 10)
     ticks = x[::tick_step]
-    axis.set_xticks(
+    deviations = np.vstack(
+        [
+            fractions_by_tissue[tissue]
+            - float(np.mean(fractions_by_tissue[tissue]))
+            for tissue in tissue_ids
+        ]
+    )
+    limit = max(float(np.max(np.abs(deviations))), 1e-6)
+    figure, deviation_axis = plt.subplots(figsize=(12.8, 4.7))
+    image = deviation_axis.imshow(
+        deviations,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="RdBu_r",
+        vmin=-limit,
+        vmax=limit,
+    )
+    deviation_axis.set_yticks(
+        range(len(tissue_ids)),
+        [
+            TISSUE_NAMES.get(tissue, f"Tissue {tissue}")
+            for tissue in tissue_ids
+        ],
+    )
+    deviation_axis.set_xticks(
         ticks,
         [str(_repeat_number(subject_rows[index][0])) for index in ticks],
     )
-    axis.set_title(
+    deviation_axis.set_xlabel("Remesh repeat")
+    deviation_axis.set_title(
+        "Deviation from each tissue's 40-repeat mean",
+        loc="left",
+    )
+    colorbar = figure.colorbar(
+        image,
+        ax=deviation_axis,
+        fraction=0.025,
+        pad=0.02,
+    )
+    colorbar.set_label("Deviation (percentage points)")
+
+    figure.suptitle(
         f"Example subject {subject.removeprefix('sub-CC')}: "
-        "tissue composition across remesh repeats"
+        "tissue-composition deviations across remesh repeats",
+        y=0.985,
     )
-    axis.legend(
-        frameon=False,
-        ncol=min(5, len(tissue_ids)),
-        loc="upper center",
-        bbox_to_anchor=(0.5, -0.16),
-    )
-    figure.tight_layout()
+    figure.tight_layout(rect=(0, 0, 1, 0.92))
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(figure)
@@ -1006,10 +1076,13 @@ def _repeatability_captions(
     element_stem = "03_primary_mesh_element_repeat_distributions"
     if element_stem in generated:
         captions[element_stem] = (
-            "Repeat-level total tetrahedral element count. Pale blue and "
-            "orange points show remesh and fixed-mesh repeats, respectively. "
-            "Dark open markers show each condition mean and error bars show "
-            "±1 SD. Subjects are ordered by decreasing remesh mean."
+            "Within-subject variation in total tetrahedral element count. "
+            "Each pale blue point is one remesh repeat expressed as its "
+            "difference from that subject's 40-repeat remesh mean; the dark "
+            "open blue marker is therefore zero and its error bars show "
+            "±1 SD. The orange diamond is the single fixed-mesh element "
+            "count expressed relative to the same remesh mean. Subjects are "
+            "ordered by decreasing absolute remesh mean."
         )
     tissue_element_stem = "04_tissue_element_repeat_distributions"
     if tissue_element_stem in generated:
@@ -1028,9 +1101,11 @@ def _repeatability_captions(
     composition_stem = "06_example_subject_tissue_composition"
     if composition_stem in generated:
         captions[composition_stem] = (
-            "Tissue-volume composition across remesh repeats for the subject "
-            "with the largest within-subject variation. Each bar is one "
-            "repeat and sums to 100%; colours identify SimNIBS tissue tags."
+            "Tissue-volume composition deviations across remesh repeats for "
+            "the subject with the largest within-subject variation. Each cell "
+            "is the difference from that tissue's 40-repeat mean in percentage "
+            "points; red and blue indicate values above and below the mean, "
+            "respectively, on a common zero-centred colour scale."
         )
     return captions
 
@@ -1146,8 +1221,10 @@ def make_figures(
         condition_rows,
         roi_display_name=roi_display_name,
         metric="mesh_elements",
-        ylabel="Tetrahedral elements",
-        title="Tetrahedral mesh elements across remeshed and fixed-mesh runs",
+        ylabel="Deviation from 40-repeat mean (elements)",
+        title="Within-subject variation in mesh element count",
+        fixed_mesh_single_value=True,
+        difference_from_remesh_mean=True,
     ):
         figures.append(str(element_figure))
 

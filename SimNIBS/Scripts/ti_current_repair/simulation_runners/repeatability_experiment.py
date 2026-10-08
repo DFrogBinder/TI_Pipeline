@@ -78,6 +78,9 @@ SIM_MODULE = None
 SIM_MESH_IO = None
 SIM_STRUCT = None
 SIM_TI = None
+# Version-specific backends can supply a label-volume writer when their
+# msh2nii CLI does not expose the v4 ``--create_label`` option.
+SIM_LABEL_EXPORTER = None
 NIB_MODULE = None
 NP_MODULE = None
 RESAMPLE_FROM_TO = None
@@ -664,10 +667,23 @@ def _run_ti_pipeline(
     ti_volume_path = volume_base_path / "TI_Volumetric_Base"
     t1_path = subject_dir / f"{subject}_T1w.nii"
 
-    run_cmd(
-        ["msh2nii", os.path.join(S.pathfem, "TI.msh"), str(t1_path), str(labels_path), "--create_label"],
-        label="msh2nii_labels",
-    )
+    if SIM_LABEL_EXPORTER is None:
+        run_cmd(
+            [
+                "msh2nii",
+                os.path.join(S.pathfem, "TI.msh"),
+                str(t1_path),
+                str(labels_path),
+                "--create_label",
+            ],
+            label="msh2nii_labels",
+        )
+    else:
+        SIM_LABEL_EXPORTER(
+            Path(S.pathfem) / "TI.msh",
+            t1_path,
+            labels_path,
+        )
     run_cmd(
         ["msh2nii", os.path.join(S.pathfem, "TI.msh"), str(t1_path), str(masks_path), "--create_masks"],
         label="msh2nii_masks",

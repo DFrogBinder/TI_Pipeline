@@ -136,3 +136,90 @@ def test_compat_shim_covers_numpy_and_nibabel_5() -> None:
     )
     assert '{"bool": bool, "int": int, "float": float}' in text
     assert "_DataobjImage.get_data = _legacy_get_data" in text
+
+
+def test_v3_label_export_matches_v4_tag_assignment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import nibabel as nib
+
+    calls: dict[str, object] = {}
+
+    class FakeElements:
+        tag1 = np.array([1, 2, 3, 5], dtype=np.int32)
+
+    class FakeMesh:
+        elm = FakeElements()
+
+        def crop_mesh(self, *, elm_type: int):
+            calls["elm_type"] = elm_type
+            return self
+
+    class FakeElementData:
+        def __init__(self, values) -> None:
+            calls["values"] = np.asarray(values).copy()
+            self.mesh = None
+
+        def to_nifti(
+            self,
+            dimensions,
+            affine,
+            *,
+            fn: str,
+            qform,
+            method: str,
+        ) -> None:
+            calls["dimensions"] = tuple(int(value) for value in dimensions)
+            calls["affine"] = np.asarray(affine).copy()
+            calls["qform"] = np.asarray(qform).copy()
+            calls["method"] = method
+            calls["mesh"] = self.mesh
+            Path(fn).write_bytes(b"label-nifti")
+
+    class FakeMeshIO:
+        ElementData = FakeElementData
+
+        @staticmethod
+        def read_msh(path: str):
+            calls["mesh_path"] = path
+            return FakeMesh()
+
+    reference = tmp_path / "reference.nii.gz"
+    nib.save(
+        nib.Nifti1Image(np.zeros((3, 4, 5), dtype=np.uint8), np.eye(4)),
+        reference,
+    )
+    mesh_path = tmp_path / "TI.msh"
+    mesh_path.write_bytes(b"mesh")
+
+    monkeypatch.setattr(simulation_runner.runner, "SIM_MODULE", object())
+    monkeypatch.setattr(simulation_runner.runner, "SIM_MESH_IO", FakeMeshIO)
+    output = simulation_runner._write_label_volume_326(
+        mesh_path,
+        reference,
+        tmp_path / "TI_Volumetric_Labels",
+    )
+
+    assert output == tmp_path / "TI_Volumetric_Labels.nii.gz"
+    assert output.read_bytes() == b"label-nifti"
+    assert calls["mesh_path"] == str(mesh_path)
+    assert calls["elm_type"] == 4
+    assert np.array_equal(calls["values"], [1, 2, 3, 5])
+    assert calls["dimensions"] == (3, 4, 5)
+    assert calls["method"] == "assign"
+    assert isinstance(calls["mesh"], FakeMesh)
+
+
+def test_v3_backend_installs_internal_label_exporter() -> None:
+    source = (PACKAGE_ROOT / "simulation_runner.py").read_text(encoding="utf-8")
+    assert "runner.SIM_LABEL_EXPORTER = _write_label_volume_326" in source
+    assert Path(simulation_runner.runner.__file__).resolve() == (
+        PACKAGE_ROOT.parent
+        / "ti_current_repair"
+        / "simulation_runners"
+        / "repeatability_experiment.py"
+    ).resolve()
+    shared_source = Path(simulation_runner.runner.__file__).read_text(encoding="utf-8")
+    assert "SIM_LABEL_EXPORTER = None" in shared_source
+    assert "SIM_LABEL_EXPORTER(" in shared_source

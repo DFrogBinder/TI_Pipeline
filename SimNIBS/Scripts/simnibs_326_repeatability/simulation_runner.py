@@ -121,6 +121,58 @@ def _ensure_simnibs_imports_326() -> None:
     runner.SIM_TI = _TIAdapter()
 
 
+def _write_label_volume_326(
+    mesh_path: Path,
+    reference_path: Path,
+    output_path: Path,
+) -> Path:
+    """Write the tissue-label NIfTI missing from the v3.2.6 msh2nii CLI.
+
+    This is the same tetrahedra/tag/assign algorithm used by the SimNIBS 4
+    ``create_label`` implementation, expressed with the v3 mesh I/O API.
+    """
+    import nibabel as nib
+
+    _ensure_simnibs_imports_326()
+    mesh = runner.SIM_MESH_IO.read_msh(str(mesh_path))
+    mesh = mesh.crop_mesh(elm_type=4)
+    element_data_type = getattr(runner.SIM_MESH_IO, "ElementData", None)
+    if not callable(element_data_type) or not callable(
+        getattr(element_data_type, "to_nifti", None)
+    ):
+        raise RuntimeError(
+            "SimNIBS 3.2.6 mesh_io.ElementData.to_nifti is unavailable"
+        )
+
+    reference = nib.load(str(reference_path))
+    destination = output_path
+    if destination.suffix == "":
+        destination = Path(f"{destination}.nii.gz")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    label_data = element_data_type(mesh.elm.tag1)
+    label_data.mesh = mesh
+    label_data.to_nifti(
+        reference.header["dim"][1:4],
+        reference.affine,
+        fn=str(destination),
+        qform=reference.header.get_qform(),
+        method="assign",
+    )
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError(
+            f"SimNIBS 3.2.6 label export did not create a NIfTI: {destination}"
+        )
+    runner.log_event(
+        "label_volume_exported",
+        implementation="simnibs-3.2.6-mesh-io-element-tags",
+        mesh_path=str(mesh_path),
+        reference_path=str(reference_path),
+        output_path=str(destination),
+    )
+    return destination
+
+
 def _scaffold_m2m(subject: str) -> Path:
     return SCAFFOLD_ROOT / subject / "anat" / f"m2m_{subject}"
 
@@ -350,6 +402,7 @@ def install_backend() -> None:
     runner._write_task_manifest = _write_task_manifest_326
     runner._write_condition_manifest = _write_condition_manifest_326
     runner._validate_existing_task_manifest = _validate_existing_task_manifest_326
+    runner.SIM_LABEL_EXPORTER = _write_label_volume_326
 
 
 def main() -> None:

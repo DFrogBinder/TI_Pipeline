@@ -367,10 +367,12 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         check=False,
     )
     msh2nii_text = msh2nii_help.stdout + msh2nii_help.stderr
-    if msh2nii_help.returncode != 0 or not all(
-        option in msh2nii_text for option in ("--create_label", "--create_masks")
-    ):
-        raise RuntimeError("msh2nii label/mask CLI check failed")
+    if msh2nii_help.returncode != 0 or "--create_masks" not in msh2nii_text:
+        raise RuntimeError(
+            "msh2nii mask CLI check failed: "
+            f"returncode={msh2nii_help.returncode}; "
+            f"output_tail={msh2nii_text[-4000:]}"
+        )
     session = sim_struct.SESSION()
     if not callable(getattr(session, "add_tdcslist", None)) or not callable(
         getattr(session, "run", None)
@@ -380,6 +382,13 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         getattr(mesh_io, "write_msh", None)
     ):
         raise RuntimeError("SimNIBS 3.2.6 mesh I/O API is incomplete")
+    element_data_type = getattr(mesh_io, "ElementData", None)
+    if not callable(element_data_type) or not callable(
+        getattr(element_data_type, "to_nifti", None)
+    ):
+        raise RuntimeError(
+            "SimNIBS 3.2.6 internal label-volume API is incomplete"
+        )
     # headreco 3.2.6 calls nibabel's legacy get_data API.  Check that the
     # module's pinned dependency stack still supports it before launching ten
     # expensive scaffold jobs.
@@ -433,7 +442,17 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
             "output_tail": matlab_output[-2000:],
         },
         "session_api": ["SESSION", "add_tdcslist", "run"],
-        "mesh_api": ["read_msh", "write_msh"],
+        "mesh_api": ["read_msh", "write_msh", "ElementData.to_nifti"],
+        "msh2nii_probe": {
+            "command": [executables["msh2nii"], "--help"],
+            "returncode": msh2nii_help.returncode,
+            "supports_create_masks": "--create_masks" in msh2nii_text,
+            "supports_create_label": "--create_label" in msh2nii_text,
+            "output_tail": msh2nii_text[-2000:],
+        },
+        "label_volume_implementation": (
+            "internal SimNIBS 3.2.6 ElementData.to_nifti tissue-tag assignment"
+        ),
         "conductivity_table": conductivity,
         "ti_envelope_implementation": "internal Grossman maximal-envelope equation",
         "head_model_strategy": HEAD_MODEL_STRATEGY,

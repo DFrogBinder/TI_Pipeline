@@ -33,6 +33,13 @@ production array is released. It also launches a short headless MATLAB probe
 and verifies the legacy NumPy scalar aliases and NiBabel accessor required by
 SimNIBS 3.2.6 before releasing the ten scaffold jobs.
 
+SimNIBS 3.2.6 `msh2nii` supports mask and field interpolation but predates the
+`--create_label` option. For the combined tissue-label volume used to mask the
+TI field, the v3 backend applies the same tetrahedra-only element-tag
+assignment implemented by later SimNIBS versions, using the installed v3
+`mesh_io.ElementData.to_nifti(..., method="assign")` API. The preflight checks
+and records both this internal API and the actual v3 CLI capabilities.
+
 ## Version boundary
 
 SimNIBS 4 CHARM models cannot be used by SimNIBS 3.2.6. The new pipeline

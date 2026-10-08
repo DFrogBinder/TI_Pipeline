@@ -30,8 +30,8 @@ muscle 0.16 S/m, and the 1.4 S/m electrode layer. SimNIBS 3.2.6 supplies its
 standard compact-bone (0.008 S/m), spongy-bone (0.025 S/m), and blood
 (0.6 S/m) entries. The module preflight records the observed table before any
 production array is released. It also launches a short headless MATLAB probe
-and verifies the legacy NiBabel accessor required by SimNIBS 3.2.6 before
-releasing the ten scaffold jobs.
+and verifies the legacy NumPy scalar aliases and NiBabel accessor required by
+SimNIBS 3.2.6 before releasing the ten scaffold jobs.
 
 ## Version boundary
 

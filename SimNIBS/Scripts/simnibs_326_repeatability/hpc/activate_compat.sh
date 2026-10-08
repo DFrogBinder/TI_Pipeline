@@ -2,7 +2,9 @@
 # Runtime-only compatibility aliases required by legacy SimNIBS 3.x code when
 # the surrounding EasyBuild stack provides newer NumPy and NiBabel releases.
 
-set -euo pipefail
+# This file is sourced by both Slurm scripts and interactive diagnostics.
+# The caller owns its shell options; changing them here can terminate an
+# interactive login shell when a later diagnostic command returns nonzero.
 
 : "${PIPELINE_DIR:?Set PIPELINE_DIR before sourcing activate_compat.sh.}"
 
@@ -12,8 +14,9 @@ mkdir -p "$SHIM_DIR"
 cat > "$SHIM_DIR/sitecustomize.py" <<'PY'
 try:
     import numpy as _np
-    if "bool" not in _np.__dict__:
-        _np.bool = _np.bool_
+    for _name, _value in {"bool": bool, "int": int, "float": float}.items():
+        if _name not in _np.__dict__:
+            setattr(_np, _name, _value)
 except Exception:
     pass
 

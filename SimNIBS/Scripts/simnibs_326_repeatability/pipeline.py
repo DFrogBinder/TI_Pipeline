@@ -316,6 +316,15 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
     missing = [name for name, path in executables.items() if path is None]
     if missing:
         raise RuntimeError(f"Module is missing required executables: {missing}")
+    required_numpy_aliases = ("bool", "int", "float")
+    missing_numpy_aliases = [
+        name for name in required_numpy_aliases if name not in np.__dict__
+    ]
+    if missing_numpy_aliases:
+        raise RuntimeError(
+            "Legacy NumPy aliases required by SimNIBS 3.2.6 are missing: "
+            f"{missing_numpy_aliases}"
+        )
     matlab_marker = "SIMNIBS326_MATLAB_OK"
     matlab_command = [
         executables["matlab"],
@@ -344,8 +353,13 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         capture_output=True,
         check=False,
     )
-    if help_result.returncode != 0 or "subject_id" not in (help_result.stdout + help_result.stderr):
-        raise RuntimeError("headreco volumemesh help/API check failed")
+    headreco_help = help_result.stdout + help_result.stderr
+    if help_result.returncode != 0 or "subject_id" not in headreco_help:
+        raise RuntimeError(
+            "headreco volumemesh help/API check failed: "
+            f"returncode={help_result.returncode}; "
+            f"output_tail={headreco_help[-4000:]}"
+        )
     msh2nii_help = subprocess.run(
         [executables["msh2nii"], "--help"],
         text=True,
@@ -408,6 +422,9 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         "simnibs_file": str(Path(simnibs.__file__).resolve()),
         "nibabel_version": str(getattr(nib, "__version__", "unknown")),
         "numpy_version": str(np.__version__),
+        "numpy_legacy_aliases": {
+            name: repr(np.__dict__[name]) for name in required_numpy_aliases
+        },
         "mesh_io_module": str(getattr(mesh_io, "__file__", "")),
         "executables": executables,
         "matlab_probe": {

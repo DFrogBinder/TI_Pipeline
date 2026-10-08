@@ -134,5 +134,5 @@ def test_compat_shim_covers_numpy_and_nibabel_5() -> None:
     text = (PACKAGE_ROOT / "hpc" / "activate_compat.sh").read_text(
         encoding="utf-8"
     )
-    assert '"bool" not in _np.__dict__' in text
+    assert '{"bool": bool, "int": int, "float": float}' in text
     assert "_DataobjImage.get_data = _legacy_get_data" in text

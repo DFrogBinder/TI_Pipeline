@@ -4,6 +4,7 @@
   "created_date": "2026-10-08",
   "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
   "headreco_matlab_module": "MATLAB/2023b",
+  "numpy_legacy_aliases": ["bool", "int", "float"],
   "module_preflight_required": true,
   "backend": "simnibs-3.2.6-headreco-volumemesh",
   "head_model_strategy": "headreco-all-scaffold-then-fresh-volumemesh",

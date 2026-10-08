@@ -12,7 +12,7 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 import simulation_runner  # noqa: E402
-from settings import SIMNIBS_MODULE, SUBJECTS  # noqa: E402
+from settings import MATLAB_MODULE, SIMNIBS_MODULE, SUBJECTS  # noqa: E402
 
 
 PIPELINE_SPEC = importlib.util.spec_from_file_location(
@@ -112,3 +112,27 @@ def test_hpc_launchers_do_not_load_simnibs_4() -> None:
     assert "SimNIBS/3.2.6-foss-2023a" in (
         hpc_root / "simulation_array.slurm"
     ).read_text(encoding="utf-8")
+
+
+def test_headreco_jobs_load_pinned_matlab_dependency() -> None:
+    assert MATLAB_MODULE == "MATLAB/2023b"
+    hpc_root = PACKAGE_ROOT / "hpc"
+    for name in (
+        "module_preflight.slurm",
+        "scaffold_array.slurm",
+        "simulation_array.slurm",
+    ):
+        text = (hpc_root / name).read_text(encoding="utf-8")
+        assert (
+            'SIMNIBS326_MATLAB_MODULE="${SIMNIBS326_MATLAB_MODULE:-MATLAB/2023b}"'
+            in text
+        )
+        assert 'module load "${SIMNIBS326_MATLAB_MODULE}"' in text
+
+
+def test_compat_shim_covers_numpy_and_nibabel_5() -> None:
+    text = (PACKAGE_ROOT / "hpc" / "activate_compat.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"bool" not in _np.__dict__' in text
+    assert "_DataobjImage.get_data = _legacy_get_data" in text

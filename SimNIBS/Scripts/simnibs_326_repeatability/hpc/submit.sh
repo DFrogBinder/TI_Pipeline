@@ -75,6 +75,7 @@ setting() {
 }
 
 SCAFFOLD_ROOT="$(setting 'SCAFFOLD_ROOT')"
+MATLAB_MODULE="$(setting 'MATLAB_MODULE')"
 PREFLIGHT_RECEIPT="$SCAFFOLD_ROOT/_simnibs326/module_preflight.json"
 
 target_root() {
@@ -110,7 +111,7 @@ submit_module_check() {
         "$SBATCH_BIN" --parsable \
             --partition="$PARTITION" \
             --output="$SCAFFOLD_ROOT/_simnibs326/module-preflight-%j.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE" \
             "$MODULE_PREFLIGHT"
     )"
     parse_job_id "$raw"
@@ -137,7 +138,7 @@ submit_scaffold() {
             --array="0-9%10" \
             "${dep[@]}" \
             --output="$log_dir/slurm-%A_%a.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE" \
             "$SCAFFOLD_ARRAY"
     )"
     parse_job_id "$raw"
@@ -172,7 +173,7 @@ submit_simulation() {
             --array="0-399%$SIM_MAX_CONCURRENT" \
             "${dep[@]}" \
             --output="$log_dir/slurm-%A_%a.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_dir" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE" \
             "$SIM_ARRAY"
     )"
     parse_job_id "$raw"
@@ -258,6 +259,7 @@ submit_fixed_and_finalize() {
 
 print_scope() {
     "$PYTHON_BIN" "$PIPELINE" plan
+    echo "  headreco MATLAB dependency: $MATLAB_MODULE"
     echo "Submission policy:"
     echo "  module check and v3 scaffold are explicit prerequisite stages"
     echo "  target arrays are chained sequentially, preserving a global 50-task cap"

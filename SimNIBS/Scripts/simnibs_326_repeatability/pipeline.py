@@ -32,6 +32,7 @@ from settings import (  # noqa: E402
     ATLAS_DIR,
     CPUS_PER_TASK,
     HEAD_MODEL_STRATEGY,
+    MATLAB_MODULE,
     MAX_CONCURRENT,
     MEMORY,
     PARTITION,
@@ -315,6 +316,28 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
     missing = [name for name, path in executables.items() if path is None]
     if missing:
         raise RuntimeError(f"Module is missing required executables: {missing}")
+    matlab_marker = "SIMNIBS326_MATLAB_OK"
+    matlab_command = [
+        executables["matlab"],
+        "-batch",
+        f"disp(['{matlab_marker} ' version])",
+    ]
+    try:
+        matlab_result = subprocess.run(
+            matlab_command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("MATLAB startup probe exceeded 300 seconds") from exc
+    matlab_output = matlab_result.stdout + matlab_result.stderr
+    if matlab_result.returncode != 0 or matlab_marker not in matlab_output:
+        raise RuntimeError(
+            "MATLAB startup probe failed: "
+            f"returncode={matlab_result.returncode}; output_tail={matlab_output[-4000:]}"
+        )
     help_result = subprocess.run(
         [executables["headreco"], "volumemesh", "--help"],
         text=True,
@@ -379,6 +402,7 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         "status": "ready",
         "created_utc": _utc_now(),
         "expected_module": SIMNIBS_MODULE,
+        "expected_matlab_module": MATLAB_MODULE,
         "loaded_modules": os.environ.get("LOADEDMODULES", ""),
         "simnibs_version": version,
         "simnibs_file": str(Path(simnibs.__file__).resolve()),
@@ -386,6 +410,11 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         "numpy_version": str(np.__version__),
         "mesh_io_module": str(getattr(mesh_io, "__file__", "")),
         "executables": executables,
+        "matlab_probe": {
+            "command": matlab_command,
+            "returncode": matlab_result.returncode,
+            "output_tail": matlab_output[-2000:],
+        },
         "session_api": ["SESSION", "add_tdcslist", "run"],
         "mesh_api": ["read_msh", "write_msh"],
         "conductivity_table": conductivity,

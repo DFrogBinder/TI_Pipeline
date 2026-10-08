@@ -10,6 +10,8 @@ set -euo pipefail
 
 module purge
 module use "$HOME/modules"
+SIMNIBS326_MATLAB_MODULE="${SIMNIBS326_MATLAB_MODULE:-MATLAB/2023b}"
+module load "${SIMNIBS326_MATLAB_MODULE}"
 module load SimNIBS/3.2.6-foss-2023a
 
 export PYTHONNOUSERSITE=1
@@ -20,4 +22,6 @@ export PYTHONNOUSERSITE=1
 source "$PIPELINE_DIR/hpc/activate_compat.sh"
 
 cd "$PIPELINE_DIR"
+echo "[INFO] MATLAB dependency: ${SIMNIBS326_MATLAB_MODULE}"
+echo "[INFO] SimNIBS module: SimNIBS/3.2.6-foss-2023a"
 python -u pipeline.py module-preflight --receipt "$PREFLIGHT_RECEIPT"

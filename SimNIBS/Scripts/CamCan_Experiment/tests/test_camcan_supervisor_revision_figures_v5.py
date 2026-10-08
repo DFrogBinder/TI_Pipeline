@@ -137,7 +137,7 @@ def _synthetic_inputs(tmp_path):
     return cohort, personalized, threshold_table
 
 
-def test_builds_only_final_four_figures_and_audits_infinity(tmp_path):
+def test_builds_final_figures_and_audits_infinity(tmp_path):
     cohort, personalized, threshold_table = _synthetic_inputs(tmp_path)
     output = tmp_path / "figures_v5"
     payload = revision.build(
@@ -164,6 +164,13 @@ def test_builds_only_final_four_figures_and_audits_infinity(tmp_path):
     personalized_table = pd.read_csv(
         output / "tables" / "table_personalization_subject_changes.csv"
     )
+    assert len(personalized_table) == 4 * 7 * 3 * 2
+    assert set(personalized_table["roi"]) == set(revision.ROI_ORDER)
+    assert set(personalized_table["panel"]) == {
+        "target_coverage",
+        "off_target_coverage",
+        "target_to_off_target_ratio",
+    }
     censored = personalized_table.loc[
         (personalized_table["roi"] == "Left_Hippocampus")
         & (personalized_table["condition"] == "personalized")
@@ -184,7 +191,7 @@ def test_builds_only_final_four_figures_and_audits_infinity(tmp_path):
     assert len(pd.read_csv(output / "figure_captions.csv")) == len(
         revision.EXPECTED_FIGURE_STEMS
     )
-    assert payload["figure_revision_schema_version"] == 9
+    assert payload["figure_revision_schema_version"] == 22
     assert payload["population_centering"].startswith("none")
     assert "absolute MNI152 value" in payload["population_mni_markers"]
     assert not (
@@ -198,6 +205,86 @@ def test_builds_only_final_four_figures_and_audits_infinity(tmp_path):
             "at_mni_roi_threshold.png"
         )
     ).is_file()
+    assert (
+        output
+        / "figures"
+        / (
+            "figure_population_target_and_offtarget_relationships_"
+            "at_mni_roi_threshold.png"
+        )
+    ).is_file()
+    assert (
+        output
+        / "figures"
+        / (
+            "figure_personalization_subject_changes_by_subject_"
+            "at_mni_roi_threshold.png"
+        )
+    ).is_file()
+
+
+def test_population_relationship_labels_use_defined_symbols():
+    assert revision.TARGET_EXPOSURE_LABEL == (
+        r"Target exposure, $E_{\mathrm{ROI}}$ (V/m)"
+    )
+    assert revision.TARGET_COVERAGE_LABEL == (
+        r"Target coverage, $C_{\mathrm{ROI}}$ (%)"
+    )
+    assert revision.OFF_TARGET_COVERAGE_LABEL == (
+        r"Off-target coverage, $C_{\mathrm{off}}$ (%)"
+    )
+
+
+def test_combined_relationship_uses_row_ylabels_and_bottom_legend(
+    tmp_path,
+    monkeypatch,
+):
+    cohort, personalized, threshold_table = _synthetic_inputs(tmp_path)
+    thresholds = revision.load_thresholds(threshold_table)
+    _, _, subjects, mni, _ = revision.load_inputs(
+        cohort,
+        personalized,
+        thresholds,
+    )
+    captured = {}
+
+    def capture_figure(figure, _figures_dir, _stem):
+        captured["figure"] = figure
+
+    monkeypatch.setattr(revision, "save_figure", capture_figure)
+    revision.set_style()
+    revision.plot_combined_relationships(
+        subjects,
+        mni,
+        thresholds,
+        tmp_path / "figures",
+    )
+
+    figure = captured["figure"]
+    assert len(figure.axes) == 8
+    assert [figure.axes[index].get_ylabel() for index in (0, 2, 4, 6)] == [
+        revision.OFF_TARGET_COVERAGE_ROW_LABEL,
+    ] * 4
+    assert all(
+        not figure.axes[index].get_ylabel() for index in (1, 3, 5, 7)
+    )
+    assert len(figure.legends) == 1
+    assert figure.legends[0]._loc == 8  # Matplotlib's lower-centre code.
+    figure.canvas.draw()
+    for index in (0, 2):
+        axis = figure.axes[index]
+        visible_ticks = axis.get_xticks()
+        visible_ticks = visible_ticks[
+            (visible_ticks >= axis.get_xlim()[0])
+            & (visible_ticks <= axis.get_xlim()[1])
+        ]
+        assert np.allclose(np.diff(visible_ticks), 0.05)
+        assert all(
+            len(label.get_text().partition(".")[2]) == 2
+            for label in axis.get_xticklabels()
+            if label.get_text()
+        )
+    revision.plt.close(figure)
 
 
 def test_population_violin_preserves_style_and_marks_absolute_mni():
@@ -223,6 +310,106 @@ def test_population_violin_preserves_style_and_marks_absolute_mni():
         artists["mni"].get_offsets(),
         np.column_stack((np.arange(1, 5), mni_values)),
     )
+    revision.plt.close(figure)
+
+
+def test_population_summary_uses_defined_outcome_symbols(
+    tmp_path,
+    monkeypatch,
+):
+    cohort, personalized, threshold_table = _synthetic_inputs(tmp_path)
+    thresholds = revision.load_thresholds(threshold_table)
+    _, _, subjects, mni, _ = revision.load_inputs(
+        cohort,
+        personalized,
+        thresholds,
+    )
+    captured = {}
+
+    def capture_figure(figure, _figures_dir, _stem):
+        captured["figure"] = figure
+
+    monkeypatch.setattr(revision, "save_figure", capture_figure)
+    revision.set_style()
+    revision.plot_population_summary(
+        subjects,
+        mni,
+        thresholds,
+        tmp_path / "figures",
+    )
+
+    figure = captured["figure"]
+    assert [axis.get_title() for axis in figure.axes] == [
+        r"$E_{\mathrm{ROI}}$",
+        r"$R_{\mathrm{TO}}$",
+    ]
+    assert [axis.get_ylabel() for axis in figure.axes] == [
+        "Mean TIS field in ROI (V/m)",
+        "Coverage ratio",
+    ]
+    caption = revision.captions(thresholds)[
+        "figure_population_mean_field_and_target_offtarget_ratio_absolute"
+    ]
+    assert "$E_{\\mathrm{ROI}}$" in caption
+    assert "$R_{\\mathrm{TO}}$" in caption
+    assert "selectivity" not in caption.lower()
+    revision.plt.close(figure)
+
+
+def test_condition_transition_legend_is_one_combined_key():
+    figure = revision.plt.figure()
+    legend = revision._condition_transition_legend(
+        figure,
+        bbox_to_anchor=(0.5, 0.9),
+    )
+
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "Generic → Personalized"
+    ]
+    assert len(legend.legend_handles) == 1
+    revision.plt.close(figure)
+
+
+def test_subject_personalization_uses_symbol_titles_and_bottom_legends(
+    tmp_path,
+    monkeypatch,
+):
+    cohort, personalized, threshold_table = _synthetic_inputs(tmp_path)
+    thresholds = revision.load_thresholds(threshold_table)
+    _, _, _, _, paired = revision.load_inputs(
+        cohort,
+        personalized,
+        thresholds,
+    )
+    captured = {}
+
+    def capture_figure(figure, _figures_dir, _stem):
+        captured["figure"] = figure
+
+    monkeypatch.setattr(revision, "save_figure", capture_figure)
+    revision.set_style()
+    revision.plot_personalized_by_subject(
+        paired,
+        thresholds,
+        tmp_path / "figures",
+    )
+
+    figure = captured["figure"]
+    assert [axis.get_title() for axis in figure.axes] == [
+        r"$C_{\mathrm{ROI}}$",
+        r"$C_{\mathrm{off}}$",
+        r"$R_{\mathrm{TO}}$",
+    ]
+    assert [axis.get_xlabel() for axis in figure.axes] == [
+        "Target coverage (%)",
+        "Off-target coverage (%)",
+        "Target/off-target ratio",
+    ]
+    assert not any(
+        "Coverage thresholds" in text.get_text() for text in figure.texts
+    )
+    assert len(figure.legends) == 2
+    assert all(legend._loc == 8 for legend in figure.legends)
     revision.plt.close(figure)
 
 

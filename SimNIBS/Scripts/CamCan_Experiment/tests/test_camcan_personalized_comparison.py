@@ -8,6 +8,29 @@ import pandas as pd
 import pytest
 
 from post import camcan_personalized_comparison as comparison
+from post import optimizer_target_roi
+
+
+def _test_roi_definition(roi: str) -> dict[str, object]:
+    requested = optimizer_target_roi.optimizer_target_volume_mm3(roi)
+    return {
+        "roi_definition_schema_version": (
+            optimizer_target_roi.ROI_DEFINITION_SCHEMA_VERSION
+        ),
+        "method": optimizer_target_roi.ROI_DEFINITION_METHOD,
+        "source_representation": optimizer_target_roi.ROI_SOURCE_REPRESENTATION,
+        "roi": roi,
+        "roi_class": optimizer_target_roi.optimizer_target_class(roi),
+        "requested_volume_mm3": requested,
+        "achieved_volume_mm3": requested,
+        "radius_mm": 3.0,
+        "start_radius_mm": optimizer_target_roi.START_RADIUS_MM,
+        "radius_step_mm": optimizer_target_roi.RADIUS_STEP_MM,
+        "radius_cap_mm": optimizer_target_roi.RADIUS_CAP_MM,
+        "distance_comparator": optimizer_target_roi.DISTANCE_COMPARATOR,
+        "target_volume_reached": True,
+        "clipped_to_anatomical_parcel": True,
+    }
 
 
 def test_repository_allowlist_contains_all_28_optimized_configurations():
@@ -231,6 +254,12 @@ def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_pa
                 path.write_text(
                     json.dumps(
                         {
+                            "comparison_schema_version": (
+                                comparison.COMPARISON_SCHEMA_VERSION
+                            ),
+                            "manuscript_analysis_schema_version": (
+                                comparison.ANALYSIS_SCHEMA_VERSION
+                            ),
                             "status": "complete",
                             "config_fingerprint": f"{pair['pair_index']}-{condition}-{repeat}",
                             "pair_index": pair["pair_index"],
@@ -246,13 +275,7 @@ def test_collector_requires_and_aggregates_exact_560_records(monkeypatch, tmp_pa
                                 "mesh_sha256": "mesh",
                                 "corrected_label_sha256": "label",
                             },
-                            "roi_definition": {
-                                "method": "synthetic test ROI",
-                                "requested_volume_mm3": 100.0,
-                                "achieved_volume_mm3": 100.0,
-                                "radius_mm": 3.0,
-                                "target_volume_reached": True,
-                            },
+                            "roi_definition": _test_roi_definition(pair["roi"]),
                             "metrics": {name: value for name in metric_names},
                         }
                     ),

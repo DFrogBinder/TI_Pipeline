@@ -11,13 +11,30 @@ from post import camcan_manuscript_analysis as manuscript
 from post import optimizer_target_roi
 
 
-TEST_ROI_DEFINITION = {
-    "method": "synthetic test ROI",
-    "requested_volume_mm3": 100.0,
-    "achieved_volume_mm3": 100.0,
-    "radius_mm": 3.0,
-    "target_volume_reached": True,
-}
+def _test_roi_definition(roi: str) -> dict[str, object]:
+    requested = optimizer_target_roi.optimizer_target_volume_mm3(roi)
+    return {
+        "roi_definition_schema_version": (
+            optimizer_target_roi.ROI_DEFINITION_SCHEMA_VERSION
+        ),
+        "method": optimizer_target_roi.ROI_DEFINITION_METHOD,
+        "source_representation": optimizer_target_roi.ROI_SOURCE_REPRESENTATION,
+        "roi": roi,
+        "roi_class": optimizer_target_roi.optimizer_target_class(roi),
+        "requested_volume_mm3": requested,
+        "achieved_volume_mm3": requested,
+        "radius_mm": 3.0,
+        "start_radius_mm": optimizer_target_roi.START_RADIUS_MM,
+        "radius_step_mm": optimizer_target_roi.RADIUS_STEP_MM,
+        "radius_cap_mm": optimizer_target_roi.RADIUS_CAP_MM,
+        "distance_comparator": optimizer_target_roi.DISTANCE_COMPARATOR,
+        "target_volume_reached": True,
+        "clipped_to_anatomical_parcel": True,
+    }
+
+
+def _test_flattened_roi_definition(roi: str) -> dict[str, object]:
+    return optimizer_target_roi.flatten_roi_metadata(_test_roi_definition(roi))
 
 
 def test_optimizer_roi_matches_make_rois_growth_and_volume_classes():
@@ -34,6 +51,11 @@ def test_optimizer_roi_matches_make_rois_growth_and_volume_classes():
         reference_img=image,
         roi="Left_Hippocampus",
     )
+    right_m1 = optimizer_target_roi.build_optimizer_target_roi(
+        anatomical_mask=anatomical,
+        reference_img=image,
+        roi="Right_M1",
+    )
 
     assert cortical.metadata["requested_volume_mm3"] == 100.0
     assert cortical.metadata["achieved_volume_mm3"] == pytest.approx(
@@ -44,6 +66,8 @@ def test_optimizer_roi_matches_make_rois_growth_and_volume_classes():
     assert subcortical.metadata["requested_volume_mm3"] == 200.0
     assert subcortical.metadata["achieved_volume_mm3"] >= 200.0
     assert subcortical.metadata["radius_mm"] > cortical.metadata["radius_mm"]
+    assert right_m1.metadata["roi_class"] == "cortical"
+    assert right_m1.metadata["requested_volume_mm3"] == 100.0
     assert np.all(cortical.mask <= anatomical)
     assert np.all(subcortical.mask <= anatomical)
 
@@ -74,6 +98,39 @@ def test_optimizer_roi_centroid_uses_world_coordinates_and_stays_in_parcel():
     assert observed_world == pytest.approx(expected_world)
     assert np.all(target.mask <= anatomical)
     assert target.metadata["target_volume_reached"] is False
+
+
+def test_metric_bundle_uses_sphere_as_primary_and_parcel_only_as_secondary():
+    anatomical = np.ones((11, 11, 11), dtype=bool)
+    axes = np.indices(anatomical.shape, dtype=np.float64)
+    ti_data = np.sqrt(sum((axis - 5.0) ** 2 for axis in axes))
+    image = nib.Nifti1Image(ti_data, np.eye(4))
+
+    metrics, metadata = manuscript.compute_optimizer_matched_metric_bundle(
+        ti_img=image,
+        ti_data=ti_data,
+        anatomical_roi_mask=anatomical,
+        roi="Left_M1",
+    )
+    target = optimizer_target_roi.build_optimizer_target_roi(
+        anatomical_mask=anatomical,
+        reference_img=image,
+        roi="Left_M1",
+    )
+
+    assert metrics["roi_mean_v_per_m"] == pytest.approx(
+        float(np.mean(ti_data[target.mask]))
+    )
+    assert metrics["anatomical_roi_mean_v_per_m"] == pytest.approx(
+        float(np.mean(ti_data[anatomical]))
+    )
+    assert metrics["roi_mean_v_per_m"] != pytest.approx(
+        metrics["anatomical_roi_mean_v_per_m"]
+    )
+    optimizer_target_roi.validate_optimizer_target_metadata(
+        metadata,
+        roi="Left_M1",
+    )
 
 
 def test_atlas_validation_requires_all_four_direct_roi_labels(tmp_path):
@@ -218,6 +275,25 @@ def test_subject_extraction_writes_and_reuses_fingerprinted_record(tmp_path):
     )
 
 
+def test_collector_rejects_complete_record_without_optimizer_roi_provenance():
+    roi_definition = _test_roi_definition("Left_Hippocampus")
+    roi_definition["method"] = "full anatomical parcel"
+    payload = {
+        "analysis_schema_version": manuscript.ANALYSIS_SCHEMA_VERSION,
+        "status": "complete",
+        "config_fingerprint": "test",
+        "subject": "sub-01",
+        "roi": "Left_Hippocampus",
+        "repeat": "01",
+        "canonical_roi": "Left-Hippocampus",
+        "roi_definition": roi_definition,
+        "metrics": {},
+    }
+
+    with pytest.raises(ValueError, match="expected.*MakeROIs"):
+        manuscript._flatten_payload(payload)
+
+
 def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
     study_root = tmp_path / "study"
     subjects_file = tmp_path / "subjects.txt"
@@ -257,13 +333,14 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
                 path.write_text(
                     json.dumps(
                         {
+                            "analysis_schema_version": manuscript.ANALYSIS_SCHEMA_VERSION,
                             "status": "complete",
                             "config_fingerprint": "test",
                             "subject": subject,
                             "roi": roi,
                             "repeat": repeat,
                             "canonical_roi": canonical,
-                            "roi_definition": TEST_ROI_DEFINITION,
+                            "roi_definition": _test_roi_definition(roi),
                             "metrics": metrics,
                         }
                     ),
@@ -276,6 +353,7 @@ def test_collector_arithmetic_means_repeat_metrics(monkeypatch, tmp_path):
         lambda roi, **kwargs: {
             "subject": "MNI152",
             "roi": roi,
+            **_test_flattened_roi_definition(roi),
             **{name: 1.0 for name in metric_names},
         },
     )
@@ -357,13 +435,14 @@ def test_collector_rejects_nonfinite_repeat_metrics(monkeypatch, tmp_path):
             path.write_text(
                 json.dumps(
                     {
+                        "analysis_schema_version": manuscript.ANALYSIS_SCHEMA_VERSION,
                         "status": "complete",
                         "config_fingerprint": "test",
                         "subject": "sub-01",
                         "roi": roi,
                         "repeat": repeat,
                         "canonical_roi": canonical,
-                        "roi_definition": TEST_ROI_DEFINITION,
+                        "roi_definition": _test_roi_definition(roi),
                         "metrics": metrics,
                     }
                 ),
@@ -404,6 +483,7 @@ def test_csv_only_reaggregation_repairs_zero_denominator_localization(
                 "roi": roi,
                 "repeat": repeat_number,
                 "canonical_roi": canonical,
+                **_test_flattened_roi_definition(roi),
                 **{name: 1.0 for name in metric_names},
             }
             if roi == "Left_Hippocampus" and repeat_number == 1:
@@ -419,6 +499,7 @@ def test_csv_only_reaggregation_repairs_zero_denominator_localization(
             {
                 "subject": "MNI152",
                 "roi": roi,
+                **_test_flattened_roi_definition(roi),
                 **{name: 1.0 for name in metric_names},
             }
             for roi in manuscript.ROI_ORDER

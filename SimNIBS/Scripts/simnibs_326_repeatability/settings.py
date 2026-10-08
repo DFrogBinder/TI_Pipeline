@@ -12,6 +12,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 SCRIPTS_ROOT = PACKAGE_ROOT.parent
 
 SIMNIBS_MODULE = "SimNIBS/3.2.6-foss-2023a"
+MATLAB_MODULE = os.environ.get("SIMNIBS326_MATLAB_MODULE", "MATLAB/2023b")
 PARTITION = "sheffield"
 CPUS_PER_TASK = 8
 MEMORY = "32G"

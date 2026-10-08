@@ -7,6 +7,8 @@ completed SimNIBS 4.0.1 roots and it does not delete transferred data.
 ## Scientific scope
 
 - SimNIBS module: `SimNIBS/3.2.6-foss-2023a`
+- `headreco` dependency: `MATLAB/2023b` for SPM12/CAT12 segmentation; the FEM
+  simulations themselves remain SimNIBS 3.2.6 Python jobs
 - Participants: the same 10-member balanced final-132 cohort
 - Targets: left hippocampus and right M1
 - Conditions: 40 fresh volume meshes and 40 fixed-mesh solves per
@@ -27,7 +29,9 @@ The conductivity handling follows the established runner: WM 0.126 S/m, GM
 muscle 0.16 S/m, and the 1.4 S/m electrode layer. SimNIBS 3.2.6 supplies its
 standard compact-bone (0.008 S/m), spongy-bone (0.025 S/m), and blood
 (0.6 S/m) entries. The module preflight records the observed table before any
-production array is released.
+production array is released. It also launches a short headless MATLAB probe
+and verifies the legacy NiBabel accessor required by SimNIBS 3.2.6 before
+releasing the ten scaffold jobs.
 
 ## Version boundary
 
@@ -137,4 +141,3 @@ stage is still queued.
 The optimizer-matched spherical ROI is reconstructed on each output grid. Its
 mesh- and voxel-based realizations are aligned/equivalent analysis definitions,
 not literally identical masks.
-

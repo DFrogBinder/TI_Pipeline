@@ -12,6 +12,8 @@ set -euo pipefail
 
 module purge
 module use "$HOME/modules"
+SIMNIBS326_MATLAB_MODULE="${SIMNIBS326_MATLAB_MODULE:-MATLAB/2023b}"
+module load "${SIMNIBS326_MATLAB_MODULE}"
 module load SimNIBS/3.2.6-foss-2023a
 
 export PYTHONNOUSERSITE=1
@@ -37,6 +39,7 @@ if ! [[ "$RETRY_COUNT" =~ ^[0-9]+$ ]]; then
 fi
 
 echo "[INFO] Module: SimNIBS/3.2.6-foss-2023a"
+echo "[INFO] headreco MATLAB dependency: ${SIMNIBS326_MATLAB_MODULE}"
 echo "[INFO] Scaffold task: $TASK_ID/9"
 echo "[INFO] Retry count: $RETRY_COUNT (unlimited until validation passes)"
 

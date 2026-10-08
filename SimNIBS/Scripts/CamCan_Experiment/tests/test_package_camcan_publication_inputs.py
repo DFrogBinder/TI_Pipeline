@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from post import package_camcan_publication_inputs as publication
+from post import package_camcan_publication_inputs_v5 as publication_v5
 from post import build_camcan_supervisor_revision_figures as revision
 
 
@@ -101,3 +102,10 @@ def test_collectors_package_and_verify_before_archiving():
 
 def test_packaged_output_contract_matches_renderer_captions():
     assert set(publication.EXPECTED_FIGURE_STEMS) == set(revision.captions())
+
+
+@pytest.mark.parametrize("role", ["cohort", "personalized"])
+def test_v5_packager_requires_optimizer_roi_contract(role):
+    contract = publication_v5.role_contract(role, ["0p2", "0p18", "0p15"])
+    for key, value in publication_v5.ROI_CONTRACT_EXPECTATIONS.items():
+        assert contract["manifest"][key] == value

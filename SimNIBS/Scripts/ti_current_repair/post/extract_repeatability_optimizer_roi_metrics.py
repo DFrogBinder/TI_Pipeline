@@ -41,15 +41,11 @@ SCHEMA_VERSION = 2
 ROI_SPECS = {
     "left-hippocampus": {
         "roi": "Left_Hippocampus",
-        "roi_class": "subcortical",
         "label_ids": (17,),
-        "target_volume_mm3": 200.0,
     },
     "right-m1": {
         "roi": "Right_M1",
-        "roi_class": "cortical",
         "label_ids": (12129,),
-        "target_volume_mm3": 100.0,
     },
 }
 ROW_FIELDS = [
@@ -158,14 +154,25 @@ def _completion_scope(config) -> dict[str, object]:
 
 
 def _roi_spec(config) -> dict[str, object]:
+    from CamCan_Experiment.post.optimizer_target_roi import (
+        optimizer_target_class,
+        optimizer_target_volume_mm3,
+    )
+
     preset = str(config.analysis.roi_preset or "").strip().lower()
     try:
-        return {"preset": preset, **ROI_SPECS[preset]}
+        spec = {"preset": preset, **ROI_SPECS[preset]}
     except KeyError as exc:
         raise ValueError(
             f"Unsupported repeatability ROI preset {preset!r}. "
             f"Expected one of {sorted(ROI_SPECS)}."
         ) from exc
+    roi = str(spec["roi"])
+    return {
+        **spec,
+        "roi_class": optimizer_target_class(roi),
+        "target_volume_mm3": optimizer_target_volume_mm3(roi),
+    }
 
 
 def _atlas_path(config, subject: str) -> Path:

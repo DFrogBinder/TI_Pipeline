@@ -1,0 +1,44 @@
+{
+  "profile": "camcan-simnibs326-balanced10-repeatability-v1",
+  "status": "candidate_unverified_on_hpc",
+  "created_date": "2026-10-08",
+  "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
+  "module_preflight_required": true,
+  "backend": "simnibs-3.2.6-headreco-volumemesh",
+  "head_model_strategy": "headreco-all-scaffold-then-fresh-volumemesh",
+  "version_boundary": "v3 headreco regenerates the head model from T1/T2; it does not consume or reproduce the corrected v4 CHARM label model",
+  "scope": {
+    "subjects": 10,
+    "targets": 2,
+    "conditions_per_target": 2,
+    "repeats_per_condition": 40,
+    "simulation_tasks": 1600,
+    "component_fem_solves": 3200,
+    "headreco_scaffold_tasks": 10
+  },
+  "scheduler": {
+    "partition": "sheffield",
+    "cpus_per_task": 8,
+    "memory": "32G",
+    "time_limit": "08:00:00",
+    "max_concurrent_simulations": 50,
+    "simulation_array_per_target_condition": "0-399%50"
+  },
+  "retry": {
+    "task_timeout_hours": 4,
+    "maximum_retries": "unlimited",
+    "completion_gate": "runner exit zero plus validate_repeatability_task.py",
+    "missing_input_exit_code": 126
+  },
+  "promotion_requirements": [
+    "module-preflight receipt records SimNIBS 3.2.6 and required v3 APIs",
+    "all 10 headreco scaffolds pass checksum and artifact validation",
+    "full requested remesh arrays are dependency-blocked until both preceding gates pass",
+    "fixed arrays remain a separate release after full remesh and optimizer-ROI validation"
+  ],
+  "known_good_predecessor": {
+    "profile": "camcan-spherical-fixed-nested-repeatability-v1",
+    "simnibs_module": "SimNIBS/4.0.1-foss-2023a",
+    "note": "resource and retry settings retained; meshing backend intentionally changed"
+  }
+}

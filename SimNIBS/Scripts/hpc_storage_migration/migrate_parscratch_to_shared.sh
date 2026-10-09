@@ -9,6 +9,7 @@ MANIFEST="${TI_MIGRATION_MANIFEST:-${SCRIPT_DIR}/parscratch_inventory.txt}"
 ACTION=""
 EXCLUDED_ENTRIES=()
 CONFIRM_DESTINATION=""
+MANIFEST_ENTRY_COUNT=0
 
 usage() {
     printf '%s\n' \
@@ -16,7 +17,7 @@ usage() {
         '  bash migrate_parscratch_to_shared.sh ACTION (--exclude TOP_LEVEL_ENTRY | --exclude-file FILE) [options]' \
         '' \
         'Actions:' \
-        '  audit       Validate the 24-entry inventory and report source sizes/counts.' \
+        '  audit       Validate the reviewed inventory and report source sizes/counts.' \
         '  copy        Resumably copy all non-excluded entries with rsync.' \
         '  verify      Read-only rsync comparison using size and modification time.' \
         '  checksum    Read-only full-content rsync checksum comparison.' \
@@ -158,7 +159,6 @@ validate_inventory() {
     local source_sorted
     local missing_entries
     local unexpected_entries
-    local manifest_count
 
     comparison_dir="$(mktemp -d)"
     manifest_sorted="${comparison_dir}/manifest.txt"
@@ -168,8 +168,8 @@ validate_inventory() {
     manifest_entries | LC_ALL=C sort > "${manifest_sorted}"
     find "${SOURCE_ROOT}" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > "${source_sorted}"
 
-    manifest_count="$(wc -l < "${manifest_sorted}")"
-    [ "${manifest_count}" -eq 24 ] || fail "Expected 24 reviewed manifest entries, found ${manifest_count}."
+    MANIFEST_ENTRY_COUNT="$(wc -l < "${manifest_sorted}")"
+    [ "${MANIFEST_ENTRY_COUNT}" -gt 0 ] || fail "The reviewed inventory manifest is empty."
     [ "$(uniq -d "${manifest_sorted}" | wc -l)" -eq 0 ] || fail "The inventory manifest contains duplicate entries."
 
     missing_entries="$(comm -23 "${manifest_sorted}" "${source_sorted}")"
@@ -190,12 +190,12 @@ receipt_dir() {
 
 print_scope() {
     local exclusion_count="${#EXCLUDED_ENTRIES[@]}"
-    local inclusion_count=$((24 - exclusion_count))
+    local inclusion_count=$((MANIFEST_ENTRY_COUNT - exclusion_count))
     local excluded_entry
     printf '%s\n' \
         'Scope:' \
         '  dataset/ROI: complete reviewed parscratch top-level inventory' \
-        '  top-level entries found: 24' \
+        "  top-level entries found: ${MANIFEST_ENTRY_COUNT}" \
         "  top-level entries included: ${inclusion_count}" \
         "  top-level entries excluded: ${exclusion_count}" \
         '  Slurm tasks/array: none; login-node filesystem operation' \

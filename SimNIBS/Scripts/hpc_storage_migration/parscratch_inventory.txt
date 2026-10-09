@@ -1,4 +1,4 @@
-# Top-level entries observed under /mnt/parscratch/users/cop23bi on 2026-10-07.
+# Top-level entries observed under /mnt/parscratch/users/cop23bi on 2026-10-09.
 # Keep one entry per line. The migration script refuses an unreviewed inventory.
 CamCan_Approved_Wave_1
 CamCan_Corrected_v4_Atlases
@@ -16,6 +16,8 @@ final_132_post_processing_analysis_results.manifest.txt
 final_132_repeatability_balanced_10
 final_132_repeatability_balanced_10_right_m1
 final_132_repeatability_balanced_10_right_m1_spherical_fixed_v1
+final_132_repeatability_balanced_10_simnibs326_left_hippocampus_v1
+final_132_repeatability_balanced_10_simnibs326_right_m1_v1
 final_132_repeatability_balanced_10_spherical_fixed_v1
 final_132_repeatability_nested_40x40_v1
 final_132_repeatability_paper_update_v1
@@ -23,4 +25,5 @@ MNI152_SimNIBS401_inputs
 MNI152_SimNIBS401_validation
 ti_dataset
 ti_dataset_final_132_balanced_10_corrected
+ti_dataset_final_132_balanced_10_simnibs326_headreco
 ZIPs

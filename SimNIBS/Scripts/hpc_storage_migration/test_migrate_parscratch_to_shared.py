@@ -5,6 +5,11 @@ import subprocess
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "migrate_parscratch_to_shared.sh"
+SIMNIBS326_ACTIVE_ROOTS = {
+    "final_132_repeatability_balanced_10_simnibs326_left_hippocampus_v1",
+    "final_132_repeatability_balanced_10_simnibs326_right_m1_v1",
+    "ti_dataset_final_132_balanced_10_simnibs326_headreco",
+}
 
 
 def manifest_entries(path: Path) -> set[str]:
@@ -21,9 +26,10 @@ def test_reviewed_dependency_scope_is_complete_and_disjoint():
     core = manifest_entries(HERE / "core_data_exclusions.txt")
     combined = manifest_entries(HERE / "repeatability_migration_exclusions.txt")
 
-    assert len(inventory) == 24
-    assert len(active) == 6
+    assert len(inventory) == 27
+    assert len(active) == 9
     assert len(core) == 9
+    assert SIMNIBS326_ACTIVE_ROOTS <= active
     assert active.isdisjoint(core)
     assert combined == active | core
     assert combined <= inventory
@@ -34,7 +40,7 @@ def test_reviewed_dependency_scope_is_complete_and_disjoint():
         for line in (HERE / "migration_scope.tsv").read_text().splitlines()[1:]
         if line.strip()
     ]
-    assert len(scope_rows) == 24
+    assert len(scope_rows) == 27
     assert {row[0] for row in scope_rows} == inventory
     kept = {row[0] for row in scope_rows if row[2] == "keep_parscratch"}
     migrated = {row[0] for row in scope_rows if row[2] == "migrate"}

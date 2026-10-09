@@ -15,6 +15,8 @@ final_132_post_processing_analysis_results.manifest.txt	metadata	migrate	Analysi
 final_132_repeatability_balanced_10	active_repeatability	keep_parscratch	Historical left-hippocampus remesh metrics and geometries used by the active paper correction.
 final_132_repeatability_balanced_10_right_m1	active_repeatability	keep_parscratch	Historical right-M1 remesh metrics and geometries used by the active paper correction.
 final_132_repeatability_balanced_10_right_m1_spherical_fixed_v1	active_repeatability	keep_parscratch	Corrected spherical-median right-M1 fixed-mesh simulations and metrics.
+final_132_repeatability_balanced_10_simnibs326_left_hippocampus_v1	active_repeatability	keep_parscratch	Current SimNIBS 3.2.6 left-hippocampus repeatability comparison outputs.
+final_132_repeatability_balanced_10_simnibs326_right_m1_v1	active_repeatability	keep_parscratch	Current SimNIBS 3.2.6 right-M1 repeatability comparison outputs.
 final_132_repeatability_balanced_10_spherical_fixed_v1	active_repeatability	keep_parscratch	Corrected spherical-median left-hippocampus fixed-mesh simulations and metrics.
 final_132_repeatability_nested_40x40_v1	active_repeatability	keep_parscratch	Completed 40-by-40 nested subject simulation and analysis inputs.
 final_132_repeatability_paper_update_v1	active_repeatability	keep_parscratch	Current repeatability-paper analysis output root.
@@ -22,4 +24,5 @@ MNI152_SimNIBS401_inputs	core_input	keep_parscratch	Reusable worker-visible MNI1
 MNI152_SimNIBS401_validation	completed_study_output	migrate	Completed MNI152 version-validation outputs.
 ti_dataset	core_input	keep_parscratch	Primary subject T1/T2 and FastSurfer source root used by cohort launchers.
 ti_dataset_final_132_balanced_10_corrected	core_input	keep_parscratch	Staged corrected source MRI/segmentation dataset required for repeatability reruns.
+ti_dataset_final_132_balanced_10_simnibs326_headreco	active_repeatability	keep_parscratch	Current SimNIBS 3.2.6 headreco inputs required by the active repeatability comparison.
 ZIPs	core_input	keep_parscratch	Worker-visible subject atlases, MNI baselines, and reusable staged input archives.

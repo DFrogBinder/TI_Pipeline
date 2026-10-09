@@ -5,8 +5,8 @@ This directory contains the guarded, resumable migration from:
 - source: `/mnt/parscratch/users/cop23bi`
 - destination: `/shared/boyan/Shared`
 
-The reviewed inventory contains 24 top-level entries. Fifteen worker-visible
-roots are protected: nine reusable core-data roots plus the six active
+The reviewed inventory contains 27 top-level entries. Eighteen worker-visible
+roots are protected: nine reusable core-data roots plus the nine active
 repeatability-paper roots. The reviewed migration scope is therefore nine
 completed/inactive entries. The script does not delete source data and does not
 update repository paths.
@@ -37,7 +37,8 @@ source MRI, segmentation, corrected-map, scaffold, atlas, MNI-input, and
 defacing roots are recorded in `core_data_exclusions.txt`. Their reviewed union
 is `repeatability_migration_exclusions.txt`, which is the exclusion file used by
 the commands below. `migration_scope.tsv` records the decision and dependency
-rationale for every one of the 24 top-level entries.
+rationale for every one of the 27 top-level entries. The active set includes
+the three SimNIBS 3.2.6 comparison roots added during the migration.
 
 ## Stanage accessibility constraint
 
@@ -57,7 +58,7 @@ cd /users/cop23bi/Repos/TI_Pipeline/SimNIBS/Scripts/hpc_storage_migration
 bash migrate_parscratch_to_shared.sh audit --exclude-file repeatability_migration_exclusions.txt
 ```
 
-Review the 24-row audit receipt under
+Review the 27-row audit receipt under
 `/shared/boyan/Shared/.parscratch_migration_receipts/`, including source sizes,
 file counts, imaging/mesh/archive counts, free space, and any top-level symbolic
 links. Imaging outputs are expected in migratable completed-study roots.

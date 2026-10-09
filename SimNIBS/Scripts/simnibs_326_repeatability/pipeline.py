@@ -497,10 +497,15 @@ def validate_module_preflight_receipt(receipt: Path) -> dict[str, Any]:
         if compatibility.get("source_sha256") != EXPECTED_SOURCE_SHA256:
             failures.append("CAT12 compatibility source hashes do not match")
         if compatibility.get("replacements") != {
-            "segment_path_insertions": 1,
+            "segment_pre_init_path_insertions": 1,
+            "segment_post_init_path_reassertions": 1,
             "xml_error_to_warning_replacements": 2,
         }:
             failures.append("CAT12 compatibility replacement counts do not match")
+        if compatibility.get("spm_jobman_initcfg_tested") is not True:
+            failures.append("CAT12 spm_jobman initcfg probe did not pass")
+        if compatibility.get("post_init_reassertion_tested") is not True:
+            failures.append("CAT12 post-init path reassertion probe did not pass")
         if compatibility.get("mat_report_created") is not True:
             failures.append("CAT12 MAT-report probe did not pass")
     if failures:

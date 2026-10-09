@@ -13,9 +13,10 @@
   "root_isolation": "fail closed before writes when a v3 writable root overlaps a staged-input or protected CHARM root",
   "cat12_compatibility": {
     "failure": "SimNIBS 3.2.6 CAT12 v1212 writes its MAT report but its legacy XML serializer fails under MATLAB R2023b",
-    "patch_id": "simnibs326-cat12-r2023b-xml-warning-v1",
-    "policy": "build a temporary overlay only after official v3.2.6 source hashes match; preserve MAT writes and downgrade only two XML-write failures to warnings",
-    "module_preflight": "probe patched cat_io_xml in MATLAB and require a compatible receipt before scaffold execution",
+    "patch_id": "simnibs326-cat12-r2023b-post-init-xml-warning-v2",
+    "failed_candidate": "v1 initially selected the scratch cat_io_xml but tbx_cfg_cat re-added the installed CAT12 directory during spm_jobman initcfg; full scaffold job 11782991 therefore still failed from the installed cat_io_xml after one bounded retry",
+    "policy": "build a temporary overlay only after official v3.2.6 source hashes match; preserve MAT writes; downgrade only two XML-write failures to warnings; and reassert plus verify the overlay after spm_jobman initcfg",
+    "module_preflight": "reproduce spm_jobman initcfg path mutation, reassert patched cat_io_xml in MATLAB, and require a compatible receipt before scaffold execution",
     "central_module_mutation": false,
     "charm_mutation": false
   },

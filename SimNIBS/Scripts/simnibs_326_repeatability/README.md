@@ -100,15 +100,18 @@ The pipeline therefore builds a temporary, per-process compatibility overlay
 from the installed SimNIBS 3.2.6 MATLAB files. It first verifies their official
 v3.2.6 SHA-256 hashes, then changes only the two fatal XML-write branches in
 `cat_io_xml.m` to warnings. The MAT report is still written, XML is still
-attempted, and all segmentation/meshing operations are unchanged. A patched
-`segment_CAT.m` verifies that the overlay is first on the MATLAB path. The
-overlay is deleted when headreco exits; `/opt/apps` and all CHARM locations are
-never modified.
+attempted, and all segmentation/meshing operations are unchanged. CAT12's
+`tbx_cfg_cat.m` re-adds the installed toolbox directory while
+`spm_jobman('initcfg')` runs, so a patched `segment_CAT.m` reasserts the
+overlay, clears cached `cat_io_xml` resolution, and verifies the selected file
+again immediately after batch initialization. The overlay is deleted when
+headreco exits; `/opt/apps` and all CHARM locations are never modified.
 
-The module-preflight job now executes this overlay in MATLAB and records the
-patch ID, source hashes, replacement counts, and successful MAT-report probe.
-Scaffold tasks reject old or incompatible module-preflight receipts before
-starting headreco.
+The module-preflight job now reproduces the `spm_jobman('initcfg')` path
+mutation, reasserts the overlay, executes it in MATLAB, and records the patch
+ID, source hashes, replacement counts, post-init resolution checks, and
+successful MAT-report probe. Scaffold tasks reject old or incompatible
+module-preflight receipts before starting headreco.
 
 Live computation remains on `/mnt/parscratch`. The Shared partition can hold
 transferred archives, but it is not used as a worker-node input or output path.

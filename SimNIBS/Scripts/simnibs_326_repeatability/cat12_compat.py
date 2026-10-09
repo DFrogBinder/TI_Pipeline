@@ -5,7 +5,9 @@ The CAT12 revision bundled with SimNIBS 3.2.6 writes a MAT report and then
 raises when its legacy XML serializer fails under newer MATLAB releases.  The
 MAT report is intact and headreco does not consume the XML report.  Build a
 temporary overlay from hash-verified upstream files that preserves the MAT
-write and downgrades only the two XML-write failures to warnings.
+write and downgrades only the two XML-write failures to warnings.  SPM's
+toolbox discovery re-adds the installed CAT12 directory during ``initcfg``, so
+the patched ``segment_CAT.m`` reasserts and verifies the overlay afterwards.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-PATCH_ID = "simnibs326-cat12-r2023b-xml-warning-v1"
+PATCH_ID = "simnibs326-cat12-r2023b-post-init-xml-warning-v2"
 EXPECTED_SOURCE_SHA256 = {
     "segment_CAT.m": "234f908b99031453807e92aeec14445e4bf3e3188c76f3fbb0cbe2222d37c970",
     "cat_io_xml.m": "7f64ad2ad71123fbfc67c0f5abd29519d5a9b24428c881ae1da5099aee8cd45e",
@@ -35,8 +37,10 @@ XML_WRITE_WARNING = (
     "        warning('MATLAB:cat_io_xml:writeErr','Can''t write XML-file "
     "''%s''!\\n',file);"
 )
-SEGMENT_INSERTION_POINT = "end\ncat_get_defaults('output.CSF.native', true);"
-SEGMENT_COMPAT_BLOCK = """end
+SEGMENT_PRE_INIT_INSERTION_POINT = (
+    "end\ncat_get_defaults('output.CSF.native', true);"
+)
+SEGMENT_PRE_INIT_COMPAT_BLOCK = """end
 
 % SimNIBS 3.2.6 compatibility overlay for MATLAB R2023b.
 compat_dir = getenv('SIMNIBS326_CAT12_COMPAT_DIR');
@@ -52,9 +56,30 @@ if ~strcmp(observed_cat_io_xml,expected_cat_io_xml)
     error('SIMNIBS326:CAT12Compat', ...
         'CAT12 compatibility overlay is not first on the MATLAB path.');
 end
-fprintf('SIMNIBS326_CAT12_COMPAT_ACTIVE %s\\n',observed_cat_io_xml);
+fprintf('SIMNIBS326_CAT12_COMPAT_ACTIVE_PRE_INIT %s\\n',observed_cat_io_xml);
 
 cat_get_defaults('output.CSF.native', true);"""
+SEGMENT_POST_INIT_INSERTION_POINT = (
+    "spm_get_defaults('cmdline', true);\n\n% segment using CAT12"
+)
+SEGMENT_POST_INIT_COMPAT_BLOCK = """spm_get_defaults('cmdline', true);
+
+% tbx_cfg_cat.m re-adds the installed CAT12 directory during initcfg.
+% Put the verified compatibility function first again and clear any cached
+% resolution before the CAT12 batch starts.
+rmpath(compat_dir);
+addpath(compat_dir,'-begin');
+clear cat_io_xml
+rehash;
+expected_cat_io_xml = fullfile(compat_dir,'cat_io_xml.m');
+observed_cat_io_xml = which('cat_io_xml');
+if ~strcmp(observed_cat_io_xml,expected_cat_io_xml)
+    error('SIMNIBS326:CAT12Compat', ...
+        'CAT12 compatibility overlay was displaced after spm_jobman initcfg.');
+end
+fprintf('SIMNIBS326_CAT12_COMPAT_ACTIVE_POST_INIT %s\\n',observed_cat_io_xml);
+
+% segment using CAT12"""
 
 
 def _sha256(path: Path) -> str:
@@ -97,19 +122,33 @@ def _patch_source_text(
         )
     patched_xml = xml_text.replace(XML_WRITE_ERROR, XML_WRITE_WARNING)
 
-    segment_replacements = segment_text.count(SEGMENT_INSERTION_POINT)
-    if segment_replacements != 1:
+    pre_init_replacements = segment_text.count(SEGMENT_PRE_INIT_INSERTION_POINT)
+    if pre_init_replacements != 1:
         raise RuntimeError(
-            "Expected exactly one segment_CAT compatibility insertion point, "
-            f"observed {segment_replacements}"
+            "Expected exactly one segment_CAT pre-init compatibility insertion "
+            f"point, observed {pre_init_replacements}"
         )
     patched_segment = segment_text.replace(
-        SEGMENT_INSERTION_POINT,
-        SEGMENT_COMPAT_BLOCK,
+        SEGMENT_PRE_INIT_INSERTION_POINT,
+        SEGMENT_PRE_INIT_COMPAT_BLOCK,
+        1,
+    )
+    post_init_replacements = patched_segment.count(
+        SEGMENT_POST_INIT_INSERTION_POINT
+    )
+    if post_init_replacements != 1:
+        raise RuntimeError(
+            "Expected exactly one segment_CAT post-init compatibility insertion "
+            f"point, observed {post_init_replacements}"
+        )
+    patched_segment = patched_segment.replace(
+        SEGMENT_POST_INIT_INSERTION_POINT,
+        SEGMENT_POST_INIT_COMPAT_BLOCK,
         1,
     )
     return patched_segment, patched_xml, {
-        "segment_path_insertions": segment_replacements,
+        "segment_pre_init_path_insertions": pre_init_replacements,
+        "segment_post_init_path_reassertions": post_init_replacements,
         "xml_error_to_warning_replacements": xml_replacements,
     }
 
@@ -234,6 +273,8 @@ def run_headreco(arguments: list[str]) -> int:
 
 def probe_matlab_compatibility(matlab: str) -> dict[str, object]:
     marker = "SIMNIBS326_CAT12_COMPAT_PROBE_OK"
+    sources = _installed_sources()
+    spm12 = sources["cat_io_xml.m"].parents[2]
     with temporary_overlay() as (overlay, metadata):
         probe_parent = overlay.parent / "probe"
         probe_parent.mkdir()
@@ -241,7 +282,19 @@ def probe_matlab_compatibility(matlab: str) -> dict[str, object]:
         probe_mat = probe_parent / "cat12_compat_probe.mat"
         script = ";".join(
             (
+                f"addpath('{_matlab_quote(spm12)}')",
                 f"addpath('{_matlab_quote(overlay)}','-begin')",
+                "spm('Defaults','fMRI')",
+                "spm_jobman('initcfg')",
+                "spm_get_defaults('cmdline',true)",
+                (
+                    "disp(['SIMNIBS326_CAT12_BEFORE_POST_INIT_REASSERT ' "
+                    "which('cat_io_xml')])"
+                ),
+                f"rmpath('{_matlab_quote(overlay)}')",
+                f"addpath('{_matlab_quote(overlay)}','-begin')",
+                "clear cat_io_xml",
+                "rehash",
                 (
                     "assert(strcmp(which('cat_io_xml'),"
                     f"fullfile('{_matlab_quote(overlay)}','cat_io_xml.m')))"
@@ -279,6 +332,8 @@ def probe_matlab_compatibility(matlab: str) -> dict[str, object]:
             "status": "ready",
             "matlab_command": [matlab, "-batch", "<cat12-compat-probe>"],
             "matlab_returncode": result.returncode,
+            "spm_jobman_initcfg_tested": True,
+            "post_init_reassertion_tested": True,
             "mat_report_created": True,
             "xml_report_created": probe_xml.is_file(),
             "output_tail": output[-2000:],

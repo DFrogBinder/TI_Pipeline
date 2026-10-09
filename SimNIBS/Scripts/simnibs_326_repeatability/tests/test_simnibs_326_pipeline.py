@@ -205,7 +205,13 @@ def test_hpc_retries_are_bounded_element_scoped_and_auditable() -> None:
 
 
 def test_cat12_compatibility_patch_is_bounded() -> None:
-    segment = "before\n" + cat12_compat.SEGMENT_INSERTION_POINT + "\nafter\n"
+    segment = (
+        "before\n"
+        + cat12_compat.SEGMENT_PRE_INIT_INSERTION_POINT
+        + "\nmiddle\n"
+        + cat12_compat.SEGMENT_POST_INIT_INSERTION_POINT
+        + "\nafter\n"
+    )
     xml = (
         "before\n"
         + cat12_compat.XML_WRITE_ERROR
@@ -220,11 +226,15 @@ def test_cat12_compatibility_patch_is_bounded() -> None:
     )
 
     assert replacements == {
-        "segment_path_insertions": 1,
+        "segment_pre_init_path_insertions": 1,
+        "segment_post_init_path_reassertions": 1,
         "xml_error_to_warning_replacements": 2,
     }
     assert "SIMNIBS326_CAT12_COMPAT_DIR" in patched_segment
     assert "CAT12 compatibility overlay is not first" in patched_segment
+    assert "SIMNIBS326_CAT12_COMPAT_ACTIVE_POST_INIT" in patched_segment
+    assert "rmpath(compat_dir);" in patched_segment
+    assert "clear cat_io_xml" in patched_segment
     assert cat12_compat.XML_WRITE_ERROR not in patched_xml
     assert patched_xml.count(cat12_compat.XML_WRITE_WARNING) == 2
 
@@ -232,12 +242,21 @@ def test_cat12_compatibility_patch_is_bounded() -> None:
 def test_cat12_compatibility_rejects_unexpected_source_layout() -> None:
     with pytest.raises(RuntimeError, match="exactly two fatal"):
         cat12_compat._patch_source_text(
-            segment_text=cat12_compat.SEGMENT_INSERTION_POINT,
+            segment_text=(
+                cat12_compat.SEGMENT_PRE_INIT_INSERTION_POINT
+                + "\n"
+                + cat12_compat.SEGMENT_POST_INIT_INSERTION_POINT
+            ),
             xml_text=cat12_compat.XML_WRITE_ERROR,
         )
-    with pytest.raises(RuntimeError, match="exactly one segment_CAT"):
+    with pytest.raises(RuntimeError, match="pre-init compatibility"):
         cat12_compat._patch_source_text(
             segment_text="no insertion point",
+            xml_text=(cat12_compat.XML_WRITE_ERROR + "\n") * 2,
+        )
+    with pytest.raises(RuntimeError, match="post-init compatibility"):
+        cat12_compat._patch_source_text(
+            segment_text=cat12_compat.SEGMENT_PRE_INIT_INSERTION_POINT,
             xml_text=(cat12_compat.XML_WRITE_ERROR + "\n") * 2,
         )
 
@@ -269,9 +288,12 @@ def test_module_receipt_requires_cat12_compatibility(tmp_path: Path) -> None:
                     "patch_id": cat12_compat.PATCH_ID,
                     "source_sha256": cat12_compat.EXPECTED_SOURCE_SHA256,
                     "replacements": {
-                        "segment_path_insertions": 1,
+                        "segment_pre_init_path_insertions": 1,
+                        "segment_post_init_path_reassertions": 1,
                         "xml_error_to_warning_replacements": 2,
                     },
+                    "spm_jobman_initcfg_tested": True,
+                    "post_init_reassertion_tested": True,
                     "mat_report_created": True,
                 },
             }

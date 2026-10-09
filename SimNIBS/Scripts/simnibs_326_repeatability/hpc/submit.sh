@@ -61,8 +61,9 @@ CONTROL="$PIPELINE_DIR/hpc/control.slurm"
 ROI_ARRAY="$PIPELINE_DIR/hpc/optimizer_roi_array.slurm"
 ROI_COLLECT="$PIPELINE_DIR/hpc/optimizer_roi_collect.slurm"
 COMPAT_SHIM="$PIPELINE_DIR/hpc/activate_compat.sh"
+CAT12_COMPAT="$PIPELINE_DIR/cat12_compat.py"
 
-for required in "$PIPELINE" "$MODULE_PREFLIGHT" "$SCAFFOLD_ARRAY" "$SIM_ARRAY" "$CONTROL" "$ROI_ARRAY" "$ROI_COLLECT" "$COMPAT_SHIM"; do
+for required in "$PIPELINE" "$MODULE_PREFLIGHT" "$SCAFFOLD_ARRAY" "$SIM_ARRAY" "$CONTROL" "$ROI_ARRAY" "$ROI_COLLECT" "$COMPAT_SHIM" "$CAT12_COMPAT"; do
     if [ ! -f "$required" ]; then
         echo "[ERROR] Missing pipeline file: $required" >&2
         exit 2
@@ -128,9 +129,9 @@ submit_scaffold() {
     local dep=()
     if [ -n "$after_job" ]; then
         dep+=("--dependency=afterok:$after_job")
-    elif [ ! -f "$PREFLIGHT_RECEIPT" ]; then
-        echo "[ERROR] Module preflight receipt is missing: $PREFLIGHT_RECEIPT" >&2
-        exit 2
+    else
+        "$PYTHON_BIN" "$PIPELINE" validate-module-receipt \
+            --receipt "$PREFLIGHT_RECEIPT" >/dev/null
     fi
     local log_dir="$SCAFFOLD_ROOT/_simnibs326/logs/scaffold"
     mkdir -p "$log_dir"
@@ -145,7 +146,7 @@ submit_scaffold() {
             "${dep[@]}" \
             --output="$log_dir/slurm-%A_%a.out" \
             --open-mode=append \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE,SIMNIBS326_MAX_RETRIES=$MAX_RETRIES" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE,SIMNIBS326_MAX_RETRIES=$MAX_RETRIES" \
             "$SCAFFOLD_ARRAY"
     )"
     parse_job_id "$raw"

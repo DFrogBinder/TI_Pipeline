@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from settings import (
     scaffold_subject_root,
     source_paths,
 )
+from cat12_compat import PATCH_ID
 
 
 READY_MARKER = ".simnibs326_scaffold_ready.json"
@@ -118,6 +120,8 @@ def build_scaffold(subject: str) -> dict[str, object]:
         shutil.rmtree(paths["anat"])
     paths["anat"].mkdir(parents=True, exist_ok=True)
     command = [
+        sys.executable,
+        str(Path(__file__).resolve().parent / "cat12_compat.py"),
         "headreco",
         "all",
         "--noclean",
@@ -144,6 +148,7 @@ def build_scaffold(subject: str) -> dict[str, object]:
         "simnibs_module": SIMNIBS_MODULE,
         "simnibs_version": _simnibs_version(),
         "loaded_modules": os.environ.get("LOADEDMODULES", ""),
+        "cat12_compatibility_patch": PATCH_ID,
         "head_model_strategy": HEAD_MODEL_STRATEGY,
         "segmentation_provenance": SEGMENTATION_PROVENANCE,
         "source_t1": str(t1),

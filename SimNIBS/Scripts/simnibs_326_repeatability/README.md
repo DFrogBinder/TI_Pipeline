@@ -89,6 +89,27 @@ nested within one of them:
 The staged T1/T2/label input root and atlas root are protected in the same way.
 Only the dedicated `simnibs326` roots can be rebuilt or overwritten.
 
+## SimNIBS 3.2.6 CAT12 compatibility
+
+The CAT12 revision bundled with SimNIBS 3.2.6 can write its MAT quality report
+but fails in its legacy XML serializer under MATLAB R2023b. This was confirmed
+uniformly across the balanced ten-subject scaffold array. Stanage does not
+currently expose an older compatible MATLAB release.
+
+The pipeline therefore builds a temporary, per-process compatibility overlay
+from the installed SimNIBS 3.2.6 MATLAB files. It first verifies their official
+v3.2.6 SHA-256 hashes, then changes only the two fatal XML-write branches in
+`cat_io_xml.m` to warnings. The MAT report is still written, XML is still
+attempted, and all segmentation/meshing operations are unchanged. A patched
+`segment_CAT.m` verifies that the overlay is first on the MATLAB path. The
+overlay is deleted when headreco exits; `/opt/apps` and all CHARM locations are
+never modified.
+
+The module-preflight job now executes this overlay in MATLAB and records the
+patch ID, source hashes, replacement counts, and successful MAT-report probe.
+Scaffold tasks reject old or incompatible module-preflight receipts before
+starting headreco.
+
 Live computation remains on `/mnt/parscratch`. The Shared partition can hold
 transferred archives, but it is not used as a worker-node input or output path.
 
@@ -162,6 +183,8 @@ stage is still queued.
   first failure is retained for diagnosis
 - Missing required inputs exit with code 126 and are logged without an
   infinite requeue loop
+- The CAT12 compatibility overlay is hash-verified and fail-closed; unexpected
+  module source files or an old module-preflight receipt prevent scaffold work
 
 `SIMNIBS326_MAX_RETRIES` can override the retry cap with a non-negative
 integer. `0` disables automatic retries; it no longer means unlimited retries.

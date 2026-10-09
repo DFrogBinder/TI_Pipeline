@@ -21,11 +21,13 @@ export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 : "${PIPELINE_DIR:?Set PIPELINE_DIR to simnibs_326_repeatability.}"
+: "${PREFLIGHT_RECEIPT:?Set PREFLIGHT_RECEIPT to the module preflight receipt.}"
 # shellcheck source=/dev/null
 source "$PIPELINE_DIR/hpc/activate_compat.sh"
 LOG_DIR="${LOG_DIR:-$PIPELINE_DIR/logs/scaffold}"
 mkdir -p "$LOG_DIR/retry_state"
 cd "$PIPELINE_DIR"
+python -u pipeline.py validate-module-receipt --receipt "$PREFLIGHT_RECEIPT" >/dev/null
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?Missing SLURM_ARRAY_TASK_ID.}"
 ARRAY_JOB_ID="${SLURM_ARRAY_JOB_ID:?Missing SLURM_ARRAY_JOB_ID.}"

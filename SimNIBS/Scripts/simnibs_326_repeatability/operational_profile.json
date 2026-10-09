@@ -11,6 +11,14 @@
   "head_model_strategy": "headreco-all-scaffold-then-fresh-volumemesh",
   "version_boundary": "v3 headreco regenerates the head model from T1/T2; it does not consume or reproduce the corrected v4 CHARM label model",
   "root_isolation": "fail closed before writes when a v3 writable root overlaps a staged-input or protected CHARM root",
+  "cat12_compatibility": {
+    "failure": "SimNIBS 3.2.6 CAT12 v1212 writes its MAT report but its legacy XML serializer fails under MATLAB R2023b",
+    "patch_id": "simnibs326-cat12-r2023b-xml-warning-v1",
+    "policy": "build a temporary overlay only after official v3.2.6 source hashes match; preserve MAT writes and downgrade only two XML-write failures to warnings",
+    "module_preflight": "probe patched cat_io_xml in MATLAB and require a compatible receipt before scaffold execution",
+    "central_module_mutation": false,
+    "charm_mutation": false
+  },
   "protected_charm_roots": [
     "/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Scaffolds",
     "/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10",

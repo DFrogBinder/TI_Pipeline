@@ -15,6 +15,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 import simulation_runner  # noqa: E402
 import settings as campaign_settings  # noqa: E402
+import cat12_compat  # noqa: E402
 from settings import MAX_RETRIES, MATLAB_MODULE, SIMNIBS_MODULE, SUBJECTS  # noqa: E402
 
 
@@ -201,6 +202,102 @@ def test_hpc_retries_are_bounded_element_scoped_and_auditable() -> None:
     assert submit.count("--open-mode=append") == 2
     assert "SIMNIBS326_MAX_RETRIES=$MAX_RETRIES" in submit
     assert "unlimited validation-gated requeue" not in submit
+
+
+def test_cat12_compatibility_patch_is_bounded() -> None:
+    segment = "before\n" + cat12_compat.SEGMENT_INSERTION_POINT + "\nafter\n"
+    xml = (
+        "before\n"
+        + cat12_compat.XML_WRITE_ERROR
+        + "\nmiddle\n"
+        + cat12_compat.XML_WRITE_ERROR
+        + "\nafter\n"
+    )
+
+    patched_segment, patched_xml, replacements = cat12_compat._patch_source_text(
+        segment_text=segment,
+        xml_text=xml,
+    )
+
+    assert replacements == {
+        "segment_path_insertions": 1,
+        "xml_error_to_warning_replacements": 2,
+    }
+    assert "SIMNIBS326_CAT12_COMPAT_DIR" in patched_segment
+    assert "CAT12 compatibility overlay is not first" in patched_segment
+    assert cat12_compat.XML_WRITE_ERROR not in patched_xml
+    assert patched_xml.count(cat12_compat.XML_WRITE_WARNING) == 2
+
+
+def test_cat12_compatibility_rejects_unexpected_source_layout() -> None:
+    with pytest.raises(RuntimeError, match="exactly two fatal"):
+        cat12_compat._patch_source_text(
+            segment_text=cat12_compat.SEGMENT_INSERTION_POINT,
+            xml_text=cat12_compat.XML_WRITE_ERROR,
+        )
+    with pytest.raises(RuntimeError, match="exactly one segment_CAT"):
+        cat12_compat._patch_source_text(
+            segment_text="no insertion point",
+            xml_text=(cat12_compat.XML_WRITE_ERROR + "\n") * 2,
+        )
+
+
+def test_headreco_matlab_command_gets_one_compatibility_path() -> None:
+    command = (
+        "matlab -nosplash -nodesktop -r \"addpath('/msh','/spm12');"
+        "try,segment_SPM('x'); segment_CAT('y');catch ME,rethrow(ME);end,exit;\""
+    )
+    overlay = Path("/tmp/simnibs326_cat12_overlay")
+    observed = cat12_compat._inject_matlab_overlay(command, overlay)
+    assert observed.count("simnibs326_cat12_overlay") == 1
+    assert "addpath('/tmp/simnibs326_cat12_overlay','-begin');try," in observed
+    assert cat12_compat._inject_matlab_overlay("matlab -batch version", overlay) == (
+        "matlab -batch version"
+    )
+
+
+def test_module_receipt_requires_cat12_compatibility(tmp_path: Path) -> None:
+    receipt = tmp_path / "module_preflight.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "expected_module": SIMNIBS_MODULE,
+                "expected_matlab_module": MATLAB_MODULE,
+                "cat12_compatibility": {
+                    "status": "ready",
+                    "patch_id": cat12_compat.PATCH_ID,
+                    "source_sha256": cat12_compat.EXPECTED_SOURCE_SHA256,
+                    "replacements": {
+                        "segment_path_insertions": 1,
+                        "xml_error_to_warning_replacements": 2,
+                    },
+                    "mat_report_created": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = pipeline.validate_module_preflight_receipt(receipt)
+    assert result["status"] == "ready"
+    assert result["cat12_compatibility_patch"] == cat12_compat.PATCH_ID
+
+    receipt.write_text(json.dumps({"status": "ready"}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="CAT12 compatibility evidence is missing"):
+        pipeline.validate_module_preflight_receipt(receipt)
+
+
+def test_scaffold_runner_uses_cat12_compatibility_wrapper() -> None:
+    text = (PACKAGE_ROOT / "scaffold_runner.py").read_text(encoding="utf-8")
+    assert '"cat12_compat.py"' in text
+    assert '"headreco"' in text
+    launcher = (PACKAGE_ROOT / "hpc" / "scaffold_array.slurm").read_text(
+        encoding="utf-8"
+    )
+    assert "validate-module-receipt" in launcher
+    submit = (PACKAGE_ROOT / "hpc" / "submit.sh").read_text(encoding="utf-8")
+    assert "PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT" in submit
+    assert 'CAT12_COMPAT="$PIPELINE_DIR/cat12_compat.py"' in submit
 
 
 def test_compat_shim_covers_numpy_and_nibabel_5() -> None:

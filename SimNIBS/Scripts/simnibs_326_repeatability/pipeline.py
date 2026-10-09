@@ -50,6 +50,11 @@ from settings import (  # noqa: E402
     target_settings,
 )
 from simulation_runner import BACKEND_NAME, CONFIG_RUNTIME_KEY  # noqa: E402
+from cat12_compat import (  # noqa: E402
+    EXPECTED_SOURCE_SHA256,
+    PATCH_ID,
+    probe_matlab_compatibility,
+)
 
 
 SCHEMA_VERSION = 1
@@ -351,6 +356,7 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
             "MATLAB startup probe failed: "
             f"returncode={matlab_result.returncode}; output_tail={matlab_output[-4000:]}"
         )
+    cat12_compatibility = probe_matlab_compatibility(executables["matlab"])
     help_result = subprocess.run(
         [executables["headreco"], "volumemesh", "--help"],
         text=True,
@@ -445,6 +451,7 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
             "returncode": matlab_result.returncode,
             "output_tail": matlab_output[-2000:],
         },
+        "cat12_compatibility": cat12_compatibility,
         "session_api": ["SESSION", "add_tdcslist", "run"],
         "mesh_api": ["read_msh", "write_msh", "ElementData.to_nifti"],
         "msh2nii_probe": {
@@ -465,6 +472,49 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
     if receipt is not None:
         _write_json_atomic(receipt.expanduser().resolve(), payload)
     return payload
+
+
+def validate_module_preflight_receipt(receipt: Path) -> dict[str, Any]:
+    path = receipt.expanduser().resolve()
+    if not path.is_file():
+        raise RuntimeError(f"Module preflight receipt is missing: {path}")
+    payload = _load_json(path)
+    compatibility = payload.get("cat12_compatibility")
+    failures: list[str] = []
+    if payload.get("status") != "ready":
+        failures.append("receipt status is not ready")
+    if payload.get("expected_module") != SIMNIBS_MODULE:
+        failures.append("SimNIBS module does not match")
+    if payload.get("expected_matlab_module") != MATLAB_MODULE:
+        failures.append("MATLAB module does not match")
+    if not isinstance(compatibility, dict):
+        failures.append("CAT12 compatibility evidence is missing")
+    else:
+        if compatibility.get("status") != "ready":
+            failures.append("CAT12 compatibility status is not ready")
+        if compatibility.get("patch_id") != PATCH_ID:
+            failures.append("CAT12 compatibility patch ID does not match")
+        if compatibility.get("source_sha256") != EXPECTED_SOURCE_SHA256:
+            failures.append("CAT12 compatibility source hashes do not match")
+        if compatibility.get("replacements") != {
+            "segment_path_insertions": 1,
+            "xml_error_to_warning_replacements": 2,
+        }:
+            failures.append("CAT12 compatibility replacement counts do not match")
+        if compatibility.get("mat_report_created") is not True:
+            failures.append("CAT12 MAT-report probe did not pass")
+    if failures:
+        raise RuntimeError(
+            f"Module preflight receipt is incompatible: {path}: "
+            + "; ".join(failures)
+        )
+    return {
+        "status": "ready",
+        "receipt": str(path),
+        "simnibs_module": SIMNIBS_MODULE,
+        "matlab_module": MATLAB_MODULE,
+        "cat12_compatibility_patch": PATCH_ID,
+    }
 
 
 def _validate_config_outputs(config_path: Path) -> dict[str, Any]:
@@ -680,6 +730,9 @@ def build_parser() -> argparse.ArgumentParser:
     module = subparsers.add_parser("module-preflight")
     module.add_argument("--receipt", type=Path, default=None)
 
+    validate_module = subparsers.add_parser("validate-module-receipt")
+    validate_module.add_argument("--receipt", type=Path, required=True)
+
     for name in ("complete-remesh", "complete-final", "status"):
         child = subparsers.add_parser(name)
         child.add_argument("--target", choices=sorted(TARGETS), required=True)
@@ -710,6 +763,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = initialize(dry_run=args.dry_run)
     elif args.command == "module-preflight":
         payload = module_preflight(receipt=args.receipt)
+    elif args.command == "validate-module-receipt":
+        payload = validate_module_preflight_receipt(args.receipt)
     elif args.command == "complete-remesh":
         payload = complete_remesh(args.target)
     elif args.command == "complete-final":

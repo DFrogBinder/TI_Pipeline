@@ -45,6 +45,7 @@ from settings import (  # noqa: E402
     TARGETS,
     TARGETS_CSV,
     TIME_LIMIT,
+    assert_output_root_isolation,
     source_paths,
     target_settings,
 )
@@ -161,6 +162,7 @@ def remesh_config(target: str) -> dict[str, Any]:
 
 
 def campaign_scope() -> dict[str, Any]:
+    root_isolation = assert_output_root_isolation()
     per_target = len(SUBJECTS) * REPEAT_COUNT
     return {
         "schema_version": SCHEMA_VERSION,
@@ -204,6 +206,7 @@ def campaign_scope() -> dict[str, Any]:
         },
         "head_model_strategy": HEAD_MODEL_STRATEGY,
         "segmentation_provenance": SEGMENTATION_PROVENANCE,
+        "root_isolation": root_isolation,
         "execution_scope": "full requested experiment; no smoke or reduced subset",
     }
 
@@ -235,6 +238,7 @@ def print_scope(scope: dict[str, Any]) -> None:
 
 
 def _validate_hpc_inputs() -> dict[str, Any]:
+    assert_output_root_isolation()
     missing: list[str] = []
     for subject in SUBJECTS:
         missing.extend(str(path) for path in source_paths(subject) if not path.is_file())

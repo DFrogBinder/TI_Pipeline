@@ -76,6 +76,19 @@ right M1:
   /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_simnibs326_right_m1_v1
 ```
 
+The v3 pipeline treats these existing CHARM locations as protected read-only
+roots and refuses to start if any writable v3 root equals, contains, or is
+nested within one of them:
+
+```text
+/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Scaffolds
+/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10
+/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1
+```
+
+The staged T1/T2/label input root and atlas root are protected in the same way.
+Only the dedicated `simnibs326` roots can be rebuilt or overwritten.
+
 Live computation remains on `/mnt/parscratch`. The Shared partition can hold
 transferred archives, but it is not used as a worker-node input or output path.
 
@@ -140,10 +153,18 @@ stage is still queued.
 - Optimizer-ROI arrays: `0-9%10`
 - Completed tasks are skipped only when output validation and SimNIBS 3.2.6
   provenance both pass
-- Incomplete simulation tasks use the existing four-hour task timeout and
-  unlimited validation-gated requeue policy
+- Incomplete scaffold and simulation tasks receive at most one
+  validation-gated requeue after the initial attempt; simulations retain the
+  existing four-hour task timeout
+- Requeues always name the exact array element; one failing placeholder task
+  cannot restart its siblings
+- Slurm output is append-only and each attempt has a timestamped log, so the
+  first failure is retained for diagnosis
 - Missing required inputs exit with code 126 and are logged without an
   infinite requeue loop
+
+`SIMNIBS326_MAX_RETRIES` can override the retry cap with a non-negative
+integer. `0` disables automatic retries; it no longer means unlimited retries.
 
 The optimizer-matched spherical ROI is reconstructed on each output grid. Its
 mesh- and voxel-based realizations are aligned/equivalent analysis definitions,

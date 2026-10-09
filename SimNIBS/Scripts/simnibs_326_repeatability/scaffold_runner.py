@@ -17,6 +17,7 @@ from settings import (
     SEGMENTATION_PROVENANCE,
     SIMNIBS_MODULE,
     SUBJECTS,
+    assert_output_root_isolation,
     scaffold_subject_root,
     source_paths,
 )
@@ -96,6 +97,7 @@ def validate_scaffold(subject: str) -> dict[str, object]:
 
 
 def build_scaffold(subject: str) -> dict[str, object]:
+    assert_output_root_isolation()
     t1, t2, corrected_labels = source_paths(subject)
     missing = [path for path in (t1, t2, corrected_labels) if not path.is_file()]
     if missing:

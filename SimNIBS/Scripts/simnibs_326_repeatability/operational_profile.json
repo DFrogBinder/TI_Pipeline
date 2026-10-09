@@ -10,6 +10,12 @@
   "backend": "simnibs-3.2.6-headreco-volumemesh",
   "head_model_strategy": "headreco-all-scaffold-then-fresh-volumemesh",
   "version_boundary": "v3 headreco regenerates the head model from T1/T2; it does not consume or reproduce the corrected v4 CHARM label model",
+  "root_isolation": "fail closed before writes when a v3 writable root overlaps a staged-input or protected CHARM root",
+  "protected_charm_roots": [
+    "/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Scaffolds",
+    "/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10",
+    "/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1"
+  ],
   "scope": {
     "subjects": 10,
     "targets": 2,
@@ -29,7 +35,10 @@
   },
   "retry": {
     "task_timeout_hours": 4,
-    "maximum_retries": "unlimited",
+    "maximum_retries": 1,
+    "maximum_attempts_per_task": 2,
+    "requeue_target": "qualified array element",
+    "log_policy": "append-only Slurm output plus timestamped per-attempt logs",
     "completion_gate": "runner exit zero plus validate_repeatability_task.py",
     "missing_input_exit_code": 126
   },
@@ -42,6 +51,6 @@
   "known_good_predecessor": {
     "profile": "camcan-spherical-fixed-nested-repeatability-v1",
     "simnibs_module": "SimNIBS/4.0.1-foss-2023a",
-    "note": "resource and retry settings retained; meshing backend intentionally changed"
+    "note": "resource settings retained; retry policy bounded after the v3 scaffold requeue-loop failure"
   }
 }

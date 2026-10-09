@@ -76,7 +76,13 @@ setting() {
 
 SCAFFOLD_ROOT="$(setting 'SCAFFOLD_ROOT')"
 MATLAB_MODULE="$(setting 'MATLAB_MODULE')"
+MAX_RETRIES="${SIMNIBS326_MAX_RETRIES:-$(setting 'MAX_RETRIES')}"
 PREFLIGHT_RECEIPT="$SCAFFOLD_ROOT/_simnibs326/module_preflight.json"
+
+if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] SIMNIBS326_MAX_RETRIES must be a non-negative integer." >&2
+    exit 2
+fi
 
 target_root() {
     local target="$1"
@@ -138,7 +144,8 @@ submit_scaffold() {
             --array="0-9%10" \
             "${dep[@]}" \
             --output="$log_dir/slurm-%A_%a.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE" \
+            --open-mode=append \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE,SIMNIBS326_MAX_RETRIES=$MAX_RETRIES" \
             "$SCAFFOLD_ARRAY"
     )"
     parse_job_id "$raw"
@@ -173,7 +180,8 @@ submit_simulation() {
             --array="0-399%$SIM_MAX_CONCURRENT" \
             "${dep[@]}" \
             --output="$log_dir/slurm-%A_%a.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE" \
+            --open-mode=append \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_dir,SIMNIBS326_MATLAB_MODULE=$MATLAB_MODULE,SIMNIBS326_MAX_RETRIES=$MAX_RETRIES" \
             "$SIM_ARRAY"
     )"
     parse_job_id "$raw"
@@ -263,7 +271,8 @@ print_scope() {
     echo "Submission policy:"
     echo "  module check and v3 scaffold are explicit prerequisite stages"
     echo "  target arrays are chained sequentially, preserving a global 50-task cap"
-    echo "  complete tasks are skipped; incomplete tasks use unlimited validation-gated requeue"
+    echo "  complete tasks are skipped; incomplete tasks receive at most $MAX_RETRIES requeue(s)"
+    echo "  requeues target one qualified array element and all attempt logs are retained"
     echo "  no job is submitted by preflight or init"
 }
 

@@ -29,6 +29,9 @@ from settings import (  # noqa: E402
     SCAFFOLD_ROOT,
     SEGMENTATION_PROVENANCE,
     SIMNIBS_MODULE,
+    SOURCE_ROOT,
+    TARGETS,
+    assert_output_root_isolation,
 )
 from simulation_runners import repeatability_experiment as runner  # noqa: E402
 
@@ -361,7 +364,28 @@ def _config_argument(argv: list[str]) -> Path:
 
 def _validate_campaign_config(config_path: Path) -> None:
     global _CONFIG_PATH
+    assert_output_root_isolation()
     payload = json.loads(config_path.read_text(encoding="utf-8"))
+    observed_experiment_root = Path(
+        str(payload.get("experiment_root", ""))
+    ).expanduser().resolve()
+    allowed_experiment_roots = {
+        settings.experiment_root for settings in TARGETS.values()
+    }
+    if observed_experiment_root not in allowed_experiment_roots:
+        raise SystemExit(
+            "Config experiment_root is not a dedicated SimNIBS 3.2.6 root: "
+            f"{observed_experiment_root}; allowed="
+            + ",".join(sorted(map(str, allowed_experiment_roots)))
+        )
+    observed_source_root = Path(
+        str(payload.get("source_root", ""))
+    ).expanduser().resolve()
+    if observed_source_root != SOURCE_ROOT:
+        raise SystemExit(
+            "Config source_root does not match the pinned read-only staged source: "
+            f"observed={observed_source_root}; expected={SOURCE_ROOT}"
+        )
     runtime = payload.get(CONFIG_RUNTIME_KEY)
     if runtime is not None:
         expected = {

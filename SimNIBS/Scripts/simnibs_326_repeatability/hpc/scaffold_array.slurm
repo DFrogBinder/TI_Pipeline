@@ -6,6 +6,7 @@
 #SBATCH --time=08:00:00
 #SBATCH --array=0-9%10
 #SBATCH --output=slurm-%A_%a.out
+#SBATCH --open-mode=append
 #SBATCH --requeue
 
 set -euo pipefail
@@ -27,9 +28,11 @@ mkdir -p "$LOG_DIR/retry_state"
 cd "$PIPELINE_DIR"
 
 TASK_ID="${SLURM_ARRAY_TASK_ID:?Missing SLURM_ARRAY_TASK_ID.}"
-JOB_KEY="${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${TASK_ID}"
+ARRAY_JOB_ID="${SLURM_ARRAY_JOB_ID:?Missing SLURM_ARRAY_JOB_ID.}"
+JOB_KEY="${ARRAY_JOB_ID}_${TASK_ID}"
+REQUEUE_JOB_ID="${ARRAY_JOB_ID}_${TASK_ID}"
 RETRY_FILE="$LOG_DIR/retry_state/${JOB_KEY}.retry"
-LOG_FILE="$LOG_DIR/scaffold_${SLURM_JOB_ID}_${TASK_ID}.log"
+MAX_RETRIES="${SIMNIBS326_MAX_RETRIES:-1}"
 RETRY_COUNT=0
 if [ -f "$RETRY_FILE" ]; then
     RETRY_COUNT="$(tr -d '[:space:]' < "$RETRY_FILE")"
@@ -37,11 +40,18 @@ fi
 if ! [[ "$RETRY_COUNT" =~ ^[0-9]+$ ]]; then
     RETRY_COUNT=0
 fi
+if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] SIMNIBS326_MAX_RETRIES must be a non-negative integer." >&2
+    exit 2
+fi
+ATTEMPT_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG_FILE="$LOG_DIR/scaffold_${JOB_KEY}_retry_${RETRY_COUNT}_${ATTEMPT_STAMP}.log"
 
 echo "[INFO] Module: SimNIBS/3.2.6-foss-2023a"
 echo "[INFO] headreco MATLAB dependency: ${SIMNIBS326_MATLAB_MODULE}"
 echo "[INFO] Scaffold task: $TASK_ID/9"
-echo "[INFO] Retry count: $RETRY_COUNT (unlimited until validation passes)"
+echo "[INFO] Attempt log: $LOG_FILE"
+echo "[INFO] Retry count: $RETRY_COUNT/$MAX_RETRIES"
 
 set +e
 timeout --kill-after=30s 7h python -u scaffold_runner.py build \
@@ -54,7 +64,24 @@ if [ "$RUN_EXIT" -eq 0 ]; then
     exit 0
 fi
 
+if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
+    echo "[ERROR] Scaffold task failed with exit $RUN_EXIT; retry limit $MAX_RETRIES exhausted." | tee -a "$LOG_FILE"
+    exit "$RUN_EXIT"
+fi
+
 NEXT_RETRY=$((RETRY_COUNT + 1))
 printf '%s\n' "$NEXT_RETRY" > "$RETRY_FILE"
-echo "[WARN] Scaffold task failed with exit $RUN_EXIT; requeueing retry $NEXT_RETRY."
-scontrol requeue "$SLURM_JOB_ID"
+echo "[WARN] Scaffold task failed with exit $RUN_EXIT; requeueing $REQUEUE_JOB_ID for retry $NEXT_RETRY/$MAX_RETRIES." | tee -a "$LOG_FILE"
+
+set +e
+REQUEUE_OUTPUT="$(scontrol requeue "$REQUEUE_JOB_ID" 2>&1)"
+REQUEUE_EXIT=$?
+set -e
+if [ -n "$REQUEUE_OUTPUT" ]; then
+    printf '%s\n' "$REQUEUE_OUTPUT" | tee -a "$LOG_FILE"
+fi
+if [ "$REQUEUE_EXIT" -ne 0 ]; then
+    echo "[ERROR] Failed to requeue $REQUEUE_JOB_ID." | tee -a "$LOG_FILE"
+    exit "$REQUEUE_EXIT"
+fi
+exit 0

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import sys
 import importlib.util
+import json
+import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +14,8 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 import simulation_runner  # noqa: E402
-from settings import MATLAB_MODULE, SIMNIBS_MODULE, SUBJECTS  # noqa: E402
+import settings as campaign_settings  # noqa: E402
+from settings import MAX_RETRIES, MATLAB_MODULE, SIMNIBS_MODULE, SUBJECTS  # noqa: E402
 
 
 PIPELINE_SPEC = importlib.util.spec_from_file_location(
@@ -58,6 +61,57 @@ def test_remesh_configs_pin_backend_and_confirmed_currents() -> None:
     assert left["stimulation"]["pair2"]["current_a"] == 0.0015886564694485628
     assert right["stimulation"]["pair1"]["current_a"] == 0.002
     assert right["stimulation"]["pair2"]["current_a"] == 0.0006324555320336759
+
+
+def test_default_v3_outputs_are_isolated_from_protected_charm_roots() -> None:
+    isolation = campaign_settings.assert_output_root_isolation()
+    writable = isolation["writable_v3_roots"]
+    protected = isolation["protected_read_only_roots"]
+
+    assert writable == {
+        "v3_scaffolds": (
+            "/mnt/parscratch/users/cop23bi/"
+            "ti_dataset_final_132_balanced_10_simnibs326_headreco"
+        ),
+        "v3_left_hippocampus": (
+            "/mnt/parscratch/users/cop23bi/"
+            "final_132_repeatability_balanced_10_simnibs326_left_hippocampus_v1"
+        ),
+        "v3_right_m1": (
+            "/mnt/parscratch/users/cop23bi/"
+            "final_132_repeatability_balanced_10_simnibs326_right_m1_v1"
+        ),
+    }
+    assert protected["left_hippocampus_experiment"].endswith(
+        "/final_132_repeatability_balanced_10"
+    )
+    assert protected["right_m1_experiment"].endswith(
+        "/final_132_repeatability_balanced_10_right_m1"
+    )
+
+
+def test_v3_writable_root_collision_with_charm_fails_closed(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        campaign_settings,
+        "SCAFFOLD_ROOT",
+        campaign_settings.PROTECTED_CHARM_ROOTS["left_hippocampus_experiment"],
+    )
+    with pytest.raises(RuntimeError, match="protected source/CHARM root"):
+        campaign_settings.assert_output_root_isolation()
+
+
+def test_v3_runner_rejects_config_that_targets_charm_root(tmp_path: Path) -> None:
+    config = pipeline.remesh_config("left-hippocampus")
+    config["experiment_root"] = str(
+        campaign_settings.PROTECTED_CHARM_ROOTS["left_hippocampus_experiment"]
+    )
+    config_path = tmp_path / "bad_root.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="not a dedicated SimNIBS 3.2.6 root"):
+        simulation_runner._validate_campaign_config(config_path)
 
 
 def test_internal_max_ti_matches_basic_geometries() -> None:
@@ -128,6 +182,25 @@ def test_headreco_jobs_load_pinned_matlab_dependency() -> None:
             in text
         )
         assert 'module load "${SIMNIBS326_MATLAB_MODULE}"' in text
+
+
+def test_hpc_retries_are_bounded_element_scoped_and_auditable() -> None:
+    assert MAX_RETRIES == 1
+    hpc_root = PACKAGE_ROOT / "hpc"
+    for name in ("scaffold_array.slurm", "simulation_array.slurm"):
+        text = (hpc_root / name).read_text(encoding="utf-8")
+        assert "#SBATCH --open-mode=append" in text
+        assert 'MAX_RETRIES="${SIMNIBS326_MAX_RETRIES:-1}"' in text
+        assert 'REQUEUE_JOB_ID="${ARRAY_JOB_ID}_${TASK_ID}"' in text
+        assert 'scontrol requeue "$REQUEUE_JOB_ID"' in text
+        assert 'scontrol requeue "$SLURM_JOB_ID"' not in text
+        assert "_retry_${RETRY_COUNT}_${ATTEMPT_STAMP}.log" in text
+        assert 'if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then' in text
+
+    submit = (hpc_root / "submit.sh").read_text(encoding="utf-8")
+    assert submit.count("--open-mode=append") == 2
+    assert "SIMNIBS326_MAX_RETRIES=$MAX_RETRIES" in submit
+    assert "unlimited validation-gated requeue" not in submit
 
 
 def test_compat_shim_covers_numpy_and_nibabel_5() -> None:

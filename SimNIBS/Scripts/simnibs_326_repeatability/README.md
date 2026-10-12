@@ -15,8 +15,10 @@ completed SimNIBS 4.0.1 roots and it does not delete transferred data.
   participant-target cell
 - Main simulation tasks: 1,600 (800 per target)
 - Component FEM solves: 3,200 (two tDCS fields per TI simulation)
-- One-time support work: 10 `headreco all` scaffold tasks and two 10-subject
-  optimizer-ROI extraction arrays
+- One-time production support: 10 `headreco all` scaffold tasks and two
+  10-subject remesh-only optimizer-ROI arrays used to select the fixed meshes
+- Post-completion analysis support: two separate 10-subject paired-condition
+  optimizer-ROI arrays, two collectors, and one combined analysis job
 - Nested 40 by 40 work is not part of this campaign
 
 The stimulation values are resolved fail-closed from the repository's
@@ -163,6 +165,42 @@ Read-only status is available at any time:
 
 ```bash
 bash hpc/submit.sh status
+```
+
+After both targets report a final, complete 800-task receipt, submit the
+read-only paired analysis:
+
+```bash
+bash hpc/submit.sh analysis
+```
+
+This does not generate meshes or solve FEM systems. It launches two 10-subject
+arrays to extract optimizer-matched ROI metrics from the 1,600 existing TI
+NIfTIs, two collectors, and one dependent analysis job. The earlier
+`repeatability_optimizer_roi_metrics_simnibs326_v1` tables contain remesh rows
+only and remain unchanged; the paired extraction is written to a distinct
+`repeatability_optimizer_roi_metrics_simnibs326_paired_v1` directory under
+each target root.
+
+The combined analysis is written to:
+
+```text
+/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_simnibs326_headreco/
+  _simnibs326/analysis/repeatability_optimizer_roi_paired_v1/
+```
+
+It contains a 1,600-row combined table, participant-by-condition summaries,
+finite-support and ROI-geometry audits, remesh rank-uncertainty summaries,
+four figures, an artifact-hashed manifest, and a compressed archive with a
+SHA-256 sidecar. The final statistics/figure job uses the established
+`$HOME/.conda/envs/ti-post/bin/python` environment; override it only when
+necessary with `SIMNIBS326_ANALYSIS_PYTHON`. Participants are the
+population-level units; the 40 runs in
+each condition are technical replicates and are not treated as 40 independent
+participants. Check progress or completion with:
+
+```bash
+bash hpc/submit.sh analysis-status
 ```
 
 Individual stages are also available as `module-check`, `scaffold`, `remesh`,

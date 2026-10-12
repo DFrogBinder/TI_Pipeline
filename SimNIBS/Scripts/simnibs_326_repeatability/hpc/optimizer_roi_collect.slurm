@@ -21,7 +21,7 @@ export PYTHONNOUSERSITE=1
 source "$PIPELINE_DIR/hpc/activate_compat.sh"
 
 EXTRACTOR="$PIPELINE_DIR/../ti_current_repair/post/extract_repeatability_optimizer_roi_metrics.py"
-ARCHIVE="$METRICS_ROOT/optimizer_roi_metrics_simnibs326.tar.gz"
+ARCHIVE="${ARCHIVE_PATH:-$METRICS_ROOT/optimizer_roi_metrics_simnibs326.tar.gz}"
 cd "$PIPELINE_DIR/.."
 python -u "$EXTRACTOR" collect \
     --config "$EXPERIMENT_CONFIG" \

@@ -673,6 +673,58 @@ def complete_final(target: str) -> dict[str, Any]:
     )
 
 
+def validate_final_receipt(target: str) -> dict[str, Any]:
+    """Validate the final-stage gate without rescanning all 800 target tasks."""
+    root = target_settings(target).experiment_root
+    paired_path = _config_path(root, PAIRED_CONFIG)
+    receipt_path = _completion_receipt(root)
+    if not paired_path.is_file():
+        raise FileNotFoundError(f"Missing paired-analysis config: {paired_path}")
+    if not receipt_path.is_file():
+        raise FileNotFoundError(f"Missing final completion receipt: {receipt_path}")
+
+    receipt = _load_json(receipt_path)
+    if receipt.get("status") != "complete" or receipt.get("stage") != "final":
+        raise RuntimeError(f"Final completion receipt is not complete: {receipt_path}")
+    if Path(str(receipt.get("config", ""))).resolve() != paired_path.resolve():
+        raise RuntimeError("Final completion receipt points to a different config")
+    if receipt.get("config_sha256") != _sha256(paired_path):
+        raise RuntimeError("Final completion receipt config checksum does not match")
+
+    expected_scope = _receipt_scope(paired_path, target=target, stage="final")
+    if receipt.get("scope") != expected_scope:
+        raise RuntimeError("Final completion receipt scope differs from the paired config")
+    validation = receipt.get("validation")
+    if not isinstance(validation, dict) or validation.get("status") != "complete":
+        raise RuntimeError("Final completion receipt validation is not complete")
+    if int(validation.get("total_tasks", -1)) != 800:
+        raise RuntimeError("Final completion receipt must validate exactly 800 tasks")
+    for condition in ("remesh", "fixed_mesh"):
+        condition_validation = validation.get(condition)
+        if not isinstance(condition_validation, dict):
+            raise RuntimeError(f"Missing {condition} validation in final receipt")
+        if condition_validation.get("status") != "complete":
+            raise RuntimeError(f"{condition} validation is not complete")
+        if int(condition_validation.get("expected_tasks", -1)) != 400:
+            raise RuntimeError(f"{condition} validation must expect 400 tasks")
+        if int(condition_validation.get("complete_tasks", -1)) != 400:
+            raise RuntimeError(f"{condition} validation must contain 400 complete tasks")
+        if int(condition_validation.get("failure_count", -1)) != 0:
+            raise RuntimeError(f"{condition} validation contains failures")
+
+    return {
+        "status": "ready",
+        "target": target,
+        "experiment_root": str(root),
+        "paired_config": str(paired_path),
+        "paired_config_sha256": _sha256(paired_path),
+        "completion_receipt": str(receipt_path),
+        "completion_receipt_sha256": _sha256(receipt_path),
+        "expected_metric_rows": 800,
+        "source_outputs_modified": False,
+    }
+
+
 def status(target: str) -> dict[str, Any]:
     root = target_settings(target).experiment_root
     configs = {
@@ -738,7 +790,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate_module = subparsers.add_parser("validate-module-receipt")
     validate_module.add_argument("--receipt", type=Path, required=True)
 
-    for name in ("complete-remesh", "complete-final", "status"):
+    for name in (
+        "complete-remesh",
+        "complete-final",
+        "validate-final-receipt",
+        "status",
+    ):
         child = subparsers.add_parser(name)
         child.add_argument("--target", choices=sorted(TARGETS), required=True)
 
@@ -774,6 +831,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = complete_remesh(args.target)
     elif args.command == "complete-final":
         payload = complete_final(args.target)
+    elif args.command == "validate-final-receipt":
+        payload = validate_final_receipt(args.target)
     elif args.command == "prepare-fixed":
         payload = prepare_fixed_stage(
             args.target,

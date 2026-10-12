@@ -115,6 +115,77 @@ def test_v3_runner_rejects_config_that_targets_charm_root(tmp_path: Path) -> Non
         simulation_runner._validate_campaign_config(config_path)
 
 
+def test_final_receipt_gate_releases_exact_paired_analysis_scope(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target = "left-hippocampus"
+    root = tmp_path / "left"
+    monkeypatch.setitem(
+        campaign_settings.TARGETS,
+        target,
+        campaign_settings.TargetSettings(
+            key=target,
+            label="left hippocampus",
+            experiment_root=root,
+        ),
+    )
+    paired_path = root / "_pipeline" / "configs" / "paired_analysis.json"
+    paired_path.parent.mkdir(parents=True)
+    paired = pipeline.remesh_config(target)
+    paired["conditions"].append(
+        {
+            "name": "fixed_mesh",
+            "mesh_mode": "fixed_mesh",
+            "repeat_count": 40,
+            "description": "Test fixed-mesh condition.",
+        }
+    )
+    paired_path.write_text(json.dumps(paired), encoding="utf-8")
+
+    condition_validation = {
+        "status": "complete",
+        "expected_tasks": 400,
+        "complete_tasks": 400,
+        "failure_count": 0,
+    }
+    receipt_path = root / "_pipeline" / "workflow" / "complete.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "stage": "final",
+                "config": str(paired_path),
+                "config_sha256": pipeline._sha256(paired_path),
+                "scope": pipeline._receipt_scope(
+                    paired_path,
+                    target=target,
+                    stage="final",
+                ),
+                "validation": {
+                    "status": "complete",
+                    "total_tasks": 800,
+                    "remesh": condition_validation,
+                    "fixed_mesh": condition_validation,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = pipeline.validate_final_receipt(target)
+    assert result["status"] == "ready"
+    assert result["expected_metric_rows"] == 800
+    assert result["source_outputs_modified"] is False
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["scope"]["simnibs_module"] = "SimNIBS/4.0.1-foss-2023a"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="scope differs"):
+        pipeline.validate_final_receipt(target)
+
+
 def test_internal_max_ti_matches_basic_geometries() -> None:
     E1 = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     E2 = np.array([[0.5, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]])
@@ -167,6 +238,31 @@ def test_hpc_launchers_do_not_load_simnibs_4() -> None:
     assert "SimNIBS/3.2.6-foss-2023a" in (
         hpc_root / "simulation_array.slurm"
     ).read_text(encoding="utf-8")
+
+
+def test_paired_analysis_launcher_is_read_only_and_full_scope() -> None:
+    hpc_root = PACKAGE_ROOT / "hpc"
+    submit = (hpc_root / "submit.sh").read_text(encoding="utf-8")
+    analysis = (hpc_root / "analyze_optimizer_roi.slurm").read_text(
+        encoding="utf-8"
+    )
+
+    assert "repeatability_optimizer_roi_metrics_simnibs326_paired_v1" in submit
+    assert 'validate-final-receipt' in submit
+    assert 'submit_paired_roi_extraction left-hippocampus' in submit
+    assert 'submit_paired_roi_extraction right-m1' in submit
+    assert '--dependency="afterok:$left_collect:$right_collect"' in submit
+    assert 'echo "  source TI NIfTIs: 1600"' in submit
+    assert 'echo "  meshing tasks: 0"' in submit
+    assert 'echo "  FEM simulation tasks: 0"' in submit
+
+    assert "analyze_repeatability_optimizer_roi_metrics.py" in analysis
+    assert 'SIMNIBS326_ANALYSIS_PYTHON' in analysis
+    assert '$HOME/.conda/envs/ti-post/bin/python' in analysis
+    assert '--rank-draws 20000' in analysis
+    assert 'int(manifest.get("rows", -1)) != 1600' in analysis
+    assert "simnibs326_repeatability_analysis_v1.tar.gz" in analysis
+    assert "Source policy:     read-only" in analysis
 
 
 def test_headreco_jobs_load_pinned_matlab_dependency() -> None:

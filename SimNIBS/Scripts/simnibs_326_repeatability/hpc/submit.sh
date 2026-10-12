@@ -32,10 +32,10 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|init|module-check|scaffold|remesh|post-remesh|fixed|all-remesh|all-fixed|status) ;;
+    preflight|init|module-check|scaffold|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
     *)
         echo "[ERROR] Unsupported mode: $MODE" >&2
-        echo "Usage: $0 {preflight|init|module-check|scaffold|remesh|post-remesh|fixed|all-remesh|all-fixed|status} [target] [--dependency=JOBID]" >&2
+        echo "Usage: $0 {preflight|init|module-check|scaffold|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target] [--dependency=JOBID]" >&2
         exit 2
         ;;
 esac
@@ -60,10 +60,13 @@ SIM_ARRAY="$PIPELINE_DIR/hpc/simulation_array.slurm"
 CONTROL="$PIPELINE_DIR/hpc/control.slurm"
 ROI_ARRAY="$PIPELINE_DIR/hpc/optimizer_roi_array.slurm"
 ROI_COLLECT="$PIPELINE_DIR/hpc/optimizer_roi_collect.slurm"
+ROI_ANALYSIS="$PIPELINE_DIR/hpc/analyze_optimizer_roi.slurm"
+ROI_EXTRACTOR="$PIPELINE_DIR/../ti_current_repair/post/extract_repeatability_optimizer_roi_metrics.py"
+ROI_ANALYZER="$PIPELINE_DIR/../ti_current_repair/post/analyze_repeatability_optimizer_roi_metrics.py"
 COMPAT_SHIM="$PIPELINE_DIR/hpc/activate_compat.sh"
 CAT12_COMPAT="$PIPELINE_DIR/cat12_compat.py"
 
-for required in "$PIPELINE" "$MODULE_PREFLIGHT" "$SCAFFOLD_ARRAY" "$SIM_ARRAY" "$CONTROL" "$ROI_ARRAY" "$ROI_COLLECT" "$COMPAT_SHIM" "$CAT12_COMPAT"; do
+for required in "$PIPELINE" "$MODULE_PREFLIGHT" "$SCAFFOLD_ARRAY" "$SIM_ARRAY" "$CONTROL" "$ROI_ARRAY" "$ROI_COLLECT" "$ROI_ANALYSIS" "$ROI_EXTRACTOR" "$ROI_ANALYZER" "$COMPAT_SHIM" "$CAT12_COMPAT"; do
     if [ ! -f "$required" ]; then
         echo "[ERROR] Missing pipeline file: $required" >&2
         exit 2
@@ -79,6 +82,8 @@ SCAFFOLD_ROOT="$(setting 'SCAFFOLD_ROOT')"
 MATLAB_MODULE="$(setting 'MATLAB_MODULE')"
 MAX_RETRIES="${SIMNIBS326_MAX_RETRIES:-$(setting 'MAX_RETRIES')}"
 PREFLIGHT_RECEIPT="$SCAFFOLD_ROOT/_simnibs326/module_preflight.json"
+ANALYSIS_ROOT="$SCAFFOLD_ROOT/_simnibs326/analysis/repeatability_optimizer_roi_paired_v1"
+ANALYSIS_PYTHON="${SIMNIBS326_ANALYSIS_PYTHON:-$HOME/.conda/envs/ti-post/bin/python}"
 
 if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
     echo "[ERROR] SIMNIBS326_MAX_RETRIES must be a non-negative integer." >&2
@@ -99,6 +104,11 @@ target_config() {
 metrics_root() {
     local target="$1"
     printf '%s/_post_processing/repeatability_optimizer_roi_metrics_simnibs326_v1\n' "$(target_root "$target")"
+}
+
+paired_metrics_root() {
+    local target="$1"
+    printf '%s/_post_processing/repeatability_optimizer_roi_metrics_simnibs326_paired_v1\n' "$(target_root "$target")"
 }
 
 parse_job_id() {
@@ -266,6 +276,116 @@ submit_fixed_and_finalize() {
     printf '%s\t%s\n' "$fixed_job" "$final_job"
 }
 
+submit_paired_roi_extraction() {
+    local target="$1"
+    local after_job="${2:-}"
+    local dep=()
+    if [ -n "$after_job" ]; then
+        dep+=("--dependency=afterok:$after_job")
+    fi
+    local root
+    root="$(target_root "$target")"
+    local config="$root/_pipeline/configs/paired_analysis.json"
+    local metrics
+    metrics="$(paired_metrics_root "$target")"
+    local log_dir="$root/_simnibs326/logs/paired_optimizer_roi"
+    local label="${target//-/_}"
+    local archive="$metrics/${label}_repeatability_optimizer_roi_metrics_simnibs326_paired_v1.tar.gz"
+    mkdir -p "$log_dir" "$metrics/logs"
+
+    local roi_raw
+    roi_raw="$(
+        "$SBATCH_BIN" --parsable \
+            --job-name="ti326_roi_${label}" \
+            --partition="$PARTITION" \
+            --array="0-9%10" \
+            "${dep[@]}" \
+            --output="$log_dir/extract-%A_%a.out" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics" \
+            "$ROI_ARRAY"
+    )"
+    local roi_job
+    roi_job="$(parse_job_id "$roi_raw")"
+
+    local collect_raw
+    collect_raw="$(
+        "$SBATCH_BIN" --parsable \
+            --job-name="ti326_roi_collect_${label}" \
+            --partition="$PARTITION" \
+            --dependency="afterok:$roi_job" \
+            --output="$log_dir/collect-%j.out" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,ARCHIVE_PATH=$archive" \
+            "$ROI_COLLECT"
+    )"
+    local collect_job
+    collect_job="$(parse_job_id "$collect_raw")"
+    printf '%s\t%s\n' "$roi_job" "$collect_job"
+}
+
+submit_paired_analysis() {
+    local left_collect="$1"
+    local right_collect="$2"
+    local left_csv
+    left_csv="$(paired_metrics_root left-hippocampus)/optimizer_roi_metrics.csv"
+    local right_csv
+    right_csv="$(paired_metrics_root right-m1)/optimizer_roi_metrics.csv"
+    local log_dir="$ANALYSIS_ROOT/logs"
+    mkdir -p "$log_dir"
+    local raw
+    raw="$(
+        "$SBATCH_BIN" --parsable \
+            --job-name="ti326_analysis" \
+            --partition="$PARTITION" \
+            --dependency="afterok:$left_collect:$right_collect" \
+            --output="$log_dir/analysis-%j.out" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_METRICS_CSV=$left_csv,RIGHT_METRICS_CSV=$right_csv,ANALYSIS_ROOT=$ANALYSIS_ROOT,SIMNIBS326_ANALYSIS_PYTHON=$ANALYSIS_PYTHON" \
+            "$ROI_ANALYSIS"
+    )"
+    parse_job_id "$raw"
+}
+
+print_analysis_scope() {
+    echo "Analysis scope:"
+    echo "  source: completed SimNIBS 3.2.6 TI fields (read-only)"
+    echo "  targets: 2 (left hippocampus, right M1)"
+    echo "  participants per target: 10"
+    echo "  conditions: 2 (remesh, fixed_mesh)"
+    echo "  technical repeats per participant-condition: 40"
+    echo "  source TI NIfTIs: 1600"
+    echo "  paired metric rows: 1600 (800 per target)"
+    echo "  extraction arrays: 2 x 0-9%10 (20 subject tasks)"
+    echo "  collector jobs: 2"
+    echo "  final analysis jobs: 1"
+    echo "  analysis Python: $ANALYSIS_PYTHON"
+    echo "  meshing tasks: 0"
+    echo "  FEM simulation tasks: 0"
+    echo "  inferential unit: participant; repeats are technical replicates"
+    echo "  ROI policy: optimizer-matched parcel-clipped spheres; mesh and voxel realizations are aligned/equivalent, not identical masks"
+    echo "  output: $ANALYSIS_ROOT"
+}
+
+print_analysis_status() {
+    local left_manifest
+    left_manifest="$(paired_metrics_root left-hippocampus)/manifest.json"
+    local right_manifest
+    right_manifest="$(paired_metrics_root right-m1)/manifest.json"
+    local analysis_manifest="$ANALYSIS_ROOT/results/analysis_manifest.json"
+    for entry in \
+        "left paired metrics|$left_manifest" \
+        "right paired metrics|$right_manifest" \
+        "combined analysis|$analysis_manifest"
+    do
+        local label="${entry%%|*}"
+        local path="${entry#*|}"
+        echo "[$label] $path"
+        if [ -s "$path" ]; then
+            cat "$path"
+        else
+            echo '{"status": "missing"}'
+        fi
+    done
+}
+
 print_scope() {
     "$PYTHON_BIN" "$PIPELINE" plan
     echo "  headreco MATLAB dependency: $MATLAB_MODULE"
@@ -349,6 +469,25 @@ case "$MODE" in
         right_jobs="$(submit_fixed_and_finalize right-m1 "$left_final")"
         echo "[INFO] Left fixed/final: $left_jobs"
         echo "[INFO] Right fixed/final: $right_jobs"
+        ;;
+    analysis)
+        print_analysis_scope
+        "$PYTHON_BIN" "$PIPELINE" validate-final-receipt \
+            --target left-hippocampus >/dev/null
+        "$PYTHON_BIN" "$PIPELINE" validate-final-receipt \
+            --target right-m1 >/dev/null
+        left_analysis_jobs="$(submit_paired_roi_extraction left-hippocampus "$DEPENDENCY")"
+        left_collect="${left_analysis_jobs##*$'\t'}"
+        right_analysis_jobs="$(submit_paired_roi_extraction right-m1 "$DEPENDENCY")"
+        right_collect="${right_analysis_jobs##*$'\t'}"
+        analysis_job="$(submit_paired_analysis "$left_collect" "$right_collect")"
+        echo "[INFO] Left paired ROI jobs (extract, collect):  $left_analysis_jobs"
+        echo "[INFO] Right paired ROI jobs (extract, collect): $right_analysis_jobs"
+        echo "[INFO] Combined analysis job:                    $analysis_job"
+        echo "[INFO] Source simulations and meshes remain read-only."
+        ;;
+    analysis-status)
+        print_analysis_status
         ;;
     status)
         "$PYTHON_BIN" "$PIPELINE" status --target left-hippocampus

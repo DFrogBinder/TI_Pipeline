@@ -1,6 +1,6 @@
 {
   "profile": "camcan-simnibs326-balanced10-repeatability-v1",
-  "status": "candidate_unverified_on_hpc",
+  "status": "working",
   "created_date": "2026-10-08",
   "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
   "headreco_matlab_module": "MATLAB/2023b",
@@ -40,7 +40,11 @@
     "memory": "32G",
     "time_limit": "08:00:00",
     "max_concurrent_simulations": 50,
-    "simulation_array_per_target_condition": "0-399%50"
+    "simulation_array_per_target_condition": "0-399%50",
+    "paired_roi_extraction_arrays": "2 x 0-9%10",
+    "paired_roi_extraction_resources": "4 CPU, 16G, 02:00:00",
+    "combined_analysis_resources": "4 CPU, 16G, 02:00:00",
+    "combined_analysis_python": "$HOME/.conda/envs/ti-post/bin/python (override with SIMNIBS326_ANALYSIS_PYTHON)"
   },
   "retry": {
     "task_timeout_hours": 4,
@@ -57,6 +61,22 @@
     "full requested remesh arrays are dependency-blocked until both preceding gates pass",
     "fixed arrays remain a separate release after full remesh and optimizer-ROI validation"
   ],
+  "completion_evidence": {
+    "module_preflight_job": "11789551 COMPLETED 0:0",
+    "scaffold_revalidation_array": "11789552_0..9 COMPLETED 0:0",
+    "remesh_and_postprocessing_jobs": "11789553..11789562 completed; 800 remesh tasks and all gates reported COMPLETED 0:0",
+    "fixed_and_final_jobs": "11797124..11797127 released the fixed arrays and final validation gates",
+    "left_final_receipt": "complete, created 2026-10-12T13:45:14+00:00, 400 remesh plus 400 fixed_mesh tasks, zero failures",
+    "right_final_receipt": "complete, created 2026-10-12T15:21:25+00:00, 400 remesh plus 400 fixed_mesh tasks, zero failures"
+  },
+  "paired_analysis": {
+    "status": "candidate_not_submitted",
+    "source_policy": "read-only completed v3 TI NIfTIs and atlases",
+    "scope": "1600 fields; 20 subject extraction tasks; 2 collectors; 1 combined analysis job",
+    "output_policy": "new paired metric roots and isolated scaffold metadata analysis root; remesh-selection metrics remain unchanged",
+    "completion_gate": "two 800-row schema-v2 target manifests plus one 1600-row artifact-hashed analysis manifest",
+    "inferential_unit": "participant; 40 runs per condition are technical replicates"
+  },
   "known_good_predecessor": {
     "profile": "camcan-spherical-fixed-nested-repeatability-v1",
     "simnibs_module": "SimNIBS/4.0.1-foss-2023a",

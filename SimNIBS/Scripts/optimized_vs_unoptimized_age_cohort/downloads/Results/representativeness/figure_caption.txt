@@ -1,0 +1,11 @@
+Generic-montage target fields in the selected 14 and final-132 cohort. Each
+point shows the ten-repeat mean target-ROI field for the MNI152-derived generic
+montage on one participant head, expressed as a percentage difference from the
+corresponding MNI152-head result. The selected age-balanced participants are
+highlighted by recorded sex, and the seven previously optimized participants
+are marked separately because they were selected using field outcomes. SMD is
+the difference in mean age/recorded-sex-adjusted residual between the selected
+14 and the 111-person reference group, divided by the reference residual
+standard deviation. Selected span is the percentage of reference residuals
+falling between the minimum and maximum selected residuals. The horizontal
+dashed line denotes the MNI152 value.

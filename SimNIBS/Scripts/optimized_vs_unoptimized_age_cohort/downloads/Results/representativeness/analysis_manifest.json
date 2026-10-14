@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "analysis": "mni_field_representativeness_of_age_balanced_14",
+  "generated_at": "2026-10-14T10:51:33.754482+00:00",
+  "status": "complete",
+  "interpretation": "descriptive_representativeness_not_equivalence",
+  "source_analysis": {
+    "analysis_schema_version": 4,
+    "subjects": 132,
+    "rois": [
+      "Left_Hippocampus",
+      "Left_M1",
+      "Right_DLPC",
+      "Right_Thalamus"
+    ],
+    "repeats_per_subject_roi": 10,
+    "primary_roi_definition": "MakeROIs.m-equivalent sphere centred on the anatomical parcel volume centroid and clipped to that parcel"
+  },
+  "validated_counts": {
+    "final_132_subjects": 132,
+    "selected_subjects": 14,
+    "prior_optimized_subjects": 7,
+    "eligible_unselected_reference_subjects": 111,
+    "targets": 4,
+    "repeats_per_subject_target": 10
+  },
+  "analysis_choices": {
+    "primary_metric": "roi_mean_v_per_m",
+    "supporting_metrics": [
+      "roi_median_v_per_m",
+      "target_coverage_percent_ge_0p2",
+      "off_target_coverage_percent_ge_0p2"
+    ],
+    "field_transform": "100 * (participant - MNI152) / MNI152",
+    "coverage_transform": "participant percentage - MNI152 percentage",
+    "adjustment_model": "continuous age + recorded sex + age by recorded sex",
+    "reference_residuals": "leave-one-out PRESS residuals",
+    "selected_residuals": "predicted by model fitted to 111-person reference only",
+    "decision_rule": "descriptive diagnostics; no pass/fail or equivalence threshold"
+  },
+  "primary_summary": {
+    "adjusted_smd_min": -0.27863487919865854,
+    "adjusted_smd_max": 0.004572234207475937,
+    "selected_span_reference_percent_min": 74.77477477477478,
+    "selected_span_reference_percent_max": 94.5945945945946,
+    "selected_max_abs_adjusted_z": 2.313160699889222,
+    "selected_multivariate_distance_percentile_min": 7.207207207207207,
+    "selected_multivariate_distance_percentile_max": 89.1891891891892
+  },
+  "inputs": {
+    "cohort_table": {
+      "path": "/home/boyan/sandbox/Jake_Data/CamCan-PostData/manuscript-ready-supervisor-revision-0p20-v4/source_tables/cohort/subject_level_repeat_mean_metrics.csv",
+      "sha256": "f22917e632538a0d96d06cc02fcd7a94e5c13a958db3051ae24c37e73596e545"
+    },
+    "mni_table": {
+      "path": "/home/boyan/sandbox/Jake_Data/CamCan-PostData/manuscript-ready-supervisor-revision-0p20-v4/source_tables/cohort/mni152_baseline_metrics.csv",
+      "sha256": "f5f6d4441e91a5a05774b536b69cc4eea6b2dfa8af99295b8ebf7b9e9e06ffd1"
+    },
+    "analysis_manifest": {
+      "path": "/home/boyan/sandbox/Jake_Data/CamCan-PostData/manuscript-ready-supervisor-revision-0p20-v4/source_tables/cohort/analysis_manifest.json",
+      "sha256": "4702dd7a9c4c25bd78e80444d3ac22424b52602dbf08b589755a4928d29b2dc9"
+    },
+    "selection_manifest": {
+      "path": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/cohort_pipeline/cohorts/optimized_vs_unoptimized_age_balanced_14/selection_manifest.csv",
+      "sha256": "76538518ef700b6d5f7396affd07a2debeeb93aedb7ed6abbfd9bf44af20e3b6"
+    },
+    "selection_audit": {
+      "path": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/output/spreadsheet/final_132_optimized_vs_unoptimized_age_balanced_14/eligible_132_selection_audit.csv",
+      "sha256": "41a231a17c813307a623fe53ca25aadfd079ea5f4c8542d0a536e29ddbc1982f"
+    },
+    "optimized_seven": {
+      "path": "/home/boyan/sandbox/TI_Pipeline/SimNIBS/Scripts/CamCan_Experiment/cohort_pipeline/cohorts/optimized_best_worst_7/subjects.txt",
+      "sha256": "fda1b5f0f29bb919f9448a889b157360865d3f7fa9e30d1d99e09cc327e45a21"
+    }
+  },
+  "outputs": [
+    "mni_field_representativeness.png",
+    "mni_field_representativeness.pdf",
+    "mni_target_coverage_representativeness.png",
+    "mni_target_coverage_representativeness.pdf",
+    "representativeness_summary.csv",
+    "selected_14_mni_field_profiles.csv",
+    "multivariate_field_profiles.csv",
+    "REPRESENTATIVENESS_REPORT.md",
+    "figure_caption.txt",
+    "target_coverage_figure_caption.txt"
+  ]
+}

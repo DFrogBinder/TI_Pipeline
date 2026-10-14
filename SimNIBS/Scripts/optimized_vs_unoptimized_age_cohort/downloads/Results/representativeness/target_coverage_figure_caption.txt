@@ -1,0 +1,9 @@
+Target coverage at 0.20 V/m in the selected 14 and final-132 cohort. Each
+point shows the percentage of the optimizer-matched target ROI with a simulated
+field at or above 0.20 V/m, averaged across ten remeshing repeats and expressed
+as a percentage-point difference from the corresponding MNI152-head result.
+The selected age-balanced participants are highlighted by recorded sex, and
+the seven previously optimized participants are marked separately. SMD and
+selected span use the same age/recorded-sex-adjusted 111-person reference as
+the mean-field figure. The dashed line denotes the MNI152 coverage. The 0.20
+V/m cutoff is an analysis convention, not a validated therapeutic threshold.

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,6 @@ from .io_utils import sha256_file, utc_now, write_csv_atomic, write_json_atomic
 from .logs import select_task_logs, summarize_task_logs
 from .mesh import audit_mesh_field
 from .paths import resolve_run_artifacts
-from .render import render_paired_diagnostic
 
 
 SUPPORT_FIELDS = (
@@ -137,6 +138,72 @@ def _production_log_status(summary: dict[str, Any]) -> str:
     return "final_attempt_not_proven_successful"
 
 
+def _run_external_renderer(request_path: Path) -> dict[str, Any]:
+    render_python_raw = os.environ.get("FINITE_SUPPORT_RENDER_PYTHON", "")
+    if not render_python_raw:
+        raise RuntimeError(
+            "FINITE_SUPPORT_RENDER_PYTHON is required for diagnostic rendering"
+        )
+    render_python = Path(render_python_raw).expanduser()
+    if not render_python.is_file() or not os.access(render_python, os.X_OK):
+        raise RuntimeError(
+            f"FINITE_SUPPORT_RENDER_PYTHON is not executable: {render_python}"
+        )
+    command = [
+        str(render_python),
+        "-u",
+        "-m",
+        "simnibs_326_finite_support_audit",
+        "render-request",
+        "--request",
+        str(request_path),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "no renderer output").strip()
+        raise RuntimeError(
+            f"External diagnostic renderer failed with exit code "
+            f"{completed.returncode}: {detail[-4000:]}"
+        )
+    receipt_path = request_path.parent / "render_complete.json"
+    if not receipt_path.is_file():
+        raise RuntimeError(f"Renderer did not write its completion receipt: {receipt_path}")
+    return json.loads(receipt_path.read_text(encoding="utf-8"))
+
+
+def _validate_render_receipt(
+    *,
+    receipt: dict[str, Any],
+    request_path: Path,
+    target: str,
+    subject: str,
+    expected_figures: dict[str, Path],
+) -> None:
+    if receipt.get("status") != "complete":
+        raise RuntimeError("Renderer receipt is not complete")
+    if receipt.get("target") != target or receipt.get("subject") != subject:
+        raise RuntimeError("Renderer receipt identity mismatch")
+    if receipt.get("request_sha256") != sha256_file(request_path):
+        raise RuntimeError("Renderer request checksum mismatch")
+    records = receipt.get("figures")
+    if not isinstance(records, list) or len(records) != len(expected_figures):
+        raise RuntimeError("Renderer receipt has the wrong figure count")
+    by_condition = {str(record.get("condition")): record for record in records}
+    if set(by_condition) != set(expected_figures):
+        raise RuntimeError("Renderer receipt has the wrong conditions")
+    for condition, expected_path in expected_figures.items():
+        record = by_condition[condition]
+        recorded_path = Path(str(record.get("path", "")))
+        if recorded_path.resolve() != expected_path.resolve():
+            raise RuntimeError(f"Renderer figure path mismatch for {condition}")
+        if not expected_path.is_file() or expected_path.stat().st_size == 0:
+            raise RuntimeError(f"Renderer figure is missing or empty: {expected_path}")
+        if int(record.get("size_bytes", -1)) != expected_path.stat().st_size:
+            raise RuntimeError(f"Renderer figure size mismatch for {condition}")
+        if record.get("sha256") != sha256_file(expected_path):
+            raise RuntimeError(f"Renderer figure checksum mismatch for {condition}")
+
+
 def audit_cell(*, cell_index: int, output_root: Path) -> dict[str, Any]:
     """Audit 80 v3 runs and 80 matched v4 runs for one subject-target cell."""
 
@@ -146,14 +213,14 @@ def audit_cell(*, cell_index: int, output_root: Path) -> dict[str, Any]:
     roi_cache: dict[tuple[Any, ...], tuple[Any, dict[str, Any], bool]] = {}
     cell_root = output_root / "cells" / target.key / subject
     rows: list[dict[str, Any]] = []
-    figure_paths: list[Path] = []
+    render_conditions: dict[str, Any] = {}
 
     for condition in CONDITIONS:
         job_id = target.remesh_job_id if condition == "remesh" else target.fixed_job_id
         log_dir = target.v3_root / "_simnibs326" / "logs" / (
             "remesh" if condition == "remesh" else "fixed"
         )
-        figure_versions: list[dict[str, Any]] = []
+        render_versions: dict[str, Any] = {}
         for repeat_number in range(1, REPEAT_COUNT + 1):
             v3_paths = resolve_run_artifacts(
                 repeat_root(target.v3_root, subject, condition, repeat_number), subject
@@ -230,25 +297,60 @@ def audit_cell(*, cell_index: int, output_root: Path) -> dict[str, Any]:
             rows.append(row)
 
             if repeat_number == 1:
-                figure_versions = [
-                    {"name": "v3", "t1_path": v3_paths["t1"], "audit": v3},
-                    {"name": "v4", "t1_path": v4_paths["t1"], "audit": v4},
-                ]
-
-        figure_path = cell_root / "figures" / f"{condition}_repeat_001_v3_v4.png"
-        render_paired_diagnostic(
-            output_path=figure_path,
-            target_label=target.roi.replace("_", " "),
-            subject=subject,
-            condition=condition,
-            versions=figure_versions,
-        )
-        figure_paths.append(figure_path)
+                render_versions = {
+                    "v3": {
+                        "t1": str(v3_paths["t1"]),
+                        "raw_field": str(v3_paths["raw_field"]),
+                        "tissue_labels": str(v3_paths["tissue_labels"]),
+                        "masked_field": str(v3_paths["masked_field"]),
+                        "cause": str(v3["cause"]),
+                    },
+                    "v4": {
+                        "t1": str(v4_paths["t1"]),
+                        "raw_field": str(v4_paths["raw_field"]),
+                        "tissue_labels": str(v4_paths["tissue_labels"]),
+                        "masked_field": str(v4_paths["masked_field"]),
+                        "cause": str(v4["cause"]),
+                    },
+                }
+        if set(render_versions) != {"v3", "v4"}:
+            raise RuntimeError(f"Missing repeat_001 render inputs for {condition}")
+        render_conditions[condition] = {
+            "output_path": str(
+                cell_root / "figures" / f"{condition}_repeat_001_v3_v4.png"
+            ),
+            "versions": render_versions,
+        }
 
     if len(rows) != len(CONDITIONS) * REPEAT_COUNT:
         raise RuntimeError(f"Expected 80 rows, produced {len(rows)}")
     runs_path = cell_root / "runs.csv"
     write_csv_atomic(runs_path, rows, RUN_FIELDS)
+    render_request = {
+        "schema_version": SCHEMA_VERSION,
+        "target": target.key,
+        "target_label": target.roi.replace("_", " "),
+        "roi": target.roi,
+        "atlas_labels": list(target.atlas_labels),
+        "subject": subject,
+        "atlas_path": str(atlas_path),
+        "conditions": render_conditions,
+    }
+    request_path = cell_root / "render_request.json"
+    write_json_atomic(request_path, render_request)
+    render_receipt = _run_external_renderer(request_path)
+    expected_figures = {
+        condition: Path(str(payload["output_path"]))
+        for condition, payload in render_conditions.items()
+    }
+    _validate_render_receipt(
+        receipt=render_receipt,
+        request_path=request_path,
+        target=target.key,
+        subject=subject,
+        expected_figures=expected_figures,
+    )
+    figure_paths = [expected_figures[condition] for condition in CONDITIONS]
     summary = {
         "status": "complete",
         "schema_version": SCHEMA_VERSION,
@@ -276,6 +378,11 @@ def audit_cell(*, cell_index: int, output_root: Path) -> dict[str, Any]:
         "runs_csv": str(runs_path),
         "runs_csv_sha256": sha256_file(runs_path),
         "figures": [str(path) for path in figure_paths],
+        "render_request": str(request_path),
+        "render_request_sha256": sha256_file(request_path),
+        "render_receipt": str(cell_root / "render_complete.json"),
+        "render_python": render_receipt.get("renderer_python"),
+        "render_matplotlib_version": render_receipt.get("matplotlib_version"),
         "source_outputs_modified": False,
         "meshing_tasks": 0,
         "fem_tasks": 0,

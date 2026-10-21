@@ -7,6 +7,7 @@ export PYTHONPATH="$PROJECT_DIR:${PYTHONPATH:-}"
 OUTPUT_ROOT="${FINITE_SUPPORT_AUDIT_ROOT:-/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_simnibs326_headreco/_simnibs326/finite_support_forensics_v1}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+RENDER_PYTHON="${FINITE_SUPPORT_RENDER_PYTHON:-$HOME/.conda/envs/ti-post/bin/python}"
 MODE="${1:-preflight}"
 
 ARRAY_SCRIPT="$PIPELINE_DIR/hpc/audit_array.slurm"
@@ -41,6 +42,8 @@ print_scope() {
     echo "  immutable production logs inspected: 1,600 task histories"
     echo "  diagnostic v3/v4 panels: 40"
     echo "  audit array: 0-19%10 (20 subject-target cells)"
+    echo "  numeric interpreter: SimNIBS 3.2.6 module Python"
+    echo "  rendering interpreter: $RENDER_PYTHON"
     echo "  meshing/FEM tasks: 0"
     echo "  source-output modifications: 0"
     echo "  isolated output: $OUTPUT_ROOT"
@@ -57,6 +60,11 @@ parse_job_id() {
 }
 
 run_preflight() {
+    if [ ! -x "$RENDER_PYTHON" ]; then
+        echo "[ERROR] Rendering Python is missing or not executable: $RENDER_PYTHON" >&2
+        exit 2
+    fi
+    "$RENDER_PYTHON" -c 'import matplotlib, nibabel, numpy'
     "$PYTHON_BIN" -m simnibs_326_finite_support_audit preflight \
         --output-root "$OUTPUT_ROOT"
 }
@@ -78,7 +86,7 @@ if [ "$MODE" = "run" ]; then
     mkdir -p "$OUTPUT_ROOT/logs"
     raw_array="$($SBATCH_BIN --parsable \
         --output="$OUTPUT_ROOT/logs/audit-%A_%a.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,OUTPUT_ROOT=$OUTPUT_ROOT" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,OUTPUT_ROOT=$OUTPUT_ROOT,FINITE_SUPPORT_RENDER_PYTHON=$RENDER_PYTHON" \
         "$ARRAY_SCRIPT")"
     array_job="$(parse_job_id "$raw_array")"
     raw_collect="$($SBATCH_BIN --parsable \
@@ -87,8 +95,8 @@ if [ "$MODE" = "run" ]; then
         --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,OUTPUT_ROOT=$OUTPUT_ROOT" \
         "$COLLECT_SCRIPT")"
     collect_job="$(parse_job_id "$raw_collect")"
-    printf 'submitted_utc\taudit_array_job\tcollector_job\toutput_root\n' > "$SUBMISSION_RECEIPT"
-    printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$array_job" "$collect_job" "$OUTPUT_ROOT" >> "$SUBMISSION_RECEIPT"
+    printf 'submitted_utc\taudit_array_job\tcollector_job\toutput_root\trender_python\n' > "$SUBMISSION_RECEIPT"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$array_job" "$collect_job" "$OUTPUT_ROOT" "$RENDER_PYTHON" >> "$SUBMISSION_RECEIPT"
     echo "Submitted audit array: $array_job"
     echo "Submitted afterok collector: $collect_job"
     echo "Receipt: $SUBMISSION_RECEIPT"

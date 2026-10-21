@@ -42,6 +42,14 @@ bash simnibs_326_finite_support_audit/hpc/submit.sh status
 submits array `0-19%10` and an `afterok` collector. No job is submitted by
 `scope` or `preflight`.
 
+The array deliberately uses two Python environments. The SimNIBS 3.2.6 module
+Python performs all NIfTI and direct mesh-field calculations. The existing
+`$HOME/.conda/envs/ti-post/bin/python` interpreter renders the diagnostic
+panels. `preflight` verifies that the rendering interpreter has Matplotlib,
+Nibabel, and NumPy before any job is submitted. Override only the renderer with
+`FINITE_SUPPORT_RENDER_PYTHON` if required; do not replace the SimNIBS 3.2.6
+interpreter used for mesh inspection.
+
 The default output root is:
 
 ```text
@@ -58,9 +66,12 @@ path overlapping the v3 roots, v4 roots, or atlas source.
 - `audit_summary.json`: full scope, cause counts, and grouped statistics;
 - `audit_report.md`: one human-readable interpretation with the 40 group summaries;
 - `cells/.../figures/*.png`: 40 paired panels;
+- `cells/.../render_request.json` and `render_complete.json`: cross-environment
+  rendering request and hashed completion evidence;
 - `production_sacct.tsv`: scheduler snapshot for the four production arrays;
 - `manifest.json` and `checksums.sha256`: auditable file inventory;
 - `finite_support_forensics_v1.tar.gz` plus SHA-256 sidecar.
 
 The collector fails closed unless all 20 cell receipts, 1,600 unique paired
-rows, and 40 panels are present and their per-cell CSV checksums agree.
+rows, and 40 panels are present and the per-cell CSV, rendering request, and
+panel checksums agree.

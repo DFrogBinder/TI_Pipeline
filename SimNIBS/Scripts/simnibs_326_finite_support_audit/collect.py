@@ -65,10 +65,55 @@ def _load_cells(output_root: Path) -> tuple[list[dict[str, str]], list[Path]]:
                 raise RuntimeError(f"Expected 80 rows in {runs_path}; got {len(cell_rows)}")
             rows.extend(cell_rows)
             summary_path = cell_root / "cell_summary.json"
-            figures = sorted((cell_root / "figures").glob("*.png"))
-            if not summary_path.is_file() or len(figures) != len(CONDITIONS):
+            render_request_path = cell_root / "render_request.json"
+            render_receipt_path = cell_root / "render_complete.json"
+            if not summary_path.is_file():
                 raise FileNotFoundError(f"Cell summary or paired diagnostic panels missing: {cell_root}")
-            source_files.extend([runs_path, receipt_path, summary_path])
+            if not render_request_path.is_file() or not render_receipt_path.is_file():
+                raise FileNotFoundError(f"Renderer request or receipt missing: {cell_root}")
+            render_receipt = json.loads(
+                render_receipt_path.read_text(encoding="utf-8")
+            )
+            if render_receipt.get("status") != "complete":
+                raise RuntimeError(f"Renderer receipt is not complete: {render_receipt_path}")
+            if (
+                render_receipt.get("target") != target.key
+                or render_receipt.get("subject") != subject
+            ):
+                raise RuntimeError(f"Renderer receipt identity mismatch: {render_receipt_path}")
+            if render_receipt.get("request_sha256") != sha256_file(render_request_path):
+                raise RuntimeError(f"Renderer request checksum mismatch: {render_request_path}")
+            figure_records = render_receipt.get("figures")
+            if not isinstance(figure_records, list) or len(figure_records) != len(CONDITIONS):
+                raise RuntimeError(f"Renderer receipt has the wrong figure count: {render_receipt_path}")
+            if {str(record.get("condition")) for record in figure_records} != set(CONDITIONS):
+                raise RuntimeError(f"Renderer receipt has the wrong conditions: {render_receipt_path}")
+            figures = []
+            for record in figure_records:
+                figure = Path(str(record.get("path", "")))
+                if figure.resolve().parent != (cell_root / "figures").resolve():
+                    raise RuntimeError(f"Renderer figure is outside its cell: {figure}")
+                if not figure.is_file() or figure.stat().st_size == 0:
+                    raise FileNotFoundError(f"Renderer figure is missing or empty: {figure}")
+                if int(record.get("size_bytes", -1)) != figure.stat().st_size:
+                    raise RuntimeError(f"Renderer figure size mismatch: {figure}")
+                if record.get("sha256") != sha256_file(figure):
+                    raise RuntimeError(f"Renderer figure checksum mismatch: {figure}")
+                figures.append(figure)
+            discovered_figures = sorted((cell_root / "figures").glob("*.png"))
+            if {path.resolve() for path in figures} != {
+                path.resolve() for path in discovered_figures
+            }:
+                raise RuntimeError(f"Renderer figure inventory mismatch: {cell_root}")
+            source_files.extend(
+                [
+                    runs_path,
+                    receipt_path,
+                    summary_path,
+                    render_request_path,
+                    render_receipt_path,
+                ]
+            )
             source_files.extend(figures)
     return rows, source_files
 

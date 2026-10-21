@@ -25,6 +25,10 @@ def _parser() -> argparse.ArgumentParser:
     collector = subparsers.add_parser("collect", help="Validate and collect all 20 cells.")
     collector.add_argument("--output-root", type=Path, default=default_output_root())
     collector.add_argument("--archive", type=Path)
+    renderer = subparsers.add_parser(
+        "render-request", help="Render one cell request with a plotting-capable Python."
+    )
+    renderer.add_argument("--request", type=Path, required=True)
     return parser
 
 
@@ -57,6 +61,10 @@ def main() -> int:
                 failure,
             )
             raise
+    elif args.command == "render-request":
+        from .cell_render import render_request
+
+        result = render_request(request_path=args.request)
     else:
         from .collect import collect
 

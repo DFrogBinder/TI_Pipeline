@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 
+import pytest
+
 from simnibs_326_finite_support_audit.collect import collect
 from simnibs_326_finite_support_audit.config import CONDITIONS, REPEAT_COUNT, SUBJECTS, target_specs
 from simnibs_326_finite_support_audit.io_utils import sha256_file
@@ -89,8 +91,32 @@ def _write_cell(root, target, subject):
     (cell / "cell_summary.json").write_text(json.dumps(receipt), encoding="utf-8")
     figures = cell / "figures"
     figures.mkdir()
+    figure_records = []
     for condition in CONDITIONS:
-        (figures / f"{condition}.png").write_bytes(b"png")
+        figure = figures / f"{condition}.png"
+        figure.write_bytes(f"png-{condition}".encode())
+        figure_records.append(
+            {
+                "condition": condition,
+                "path": str(figure),
+                "size_bytes": figure.stat().st_size,
+                "sha256": sha256_file(figure),
+            }
+        )
+    request_path = cell / "render_request.json"
+    request_path.write_text(
+        json.dumps({"target": target, "subject": subject}), encoding="utf-8"
+    )
+    render_receipt = {
+        "status": "complete",
+        "target": target,
+        "subject": subject,
+        "request_sha256": sha256_file(request_path),
+        "figures": figure_records,
+    }
+    (cell / "render_complete.json").write_text(
+        json.dumps(render_receipt), encoding="utf-8"
+    )
 
 
 def test_collect_validates_full_1600_run_scope_and_builds_archive(tmp_path):
@@ -110,3 +136,21 @@ def test_collect_validates_full_1600_run_scope_and_builds_archive(tmp_path):
     assert "Finite raw values excluded by the WM/GM mask: **1,600 runs**" in report
     assert (tmp_path / "manifest.json").is_file()
     assert (tmp_path / "finite_support_forensics_v1.tar.gz").is_file()
+
+
+def test_collect_rejects_panel_changed_after_renderer_receipt(tmp_path):
+    for target in target_specs():
+        for subject in SUBJECTS:
+            _write_cell(tmp_path, target, subject)
+    changed = (
+        tmp_path
+        / "cells"
+        / "left-hippocampus"
+        / SUBJECTS[0]
+        / "figures"
+        / "remesh.png"
+    )
+    changed.write_bytes(b"bad-remesh")
+
+    with pytest.raises(RuntimeError, match="Renderer figure checksum mismatch"):
+        collect(output_root=tmp_path)

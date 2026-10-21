@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
 from simnibs_326_finite_support_audit import workflow
+from simnibs_326_finite_support_audit.io_utils import sha256_file, write_json_atomic
 
 
 def test_audit_cell_emits_80_paired_rows_two_panels_and_complete_receipt(
@@ -95,14 +97,32 @@ def test_audit_cell_emits_80_paired_rows_two_panels_and_complete_receipt(
             "log_paths": ["task.log"],
         },
     )
-    monkeypatch.setattr(
-        workflow,
-        "render_paired_diagnostic",
-        lambda *, output_path, **kwargs: (
-            output_path.parent.mkdir(parents=True, exist_ok=True),
-            output_path.write_bytes(b"png"),
-        ),
-    )
+    def fake_external_renderer(request_path):
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        figures = []
+        for condition in ("remesh", "fixed_mesh"):
+            output_path = Path(request["conditions"][condition]["output_path"])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(f"png-{condition}".encode())
+            figures.append(
+                {
+                    "condition": condition,
+                    "path": str(output_path),
+                    "size_bytes": output_path.stat().st_size,
+                    "sha256": sha256_file(output_path),
+                }
+            )
+        receipt = {
+            "status": "complete",
+            "target": request["target"],
+            "subject": request["subject"],
+            "request_sha256": sha256_file(request_path),
+            "figures": figures,
+        }
+        write_json_atomic(request_path.parent / "render_complete.json", receipt)
+        return receipt
+
+    monkeypatch.setattr(workflow, "_run_external_renderer", fake_external_renderer)
 
     result = workflow.audit_cell(cell_index=0, output_root=tmp_path)
 
@@ -115,4 +135,6 @@ def test_audit_cell_emits_80_paired_rows_two_panels_and_complete_receipt(
     assert {row["condition"] for row in rows} == {"remesh", "fixed_mesh"}
     assert rows[0]["v3_mesh_reader_simnibs_version"] == "3.2.6"
     assert len(list((cell / "figures").glob("*.png"))) == 2
+    assert (cell / "render_request.json").is_file()
+    assert (cell / "render_complete.json").is_file()
     assert (cell / "complete.json").is_file()

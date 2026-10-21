@@ -1,0 +1,37 @@
+{
+  "profile": "camcan-simnibs326-finite-support-forensics-v1",
+  "status": "implemented_and_locally_preflight_validated_not_submitted",
+  "created_date": "2026-10-21",
+  "mode": "read_only_finite_support_forensics",
+  "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
+  "scope": {
+    "subjects": 10,
+    "targets": 2,
+    "conditions": 2,
+    "repeats_per_condition": 40,
+    "v3_runs": 1600,
+    "matched_v4_runs": 1600,
+    "direct_v3_mesh_field_reads": 1600,
+    "immutable_log_histories": 1600,
+    "paired_panels": 40,
+    "audit_array_tasks": 20,
+    "meshing_tasks": 0,
+    "fem_tasks": 0
+  },
+  "scheduler": {
+    "partition": "sheffield",
+    "array": "0-19%10",
+    "array_resources": "4 CPU, 16G, 08:00:00",
+    "collector_resources": "2 CPU, 8G, 01:00:00",
+    "collector_dependency": "afterok"
+  },
+  "production_jobs": {
+    "left_hippocampus_remesh": "11789553",
+    "right_m1_remesh": "11789558",
+    "left_hippocampus_fixed_mesh": "11797124",
+    "right_m1_fixed_mesh": "11797126"
+  },
+  "output_root": "/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_simnibs326_headreco/_simnibs326/finite_support_forensics_v1",
+  "submission_gate": "hpc/submit.sh run performs the complete read-only inventory before sbatch",
+  "source_mutation_policy": "never modify retained simulation outputs, meshes, atlases, or logs"
+}

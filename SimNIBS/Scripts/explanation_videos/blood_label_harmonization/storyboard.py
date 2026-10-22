@@ -43,7 +43,7 @@ _TISSUES = {
     "eyes": Tissue("eyes", "Eyes", "#F0E442", 6),
     "compact_bone": Tissue("compact_bone", "Compact bone", "#9A6F42", 7),
     "spongy_bone": Tissue("spongy_bone", "Spongy bone", "#D8B878", 8),
-    "blood": Tissue("blood", "Blood", "#D55E00", 9),
+    "blood": Tissue("blood", "Blood", "#E63946", 9),
     "muscle": Tissue("muscle", "Muscle", "#CC79A7", 10),
     "internal_air": Tissue(
         "internal_air", "Internal air (excluded)", "#20252C", 11, conductive=False

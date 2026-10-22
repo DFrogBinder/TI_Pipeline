@@ -10,6 +10,17 @@ from explanation_videos.blood_label_harmonization.storyboard import (
 )
 
 
+def rgb(hex_colour: str) -> tuple[int, int, int]:
+    value = hex_colour.removeprefix("#")
+    return tuple(int(value[index : index + 2], 16) for index in (0, 2, 4))
+
+
+def colour_distance(left: str, right: str) -> float:
+    left_rgb = rgb(left)
+    right_rgb = rgb(right)
+    return sum((a - b) ** 2 for a, b in zip(left_rgb, right_rgb, strict=True)) ** 0.5
+
+
 def test_harmonized_model_contains_exactly_six_supported_tissues() -> None:
     assert HARMONIZED_TISSUES == (
         "white_matter",
@@ -52,6 +63,13 @@ def test_blood_replacement_rejects_unsupported_enclosing_tissue() -> None:
 def test_internal_air_is_defined_as_excluded_not_conductive() -> None:
     assert TISSUES["internal_air"].conductive is False
     assert "internal_air" not in HARMONIZED_TISSUES
+
+
+def test_explicit_blood_is_visually_distinct_from_adjacent_soft_tissues() -> None:
+    blood = TISSUES["blood"].colour
+
+    assert colour_distance(blood, TISSUES["scalp"].colour) > 100
+    assert colour_distance(blood, TISSUES["muscle"].colour) > 100
 
 
 def test_storyboard_preserves_scientific_sequence_and_duration() -> None:

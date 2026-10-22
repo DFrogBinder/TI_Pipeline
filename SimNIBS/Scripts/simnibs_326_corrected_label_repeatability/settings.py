@@ -9,6 +9,14 @@ from typing import Mapping
 
 
 ENV_PREFIX = "SIMNIBS326H_"
+PACKAGE_ROOT = Path(__file__).resolve().parent
+SCRIPTS_ROOT = PACKAGE_ROOT.parent
+TARGETS_CSV = Path(
+    os.environ.get(
+        f"{ENV_PREFIX}TARGETS_CSV",
+        str(SCRIPTS_ROOT / "utils" / "targets.csv"),
+    )
+).expanduser().resolve(strict=False)
 SIMNIBS_MODULE = "SimNIBS/3.2.6-foss-2023a"
 PARTITION = "sheffield"
 CPUS_PER_TASK = 8

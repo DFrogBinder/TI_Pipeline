@@ -28,6 +28,7 @@ def render_qc_request(request_path: str | Path) -> Path:
         raise QCRenderError("Render request hash mismatch")
     _validate_record(payload.get("t1"), "T1")
     _validate_record(payload.get("labels"), "labels")
+    _validate_record(payload.get("headmodel_marker"), "head-model marker")
     t1 = nib.load(str(payload["t1"]["path"]))
     labels = nib.load(str(payload["labels"]["path"]))
     t1_data = np.asarray(t1.dataobj, dtype=float)

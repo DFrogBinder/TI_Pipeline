@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -11,6 +12,7 @@ from simnibs_326_corrected_label_repeatability.reference_stage import (
     ReferenceStageError,
     collect_reference_stage,
     stage_subject_reference,
+    validate_collected_reference,
     validate_staged_reference,
 )
 from simnibs_326_corrected_label_repeatability.settings import (
@@ -143,6 +145,26 @@ def test_cohort_collection_requires_all_ten_valid_receipts(tmp_path: Path) -> No
     assert result["subject_count"] == 10
     assert [entry["subject"] for entry in result["subjects"]] == list(SUBJECTS)
     assert collection.is_file()
+
+
+def test_collected_stage_remains_valid_after_legacy_root_is_removed(tmp_path: Path) -> None:
+    paths = None
+    for subject in SUBJECTS:
+        paths, resolved = _reference_layout(tmp_path, subject)
+        stage_subject_reference(resolved)
+    assert paths is not None
+    collect_reference_stage(paths)
+    shutil.rmtree(paths.legacy_reference_root)
+
+    receipt = validate_collected_reference(subject_paths(paths, SUBJECTS[0]))
+
+    assert receipt.subject == SUBJECTS[0]
+    assert receipt.file_count == 7
+
+    staged_receipt = subject_paths(paths, SUBJECTS[0]).reference_receipt
+    staged_receipt.write_text(staged_receipt.read_text() + "tampered", encoding="utf-8")
+    with pytest.raises(ReferenceStageError, match="receipt hash"):
+        validate_collected_reference(subject_paths(paths, SUBJECTS[0]))
 
 
 def _reference_layout(tmp_path: Path, subject: str = SUBJECTS[0]):

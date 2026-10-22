@@ -4,7 +4,6 @@ set -euo pipefail
 PIPELINE_DIR="${PIPELINE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PIPELINE_PARENT="$(dirname "$PIPELINE_DIR")"
 export PYTHONPATH="$PIPELINE_PARENT:${PYTHONPATH:-}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 PARTITION="${PARTITION:-sheffield}"
 SIM_CPUS="${SIM_CPUS:-8}"
@@ -13,6 +12,14 @@ SIM_TIME="${SIM_TIME:-08:00:00}"
 SIM_MAX_CONCURRENT="${SIM_MAX_CONCURRENT:-50}"
 MAX_RETRIES="${SIMNIBS326H_MAX_RETRIES:-1}"
 RENDER_PYTHON="${SIMNIBS326H_RENDER_PYTHON:-$HOME/.conda/envs/ti-post/bin/python}"
+PLANNING_PYTHON="${PYTHON_BIN:-}"
+if [ -n "$PLANNING_PYTHON" ]; then
+    PYTHON_BIN="$PLANNING_PYTHON"
+elif [ -x "$RENDER_PYTHON" ]; then
+    PYTHON_BIN="$RENDER_PYTHON"
+else
+    PYTHON_BIN=python3
+fi
 
 MODE="${1:-preflight}"
 [ "$#" -eq 0 ] || shift
@@ -264,9 +271,11 @@ case "$MODE" in
         "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability init
         ;;
     module-check)
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight >/dev/null
         job="$(submit_module_check)"; echo "[INFO] Module-check job: $job"
         ;;
     stage-references)
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight >/dev/null
         jobs="$(submit_reference_staging)"; echo "[INFO] Reference array/collector: $jobs"
         ;;
     headmodels)

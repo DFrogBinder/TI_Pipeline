@@ -158,6 +158,9 @@ def test_subject_paths_expose_inputs_outputs_and_receipts(tmp_path: Path) -> Non
     assert resolved.corrected_t1 == (
         paths.corrected_root / subject / "anat" / f"{subject}_T1w.nii"
     )
+    assert resolved.corrected_t2 == (
+        paths.corrected_root / subject / "anat" / f"{subject}_T2w.nii"
+    )
     assert resolved.legacy_m2m == (
         paths.legacy_reference_root / subject / "anat" / f"m2m_{subject}"
     )

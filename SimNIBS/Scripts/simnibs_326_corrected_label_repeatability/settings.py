@@ -59,6 +59,7 @@ class SubjectPaths:
     subject: str
     corrected_label: Path
     corrected_t1: Path
+    corrected_t2: Path
     legacy_anat: Path
     legacy_m2m: Path
     legacy_ready_marker: Path
@@ -161,6 +162,7 @@ def subject_paths(paths: CampaignPaths, subject: str) -> SubjectPaths:
             corrected_anat / f"{subject}_T1w_ras_1mm_T1andT2_masks.nii"
         ),
         corrected_t1=corrected_anat / f"{subject}_T1w.nii",
+        corrected_t2=corrected_anat / f"{subject}_T2w.nii",
         legacy_anat=legacy_anat,
         legacy_m2m=legacy_anat / f"m2m_{subject}",
         legacy_ready_marker=legacy_anat / ".simnibs326_scaffold_ready.json",

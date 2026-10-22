@@ -126,9 +126,14 @@ def stage_subject_reference(subject_paths: SubjectPaths) -> StageReceipt:
             shutil.rmtree(temporary)
 
 
-def validate_staged_reference(subject_paths: SubjectPaths) -> StageReceipt:
-    """Recompute every source and destination hash bound by a stage receipt."""
-    _validate_roots(subject_paths)
+def validate_staged_reference(
+    subject_paths: SubjectPaths,
+    *,
+    verify_source: bool = True,
+) -> StageReceipt:
+    """Validate the staged tree, optionally re-reading the legacy source."""
+    if verify_source:
+        _validate_roots(subject_paths)
     receipt_path = subject_paths.reference_receipt
     destination = subject_paths.staged_m2m.resolve(strict=False)
     if not receipt_path.is_file() or not destination.is_dir():
@@ -159,9 +164,10 @@ def validate_staged_reference(subject_paths: SubjectPaths) -> StageReceipt:
         relative = str(record.get("destination_relative", ""))
         destination_file = _safe_destination(destination, relative)
         source_file = Path(str(record.get("source_path", "")))
-        _assert_regular_source(source_file)
-        if _sha256(source_file) != record.get("source_sha256"):
-            raise ReferenceStageError(f"Legacy source hash changed: {source_file}")
+        if verify_source:
+            _assert_regular_source(source_file)
+            if _sha256(source_file) != record.get("source_sha256"):
+                raise ReferenceStageError(f"Legacy source hash changed: {source_file}")
         if not destination_file.is_file() or destination_file.is_symlink():
             raise ReferenceStageError(f"Staged file is missing or unsafe: {destination_file}")
         destination_hash = _sha256(destination_file)
@@ -194,6 +200,47 @@ def validate_staged_reference(subject_paths: SubjectPaths) -> StageReceipt:
         file_count=len(files),
         byte_count=byte_count,
     )
+
+
+def validate_collected_reference(subject_paths: SubjectPaths) -> StageReceipt:
+    """Validate one staged subject against the source-verified cohort receipt."""
+    collection_path = (
+        subject_paths.reference_receipt.parents[2]
+        / "reference_stage_collection.json"
+    )
+    try:
+        collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReferenceStageError(
+            f"Reference-stage collection receipt is missing or unreadable: {collection_path}"
+        ) from exc
+    if (
+        collection.get("status") != "complete"
+        or collection.get("subject_count") != len(SUBJECTS)
+        or collection.get("headmodel_root")
+        != str(subject_paths.staged_anat.parents[1].resolve())
+        or collection.get("legacy_reference_dependency_released") is not True
+    ):
+        raise ReferenceStageError("Reference-stage collection receipt is incomplete")
+    entries = collection.get("subjects")
+    if not isinstance(entries, list):
+        raise ReferenceStageError("Reference-stage collection has no subject inventory")
+    matches = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("subject") == subject_paths.subject
+    ]
+    if len(matches) != 1:
+        raise ReferenceStageError(
+            f"Reference-stage collection does not contain {subject_paths.subject} exactly once"
+        )
+    entry = matches[0]
+    receipt_path = subject_paths.reference_receipt.resolve()
+    if entry.get("receipt_path") != str(receipt_path):
+        raise ReferenceStageError("Collected reference names a different subject receipt")
+    if not receipt_path.is_file() or entry.get("receipt_sha256") != _sha256(receipt_path):
+        raise ReferenceStageError("Collected subject receipt hash mismatch")
+    return validate_staged_reference(subject_paths, verify_source=False)
 
 
 def collect_reference_stage(paths: CampaignPaths) -> dict[str, object]:

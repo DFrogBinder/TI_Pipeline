@@ -205,3 +205,4 @@ def test_launchers_remove_matlab_cat12_and_preserve_retry_contract() -> None:
     assert '${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}' in text
     assert "SIMNIBS326H_MAX_RETRIES" in text
     assert "--open-mode=append" in text
+    assert "validate_repeatability_task.py" in text

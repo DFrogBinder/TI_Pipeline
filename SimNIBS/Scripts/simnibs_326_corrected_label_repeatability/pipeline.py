@@ -14,24 +14,6 @@ import sys
 import tempfile
 from typing import Any
 
-
-PACKAGE_ROOT = Path(__file__).resolve().parent
-SCRIPTS_ROOT = PACKAGE_ROOT.parent
-CURRENT_REPAIR_ROOT = SCRIPTS_ROOT / "ti_current_repair"
-if str(SCRIPTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_ROOT))
-_added_repair_path = str(CURRENT_REPAIR_ROOT) not in sys.path
-if _added_repair_path:
-    sys.path.insert(0, str(CURRENT_REPAIR_ROOT))
-try:
-    from experiment_config import iter_experiment_tasks, load_experiment_config
-    from pipeline.spherical_fixed_nested_experiment import prepare_fixed
-    from stimulation_config import resolve_confirmed_stimulation
-    from validate_repeatability_task import validate_task
-finally:
-    if _added_repair_path:
-        sys.path.remove(str(CURRENT_REPAIR_ROOT))
-
 from .headmodels import (
     build_headmodel,
     collect_headmodels,
@@ -42,15 +24,10 @@ from .headmodels import (
 from .labels import validate_source_labels
 from .reference_stage import collect_reference_stage, stage_subject_reference
 from .settings import (
-    CPUS_PER_TASK,
-    MAX_CONCURRENT,
-    MEMORY,
-    PARTITION,
     REPEAT_COUNT,
     SIMNIBS_MODULE,
     SUBJECTS,
     TARGETS_CSV,
-    TIME_LIMIT,
     CampaignPaths,
     assert_root_isolation,
     campaign_paths_from_environment,
@@ -65,6 +42,23 @@ from .simulation_runner import (
 )
 from .v3_meshing import load_v3_meshing_api, probe_v3_meshing_api
 
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+SCRIPTS_ROOT = PACKAGE_ROOT.parent
+CURRENT_REPAIR_ROOT = SCRIPTS_ROOT / "ti_current_repair"
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
+_added_repair_path = str(CURRENT_REPAIR_ROOT) not in sys.path
+if _added_repair_path:
+    sys.path.insert(0, str(CURRENT_REPAIR_ROOT))
+try:
+    from experiment_config import iter_experiment_tasks, load_experiment_config  # noqa: E402
+    from pipeline.spherical_fixed_nested_experiment import prepare_fixed  # noqa: E402
+    from stimulation_config import resolve_confirmed_stimulation  # noqa: E402
+    from validate_repeatability_task import validate_task  # noqa: E402
+finally:
+    if _added_repair_path:
+        sys.path.remove(str(CURRENT_REPAIR_ROOT))
 
 SCHEMA_VERSION = 1
 REMESH_CONFIG = "remesh_only.json"
@@ -186,6 +180,7 @@ def _inspect_subject_inputs(paths: CampaignPaths, subject: str) -> dict[str, Any
     required_files = (
         resolved.corrected_label,
         resolved.corrected_t1,
+        resolved.corrected_t2,
         resolved.legacy_ready_marker,
         resolved.legacy_m2m / "T1fs_conform.nii.gz",
         resolved.legacy_m2m / "T1fs_nu_conform.nii.gz",

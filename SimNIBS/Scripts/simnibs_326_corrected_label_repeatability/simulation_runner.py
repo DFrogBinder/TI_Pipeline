@@ -390,13 +390,49 @@ def _validate_campaign_config(
         )
     if payload.get("subjects") != list(SUBJECTS):
         raise SystemExit("Config subject order differs from the pinned balanced-10 cohort")
+    conditions = payload.get("conditions")
+    valid_condition_scopes = (
+        [{"name": "remesh", "mesh_mode": "remesh", "repeat_count": 40}],
+        [{"name": "fixed_mesh", "mesh_mode": "fixed_mesh", "repeat_count": 40}],
+    )
+    normalized_conditions = []
+    if isinstance(conditions, list):
+        normalized_conditions = [
+            {
+                "name": item.get("name"),
+                "mesh_mode": item.get("mesh_mode"),
+                "repeat_count": item.get("repeat_count"),
+            }
+            for item in conditions
+            if isinstance(item, dict)
+        ]
+    if normalized_conditions not in valid_condition_scopes:
+        raise SystemExit(
+            "Config condition scope must be exactly one 40-repeat remesh or "
+            "fixed_mesh condition"
+        )
     try:
         promotion = _validated_promotion(resolved_paths)
     except SimulationBoundaryError as exc:
         raise SystemExit(str(exc)) from exc
     runtime = payload.get(CONFIG_RUNTIME_KEY)
     if not isinstance(runtime, dict):
-        raise SystemExit(f"Config lacks required {CONFIG_RUNTIME_KEY} provenance")
+        if normalized_conditions[0]["mesh_mode"] != "fixed_mesh":
+            raise SystemExit(f"Config lacks required {CONFIG_RUNTIME_KEY} provenance")
+        campaign_path = experiment_root / "_simnibs326" / "campaign.json"
+        campaign = _load_json(campaign_path)
+        expected_target = (
+            "left-hippocampus"
+            if experiment_root == resolved_paths.left_root.resolve()
+            else "right-m1"
+        )
+        if campaign.get("target") != expected_target:
+            raise SystemExit("Fixed config campaign manifest has a different target")
+        runtime = campaign.get("runtime")
+        if not isinstance(runtime, dict):
+            raise SystemExit(
+                f"Fixed config campaign lacks required {CONFIG_RUNTIME_KEY} provenance"
+            )
     expected = {
         "simnibs_module": SIMNIBS_MODULE,
         "backend": BACKEND_NAME,

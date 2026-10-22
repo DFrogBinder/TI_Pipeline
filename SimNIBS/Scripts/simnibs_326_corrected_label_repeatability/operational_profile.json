@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "campaign": "simnibs-3.2.6-harmonized-corrected-label-v2",
+  "evidence_status": {
+    "repository_implementation": "locally_verified",
+    "simnibs_326_simulation_profile": "inherited_working",
+    "corrected_label_harmonization": "candidate_pending_stanage_evidence",
+    "direct_v3_surface_and_volume_meshing": "candidate_pending_stanage_evidence",
+    "headmodel_qc_and_promotion": "not_run",
+    "repeatability_simulations": "not_submitted"
+  },
+  "scope": {
+    "subjects": 10,
+    "targets": 2,
+    "conditions_per_target": 2,
+    "repeats_per_condition": 40,
+    "simulation_tasks": 1600,
+    "component_fem_solves": 3200
+  },
+  "scheduler": {
+    "module": "SimNIBS/3.2.6-foss-2023a",
+    "partition": "sheffield",
+    "simulation_cpus": 8,
+    "simulation_memory": "32G",
+    "simulation_time": "08:00:00",
+    "simulation_array": "0-399%50",
+    "maximum_retries": 1,
+    "array_requeue": "${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}",
+    "slurm_output_mode": "append"
+  },
+  "intentional_deltas": {
+    "matlab_loaded": false,
+    "spm_or_cat12_run": false,
+    "legacy_reference_allowlist_only": true,
+    "new_v3_surfaces": true,
+    "new_v3_tetrahedral_meshes": true
+  },
+  "submission_gate": "human-reviewed content-addressed headmodel promotion receipt",
+  "implementation_submission_authorized": false
+}

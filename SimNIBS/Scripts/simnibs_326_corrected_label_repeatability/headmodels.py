@@ -8,16 +8,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
-from typing import Any
 
 import nibabel as nib
 import numpy as np
 
 from .label_io import harmonize_subject_labels, temporary_surface_masks
-from .reference_stage import validate_staged_reference
+from .reference_stage import validate_collected_reference as validate_staged_reference
 from .settings import (
     CampaignPaths,
     SUBJECTS,

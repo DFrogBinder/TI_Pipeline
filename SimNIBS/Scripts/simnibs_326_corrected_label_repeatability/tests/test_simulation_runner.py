@@ -248,6 +248,59 @@ def test_config_and_task_reject_unpromoted_or_stale_headmodels(
         )
 
 
+def test_seeded_fixed_config_uses_the_initialized_campaign_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, _, promotion = _promoted_subject_layout(tmp_path)
+    monkeypatch.setattr(simulation_runner, "_validated_promotion", lambda _paths: promotion)
+    config = _valid_config(paths, promotion)
+    config["conditions"] = [
+        {"name": "fixed_mesh", "mesh_mode": "fixed_mesh", "repeat_count": 40}
+    ]
+    runtime = config.pop(simulation_runner.CONFIG_RUNTIME_KEY)
+    config_path = paths.left_root / "_pipeline/configs/fixed_mesh_spherical_median.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    campaign = paths.left_root / "_simnibs326/campaign.json"
+    campaign.parent.mkdir(parents=True)
+    campaign.write_text(json.dumps({"target": "left-hippocampus", "runtime": runtime}))
+
+    simulation_runner._validate_campaign_config(config_path, paths=paths)
+
+    runtime["headmodel_manifest_sha256"] = "f" * 64
+    campaign.write_text(json.dumps({"target": "left-hippocampus", "runtime": runtime}))
+    with pytest.raises(SystemExit, match="promotion/runtime provenance differs"):
+        simulation_runner._validate_campaign_config(config_path, paths=paths)
+
+
+@pytest.mark.parametrize(
+    "conditions",
+    [
+        [{"name": "remesh", "mesh_mode": "remesh", "repeat_count": 39}],
+        [{"name": "fixed_mesh", "mesh_mode": "remesh", "repeat_count": 40}],
+        [
+            {"name": "remesh", "mesh_mode": "remesh", "repeat_count": 40},
+            {"name": "fixed_mesh", "mesh_mode": "fixed_mesh", "repeat_count": 40},
+        ],
+    ],
+)
+def test_task_config_rejects_changed_condition_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    conditions: list[dict[str, object]],
+) -> None:
+    paths, _, promotion = _promoted_subject_layout(tmp_path)
+    monkeypatch.setattr(simulation_runner, "_validated_promotion", lambda _paths: promotion)
+    config = _valid_config(paths, promotion)
+    config["conditions"] = conditions
+    path = tmp_path / "changed-scope.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="condition scope"):
+        simulation_runner._validate_campaign_config(path, paths=paths)
+
+
 def _promoted_subject_layout(tmp_path: Path):
     defaults = campaign_paths_from_environment({})
     paths = replace(

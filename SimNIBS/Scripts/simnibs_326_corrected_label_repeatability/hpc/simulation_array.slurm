@@ -43,8 +43,29 @@ timeout --kill-after=30s 4h python -u \
     "${EXTRA_ARGS[@]}" 2>&1 | tee "$ATTEMPT_LOG"
 RUN_EXIT=${PIPESTATUS[0]}
 set -e
-if [ "$RUN_EXIT" -eq 0 ]; then rm -f "$RETRY_FILE"; exit 0; fi
-if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then exit "$RUN_EXIT"; fi
+
+if [ "$RUN_EXIT" -eq 126 ]; then
+    printf '%s\t%s\t%s\n' "$(date -Is)" "$TASK_ID" "$RUN_EXIT" \
+        >> "$LOG_DIR/tasks_skipped_missing_inputs.tsv"
+    rm -f "$RETRY_FILE"
+    echo "[WARN] Missing task inputs recorded without requeue." | tee -a "$ATTEMPT_LOG"
+    exit 0
+fi
+
+set +e
+python -u "$PIPELINE_DIR/../ti_current_repair/validate_repeatability_task.py" \
+    --config "$EXPERIMENT_CONFIG" --task-index "$TASK_ID" \
+    2>&1 | tee -a "$ATTEMPT_LOG"
+VALIDATE_EXIT=${PIPESTATUS[0]}
+set -e
+
+if [ "$RUN_EXIT" -eq 0 ] && [ "$VALIDATE_EXIT" -eq 0 ]; then
+    rm -f "$RETRY_FILE"
+    exit 0
+fi
+FINAL_EXIT="$RUN_EXIT"
+[ "$FINAL_EXIT" -ne 0 ] || FINAL_EXIT="$VALIDATE_EXIT"
+if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then exit "$FINAL_EXIT"; fi
 printf '%s\n' "$((RETRY_COUNT + 1))" > "$RETRY_FILE"
 scontrol requeue "${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 exit 0

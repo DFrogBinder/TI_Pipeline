@@ -116,6 +116,21 @@ submit_job() {
 require_file() {
     [ -s "$1" ] || { echo "[ERROR] Required receipt/config is missing: $1" >&2; exit 2; }
 }
+record_submission() {
+    local mode="$1" target="$2" dependency="$3" jobs="$4"
+    local receipt="$HEADMODEL_ROOT/_pipeline/submissions.tsv"
+    local commit
+    jobs="${jobs//$'\t'/,}"
+    jobs="${jobs//\\t/,}"
+    mkdir -p "$(dirname "$receipt")"
+    if [ ! -e "$receipt" ]; then
+        printf 'submitted_utc\tmode\ttarget\trequested_dependency\tjob_ids\tgit_commit\n' > "$receipt"
+    fi
+    commit="$(git -C "$PIPELINE_PARENT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mode" "$target" \
+        "$dependency" "$jobs" "$commit" >> "$receipt"
+}
 
 print_scope() {
     echo "Scope:"
@@ -257,7 +272,7 @@ submit_paired_roi() {
 print_scope
 case "$MODE" in
     preflight)
-        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight >/dev/null
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight
         echo "[INFO] Read-only preflight passed; no job submitted."
         ;;
     status)
@@ -272,14 +287,20 @@ case "$MODE" in
         ;;
     module-check)
         "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight >/dev/null
-        job="$(submit_module_check)"; echo "[INFO] Module-check job: $job"
+        job="$(submit_module_check)"
+        record_submission "$MODE" none "$DEPENDENCY" "$job"
+        echo "[INFO] Module-check job: $job"
         ;;
     stage-references)
         "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight >/dev/null
-        jobs="$(submit_reference_staging)"; echo "[INFO] Reference array/collector: $jobs"
+        jobs="$(submit_reference_staging)"
+        record_submission "$MODE" none "$DEPENDENCY" "$jobs"
+        echo "[INFO] Reference array/collector: $jobs"
         ;;
     headmodels)
-        jobs="$(submit_headmodels)"; echo "[INFO] Head-model array/collector: $jobs"
+        jobs="$(submit_headmodels)"
+        record_submission "$MODE" none "$DEPENDENCY" "$jobs"
+        echo "[INFO] Head-model array/collector: $jobs"
         ;;
     promote)
         [ "$CONFIRM_ROOT" = "$HEADMODEL_ROOT" ] || {
@@ -292,14 +313,17 @@ case "$MODE" in
         ;;
     remesh)
         job="$(submit_simulation "$TARGET" remesh_only.json remesh "$DEPENDENCY")"
+        record_submission "$MODE" "$TARGET" "$DEPENDENCY" "$job"
         echo "[INFO] Remesh array: $job"
         ;;
     post-remesh)
         jobs="$(submit_post_remesh "$TARGET" "$DEPENDENCY")"
+        record_submission "$MODE" "$TARGET" "$DEPENDENCY" "$jobs"
         echo "[INFO] Post-remesh chain: $jobs"
         ;;
     fixed)
         jobs="$(submit_fixed_chain "$TARGET" "$DEPENDENCY")"
+        record_submission "$MODE" "$TARGET" "$DEPENDENCY" "$jobs"
         echo "[INFO] Fixed/final chain: $jobs"
         ;;
     all-remesh)
@@ -308,12 +332,14 @@ case "$MODE" in
         left_terminal="${left_chain##*$'\t'}"
         right_sim="$(submit_simulation right-m1 remesh_only.json remesh "$left_terminal")"
         right_chain="$(submit_post_remesh right-m1 "$right_sim")"
+        record_submission "$MODE" both "$DEPENDENCY" "$left_sim\t$left_chain\t$right_sim\t$right_chain"
         echo "[INFO] Sequential remesh chains: left=$left_sim/$left_chain right=$right_sim/$right_chain"
         ;;
     all-fixed)
         left_chain="$(submit_fixed_chain left-hippocampus)"
         left_terminal="${left_chain##*$'\t'}"
         right_chain="$(submit_fixed_chain right-m1 "$left_terminal")"
+        record_submission "$MODE" both "$DEPENDENCY" "$left_chain\t$right_chain"
         echo "[INFO] Sequential fixed chains: left=$left_chain right=$right_chain"
         ;;
     analysis)
@@ -331,6 +357,7 @@ case "$MODE" in
             --output="$ANALYSIS_ROOT/logs/analysis-%j.out" \
             --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_METRICS_CSV=$(paired_metrics_root left-hippocampus)/optimizer_roi_metrics.csv,RIGHT_METRICS_CSV=$(paired_metrics_root right-m1)/optimizer_roi_metrics.csv,ANALYSIS_ROOT=$ANALYSIS_ROOT,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON" \
             "$ROI_ANALYSIS")"
+        record_submission "$MODE" both "$DEPENDENCY" "$left_jobs\t$right_jobs\t$analysis_job"
         echo "[INFO] Analysis jobs: left=$left_jobs right=$right_jobs final=$analysis_job"
         ;;
     analysis-status)

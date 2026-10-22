@@ -74,6 +74,18 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=SCRIPTS_ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -177,15 +189,15 @@ def _inspect_subject_inputs(paths: CampaignPaths, subject: str) -> dict[str, Any
     import nibabel as nib
 
     resolved = subject_paths(paths, subject)
-    required_files = (
-        resolved.corrected_label,
-        resolved.corrected_t1,
-        resolved.corrected_t2,
-        resolved.legacy_ready_marker,
-        resolved.legacy_m2m / "T1fs_conform.nii.gz",
-        resolved.legacy_m2m / "T1fs_nu_conform.nii.gz",
-    )
-    missing = [str(path) for path in required_files if not path.is_file()]
+    required_files = {
+        "corrected_label": resolved.corrected_label,
+        "corrected_t1": resolved.corrected_t1,
+        "corrected_t2": resolved.corrected_t2,
+        "legacy_ready_marker": resolved.legacy_ready_marker,
+        "t1fs_conform": resolved.legacy_m2m / "T1fs_conform.nii.gz",
+        "t1fs_nu_conform": resolved.legacy_m2m / "T1fs_nu_conform.nii.gz",
+    }
+    missing = [str(path) for path in required_files.values() if not path.is_file()]
     required_dirs = (
         resolved.legacy_m2m / "eeg_positions",
         resolved.legacy_m2m / "toMNI",
@@ -196,17 +208,38 @@ def _inspect_subject_inputs(paths: CampaignPaths, subject: str) -> dict[str, Any
     source = nib.load(str(resolved.corrected_label))
     data = validate_source_labels(source.get_fdata(dtype="float64"))
     reference = nib.load(str(resolved.legacy_m2m / "T1fs_conform.nii.gz"))
+    files = {
+        name: {
+            "path": str(path.resolve()),
+            "size_bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        for name, path in required_files.items()
+    }
+    source_grid = {
+        "shape": list(source.shape),
+        "affine": source.affine.astype(float).tolist(),
+        "voxel_sizes_mm": [float(v) for v in source.header.get_zooms()[:3]],
+    }
+    reference_grid = {
+        "shape": list(reference.shape),
+        "affine": reference.affine.astype(float).tolist(),
+        "voxel_sizes_mm": [
+            float(v) for v in reference.header.get_zooms()[:3]
+        ],
+    }
     return {
         "subject": subject,
         "corrected_label": str(resolved.corrected_label.resolve()),
         "corrected_label_sha256": _sha256(resolved.corrected_label),
-        "source_shape": list(source.shape),
-        "source_voxel_sizes_mm": [float(v) for v in source.header.get_zooms()[:3]],
+        "files": files,
+        "source_grid": source_grid,
+        "reference_grid": reference_grid,
+        "source_shape": source_grid["shape"],
+        "source_voxel_sizes_mm": source_grid["voxel_sizes_mm"],
         "observed_labels": sorted(int(v) for v in set(data.ravel().tolist())),
-        "reference_shape": list(reference.shape),
-        "reference_voxel_sizes_mm": [
-            float(v) for v in reference.header.get_zooms()[:3]
-        ],
+        "reference_shape": reference_grid["shape"],
+        "reference_voxel_sizes_mm": reference_grid["voxel_sizes_mm"],
         "legacy_ready_marker_sha256": _sha256(resolved.legacy_ready_marker),
     }
 
@@ -238,6 +271,7 @@ def preflight(
         "schema_version": SCHEMA_VERSION,
         "status": "ready",
         "created_utc": _utc_now(),
+        "git_commit": _git_commit(),
         "scope": campaign_scope(resolved),
         "root_isolation": isolation,
         "subjects": subjects,
@@ -313,6 +347,7 @@ def initialize(
         root = target_settings(target, resolved).experiment_root
         manifest = {
             **scope,
+            "git_commit": _git_commit(),
             "target": target,
             "target_experiment_root": str(root.resolve()),
             "remesh_config": str(_config_path(root, REMESH_CONFIG)),
@@ -382,6 +417,7 @@ def module_preflight(*, receipt: Path | None) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "status": "ready",
         "created_utc": _utc_now(),
+        "git_commit": _git_commit(),
         "expected_module": SIMNIBS_MODULE,
         "python_executable": sys.executable,
         "meshing_api": meshing,
@@ -468,6 +504,7 @@ def _write_completion(
         "status": "complete",
         "stage": stage,
         "created_utc": _utc_now(),
+        "git_commit": _git_commit(),
         "config": str(config_path),
         "config_sha256": _sha256(config_path),
         "scope": _receipt_scope(config_path, target=target, stage=stage),

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import nibabel as nib
+import numpy as np
 import pytest
 
 import simnibs_326_corrected_label_repeatability.pipeline as pipeline
@@ -70,6 +72,40 @@ def test_preflight_is_read_only_and_checks_all_ten_subjects(
     assert not paths.right_root.exists()
 
 
+def test_subject_preflight_records_all_required_file_hashes_sizes_and_grids(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+    subject = SUBJECTS[0]
+    resolved = pipeline.subject_paths(paths, subject)
+    resolved.corrected_label.parent.mkdir(parents=True)
+    resolved.legacy_m2m.mkdir(parents=True)
+    data = np.ones((3, 4, 5), dtype=np.uint8)
+    affine = np.diag([1.0, 2.0, 3.0, 1.0])
+    for path in (resolved.corrected_label, resolved.corrected_t1, resolved.corrected_t2):
+        nib.save(nib.Nifti1Image(data, affine), path)
+    for path in (
+        resolved.legacy_m2m / "T1fs_conform.nii.gz",
+        resolved.legacy_m2m / "T1fs_nu_conform.nii.gz",
+    ):
+        nib.save(nib.Nifti1Image(data, affine), path)
+    resolved.legacy_ready_marker.write_text("{}", encoding="utf-8")
+    (resolved.legacy_m2m / "eeg_positions").mkdir()
+    (resolved.legacy_m2m / "toMNI").mkdir()
+
+    result = pipeline._inspect_subject_inputs(paths, subject)
+
+    assert set(result["files"]) == {
+        "corrected_label", "corrected_t1", "corrected_t2", "legacy_ready_marker",
+        "t1fs_conform", "t1fs_nu_conform",
+    }
+    assert all(record["size_bytes"] > 0 for record in result["files"].values())
+    assert all(len(record["sha256"]) == 64 for record in result["files"].values())
+    assert result["source_grid"]["shape"] == [3, 4, 5]
+    assert result["source_grid"]["affine"] == affine.tolist()
+    assert result["reference_grid"]["voxel_sizes_mm"] == [1.0, 2.0, 3.0]
+
+
 def test_initialize_writes_only_two_exact_400_task_remesh_plans(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,6 +135,10 @@ def test_initialize_writes_only_two_exact_400_task_remesh_plans(
         assert len(config["subjects"]) * config["conditions"][0]["repeat_count"] == 400
         assert config["analysis"]["roi_preset"] == target
         assert config[pipeline.CONFIG_RUNTIME_KEY]["headmodel_manifest_sha256"] == "a" * 64
+        manifest = json.loads(
+            (root / "_simnibs326/campaign.json").read_text(encoding="utf-8")
+        )
+        assert len(manifest["git_commit"]) >= 7
         assert not (root / "_pipeline/configs/fixed_mesh_spherical_median.json").exists()
 
 
@@ -144,6 +184,7 @@ def test_module_preflight_probes_meshing_and_fem_without_matlab(
     assert result["matlab_required"] is False
     assert result["meshing_api"]["status"] == "ready"
     assert result["fem_api"]["session_api"] is True
+    assert len(result["git_commit"]) >= 7
     assert "matlab" not in json.dumps(result).lower().replace('"matlab_required": false', "")
     assert pipeline.validate_module_preflight_receipt(receipt)["status"] == "ready"
 
@@ -181,6 +222,7 @@ def test_completion_gates_require_400_then_800_tasks(
     final_receipt = pipeline.complete_final("left-hippocampus", paths=paths)
 
     assert remesh_receipt["validation"]["complete_tasks"] == 400
+    assert len(remesh_receipt["git_commit"]) >= 7
     assert final_receipt["validation"]["total_tasks"] == 800
     assert len(json.loads((config_dir / pipeline.PAIRED_CONFIG).read_text())["conditions"]) == 2
 

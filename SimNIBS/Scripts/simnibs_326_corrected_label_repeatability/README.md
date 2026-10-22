@@ -153,6 +153,18 @@ bash "$PIPELINE" fixed left-hippocampus --dependency=<optional-prerequisite-job-
 immutable attempt logs, and exact array-element requeue. Worker jobs use
 parscratch only.
 
+Every successful launcher call appends its UTC time, mode, target, requested
+dependency, returned Slurm job IDs, and Git commit to the campaign-wide ledger:
+
+```text
+<headmodel-root>/_pipeline/submissions.tsv
+```
+
+`status` and `analysis-status` report artifact/receipt state. They do not
+replace Slurm accounting: use the site job-history tool or `sacct` to confirm
+terminal job states, including failed or requeued attempts that are no longer
+visible in `squeue`.
+
 ## Environment overrides
 
 Every path override is namespaced with `SIMNIBS326H_`. The principal variables

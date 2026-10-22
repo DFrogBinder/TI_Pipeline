@@ -131,6 +131,10 @@ def test_reference_staging_is_ten_bounded_tasks(
     assert "--array=0-9%10" in submitted[0]
     assert "reference_stage_array.slurm" in submitted[0]
     assert "--dependency=afterok:10001" in submitted[1]
+    receipt = Path(env["SIMNIBS326H_HEADMODEL_ROOT"]) / "_pipeline/submissions.tsv"
+    assert receipt.is_file()
+    assert "stage-references" in receipt.read_text(encoding="utf-8")
+    assert "10001,10002" in receipt.read_text(encoding="utf-8")
 
 
 def test_headmodels_require_receipts_then_submit_array_and_collector(
@@ -206,3 +210,11 @@ def test_launchers_remove_matlab_cat12_and_preserve_retry_contract() -> None:
     assert "SIMNIBS326H_MAX_RETRIES" in text
     assert "--open-mode=append" in text
     assert "validate_repeatability_task.py" in text
+
+
+def test_default_preflight_does_not_hide_the_audit_plan() -> None:
+    submit = SUBMIT.read_text(encoding="utf-8")
+    assert (
+        '"$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability preflight\n'
+        in submit
+    )

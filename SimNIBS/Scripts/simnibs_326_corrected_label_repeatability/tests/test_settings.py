@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from simnibs_326_corrected_label_repeatability.settings import (
+    ENV_PREFIX,
+    REPEAT_COUNT,
+    SUBJECTS,
+    assert_root_isolation,
+    campaign_paths_from_environment,
+    campaign_scope,
+    subject_paths,
+    target_settings,
+)
+
+
+EXPECTED_SUBJECTS = (
+    "sub-CC110174",
+    "sub-CC121144",
+    "sub-CC310407",
+    "sub-CC320616",
+    "sub-CC420071",
+    "sub-CC410432",
+    "sub-CC520083",
+    "sub-CC520127",
+    "sub-CC610631",
+    "sub-CC720941",
+)
+
+
+def test_pins_full_campaign_scope_and_default_roots() -> None:
+    paths = campaign_paths_from_environment({})
+    scope = campaign_scope(paths)
+
+    assert SUBJECTS == EXPECTED_SUBJECTS
+    assert REPEAT_COUNT == 40
+    assert ENV_PREFIX == "SIMNIBS326H_"
+    assert paths.headmodel_root == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "ti_dataset_final_132_balanced_10_simnibs326_harmonized_v2"
+    )
+    assert paths.left_root == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_balanced_10_simnibs326_harmonized_"
+        "left_hippocampus_v2"
+    )
+    assert paths.right_root == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_balanced_10_simnibs326_harmonized_right_m1_v2"
+    )
+    assert scope["subjects"] == list(EXPECTED_SUBJECTS)
+    assert scope["targets"] == ["left-hippocampus", "right-m1"]
+    assert scope["conditions"] == ["remesh", "fixed_mesh"]
+    assert scope["total_simulation_tasks"] == 1600
+    assert scope["component_fem_solves"] == 3200
+    assert scope["arrays"] == {
+        "left_hippocampus_remesh": "0-399%50",
+        "left_hippocampus_fixed": "0-399%50",
+        "right_m1_remesh": "0-399%50",
+        "right_m1_fixed": "0-399%50",
+    }
+    assert target_settings("left-hippocampus", paths).experiment_root == paths.left_root
+    assert target_settings("right-m1", paths).experiment_root == paths.right_root
+
+
+def test_environment_overrides_share_one_prefix(tmp_path: Path) -> None:
+    environ = {
+        "SIMNIBS326H_CORRECTED_ROOT": str(tmp_path / "corrected"),
+        "SIMNIBS326H_LEGACY_REFERENCE_ROOT": str(tmp_path / "legacy"),
+        "SIMNIBS326H_HEADMODEL_ROOT": str(tmp_path / "headmodels"),
+        "SIMNIBS326H_LEFT_ROOT": str(tmp_path / "left"),
+        "SIMNIBS326H_RIGHT_ROOT": str(tmp_path / "right"),
+        "SIMNIBS326H_ATLAS_ROOT": str(tmp_path / "atlases"),
+    }
+
+    paths = campaign_paths_from_environment(environ)
+
+    assert paths.corrected_root == (tmp_path / "corrected").resolve()
+    assert paths.legacy_reference_root == (tmp_path / "legacy").resolve()
+    assert paths.headmodel_root == (tmp_path / "headmodels").resolve()
+    assert paths.left_root == (tmp_path / "left").resolve()
+    assert paths.right_root == (tmp_path / "right").resolve()
+    assert paths.atlas_root == (tmp_path / "atlases").resolve()
+
+
+@pytest.mark.parametrize("relationship", ["equal", "ancestor", "descendant"])
+@pytest.mark.parametrize(
+    "protected_field",
+    [
+        "corrected_root",
+        "legacy_reference_root",
+        "atlas_root",
+        "completed_v3_left_root",
+        "completed_v3_right_root",
+        "completed_v4_left_root",
+        "completed_v4_right_root",
+    ],
+)
+def test_root_isolation_rejects_protected_collisions(
+    tmp_path: Path,
+    protected_field: str,
+    relationship: str,
+) -> None:
+    paths = _disjoint_paths(tmp_path)
+    protected = getattr(paths, protected_field)
+    if relationship == "equal":
+        unsafe = protected
+    elif relationship == "ancestor":
+        unsafe = protected.parent
+    else:
+        unsafe = protected / "child"
+
+    with pytest.raises(RuntimeError, match="overlap"):
+        assert_root_isolation(replace(paths, headmodel_root=unsafe))
+
+
+@pytest.mark.parametrize("relationship", ["equal", "ancestor", "descendant"])
+def test_root_isolation_rejects_writable_root_collisions(
+    tmp_path: Path,
+    relationship: str,
+) -> None:
+    paths = _disjoint_paths(tmp_path)
+    if relationship == "equal":
+        unsafe = paths.headmodel_root
+    elif relationship == "ancestor":
+        unsafe = paths.headmodel_root.parent
+    else:
+        unsafe = paths.headmodel_root / "child"
+
+    with pytest.raises(RuntimeError, match="overlap"):
+        assert_root_isolation(replace(paths, left_root=unsafe))
+
+
+def test_disjoint_root_report_is_json_serializable(tmp_path: Path) -> None:
+    report = assert_root_isolation(_disjoint_paths(tmp_path))
+
+    encoded = json.dumps(report, sort_keys=True)
+    assert "headmodel_root" in encoded
+    assert "corrected_root" in encoded
+
+
+def test_subject_paths_expose_inputs_outputs_and_receipts(tmp_path: Path) -> None:
+    paths = _disjoint_paths(tmp_path)
+    subject = SUBJECTS[0]
+
+    resolved = subject_paths(paths, subject)
+
+    assert resolved.corrected_label == (
+        paths.corrected_root
+        / subject
+        / "anat"
+        / f"{subject}_T1w_ras_1mm_T1andT2_masks.nii"
+    )
+    assert resolved.corrected_t1 == (
+        paths.corrected_root / subject / "anat" / f"{subject}_T1w.nii"
+    )
+    assert resolved.legacy_m2m == (
+        paths.legacy_reference_root / subject / "anat" / f"m2m_{subject}"
+    )
+    assert resolved.legacy_ready_marker.name == ".simnibs326_scaffold_ready.json"
+    assert resolved.staged_m2m == paths.headmodel_root / subject / "anat" / f"m2m_{subject}"
+    assert resolved.harmonized_label == (
+        paths.headmodel_root
+        / "harmonized_labels"
+        / f"{subject}_v3_harmonized_t1fs_grid.nii.gz"
+    )
+    assert resolved.head_mesh == paths.headmodel_root / subject / "anat" / f"{subject}.msh"
+    assert resolved.reference_receipt.name == "reference_stage.json"
+    assert resolved.headmodel_receipt.name == "headmodel_complete.json"
+
+
+def test_unknown_subject_and_target_fail_closed(tmp_path: Path) -> None:
+    paths = _disjoint_paths(tmp_path)
+    with pytest.raises(ValueError, match="Unsupported subject"):
+        subject_paths(paths, "sub-UNKNOWN")
+    with pytest.raises(ValueError, match="Unsupported target"):
+        target_settings("other", paths)
+
+
+def _disjoint_paths(tmp_path: Path):
+    defaults = campaign_paths_from_environment({})
+    replacements = {
+        field: (tmp_path / field).resolve()
+        for field in (
+            "corrected_root",
+            "legacy_reference_root",
+            "atlas_root",
+            "headmodel_root",
+            "left_root",
+            "right_root",
+            "completed_v3_left_root",
+            "completed_v3_right_root",
+            "completed_v4_left_root",
+            "completed_v4_right_root",
+        )
+    }
+    return replace(defaults, **replacements)

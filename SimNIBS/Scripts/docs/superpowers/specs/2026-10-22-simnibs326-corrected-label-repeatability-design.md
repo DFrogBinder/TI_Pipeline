@@ -112,6 +112,10 @@ observed label sets, resolved paths, and source hashes. An unknown source label,
 missing required artifact, unsafe root relationship, or wrong SimNIBS version
 must fail closed.
 
+The corrected source label image is never copied into the new head-model root.
+Its absolute path and SHA-256 hash are recorded in provenance so the retained
+harmonized map remains traceable without duplicating the existing dataset.
+
 ## Legacy v3 reference staging
 
 The old v3 scaffold is used only to avoid repeating SPM/CAT12 and to preserve
@@ -157,7 +161,7 @@ explicit user action.
 | 8 | spongy bone | 4 generic bone |
 | 9 | blood | local eligible enclosing tissue |
 | 10 | muscle | 5 external soft tissue |
-| 11 | internal air, when present | separate air mask; void in six-tissue map |
+| 11 | internal air, when present | 11 geometry/control label; void in FEM tissues |
 
 Label 4 is not an accepted corrected-source label. Any nonzero label not listed
 above is an error.
@@ -182,36 +186,36 @@ blood calculation.
 
 ### Saved label products
 
-For each participant, save:
+For each participant, retain only one harmonized categorical label image:
 
 ```text
-harmonized_labels/<subject>_harmonized_source_grid.nii.gz
-harmonized_labels/<subject>_harmonized_v3_grid.nii.gz
-harmonized_labels/<subject>_air_source_grid.nii.gz
-harmonized_labels/<subject>_air_v3_grid.nii.gz
+harmonized_labels/<subject>_v3_harmonized_t1fs_grid.nii.gz
 harmonized_labels/qc/<subject>.json
 harmonized_labels/figures/<subject>.png
 ```
 
-The source-grid map is the direct six-tissue projection of the corrected v4
-label image. The v3-grid product is made by nearest-neighbour resampling of a
-categorical geometry map onto `T1fs_conform.nii.gz`; air is retained during
-resampling, then separated into its own binary mask and represented as zero in
-the visible six-tissue map.
+The corrected source label image stays in its existing location and is
+referenced by path and hash. Harmonization is calculated on the source grid in
+memory or task-local temporary storage. That categorical geometry map is then
+resampled with nearest-neighbour interpolation onto `T1fs_conform.nii.gz` and
+saved as the single retained harmonized map. Tissue labels are 1-6; internal
+air, when present, remains label 11 in this geometry map so `MASK_AIR` can be
+derived without retaining another NIfTI.
 
 The implementation must not independently resample overlapping binary tissue
 masks. A single categorical resampling prevents overlaps and gaps caused by
 mask-by-mask interpolation.
 
-The per-participant JSON records source and output hashes, affines, shapes,
-voxel sizes, original and final label counts, blood assignment counts, and the
-software version. A cohort TSV, manifest JSON, and checksum file collect the
-ten participants for later inspection.
+The transient source-grid harmonized image and separate air images are not
+retained. The per-participant JSON records the existing source path and hash,
+output hash, affines, shapes, voxel sizes, original and final label counts,
+blood assignment counts, and software version. A cohort TSV, manifest JSON,
+and checksum file collect the ten retained maps for later inspection.
 
 ## v3 masks, surfaces, and tetrahedral mesh
 
-From the v3-grid geometry map, derive mutually exclusive binary images named
-for the SimNIBS 3.2.6 headreco interface:
+From the retained v3-grid geometry map, derive mutually exclusive temporary
+binary images named for the SimNIBS 3.2.6 headreco interface:
 
 - `MASK_WM.nii.gz`;
 - `MASK_GM.nii.gz`;
@@ -220,6 +224,12 @@ for the SimNIBS 3.2.6 headreco interface:
 - `MASK_SKIN.nii.gz`;
 - `MASK_EYES.nii.gz`;
 - `MASK_AIR.nii.gz`.
+
+These masks are task-local working products used to generate the surfaces.
+After the mask validation report and new surfaces have been successfully
+written and hashed, the binary masks are removed. They remain exactly
+reconstructable from the retained categorical map and therefore need not
+consume permanent parscratch space.
 
 Use the SimNIBS 3.2.6 implementation of `make_surface_meshes` to generate new
 surfaces from those masks. Use the SimNIBS 3.2.6 implementation of
@@ -249,7 +259,8 @@ submitted by the head-model launcher.
 
 Automated validation requires:
 
-- all requested label-map and mask artifacts;
+- the retained harmonized label map and all requested surface/mesh artifacts;
+- a successful temporary-mask validation recorded in the receipt;
 - mutually exclusive tissues and an allowed final label set;
 - nonempty required tissue compartments;
 - finite, valid NIfTI geometry;

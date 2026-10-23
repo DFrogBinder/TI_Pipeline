@@ -154,6 +154,39 @@ def test_retry_rebuilds_owned_partial_outputs_without_touching_references(
     assert (resolved.staged_m2m / "T1fs_conform.nii.gz").read_bytes() == reference_before
 
 
+def test_failed_attempt_cleanup_removes_generated_niftis_and_geo_only(
+    tmp_path: Path,
+) -> None:
+    _, resolved = _headmodel_layout(tmp_path)
+    generated = [
+        resolved.staged_m2m / name
+        for name in (
+            "bone.nii.gz",
+            "csf.nii.gz",
+            "eyes.nii.gz",
+            "gm.nii.gz",
+            "skin.nii.gz",
+            "wm.nii.gz",
+            f"{resolved.subject}.geo",
+            "wm.stl",
+        )
+    ]
+    for path in generated:
+        path.write_bytes(b"generated")
+    references = [
+        resolved.staged_m2m / "T1fs_conform.nii.gz",
+        resolved.staged_m2m / "T1fs_nu_conform.nii.gz",
+        resolved.staged_m2m / "eeg_positions",
+        resolved.staged_m2m / "toMNI",
+        resolved.reference_receipt,
+    ]
+
+    headmodel_module._clear_partial_generated_artifacts(resolved)
+
+    assert all(not path.exists() for path in generated)
+    assert all(path.exists() for path in references)
+
+
 def test_build_rejects_a_surface_or_mesh_reused_from_legacy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

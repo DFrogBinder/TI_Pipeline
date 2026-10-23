@@ -10,6 +10,7 @@ import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1]
 SUBMIT = PACKAGE / "hpc" / "submit.sh"
+HEADMODEL_ARRAY = PACKAGE / "hpc" / "headmodel_array.slurm"
 EXPECTED = {
     "activate_compat.sh",
     "module_preflight.slurm",
@@ -210,6 +211,69 @@ def test_launchers_remove_matlab_cat12_and_preserve_retry_contract() -> None:
     assert "SIMNIBS326H_MAX_RETRIES" in text
     assert "--open-mode=append" in text
     assert "validate_repeatability_task.py" in text
+
+
+def test_headmodel_worker_isolates_gmsh_workdir_and_writes_diagnostic_receipt(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (
+        ("module", "#!/bin/bash\nexit 0\n"),
+        ("python", "#!/bin/bash\nexit 0\n"),
+        ("scontrol", "#!/bin/bash\nexit 99\n"),
+        (
+            "timeout",
+            "#!/bin/bash\n"
+            'printf "%s\\n" "$PWD" > "$OBSERVED_HEADMODEL_CWD"\n'
+            'printf "isolated gmsh log\\n" > gmsh_log.txt\n'
+            "exit 1\n",
+        ),
+    ):
+        path = bin_dir / name
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+    log_dir = tmp_path / "logs"
+    preflight = tmp_path / "module_preflight.json"
+    preflight.write_text("{}", encoding="utf-8")
+    observed_cwd = tmp_path / "observed-cwd.txt"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{bin_dir}:{env['PATH']}",
+            "HOME": str(tmp_path / "home"),
+            "USER": "test-user",
+            "PIPELINE_DIR": str(PACKAGE),
+            "PREFLIGHT_RECEIPT": str(preflight),
+            "LOG_DIR": str(log_dir),
+            "SLURM_ARRAY_TASK_ID": "6",
+            "SLURM_ARRAY_JOB_ID": "119",
+            "SLURM_JOB_ID": "119_6",
+            "SLURM_CPUS_PER_TASK": "8",
+            "SIMNIBS326H_MAX_RETRIES": "0",
+            "SIMNIBS326H_DIAGNOSTIC": "1",
+            "OBSERVED_HEADMODEL_CWD": str(observed_cwd),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(HEADMODEL_ARRAY)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    workdir = Path(observed_cwd.read_text(encoding="utf-8").strip())
+    assert workdir.parent == log_dir / "work" / "119_6"
+    assert workdir.name.startswith("retry_0_")
+    assert (workdir / "gmsh_log.txt").read_text(encoding="utf-8") == "isolated gmsh log\n"
+    receipts = list((log_dir / "diagnostic_receipts").glob("diagnostic_119_6_*.tsv"))
+    assert len(receipts) == 1
+    row = receipts[0].read_text(encoding="utf-8")
+    assert "job_key\tsubject_index\tretry\texit_code\twork_dir\tattempt_log" in row
+    assert "119_6\t6\t0\t1\t" in row
 
 
 def test_default_preflight_does_not_hide_the_audit_plan() -> None:

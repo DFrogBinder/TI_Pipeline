@@ -41,6 +41,12 @@ class HeadModelError(RuntimeError):
     """Raised when a head model cannot be proved complete and independent."""
 
 
+_GENERATED_TISSUE_NIFTIS = {
+    f"{name}.nii.gz"
+    for name in ("wm", "gm", "csf", "bone", "skin", "eyes", "air")
+}
+
+
 def build_headmodel(
     paths: CampaignPaths,
     subject: str,
@@ -492,7 +498,11 @@ def _validate_finite_mesh_nodes(api: V3MeshingAPI, mesh_path: Path) -> int:
 def _clear_partial_generated_artifacts(resolved) -> None:
     if resolved.staged_m2m.is_dir():
         for path in resolved.staged_m2m.iterdir():
-            if path.is_file() and path.suffix.lower() in {".stl", ".off", ".msh"}:
+            generated = (
+                path.suffix.lower() in {".stl", ".off", ".msh", ".geo"}
+                or path.name.lower() in _GENERATED_TISSUE_NIFTIS
+            )
+            if path.is_file() and generated:
                 path.unlink()
     for path in (resolved.head_mesh, resolved.compatibility_mesh):
         if path.is_file() or path.is_symlink():

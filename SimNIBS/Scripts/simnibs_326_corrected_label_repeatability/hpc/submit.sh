@@ -62,6 +62,9 @@ if [ "$COHORT" = base9 ] && [ "$MODE" = analysis ]; then
     exit 2
 fi
 export SIMNIBS326H_COHORT="$COHORT"
+"$PYTHON_BIN" -c \
+    'from simnibs_326_corrected_label_repeatability.settings import assert_root_isolation, campaign_paths_from_environment; assert_root_isolation(campaign_paths_from_environment())' \
+    >/dev/null
 [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid retry cap." >&2; exit 2; }
 [ -z "$DEPENDENCY" ] || [[ "$DEPENDENCY" =~ ^[0-9]+$ ]] || {
     echo "[ERROR] Dependency must be a numeric Slurm job ID." >&2; exit 2;

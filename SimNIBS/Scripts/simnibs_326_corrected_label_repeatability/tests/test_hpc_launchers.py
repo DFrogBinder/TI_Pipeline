@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -318,6 +319,33 @@ def test_base9_analysis_is_rejected_until_provenance_safe_aggregation_exists(
     assert result.returncode == 2
     assert "base9 analysis is intentionally blocked" in result.stderr
     assert _calls(calls) == []
+
+
+def test_explicit_cross_profile_root_collision_fails_before_any_submission(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    shared = tmp_path / "shared-result-root"
+    env.update(
+        {
+            "PYTHON_BIN": sys.executable,
+            "SIMNIBS326H_LEFT_ROOT": str(shared),
+            "SIMNIBS326H_BASE9_LEFT_ROOT": str(shared),
+        }
+    )
+
+    result = _run(
+        env,
+        "remesh",
+        "left-hippocampus",
+        "--cohort=base9",
+    )
+
+    assert result.returncode != 0
+    assert "base9 writable result root overlaps" in result.stderr
+    assert _calls(calls) == []
+    assert not shared.exists()
 
 
 def test_default_full10_submission_ledger_preserves_legacy_mode_value(

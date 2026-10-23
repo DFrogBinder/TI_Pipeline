@@ -46,10 +46,10 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
+    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
     *)
         echo "[ERROR] Unsupported mode: $MODE" >&2
-        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target|subject] [options]" >&2
+        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target|subject] [options]" >&2
         exit 2
         ;;
 esac
@@ -81,7 +81,7 @@ export SIMNIBS326H_COHORT="$COHORT"
 [ -z "$DEPENDENCY" ] || [[ "$DEPENDENCY" =~ ^[0-9]+$ ]] || {
     echo "[ERROR] Dependency must be a numeric Slurm job ID." >&2; exit 2;
 }
-if { [ "$MODE" = remesh ] || [ "$MODE" = post-remesh ] || [ "$MODE" = fixed ]; } && [ -z "$TARGET" ]; then
+if { [ "$MODE" = remesh ] || [ "$MODE" = target-remesh ] || [ "$MODE" = post-remesh ] || [ "$MODE" = fixed ]; } && [ -z "$TARGET" ]; then
     echo "[ERROR] Mode $MODE requires a target." >&2; exit 2
 fi
 if [ "$MODE" = post-remesh ] && [ -z "$DEPENDENCY" ]; then
@@ -455,6 +455,12 @@ case "$MODE" in
         job="$(submit_simulation "$TARGET" remesh_only.json remesh "$DEPENDENCY")"
         record_submission "$MODE" "$TARGET" "$DEPENDENCY" "$job"
         echo "[INFO] Remesh array: $job"
+        ;;
+    target-remesh)
+        simulation_job="$(submit_simulation "$TARGET" remesh_only.json remesh "$DEPENDENCY")"
+        post_jobs="$(submit_post_remesh "$TARGET" "$simulation_job")"
+        record_submission "$MODE" "$TARGET" "$DEPENDENCY" "$simulation_job\t$post_jobs"
+        echo "[INFO] Target remesh/preparation chain: simulation=$simulation_job post=$post_jobs"
         ;;
     post-remesh)
         jobs="$(submit_post_remesh "$TARGET" "$DEPENDENCY")"

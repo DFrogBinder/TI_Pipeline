@@ -214,6 +214,25 @@ def test_all_remesh_and_all_fixed_keep_target_arrays_sequential(
     assert "--dependency=afterok:" in fixed_simulations[1]
 
 
+def test_target_remesh_submits_one_target_complete_preparation_chain(
+    launcher_env: tuple[dict[str, str], Path]
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env)
+    _configs(env)
+
+    result = _run(env, "target-remesh", "left-hippocampus")
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    simulations = [line for line in submitted if "simulation_array.slurm" in line]
+    roi_arrays = [line for line in submitted if "optimizer_roi_array.slurm" in line]
+    assert len(simulations) == 1
+    assert "left/_pipeline/configs/remesh_only.json" in simulations[0]
+    assert len(roi_arrays) == 1
+    assert len(submitted) == 5
+
+
 @pytest.mark.parametrize("mode", ["all-remesh", "all-fixed"])
 def test_aggregate_modes_forward_requested_dependency_to_first_simulation(
     launcher_env: tuple[dict[str, str], Path],

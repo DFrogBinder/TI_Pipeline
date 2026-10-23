@@ -126,6 +126,11 @@ The wrapper will stage the selected subject into an isolated corrected-input
 root using the existing final-132 staging utility, then initialize the existing
 `ti_current_repair/pipeline/staged_median_fixed_experiment.py` once for each
 target. Each v4 experiment receives a singleton subject list and isolated root.
+No previous v4 mesh is assumed or reused for the replacement subject. For each
+target, the v4 arm generates 40 new remesh realizations from the corrected
+subject inputs, selects the target-specific representative mesh using the
+existing median-selection workflow, physically seeds that mesh into the fixed
+condition, and performs 40 fixed-mesh repetitions.
 
 ### Gates and execution order
 
@@ -152,7 +157,9 @@ figures as cohort-level inference.
 For each version the full replacement scope is two targets multiplied by two
 conditions multiplied by 40 repeats: 160 simulation tasks, 160 expected field
 meshes, and 320 component FEM solves. Across both versions the scope is 320
-simulation tasks and 640 component FEM solves.
+simulation tasks and 640 component FEM solves. The v4 share comprises 80
+new-mesh simulations and 80 fixed-mesh simulations; it is not a replay of an
+existing subject mesh.
 
 ## Failure Behavior
 

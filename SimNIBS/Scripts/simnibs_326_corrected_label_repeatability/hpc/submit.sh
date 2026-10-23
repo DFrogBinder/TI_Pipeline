@@ -54,9 +54,21 @@ case "$MODE" in
         ;;
 esac
 case "$COHORT" in
-    full10|base9) ;;
-    *) echo "[ERROR] Unsupported cohort: $COHORT (expected full10 or base9)." >&2; exit 2 ;;
+    full10|base9|external1) ;;
+    *) echo "[ERROR] Unsupported cohort: $COHORT (expected full10, base9, or external1)." >&2; exit 2 ;;
 esac
+if [ "$COHORT" = external1 ]; then
+    EXTERNAL_MANIFEST="${SIMNIBS326H_EXTERNAL_MANIFEST:-}"
+    [ -n "$EXTERNAL_MANIFEST" ] || {
+        echo "[ERROR] external1 requires SIMNIBS326H_EXTERNAL_MANIFEST." >&2; exit 2;
+    }
+    [[ "$EXTERNAL_MANIFEST" = /* ]] || {
+        echo "[ERROR] SIMNIBS326H_EXTERNAL_MANIFEST must be absolute." >&2; exit 2;
+    }
+    [ -s "$EXTERNAL_MANIFEST" ] || {
+        echo "[ERROR] External manifest is missing or empty: $EXTERNAL_MANIFEST" >&2; exit 2;
+    }
+fi
 if [ "$COHORT" = base9 ] && [ "$MODE" = analysis ]; then
     echo "[ERROR] base9 analysis is intentionally blocked until a provenance-safe base9 or 9+1 aggregation is implemented." >&2
     exit 2
@@ -78,8 +90,8 @@ fi
 if [ "$MODE" = diagnose-headmodel ] && [ "$DIAGNOSTIC_SUBJECT" != "sub-CC520083" ]; then
     echo "[ERROR] diagnose-headmodel requires sub-CC520083." >&2; exit 2
 fi
-if { [ "$MODE" = stage-references ] || [ "$MODE" = headmodels ]; } && [ "$COHORT" != full10 ]; then
-    echo "[ERROR] $MODE is full10-only; base9 reuses the completed reference stage and nine head models." >&2
+if { [ "$MODE" = stage-references ] || [ "$MODE" = headmodels ]; } && [ "$COHORT" = base9 ]; then
+    echo "[ERROR] $MODE is unavailable for base9, which reuses the completed reference stage and nine head models." >&2
     exit 2
 fi
 
@@ -90,6 +102,17 @@ if [ "$COHORT" = base9 ]; then
     ROI_ARRAY_LAST=8
     ROI_MAX_CONCURRENT=9
     JOB_SCOPE="b9_"
+    REFERENCE_ARRAY_LAST=9
+    REFERENCE_MAX_CONCURRENT=10
+elif [ "$COHORT" = external1 ]; then
+    SUBJECT_COUNT=1
+    TASKS_PER_CONDITION=40
+    SIM_ARRAY_LAST=39
+    ROI_ARRAY_LAST=0
+    ROI_MAX_CONCURRENT=1
+    JOB_SCOPE="x1_"
+    REFERENCE_ARRAY_LAST=0
+    REFERENCE_MAX_CONCURRENT=1
 else
     SUBJECT_COUNT=10
     TASKS_PER_CONDITION=400
@@ -97,6 +120,8 @@ else
     ROI_ARRAY_LAST=9
     ROI_MAX_CONCURRENT=10
     JOB_SCOPE=""
+    REFERENCE_ARRAY_LAST=9
+    REFERENCE_MAX_CONCURRENT=10
 fi
 
 setting_path() {
@@ -120,6 +145,9 @@ ANALYSIS_ROOT="$HEADMODEL_ROOT/_pipeline/analysis/repeatability_optimizer_roi_pa
 if [ "$COHORT" = base9 ]; then
     HEADMODEL_COLLECTION_ROOT="$HEADMODEL_COLLECTION_ROOT/base9"
     ANALYSIS_ROOT="$HEADMODEL_ROOT/_pipeline/analysis/repeatability_optimizer_roi_paired_base9_v2"
+elif [ "$COHORT" = external1 ]; then
+    HEADMODEL_COLLECTION_ROOT="$HEADMODEL_COLLECTION_ROOT/external1"
+    ANALYSIS_ROOT="$HEADMODEL_ROOT/_pipeline/analysis/repeatability_optimizer_roi_paired_external1_v2"
 fi
 PROMOTION_RECEIPT="$HEADMODEL_COLLECTION_ROOT/promoted.json"
 
@@ -168,7 +196,7 @@ record_submission() {
     local receipt_mode="$mode"
     local receipt="$HEADMODEL_ROOT/_pipeline/submissions.tsv"
     local commit
-    [ "$COHORT" != base9 ] || receipt_mode="base9:$mode"
+    [ "$COHORT" = full10 ] || receipt_mode="$COHORT:$mode"
     jobs="${jobs//$'\t'/,}"
     jobs="${jobs//\\t/,}"
     mkdir -p "$(dirname "$receipt")"
@@ -205,6 +233,10 @@ print_scope() {
         echo "  head-model build tasks: 0 (reuse nine completed markers)"
         echo "  head-model collection subjects: 9"
         echo "  execution: authorized reduced scope; sub-CC520083 excluded"
+    elif [ "$COHORT" = external1 ]; then
+        echo "  reference-stage tasks: 1 (0-0%1)"
+        echo "  head-model tasks: 1 (0-0%1)"
+        echo "  execution: manifest-bound replacement subject"
     else
         echo "  reference-stage tasks: 10 (0-9%10)"
         echo "  head-model tasks: 10 (0-9%10)"
@@ -232,7 +264,7 @@ submit_reference_staging() {
     local log_dir="$HEADMODEL_ROOT/_pipeline/logs/reference_stage"
     mkdir -p "$log_dir"
     local array_job
-    array_job="$(submit_job --partition="$PARTITION" --array="0-9%10" \
+    array_job="$(submit_job --partition="$PARTITION" --array="0-${REFERENCE_ARRAY_LAST}%${REFERENCE_MAX_CONCURRENT}" \
         --output="$log_dir/slurm-%A_%a.out" --open-mode=append \
         --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES,SIMNIBS326H_COHORT=$COHORT" \
         "$REFERENCE_ARRAY")"
@@ -248,14 +280,14 @@ submit_headmodels() {
     require_file "$REFERENCE_RECEIPT"
     "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-module-receipt \
         --receipt "$PREFLIGHT_RECEIPT" >/dev/null
-    "$PYTHON_BIN" -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p.get("status")=="complete" and p.get("subject_count")==10' \
-        "$REFERENCE_RECEIPT"
+    "$PYTHON_BIN" -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p.get("status")=="complete" and p.get("subject_count")==int(sys.argv[2])' \
+        "$REFERENCE_RECEIPT" "$SUBJECT_COUNT"
     [ -x "$RENDER_PYTHON" ] || { echo "[ERROR] Renderer is not executable: $RENDER_PYTHON" >&2; exit 2; }
     local log_dir="$HEADMODEL_ROOT/_pipeline/logs/headmodels"
     mkdir -p "$log_dir"
     local array_job
     array_job="$(submit_job --partition="$PARTITION" --cpus-per-task=8 --mem=32G \
-        --time=08:00:00 --array="0-9%10" --output="$log_dir/slurm-%A_%a.out" \
+        --time=08:00:00 --array="0-${REFERENCE_ARRAY_LAST}%${REFERENCE_MAX_CONCURRENT}" --output="$log_dir/slurm-%A_%a.out" \
         --open-mode=append \
         --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES,SIMNIBS326H_COHORT=$COHORT" \
         "$HEADMODEL_ARRAY")"
@@ -271,8 +303,8 @@ submit_headmodel_collector() {
     require_file "$REFERENCE_RECEIPT"
     "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-module-receipt \
         --receipt "$PREFLIGHT_RECEIPT" >/dev/null
-    "$PYTHON_BIN" -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p.get("status")=="complete" and p.get("subject_count")==10' \
-        "$REFERENCE_RECEIPT"
+    "$PYTHON_BIN" -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p.get("status")=="complete" and p.get("subject_count")==int(sys.argv[2])' \
+        "$REFERENCE_RECEIPT" "$SUBJECT_COUNT"
     [ -x "$RENDER_PYTHON" ] || { echo "[ERROR] Renderer is not executable: $RENDER_PYTHON" >&2; exit 2; }
     local log_dir="$HEADMODEL_ROOT/_pipeline/logs/headmodel_collect/$COHORT"
     mkdir -p "$log_dir"

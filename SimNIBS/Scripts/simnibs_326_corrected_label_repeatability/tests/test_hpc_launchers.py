@@ -94,9 +94,12 @@ def _ready_prerequisites(env: dict[str, str], *, cohort: str = "full10") -> None
     if cohort == "base9":
         promotion = head / "_pipeline/headmodels/base9/promoted.json"
         subject_count = 9
+    elif cohort == "external1":
+        promotion = head / "_pipeline/headmodels/external1/promoted.json"
+        subject_count = 1
     for path, payload in (
         (module, {"status": "ready"}),
-        (references, {"status": "complete", "subject_count": 10}),
+        (references, {"status": "complete", "subject_count": subject_count}),
         (promotion, {"status": "promoted", "subjects": [str(i) for i in range(subject_count)]}),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,6 +290,106 @@ def test_base9_collector_only_submits_no_headmodel_build_array(
     assert "headmodel_collect.slurm" in submitted[0]
     assert "--dependency=" not in submitted[0]
     assert "headmodel_array.slurm" not in submitted[0]
+
+
+def _external_launcher_env(
+    env: dict[str, str], tmp_path: Path, subject: str = "sub-CC999999"
+) -> None:
+    manifest = tmp_path / "replacement_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "workflow": "simnibs_subject_replacement",
+                "profile": "external1",
+                "status": "prepared",
+                "subject": subject,
+                "subjects": [subject],
+            }
+        ),
+        encoding="utf-8",
+    )
+    env["SIMNIBS326H_EXTERNAL_MANIFEST"] = str(manifest)
+
+
+def test_external_preflight_is_read_only_and_reports_singleton_scope(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    _external_launcher_env(env, tmp_path)
+
+    result = _run(env, "preflight", "--cohort=external1")
+
+    assert result.returncode == 0, result.stderr
+    assert "  cohort: external1\n" in result.stdout
+    assert "  subjects: 1\n" in result.stdout
+    assert "  total simulation tasks: 160\n" in result.stdout
+    assert _calls(calls) == []
+
+
+def test_external_reference_and_headmodel_arrays_are_singleton(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    _external_launcher_env(env, tmp_path)
+
+    staged = _run(env, "stage-references", "--cohort=external1")
+    assert staged.returncode == 0, staged.stderr
+    assert "--array=0-0%1" in _calls(calls)[0]
+
+    calls.unlink()
+    Path(env["FAKE_SBATCH_COUNTER"]).unlink()
+    _ready_prerequisites(env, cohort="external1")
+    built = _run(env, "headmodels", "--cohort=external1")
+    assert built.returncode == 0, built.stderr
+    submitted = _calls(calls)
+    assert "--array=0-0%1" in submitted[0]
+    assert "headmodel_collect.slurm" in submitted[1]
+
+
+def test_external_simulation_and_roi_arrays_use_singleton_scope(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    _external_launcher_env(env, tmp_path)
+    _ready_prerequisites(env, cohort="external1")
+    _configs(env)
+
+    result = _run(env, "all-remesh", "--cohort=external1")
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    simulations = [line for line in submitted if "simulation_array.slurm" in line]
+    roi_arrays = [line for line in submitted if "optimizer_roi_array.slurm" in line]
+    assert len(simulations) == 2
+    assert all("--array=0-39%50" in line for line in simulations)
+    assert len(roi_arrays) == 2
+    assert all("--array=0-0%1" in line for line in roi_arrays)
+    assert all("SIMNIBS326H_COHORT=external1" in line for line in submitted)
+
+
+def test_external_collector_and_promotion_path_use_external1_directory(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    _external_launcher_env(env, tmp_path)
+    _ready_prerequisites(env, cohort="external1")
+
+    result = _run(env, "collect-headmodels", "--cohort=external1")
+
+    assert result.returncode == 0, result.stderr
+    assert len(_calls(calls)) == 1
+    assert "headmodel_collect.slurm" in _calls(calls)[0]
+
+    promotion = (
+        Path(env["SIMNIBS326H_HEADMODEL_ROOT"])
+        / "_pipeline/headmodels/external1/promoted.json"
+    )
+    assert promotion.is_file()
 
 
 def test_one_subject_diagnosis_submits_exact_task_without_retry_or_collector(

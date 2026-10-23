@@ -181,6 +181,44 @@ def test_base9_scope_reports_reused_reference_and_headmodels_as_zero_build_tasks
     assert scope["headmodel_tasks"] == 0
 
 
+def test_external_scope_and_cli_use_manifest_singleton(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject = "sub-CC999999"
+    manifest = tmp_path / "replacement_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "workflow": "simnibs_subject_replacement",
+                "profile": "external1",
+                "status": "prepared",
+                "subject": subject,
+                "subjects": [subject],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(COHORT_ENV, "external1")
+    monkeypatch.setenv("SIMNIBS326H_EXTERNAL_MANIFEST", str(manifest))
+
+    scope = pipeline.campaign_scope(_paths(tmp_path))
+    parser = pipeline.build_parser()
+    by_name = parser.parse_args(["stage-reference", "--subject", subject])
+    by_index = parser.parse_args(["build-headmodel", "--subject-index", "0"])
+
+    assert scope["subject_count"] == 1
+    assert scope["reference_stage_tasks"] == 1
+    assert scope["headmodel_tasks"] == 1
+    assert scope["total_simulation_tasks"] == 160
+    assert set(scope["arrays"].values()) == {"0-39%50"}
+    assert pipeline._selected_subject(by_name) == subject
+    assert pipeline._selected_subject(by_index) == subject
+    with pytest.raises(SystemExit):
+        parser.parse_args(["stage-reference", "--subject", SUBJECTS[0]])
+
+
 def test_initialize_fails_closed_on_missing_or_stale_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

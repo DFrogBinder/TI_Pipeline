@@ -16,6 +16,7 @@ from simnibs_326_corrected_label_repeatability.settings import (
     campaign_scope,
     cohort_name,
     cohort_subjects,
+    load_external_manifest,
     subject_paths,
     target_settings,
 )
@@ -141,6 +142,120 @@ def test_unknown_cohort_profile_fails_closed() -> None:
         cohort_subjects(environ)
     with pytest.raises(ValueError, match="Unsupported cohort profile"):
         campaign_paths_from_environment(environ)
+
+
+def _write_external_manifest(
+    tmp_path: Path,
+    *,
+    subject: str = "sub-CC999999",
+    **overrides: object,
+) -> Path:
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "workflow": "simnibs_subject_replacement",
+        "profile": "external1",
+        "status": "prepared",
+        "subject": subject,
+        "subjects": [subject],
+    }
+    payload.update(overrides)
+    path = tmp_path / "replacement_manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_external_profile_loads_one_manifest_bound_subject(tmp_path: Path) -> None:
+    manifest_path = _write_external_manifest(tmp_path)
+    environ = {
+        "SIMNIBS326H_COHORT": "external1",
+        "SIMNIBS326H_EXTERNAL_MANIFEST": str(manifest_path),
+    }
+
+    manifest = load_external_manifest(environ)
+
+    assert manifest["subject"] == "sub-CC999999"
+    assert cohort_name(environ) == "external1"
+    assert cohort_subjects(environ) == ("sub-CC999999",)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"profile": "base9"}, "profile"),
+        ({"status": "draft"}, "prepared"),
+        ({"subjects": ["sub-CC999999", "sub-CC888888"]}, "exactly one"),
+        ({"subject": "../sub-CC999999", "subjects": ["../sub-CC999999"]}, "canonical"),
+        ({"subjects": ["sub-CC888888"]}, "subject.*subjects"),
+    ],
+)
+def test_external_manifest_rejects_invalid_binding(
+    tmp_path: Path,
+    overrides: dict[str, object],
+    match: str,
+) -> None:
+    manifest_path = _write_external_manifest(tmp_path, **overrides)
+    environ = {
+        "SIMNIBS326H_COHORT": "external1",
+        "SIMNIBS326H_EXTERNAL_MANIFEST": str(manifest_path),
+    }
+
+    with pytest.raises(ValueError, match=match):
+        cohort_subjects(environ)
+
+
+def test_external_manifest_is_mandatory_absolute_and_valid_json(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="EXTERNAL_MANIFEST"):
+        cohort_subjects({"SIMNIBS326H_COHORT": "external1"})
+
+    with pytest.raises(ValueError, match="absolute"):
+        cohort_subjects(
+            {
+                "SIMNIBS326H_COHORT": "external1",
+                "SIMNIBS326H_EXTERNAL_MANIFEST": "relative/manifest.json",
+            }
+        )
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("not-json", encoding="utf-8")
+    with pytest.raises(ValueError, match="valid JSON"):
+        cohort_subjects(
+            {
+                "SIMNIBS326H_COHORT": "external1",
+                "SIMNIBS326H_EXTERNAL_MANIFEST": str(malformed),
+            }
+        )
+
+
+def test_external_profile_has_singleton_scope_and_subject_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject = "sub-CC999999"
+    manifest_path = _write_external_manifest(tmp_path, subject=subject)
+    environ = {
+        "SIMNIBS326H_COHORT": "external1",
+        "SIMNIBS326H_EXTERNAL_MANIFEST": str(manifest_path),
+        "SIMNIBS326H_CORRECTED_ROOT": str(tmp_path / "corrected"),
+        "SIMNIBS326H_LEGACY_REFERENCE_ROOT": str(tmp_path / "legacy"),
+        "SIMNIBS326H_ATLAS_ROOT": str(tmp_path / "atlas"),
+        "SIMNIBS326H_HEADMODEL_ROOT": str(tmp_path / "headmodels"),
+        "SIMNIBS326H_LEFT_ROOT": str(tmp_path / "left"),
+        "SIMNIBS326H_RIGHT_ROOT": str(tmp_path / "right"),
+    }
+    paths = campaign_paths_from_environment(environ)
+    scope = campaign_scope(paths, environ=environ)
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+
+    assert scope["subject_count"] == 1
+    assert scope["total_simulation_tasks"] == 160
+    assert scope["component_fem_solves"] == 320
+    assert set(scope["arrays"].values()) == {"0-39%50"}
+    assert subject_paths(paths, subject).subject == subject
+    with pytest.raises(ValueError, match="active external1 subject"):
+        subject_paths(paths, SUBJECTS[0])
 
 
 def test_environment_overrides_share_one_prefix(tmp_path: Path) -> None:

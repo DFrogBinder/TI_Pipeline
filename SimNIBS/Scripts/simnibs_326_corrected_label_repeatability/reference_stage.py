@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 from typing import Any
 
-from .settings import CampaignPaths, SUBJECTS, SubjectPaths, subject_paths
+from .settings import CampaignPaths, SubjectPaths, cohort_subjects, subject_paths
 
 
 PROVENANCE_MARKER_NAME = "legacy_scaffold_ready.provenance.json"
@@ -214,9 +214,10 @@ def validate_collected_reference(subject_paths: SubjectPaths) -> StageReceipt:
         raise ReferenceStageError(
             f"Reference-stage collection receipt is missing or unreadable: {collection_path}"
         ) from exc
+    selected = cohort_subjects()
     if (
         collection.get("status") != "complete"
-        or collection.get("subject_count") != len(SUBJECTS)
+        or collection.get("subject_count") != len(selected)
         or collection.get("headmodel_root")
         != str(subject_paths.staged_anat.parents[1].resolve())
         or collection.get("legacy_reference_dependency_released") is not True
@@ -225,6 +226,10 @@ def validate_collected_reference(subject_paths: SubjectPaths) -> StageReceipt:
     entries = collection.get("subjects")
     if not isinstance(entries, list):
         raise ReferenceStageError("Reference-stage collection has no subject inventory")
+    if [entry.get("subject") for entry in entries if isinstance(entry, dict)] != list(
+        selected
+    ):
+        raise ReferenceStageError("Reference-stage collection subject order differs")
     matches = [
         entry
         for entry in entries
@@ -244,9 +249,10 @@ def validate_collected_reference(subject_paths: SubjectPaths) -> StageReceipt:
 
 
 def collect_reference_stage(paths: CampaignPaths) -> dict[str, object]:
-    """Validate all ten staged references before releasing the legacy dependency."""
+    """Validate the active cohort before releasing the legacy dependency."""
     subjects: list[dict[str, object]] = []
-    for subject in SUBJECTS:
+    selected = cohort_subjects()
+    for subject in selected:
         resolved = subject_paths(paths, subject)
         try:
             receipt = validate_staged_reference(resolved)
@@ -272,6 +278,7 @@ def collect_reference_stage(paths: CampaignPaths) -> dict[str, object]:
         "git_commit": _git_commit(),
         "headmodel_root": str(paths.headmodel_root.resolve()),
         "subject_count": len(subjects),
+        "subject_order": list(selected),
         "subjects": subjects,
         "subjects_manifest_sha256": hashlib.sha256(binding).hexdigest(),
         "legacy_reference_dependency_released": True,

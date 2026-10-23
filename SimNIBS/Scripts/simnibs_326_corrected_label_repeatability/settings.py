@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -43,7 +45,9 @@ BASE9_SUBJECTS = tuple(
     subject for subject in SUBJECTS if subject != BASE9_EXCLUDED_SUBJECT
 )
 COHORT_ENV = f"{ENV_PREFIX}COHORT"
-COHORT_PROFILES = ("full10", "base9")
+EXTERNAL_MANIFEST_ENV = f"{ENV_PREFIX}EXTERNAL_MANIFEST"
+COHORT_PROFILES = ("full10", "base9", "external1")
+_CANONICAL_SUBJECT_RE = re.compile(r"^sub-CC[0-9]{6}$")
 
 
 @dataclass(frozen=True)
@@ -161,10 +165,58 @@ def cohort_name(environ: Mapping[str, str] | None = None) -> str:
     return name
 
 
+def load_external_manifest(
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Load and validate the manifest that authorizes one external subject."""
+    source = os.environ if environ is None else environ
+    raw_path = source.get(EXTERNAL_MANIFEST_ENV, "").strip()
+    if not raw_path:
+        raise ValueError(
+            f"{EXTERNAL_MANIFEST_ENV} is required for the external1 cohort"
+        )
+    manifest_path = Path(raw_path).expanduser()
+    if not manifest_path.is_absolute():
+        raise ValueError(f"{EXTERNAL_MANIFEST_ENV} must be an absolute path")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"{EXTERNAL_MANIFEST_ENV} must reference readable, valid JSON: "
+            f"{manifest_path}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError("External manifest must contain a JSON object")
+    if payload.get("schema_version") != 1:
+        raise ValueError("External manifest schema_version must be 1")
+    if payload.get("workflow") != "simnibs_subject_replacement":
+        raise ValueError(
+            "External manifest workflow must be simnibs_subject_replacement"
+        )
+    if payload.get("profile") != "external1":
+        raise ValueError("External manifest profile must be external1")
+    if payload.get("status") != "prepared":
+        raise ValueError("External manifest status must be prepared")
+    subjects = payload.get("subjects")
+    if not isinstance(subjects, list) or len(subjects) != 1:
+        raise ValueError("External manifest must bind exactly one subject")
+    subject = payload.get("subject")
+    if subject != subjects[0]:
+        raise ValueError("External manifest subject must match subjects[0]")
+    if not isinstance(subject, str) or not _CANONICAL_SUBJECT_RE.fullmatch(subject):
+        raise ValueError("External manifest subject must be a canonical subject ID")
+    return payload
+
+
 def cohort_subjects(
     environ: Mapping[str, str] | None = None,
 ) -> tuple[str, ...]:
-    return BASE9_SUBJECTS if cohort_name(environ) == "base9" else SUBJECTS
+    profile = cohort_name(environ)
+    if profile == "base9":
+        return BASE9_SUBJECTS
+    if profile == "external1":
+        return (str(load_external_manifest(environ)["subject"]),)
+    return SUBJECTS
 
 
 def campaign_paths_from_environment(
@@ -230,8 +282,17 @@ def campaign_paths_from_environment(
 
 
 def subject_paths(paths: CampaignPaths, subject: str) -> SubjectPaths:
-    if subject not in SUBJECTS:
-        raise ValueError(f"Unsupported subject {subject!r}; expected one of {SUBJECTS}")
+    profile = cohort_name()
+    allowed_subjects = cohort_subjects()
+    if subject not in allowed_subjects:
+        if profile == "external1":
+            raise ValueError(
+                f"Unsupported subject {subject!r}; expected the active external1 "
+                f"subject {allowed_subjects[0]!r}"
+            )
+        raise ValueError(
+            f"Unsupported subject {subject!r}; expected one of {allowed_subjects}"
+        )
     corrected_anat = paths.corrected_root / subject / "anat"
     legacy_anat = paths.legacy_reference_root / subject / "anat"
     staged_anat = paths.headmodel_root / subject / "anat"

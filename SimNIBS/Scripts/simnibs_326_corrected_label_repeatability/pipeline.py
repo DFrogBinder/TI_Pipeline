@@ -152,21 +152,23 @@ def campaign_scope(paths: CampaignPaths | None = None) -> dict[str, Any]:
     profile = cohort_name()
     return {
         "schema_version": SCHEMA_VERSION,
-        "study": (
-            "corrected-label SimNIBS 3.2.6 balanced-10 repeatability"
-            if profile == "full10"
-            else "corrected-label SimNIBS 3.2.6 base-nine early release"
-        ),
+        "study": {
+            "full10": "corrected-label SimNIBS 3.2.6 balanced-10 repeatability",
+            "base9": "corrected-label SimNIBS 3.2.6 base-nine early release",
+            "external1": "corrected-label SimNIBS 3.2.6 replacement singleton",
+        }[profile],
         **base,
-        "headmodel_tasks": len(subjects) if profile == "full10" else 0,
-        "reference_stage_tasks": len(SUBJECTS) if profile == "full10" else 0,
+        "headmodel_tasks": len(subjects) if profile in ("full10", "external1") else 0,
+        "reference_stage_tasks": (
+            len(subjects) if profile in ("full10", "external1") else 0
+        ),
         "remesh_tasks": per_target * 2,
         "fixed_mesh_tasks": per_target * 2,
-        "execution_scope": (
-            "full requested experiment; no reduced subset"
-            if profile == "full10"
-            else "authorized base-nine early release; sub-CC520083 excluded"
-        ),
+        "execution_scope": {
+            "full10": "full requested experiment; no reduced subset",
+            "base9": "authorized base-nine early release; sub-CC520083 excluded",
+            "external1": "manifest-bound replacement subject only",
+        }[profile],
         "source_policy": "read-only; corrected label maps are hashed, not copied",
         "headmodel_status": "candidate until Stanage module and build evidence exists",
     }
@@ -717,11 +719,14 @@ def build_parser() -> argparse.ArgumentParser:
     module.add_argument("--receipt", type=Path)
     validate_module = commands.add_parser("validate-module-receipt")
     validate_module.add_argument("--receipt", type=Path, required=True)
+    active_subjects = cohort_subjects()
     for name in ("stage-reference", "build-headmodel", "validate-headmodel", "render-qc"):
         child = commands.add_parser(name)
         group = child.add_mutually_exclusive_group(required=True)
-        group.add_argument("--subject", choices=SUBJECTS)
-        group.add_argument("--subject-index", type=int, choices=range(len(SUBJECTS)))
+        group.add_argument("--subject", choices=active_subjects)
+        group.add_argument(
+            "--subject-index", type=int, choices=range(len(active_subjects))
+        )
         if name == "render-qc":
             child.add_argument("--render-python", required=True)
     commands.add_parser("collect-references")
@@ -743,7 +748,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _selected_subject(args: argparse.Namespace) -> str:
-    return args.subject if args.subject is not None else SUBJECTS[args.subject_index]
+    active_subjects = cohort_subjects()
+    return (
+        args.subject
+        if args.subject is not None
+        else active_subjects[args.subject_index]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

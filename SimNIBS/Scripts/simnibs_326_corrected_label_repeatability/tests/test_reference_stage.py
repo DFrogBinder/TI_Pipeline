@@ -167,6 +167,38 @@ def test_collected_stage_remains_valid_after_legacy_root_is_removed(tmp_path: Pa
         validate_collected_reference(subject_paths(paths, SUBJECTS[0]))
 
 
+def test_external_collection_contains_only_manifest_subject(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject = "sub-CC999999"
+    manifest = tmp_path / "replacement_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "workflow": "simnibs_subject_replacement",
+                "profile": "external1",
+                "status": "prepared",
+                "subject": subject,
+                "subjects": [subject],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SIMNIBS326H_COHORT", "external1")
+    monkeypatch.setenv("SIMNIBS326H_EXTERNAL_MANIFEST", str(manifest))
+    paths, resolved = _reference_layout(tmp_path, subject)
+    stage_subject_reference(resolved)
+
+    collected = collect_reference_stage(paths)
+    validated = validate_collected_reference(resolved)
+
+    assert collected["subject_count"] == 1
+    assert [entry["subject"] for entry in collected["subjects"]] == [subject]
+    assert validated.subject == subject
+
+
 def _reference_layout(tmp_path: Path, subject: str = SUBJECTS[0]):
     defaults = campaign_paths_from_environment({})
     paths = replace(

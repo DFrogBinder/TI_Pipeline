@@ -383,6 +383,54 @@ def test_base9_collection_and_promotion_use_separate_immutable_artifacts(
     assert not (paths.headmodel_root / "_pipeline/headmodels/promoted.json").exists()
 
 
+def test_external_collection_and_promotion_use_external1_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subject = "sub-CC999999"
+    manifest_path = tmp_path / "replacement_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "workflow": "simnibs_subject_replacement",
+                "profile": "external1",
+                "status": "prepared",
+                "subject": subject,
+                "subjects": [subject],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SIMNIBS326H_COHORT", "external1")
+    monkeypatch.setenv("SIMNIBS326H_EXTERNAL_MANIFEST", str(manifest_path))
+    paths, resolved = _headmodel_layout(tmp_path, subject)
+    _install_fake_lifecycle(monkeypatch, resolved, [], [])
+    build_headmodel(paths, subject, SimpleNamespace())
+    monkeypatch.setattr(headmodel_module, "load_v3_meshing_api", lambda: SimpleNamespace())
+
+    def renderer(_python: str, request: Path) -> None:
+        payload = json.loads(request.read_text(encoding="utf-8"))
+        _write_fake_png(Path(payload["output_png"]))
+
+    monkeypatch.setattr(headmodel_module, "_run_renderer", renderer)
+    collected = collect_headmodels(paths, "/fake/ti-post/python")
+    output_dir = paths.headmodel_root / "_pipeline" / "headmodels" / "external1"
+
+    assert headmodel_output_dir(paths) == output_dir
+    assert collected["subject_count"] == 1
+    assert collected["subject_order"] == [subject]
+    assert (output_dir / "manifest.json").is_file()
+    promoted = promote_headmodels(
+        paths,
+        collected["manifest_sha256"],
+        True,
+    )
+    assert promoted["subjects"] == [subject]
+    assert promoted["panels_reviewed"] == 1
+    assert (output_dir / "promoted.json").is_file()
+
+
 def test_tampered_panel_invalidates_manifest_and_blocks_promotion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

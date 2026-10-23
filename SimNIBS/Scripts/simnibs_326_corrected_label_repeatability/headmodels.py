@@ -22,6 +22,7 @@ from .settings import (
     CampaignPaths,
     SUBJECTS,
     assert_root_isolation,
+    cohort_name,
     cohort_subjects,
     subject_paths,
 )
@@ -165,9 +166,13 @@ def validate_headmodel(
 
 def _selected_subjects(subjects: Sequence[str] | None = None) -> tuple[str, ...]:
     selected = tuple(cohort_subjects() if subjects is None else subjects)
-    if selected not in (SUBJECTS, BASE9_SUBJECTS):
+    active = cohort_subjects()
+    if selected not in (SUBJECTS, BASE9_SUBJECTS) and not (
+        cohort_name() == "external1" and selected == active
+    ):
         raise HeadModelError(
-            "Head-model cohort must be exactly the pinned full10 or base9 profile"
+            "Head-model cohort must be exactly the active full10, base9, or "
+            "manifest-bound external1 profile"
         )
     return selected
 
@@ -178,7 +183,11 @@ def headmodel_output_dir(
 ) -> Path:
     selected = _selected_subjects(subjects)
     root = paths.headmodel_root / "_pipeline" / "headmodels"
-    return root if selected == SUBJECTS else root / "base9"
+    if selected == SUBJECTS:
+        return root
+    if selected == BASE9_SUBJECTS:
+        return root / "base9"
+    return root / "external1"
 
 
 def write_qc_request(

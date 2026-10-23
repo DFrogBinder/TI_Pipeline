@@ -17,6 +17,7 @@ from typing import Any
 from .headmodels import (
     build_headmodel,
     collect_headmodels,
+    headmodel_output_dir,
     promote_headmodels,
     validate_headmodel,
     write_qc_request,
@@ -32,6 +33,8 @@ from .settings import (
     assert_root_isolation,
     campaign_paths_from_environment,
     campaign_scope as settings_scope,
+    cohort_name,
+    cohort_subjects,
     subject_paths,
     target_settings,
 )
@@ -143,17 +146,27 @@ def _resolve_stimulation(target: str, targets_csv: Path = TARGETS_CSV):
 
 def campaign_scope(paths: CampaignPaths | None = None) -> dict[str, Any]:
     resolved = paths or campaign_paths_from_environment()
+    subjects = cohort_subjects()
     base = settings_scope(resolved)
-    per_target = len(SUBJECTS) * REPEAT_COUNT
+    per_target = len(subjects) * REPEAT_COUNT
+    profile = cohort_name()
     return {
         "schema_version": SCHEMA_VERSION,
-        "study": "corrected-label SimNIBS 3.2.6 balanced-10 repeatability",
+        "study": (
+            "corrected-label SimNIBS 3.2.6 balanced-10 repeatability"
+            if profile == "full10"
+            else "corrected-label SimNIBS 3.2.6 base-nine early release"
+        ),
         **base,
-        "headmodel_tasks": len(SUBJECTS),
+        "headmodel_tasks": len(subjects),
         "reference_stage_tasks": len(SUBJECTS),
         "remesh_tasks": per_target * 2,
         "fixed_mesh_tasks": per_target * 2,
-        "execution_scope": "full requested experiment; no reduced subset",
+        "execution_scope": (
+            "full requested experiment; no reduced subset"
+            if profile == "full10"
+            else "authorized base-nine early release; sub-CC520083 excluded"
+        ),
         "source_policy": "read-only; corrected label maps are hashed, not copied",
         "headmodel_status": "candidate until Stanage module and build evidence exists",
     }
@@ -247,22 +260,23 @@ def _inspect_subject_inputs(paths: CampaignPaths, subject: str) -> dict[str, Any
 def preflight(
     *, paths: CampaignPaths | None = None, targets_csv: Path = TARGETS_CSV
 ) -> dict[str, Any]:
-    """Perform the complete ten-subject input audit without creating outputs."""
+    """Perform the active-cohort input audit without creating outputs."""
     resolved = paths or campaign_paths_from_environment()
+    selected = cohort_subjects()
     isolation = assert_root_isolation(resolved)
     targets_csv = targets_csv.expanduser().resolve()
     if not targets_csv.is_file():
         raise FileNotFoundError(f"Targets CSV is missing: {targets_csv}")
     missing_atlases = [
         str(resolved.atlas_root / f"{subject}.nii.gz")
-        for subject in SUBJECTS
+        for subject in selected
         if not (resolved.atlas_root / f"{subject}.nii.gz").is_file()
     ]
     if missing_atlases:
         raise FileNotFoundError(
             "Missing optimizer atlases (first 10): " + ", ".join(missing_atlases[:10])
         )
-    subjects = [_inspect_subject_inputs(resolved, subject) for subject in SUBJECTS]
+    subjects = [_inspect_subject_inputs(resolved, subject) for subject in selected]
     stimulation = {
         target: _resolve_stimulation(target, targets_csv).to_dict()
         for target in ("left-hippocampus", "right-m1")
@@ -304,12 +318,13 @@ def remesh_config(
     targets_csv: Path = TARGETS_CSV,
 ) -> dict[str, Any]:
     resolved = paths or campaign_paths_from_environment()
+    selected = cohort_subjects()
     promotion = _validated_promotion(resolved)
     target_spec = target_settings(target, resolved)
     return {
         "source_root": str(resolved.corrected_root.resolve()),
         "experiment_root": str(target_spec.experiment_root.resolve()),
-        "subjects": list(SUBJECTS),
+        "subjects": list(selected),
         "conditions": [{
             "name": "remesh",
             "mesh_mode": "remesh",
@@ -522,9 +537,10 @@ def complete_remesh(
     root = target_settings(target, resolved).experiment_root
     config_path = _config_path(root, REMESH_CONFIG)
     validation = _validate_config_outputs(config_path)
-    if validation.get("status") != "complete" or validation.get("complete_tasks") != 400:
+    expected = len(cohort_subjects()) * REPEAT_COUNT
+    if validation.get("status") != "complete" or validation.get("complete_tasks") != expected:
         raise RuntimeError(
-            f"Remesh stage requires exactly 400 complete tasks; observed {validation}"
+            f"Remesh stage requires exactly {expected} complete tasks; observed {validation}"
         )
     return _write_completion(
         root=root, config_path=config_path, target=target, stage="remesh",
@@ -570,9 +586,12 @@ def complete_final(
     fixed_path = _config_path(root, FIXED_CONFIG)
     remesh = _validate_config_outputs(remesh_path)
     fixed = _validate_config_outputs(fixed_path)
+    expected = len(cohort_subjects()) * REPEAT_COUNT
     for label, validation in (("remesh", remesh), ("fixed", fixed)):
-        if validation.get("status") != "complete" or validation.get("complete_tasks") != 400:
-            raise RuntimeError(f"Final stage {label} condition is not exactly 400/400")
+        if validation.get("status") != "complete" or validation.get("complete_tasks") != expected:
+            raise RuntimeError(
+                f"Final stage {label} condition is not exactly {expected}/{expected}"
+            )
     paired_path = _config_path(root, PAIRED_CONFIG)
     current = _load_json(paired_path)
     remesh_config_payload = _load_json(remesh_path)
@@ -582,7 +601,7 @@ def complete_final(
     _write_json_atomic(paired_path, combined)
     validation = {
         "status": "complete", "remesh": remesh, "fixed_mesh": fixed,
-        "total_tasks": 800,
+        "total_tasks": expected * 2,
     }
     return _write_completion(
         root=root, config_path=paired_path, target=target, stage="final",
@@ -602,19 +621,23 @@ def validate_final_receipt(
         raise RuntimeError("Final completion receipt is not complete")
     if receipt.get("config_sha256") != _sha256(paired):
         raise RuntimeError("Final receipt does not match the paired config")
+    expected = len(cohort_subjects()) * REPEAT_COUNT
+    expected_total = expected * 2
     validation = receipt.get("validation", {})
-    if not isinstance(validation, dict) or validation.get("total_tasks") != 800:
-        raise RuntimeError("Final receipt does not prove 800 tasks")
+    if not isinstance(validation, dict) or validation.get("total_tasks") != expected_total:
+        raise RuntimeError(f"Final receipt does not prove {expected_total} tasks")
     for condition in ("remesh", "fixed_mesh"):
         record = validation.get(condition, {})
-        if record.get("complete_tasks") != 400 or record.get("failure_count") != 0:
-            raise RuntimeError(f"Final receipt does not prove 400 {condition} tasks")
+        if record.get("complete_tasks") != expected or record.get("failure_count") != 0:
+            raise RuntimeError(
+                f"Final receipt does not prove {expected} {condition} tasks"
+            )
     return {
         "status": "ready", "target": target, "paired_config": str(paired),
         "paired_config_sha256": _sha256(paired),
         "completion_receipt": str(receipt_path),
         "completion_receipt_sha256": _sha256(receipt_path),
-        "expected_metric_rows": 800,
+        "expected_metric_rows": expected_total,
     }
 
 
@@ -640,6 +663,7 @@ def _target_counts(root: Path) -> dict[str, int]:
 
 def status(*, paths: CampaignPaths | None = None) -> dict[str, Any]:
     resolved = paths or campaign_paths_from_environment()
+    expected = len(cohort_subjects()) * REPEAT_COUNT
     target_counts = {
         target: _target_counts(target_settings(target, resolved).experiment_root)
         for target in ("left-hippocampus", "right-m1")
@@ -648,11 +672,12 @@ def status(*, paths: CampaignPaths | None = None) -> dict[str, Any]:
         _campaign_manifest(root).is_file() for root in (resolved.left_root, resolved.right_root)
     )
     references = (resolved.headmodel_root / "_pipeline/reference_stage_collection.json").is_file()
-    headmodels = (resolved.headmodel_root / "_pipeline/headmodels/manifest.json").is_file()
-    promoted = (resolved.headmodel_root / "_pipeline/headmodels/promoted.json").is_file()
-    remesh = all(value["remesh"] == 400 for value in target_counts.values())
+    collection_dir = headmodel_output_dir(resolved)
+    headmodels = (collection_dir / "manifest.json").is_file()
+    promoted = (collection_dir / "promoted.json").is_file()
+    remesh = all(value["remesh"] == expected for value in target_counts.values())
     final = all(
-        value["remesh"] == 400 and value["fixed_mesh"] == 400
+        value["remesh"] == expected and value["fixed_mesh"] == expected
         for value in target_counts.values()
     )
     gates = {

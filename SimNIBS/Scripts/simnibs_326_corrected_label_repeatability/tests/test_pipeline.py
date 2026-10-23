@@ -11,6 +11,8 @@ import pytest
 
 import simnibs_326_corrected_label_repeatability.pipeline as pipeline
 from simnibs_326_corrected_label_repeatability.settings import (
+    BASE9_SUBJECTS,
+    COHORT_ENV,
     SUBJECTS,
     campaign_paths_from_environment,
 )
@@ -142,6 +144,31 @@ def test_initialize_writes_only_two_exact_400_task_remesh_plans(
         assert not (root / "_pipeline/configs/fixed_mesh_spherical_median.json").exists()
 
 
+def test_base9_initialize_writes_exact_360_task_remesh_plans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(COHORT_ENV, "base9")
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(pipeline, "_validated_promotion", lambda _paths: _promotion(paths))
+    monkeypatch.setattr(pipeline, "_resolve_stimulation", _stim)
+
+    result = pipeline.initialize(paths=paths, dry_run=False)
+
+    assert result["status"] == "initialized"
+    for root in (paths.left_root, paths.right_root):
+        config = json.loads(
+            (root / "_pipeline/configs/remesh_only.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (root / "_simnibs326/campaign.json").read_text(encoding="utf-8")
+        )
+        assert config["subjects"] == list(BASE9_SUBJECTS)
+        assert len(config["subjects"]) * config["conditions"][0]["repeat_count"] == 360
+        assert manifest["cohort"] == "base9"
+        assert manifest["total_simulation_tasks"] == 1440
+
+
 def test_initialize_fails_closed_on_missing_or_stale_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -225,6 +252,50 @@ def test_completion_gates_require_400_then_800_tasks(
     assert len(remesh_receipt["git_commit"]) >= 7
     assert final_receipt["validation"]["total_tasks"] == 800
     assert len(json.loads((config_dir / pipeline.PAIRED_CONFIG).read_text())["conditions"]) == 2
+
+
+def test_base9_completion_gates_require_360_then_720_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(COHORT_ENV, "base9")
+    paths = _paths(tmp_path)
+    root = paths.left_root
+    config_dir = root / "_pipeline/configs"
+    config_dir.mkdir(parents=True)
+    remesh = {"subjects": list(BASE9_SUBJECTS), "conditions": [{"name": "remesh"}]}
+    fixed = {"subjects": list(BASE9_SUBJECTS), "conditions": [{"name": "fixed_mesh"}]}
+    (config_dir / pipeline.REMESH_CONFIG).write_text(json.dumps(remesh), encoding="utf-8")
+    (config_dir / pipeline.PAIRED_CONFIG).write_text(json.dumps(remesh), encoding="utf-8")
+    (config_dir / pipeline.FIXED_CONFIG).write_text(json.dumps(fixed), encoding="utf-8")
+    validations = {
+        pipeline.REMESH_CONFIG: {
+            "status": "complete", "expected_tasks": 360, "complete_tasks": 360,
+            "failure_count": 0, "failures": [],
+        },
+        pipeline.FIXED_CONFIG: {
+            "status": "complete", "expected_tasks": 360, "complete_tasks": 360,
+            "failure_count": 0, "failures": [],
+        },
+    }
+    monkeypatch.setattr(
+        pipeline,
+        "_validate_config_outputs",
+        lambda path: {"config": str(path), **validations[path.name]},
+    )
+    monkeypatch.setattr(pipeline, "_receipt_scope", lambda *args, **kwargs: {"expected": 360})
+
+    remesh_receipt = pipeline.complete_remesh("left-hippocampus", paths=paths)
+    final_receipt = pipeline.complete_final("left-hippocampus", paths=paths)
+    validated = pipeline.validate_final_receipt("left-hippocampus", paths=paths)
+
+    assert remesh_receipt["validation"]["complete_tasks"] == 360
+    assert final_receipt["validation"]["total_tasks"] == 720
+    assert validated["expected_metric_rows"] == 720
+
+    validations[pipeline.REMESH_CONFIG]["complete_tasks"] = 359
+    with pytest.raises(RuntimeError, match="360"):
+        pipeline.complete_remesh("left-hippocampus", paths=paths)
 
 
 def test_fixed_preparation_uses_established_median_selector(

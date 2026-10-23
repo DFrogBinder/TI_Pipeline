@@ -24,7 +24,9 @@ fi
 MODE="${1:-preflight}"
 [ "$#" -eq 0 ] || shift
 TARGET=""
+DIAGNOSTIC_SUBJECT=""
 DEPENDENCY=""
+COHORT="${SIMNIBS326H_COHORT:-full10}"
 CONFIRM_ROOT=""
 CONFIRM_ROOTS=""
 MANIFEST_SHA256=""
@@ -32,6 +34,8 @@ CONFIRM_REVIEWED=0
 for argument in "$@"; do
     case "$argument" in
         left-hippocampus|right-m1) TARGET="$argument" ;;
+        sub-CC520083) DIAGNOSTIC_SUBJECT="$argument" ;;
+        --cohort=*) COHORT="${argument#*=}" ;;
         --dependency=*) DEPENDENCY="${argument#*=}" ;;
         --confirm-root=*) CONFIRM_ROOT="${argument#*=}" ;;
         --confirm-roots=*) CONFIRM_ROOTS="${argument#*=}" ;;
@@ -42,13 +46,18 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|init|module-check|stage-references|headmodels|promote|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
+    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
     *)
         echo "[ERROR] Unsupported mode: $MODE" >&2
-        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|promote|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target] [options]" >&2
+        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target|subject] [options]" >&2
         exit 2
         ;;
 esac
+case "$COHORT" in
+    full10|base9) ;;
+    *) echo "[ERROR] Unsupported cohort: $COHORT (expected full10 or base9)." >&2; exit 2 ;;
+esac
+export SIMNIBS326H_COHORT="$COHORT"
 [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid retry cap." >&2; exit 2; }
 [ -z "$DEPENDENCY" ] || [[ "$DEPENDENCY" =~ ^[0-9]+$ ]] || {
     echo "[ERROR] Dependency must be a numeric Slurm job ID." >&2; exit 2;
@@ -59,22 +68,53 @@ fi
 if [ "$MODE" = post-remesh ] && [ -z "$DEPENDENCY" ]; then
     echo "[ERROR] post-remesh requires --dependency=JOBID." >&2; exit 2
 fi
+if [ "$MODE" = diagnose-headmodel ] && [ "$DIAGNOSTIC_SUBJECT" != "sub-CC520083" ]; then
+    echo "[ERROR] diagnose-headmodel requires sub-CC520083." >&2; exit 2
+fi
+if { [ "$MODE" = stage-references ] || [ "$MODE" = headmodels ]; } && [ "$COHORT" != full10 ]; then
+    echo "[ERROR] $MODE is full10-only; base9 reuses the completed reference stage and nine head models." >&2
+    exit 2
+fi
+
+if [ "$COHORT" = base9 ]; then
+    SUBJECT_COUNT=9
+    TASKS_PER_CONDITION=360
+    SIM_ARRAY_LAST=359
+    ROI_ARRAY_LAST=8
+    ROI_MAX_CONCURRENT=9
+    JOB_SCOPE="b9_"
+else
+    SUBJECT_COUNT=10
+    TASKS_PER_CONDITION=400
+    SIM_ARRAY_LAST=399
+    ROI_ARRAY_LAST=9
+    ROI_MAX_CONCURRENT=10
+    JOB_SCOPE=""
+fi
 
 setting_path() {
-    local env_name="$1"
-    local expression="$2"
+    local expression="$1"
+    local full_env_name="$2"
+    local base9_env_name="${3:-$2}"
+    local env_name="$full_env_name"
+    [ "$COHORT" != base9 ] || env_name="$base9_env_name"
     local override="${!env_name:-}"
     if [ -n "$override" ]; then printf '%s\n' "$override"; return; fi
     "$PYTHON_BIN" -c "from simnibs_326_corrected_label_repeatability.settings import campaign_paths_from_environment; print(campaign_paths_from_environment().$expression)"
 }
 
-HEADMODEL_ROOT="$(setting_path SIMNIBS326H_HEADMODEL_ROOT headmodel_root)"
-LEFT_ROOT="$(setting_path SIMNIBS326H_LEFT_ROOT left_root)"
-RIGHT_ROOT="$(setting_path SIMNIBS326H_RIGHT_ROOT right_root)"
+HEADMODEL_ROOT="$(setting_path headmodel_root SIMNIBS326H_HEADMODEL_ROOT)"
+LEFT_ROOT="$(setting_path left_root SIMNIBS326H_LEFT_ROOT SIMNIBS326H_BASE9_LEFT_ROOT)"
+RIGHT_ROOT="$(setting_path right_root SIMNIBS326H_RIGHT_ROOT SIMNIBS326H_BASE9_RIGHT_ROOT)"
 PREFLIGHT_RECEIPT="$HEADMODEL_ROOT/_pipeline/module_preflight.json"
 REFERENCE_RECEIPT="$HEADMODEL_ROOT/_pipeline/reference_stage_collection.json"
-PROMOTION_RECEIPT="$HEADMODEL_ROOT/_pipeline/headmodels/promoted.json"
+HEADMODEL_COLLECTION_ROOT="$HEADMODEL_ROOT/_pipeline/headmodels"
 ANALYSIS_ROOT="$HEADMODEL_ROOT/_pipeline/analysis/repeatability_optimizer_roi_paired_v2"
+if [ "$COHORT" = base9 ]; then
+    HEADMODEL_COLLECTION_ROOT="$HEADMODEL_COLLECTION_ROOT/base9"
+    ANALYSIS_ROOT="$HEADMODEL_ROOT/_pipeline/analysis/repeatability_optimizer_roi_paired_base9_v2"
+fi
+PROMOTION_RECEIPT="$HEADMODEL_COLLECTION_ROOT/promoted.json"
 
 MODULE_PREFLIGHT="$PIPELINE_DIR/hpc/module_preflight.slurm"
 REFERENCE_ARRAY="$PIPELINE_DIR/hpc/reference_stage_array.slurm"
@@ -128,23 +168,43 @@ record_submission() {
     fi
     commit="$(git -C "$PIPELINE_PARENT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$mode" "$target" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COHORT:$mode" "$target" \
         "$dependency" "$jobs" "$commit" >> "$receipt"
 }
 
 print_scope() {
+    if [ "$MODE" = diagnose-headmodel ]; then
+        echo "Scope:"
+        echo "  study: corrected-label SimNIBS 3.2.6 one-subject head-model diagnosis"
+        echo "  subject: sub-CC520083 (original task index 6)"
+        echo "  head-model tasks: 1 (6-6%1)"
+        echo "  FEM simulation tasks: 0"
+        echo "  resources: sheffield; 8 CPU; 32G; 08:00:00"
+        echo "  module: SimNIBS/3.2.6-foss-2023a"
+        echo "  retries: 0; isolated attempt and Gmsh logs"
+        return
+    fi
     echo "Scope:"
-    echo "  study: corrected-label SimNIBS 3.2.6 balanced-10 repeatability"
-    echo "  subjects: 10"
+    echo "  study: corrected-label SimNIBS 3.2.6 repeatability"
+    echo "  cohort: $COHORT"
+    echo "  subjects: $SUBJECT_COUNT"
     echo "  targets: 2 (left hippocampus, right M1)"
     echo "  conditions: 2 (remesh, fixed_mesh)"
     echo "  repeats per condition: 40"
-    echo "  reference-stage tasks: 10 (0-9%10)"
-    echo "  head-model tasks: 10 (0-9%10)"
-    echo "  remesh tasks: 800 (2 x 0-399%50)"
-    echo "  fixed-mesh tasks: 800 (2 x 0-399%50)"
-    echo "  total simulation tasks: 1600"
-    echo "  component FEM solves: 3200"
+    if [ "$COHORT" = base9 ]; then
+        echo "  reference-stage tasks: 0 (reuse completed full10 receipt)"
+        echo "  head-model build tasks: 0 (reuse nine completed markers)"
+        echo "  head-model collection subjects: 9"
+        echo "  execution: authorized reduced scope; sub-CC520083 excluded"
+    else
+        echo "  reference-stage tasks: 10 (0-9%10)"
+        echo "  head-model tasks: 10 (0-9%10)"
+        echo "  execution: full requested scope"
+    fi
+    echo "  remesh tasks: $((TASKS_PER_CONDITION * 2)) (2 x 0-${SIM_ARRAY_LAST}%$SIM_MAX_CONCURRENT)"
+    echo "  fixed-mesh tasks: $((TASKS_PER_CONDITION * 2)) (2 x 0-${SIM_ARRAY_LAST}%$SIM_MAX_CONCURRENT)"
+    echo "  total simulation tasks: $((TASKS_PER_CONDITION * 4))"
+    echo "  component FEM solves: $((TASKS_PER_CONDITION * 8))"
     echo "  resources: sheffield; 8 CPU; 32G; 08:00:00; max 50 simulations"
     echo "  module: SimNIBS/3.2.6-foss-2023a"
     echo "  retries: $MAX_RETRIES; exact array-element requeue; append-only Slurm logs"
@@ -156,7 +216,7 @@ submit_module_check() {
     mkdir -p "$(dirname "$PREFLIGHT_RECEIPT")"
     submit_job --partition="$PARTITION" \
         --output="$HEADMODEL_ROOT/_pipeline/module-preflight-%j.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326H_COHORT=$COHORT" \
         "$MODULE_PREFLIGHT"
 }
 submit_reference_staging() {
@@ -165,12 +225,12 @@ submit_reference_staging() {
     local array_job
     array_job="$(submit_job --partition="$PARTITION" --array="0-9%10" \
         --output="$log_dir/slurm-%A_%a.out" --open-mode=append \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES,SIMNIBS326H_COHORT=$COHORT" \
         "$REFERENCE_ARRAY")"
     local collector
     collector="$(submit_job --partition="$PARTITION" --dependency="afterok:$array_job" \
         --output="$log_dir/collect-%j.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,CONTROL_ACTION=collect-references,TARGET=none" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,CONTROL_ACTION=collect-references,TARGET=none,SIMNIBS326H_COHORT=$COHORT" \
         "$CONTROL")"
     printf '%s\t%s\n' "$array_job" "$collector"
 }
@@ -188,14 +248,43 @@ submit_headmodels() {
     array_job="$(submit_job --partition="$PARTITION" --cpus-per-task=8 --mem=32G \
         --time=08:00:00 --array="0-9%10" --output="$log_dir/slurm-%A_%a.out" \
         --open-mode=append \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES,SIMNIBS326H_COHORT=$COHORT" \
         "$HEADMODEL_ARRAY")"
     local collector
     collector="$(submit_job --partition="$PARTITION" --dependency="afterok:$array_job" \
         --output="$log_dir/collect-%j.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON,SIMNIBS326H_COHORT=$COHORT" \
         "$HEADMODEL_COLLECT")"
     printf '%s\t%s\n' "$array_job" "$collector"
+}
+submit_headmodel_collector() {
+    require_file "$PREFLIGHT_RECEIPT"
+    require_file "$REFERENCE_RECEIPT"
+    "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-module-receipt \
+        --receipt "$PREFLIGHT_RECEIPT" >/dev/null
+    "$PYTHON_BIN" -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p.get("status")=="complete" and p.get("subject_count")==10' \
+        "$REFERENCE_RECEIPT"
+    [ -x "$RENDER_PYTHON" ] || { echo "[ERROR] Renderer is not executable: $RENDER_PYTHON" >&2; exit 2; }
+    local log_dir="$HEADMODEL_ROOT/_pipeline/logs/headmodel_collect/$COHORT"
+    mkdir -p "$log_dir"
+    submit_job --job-name="ti326h_${JOB_SCOPE}collect" --partition="$PARTITION" \
+        --cpus-per-task=4 --mem=16G --time=02:00:00 \
+        --output="$log_dir/collect-%j.out" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON,SIMNIBS326H_COHORT=$COHORT" \
+        "$HEADMODEL_COLLECT"
+}
+submit_headmodel_diagnosis() {
+    require_file "$PREFLIGHT_RECEIPT"
+    require_file "$REFERENCE_RECEIPT"
+    "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-module-receipt \
+        --receipt "$PREFLIGHT_RECEIPT" >/dev/null
+    local log_dir="$HEADMODEL_ROOT/_pipeline/logs/headmodel_diagnostics/$DIAGNOSTIC_SUBJECT"
+    mkdir -p "$log_dir"
+    submit_job --job-name=ti326h_diag --partition="$PARTITION" \
+        --cpus-per-task=8 --mem=32G --time=08:00:00 --array="6-6%1" \
+        --output="$log_dir/slurm-%A_%a.out" --open-mode=append \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326H_MAX_RETRIES=0,SIMNIBS326H_DIAGNOSTIC=1,SIMNIBS326H_COHORT=full10" \
+        "$HEADMODEL_ARRAY"
 }
 submit_simulation() {
     local target="$1" config_name="$2" stage="$3" after_job="${4:-}"
@@ -208,11 +297,11 @@ submit_simulation() {
     mkdir -p "$log_dir"
     local dependency_args=()
     [ -z "$after_job" ] || dependency_args+=("--dependency=afterok:$after_job")
-    submit_job --job-name="ti326h_${stage}" --partition="$PARTITION" \
+    submit_job --job-name="ti326h_${JOB_SCOPE}${stage}" --partition="$PARTITION" \
         --cpus-per-task="$SIM_CPUS" --mem="$SIM_MEMORY" --time="$SIM_TIME" \
-        --array="0-399%$SIM_MAX_CONCURRENT" "${dependency_args[@]}" \
+        --array="0-${SIM_ARRAY_LAST}%$SIM_MAX_CONCURRENT" "${dependency_args[@]}" \
         --output="$log_dir/slurm-%A_%a.out" --open-mode=append \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_dir,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,LOG_DIR=$log_dir,SIMNIBS326H_MAX_RETRIES=$MAX_RETRIES,SIMNIBS326H_COHORT=$COHORT" \
         "$SIM_ARRAY"
 }
 submit_control() {
@@ -221,9 +310,9 @@ submit_control() {
     root="$(target_root "$target")"
     log_dir="$root/_simnibs326/logs/control"
     mkdir -p "$log_dir"
-    exports="ALL,PIPELINE_DIR=$PIPELINE_DIR,CONTROL_ACTION=$action,TARGET=$target"
+    exports="ALL,PIPELINE_DIR=$PIPELINE_DIR,CONTROL_ACTION=$action,TARGET=$target,SIMNIBS326H_COHORT=$COHORT"
     [ -z "$metrics_csv" ] || exports="$exports,METRICS_CSV=$metrics_csv"
-    submit_job --job-name="ti326h_${action}" --partition="$PARTITION" \
+    submit_job --job-name="ti326h_${JOB_SCOPE}${action}" --partition="$PARTITION" \
         --dependency="afterok:$after_job" --output="$log_dir/${action}-%j.out" \
         --export="$exports" "$CONTROL"
 }
@@ -237,12 +326,12 @@ submit_post_remesh() {
     mkdir -p "$log_dir" "$metrics/logs"
     local complete roi collect prepare
     complete="$(submit_control "$target" complete-remesh "$remesh_job")"
-    roi="$(submit_job --partition="$PARTITION" --array="0-9%10" \
+    roi="$(submit_job --partition="$PARTITION" --array="0-${ROI_ARRAY_LAST}%$ROI_MAX_CONCURRENT" \
         --dependency="afterok:$complete" --output="$log_dir/extract-%A_%a.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics" "$ROI_ARRAY")"
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_ARRAY")"
     collect="$(submit_job --partition="$PARTITION" --dependency="afterok:$roi" \
         --output="$log_dir/collect-%j.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics" "$ROI_COLLECT")"
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_COLLECT")"
     prepare="$(submit_control "$target" prepare-fixed "$collect" "$metrics_csv")"
     printf '%s\t%s\t%s\t%s\n' "$complete" "$roi" "$collect" "$prepare"
 }
@@ -260,12 +349,12 @@ submit_paired_roi() {
     log_dir="$root/_simnibs326/logs/paired_optimizer_roi"
     require_file "$config"
     mkdir -p "$metrics" "$log_dir"
-    roi="$(submit_job --partition="$PARTITION" --array="0-9%10" \
+    roi="$(submit_job --partition="$PARTITION" --array="0-${ROI_ARRAY_LAST}%$ROI_MAX_CONCURRENT" \
         --output="$log_dir/extract-%A_%a.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics" "$ROI_ARRAY")"
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_ARRAY")"
     collect="$(submit_job --partition="$PARTITION" --dependency="afterok:$roi" \
         --output="$log_dir/collect-%j.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics" "$ROI_COLLECT")"
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_COLLECT")"
     printf '%s\t%s\n' "$roi" "$collect"
 }
 
@@ -301,6 +390,16 @@ case "$MODE" in
         jobs="$(submit_headmodels)"
         record_submission "$MODE" none "$DEPENDENCY" "$jobs"
         echo "[INFO] Head-model array/collector: $jobs"
+        ;;
+    collect-headmodels)
+        job="$(submit_headmodel_collector)"
+        record_submission "$MODE" none "$DEPENDENCY" "$job"
+        echo "[INFO] $COHORT head-model collector: $job"
+        ;;
+    diagnose-headmodel)
+        job="$(submit_headmodel_diagnosis)"
+        record_submission "$MODE" "$DIAGNOSTIC_SUBJECT" "$DEPENDENCY" "$job"
+        echo "[INFO] One-subject diagnostic job: $job"
         ;;
     promote)
         [ "$CONFIRM_ROOT" = "$HEADMODEL_ROOT" ] || {
@@ -355,7 +454,7 @@ case "$MODE" in
         analysis_job="$(submit_job --partition="$PARTITION" \
             --dependency="afterok:$left_collect:$right_collect" \
             --output="$ANALYSIS_ROOT/logs/analysis-%j.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_METRICS_CSV=$(paired_metrics_root left-hippocampus)/optimizer_roi_metrics.csv,RIGHT_METRICS_CSV=$(paired_metrics_root right-m1)/optimizer_roi_metrics.csv,ANALYSIS_ROOT=$ANALYSIS_ROOT,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON" \
+            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_METRICS_CSV=$(paired_metrics_root left-hippocampus)/optimizer_roi_metrics.csv,RIGHT_METRICS_CSV=$(paired_metrics_root right-m1)/optimizer_roi_metrics.csv,ANALYSIS_ROOT=$ANALYSIS_ROOT,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON,SIMNIBS326H_COHORT=$COHORT" \
             "$ROI_ANALYSIS")"
         record_submission "$MODE" both "$DEPENDENCY" "$left_jobs\t$right_jobs\t$analysis_job"
         echo "[INFO] Analysis jobs: left=$left_jobs right=$right_jobs final=$analysis_job"

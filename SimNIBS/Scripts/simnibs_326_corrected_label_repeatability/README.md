@@ -87,6 +87,78 @@ bash "$PIPELINE" preflight
 bash "$PIPELINE" status
 ```
 
+### Base-nine early FEM release while `sub-CC520083` is investigated
+
+The default remains the original `full10` campaign. The explicitly authorized
+early release is selected only with `--cohort=base9`; it excludes
+`sub-CC520083`, reuses the nine completed head-model markers, and writes to
+separate `base9` result roots.
+
+First collect and render the nine existing heads. This submits one collector
+job and no head-model build or FEM task:
+
+```bash
+bash "$PIPELINE" preflight --cohort=base9
+bash "$PIPELINE" collect-headmodels --cohort=base9
+```
+
+After that collector is terminal `COMPLETED`, inspect all nine panels and the
+manifest under:
+
+```text
+/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_simnibs326_harmonized_v2/_pipeline/headmodels/base9/
+```
+
+Promote only the exact reviewed manifest hash, then initialize the two isolated
+result roots:
+
+```bash
+HEADMODEL_ROOT=/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_simnibs326_harmonized_v2
+BASE9_MANIFEST="$HEADMODEL_ROOT/_pipeline/headmodels/base9/manifest.json"
+MANIFEST_SHA256="$(sha256sum "$BASE9_MANIFEST" | awk '{print $1}')"
+
+bash "$PIPELINE" promote \
+  --cohort=base9 \
+  --confirm-root="$HEADMODEL_ROOT" \
+  --manifest-sha256="$MANIFEST_SHA256" \
+  --confirm-reviewed
+
+BASE9_LEFT=/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_simnibs326_harmonized_base9_left_hippocampus_v2
+BASE9_RIGHT=/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_simnibs326_harmonized_base9_right_m1_v2
+
+bash "$PIPELINE" init \
+  --cohort=base9 \
+  --confirm-roots="$BASE9_LEFT,$BASE9_RIGHT"
+```
+
+Release the two target remesh chains sequentially:
+
+```bash
+bash "$PIPELINE" all-remesh --cohort=base9
+```
+
+This submits 360 left-hippocampus and 360 right-M1 remesh simulations
+(`0-359%50` per target), or 720 simulations and 1,440 component FEM solves.
+The fixed-mesh stage is intentionally not released until remesh validation,
+ROI extraction, and median-mesh preparation complete. The eventual base-nine
+total is 1,440 simulations and 2,880 component solves.
+
+The failed subject can be diagnosed independently at any time:
+
+```bash
+bash "$PIPELINE" diagnose-headmodel sub-CC520083
+```
+
+That command submits one head-model task (`6-6%1`), zero FEM tasks, and zero
+automatic retries. It clears only generated failed-attempt tissue/mesh/GEO
+artifacts for `sub-CC520083`; staged T1fs, EEG, transform, and provenance files
+are preserved. Attempt logs, the diagnostic receipt, and the isolated
+`gmsh_log.txt` are retained under:
+
+```text
+<headmodel-root>/_pipeline/logs/headmodel_diagnostics/sub-CC520083/
+```
+
 Run the real module probe, then stage and build:
 
 ```bash

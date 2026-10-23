@@ -46,7 +46,9 @@ def launcher_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     head = tmp_path / "headmodels"
     left = tmp_path / "left"
     right = tmp_path / "right"
-    for root in (head, left, right):
+    base9_left = tmp_path / "base9-left"
+    base9_right = tmp_path / "base9-right"
+    for root in (head, left, right, base9_left, base9_right):
         root.mkdir()
     env = os.environ.copy()
     env.update(
@@ -60,6 +62,8 @@ def launcher_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
             "SIMNIBS326H_HEADMODEL_ROOT": str(head),
             "SIMNIBS326H_LEFT_ROOT": str(left),
             "SIMNIBS326H_RIGHT_ROOT": str(right),
+            "SIMNIBS326H_BASE9_LEFT_ROOT": str(base9_left),
+            "SIMNIBS326H_BASE9_RIGHT_ROOT": str(base9_right),
             "SIMNIBS326H_RENDER_PYTHON": "/bin/true",
         }
     )
@@ -80,22 +84,29 @@ def _calls(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
 
-def _ready_prerequisites(env: dict[str, str]) -> None:
+def _ready_prerequisites(env: dict[str, str], *, cohort: str = "full10") -> None:
     head = Path(env["SIMNIBS326H_HEADMODEL_ROOT"])
     module = head / "_pipeline/module_preflight.json"
     references = head / "_pipeline/reference_stage_collection.json"
     promotion = head / "_pipeline/headmodels/promoted.json"
+    subject_count = 10
+    if cohort == "base9":
+        promotion = head / "_pipeline/headmodels/base9/promoted.json"
+        subject_count = 9
     for path, payload in (
         (module, {"status": "ready"}),
         (references, {"status": "complete", "subject_count": 10}),
-        (promotion, {"status": "promoted", "subjects": [str(i) for i in range(10)]}),
+        (promotion, {"status": "promoted", "subjects": [str(i) for i in range(subject_count)]}),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _configs(env: dict[str, str]) -> None:
-    for key in ("SIMNIBS326H_LEFT_ROOT", "SIMNIBS326H_RIGHT_ROOT"):
+def _configs(env: dict[str, str], *, cohort: str = "full10") -> None:
+    keys = ("SIMNIBS326H_LEFT_ROOT", "SIMNIBS326H_RIGHT_ROOT")
+    if cohort == "base9":
+        keys = ("SIMNIBS326H_BASE9_LEFT_ROOT", "SIMNIBS326H_BASE9_RIGHT_ROOT")
+    for key in keys:
         config_dir = Path(env[key]) / "_pipeline/configs"
         config_dir.mkdir(parents=True, exist_ok=True)
         for name in (
@@ -197,6 +208,85 @@ def test_all_remesh_and_all_fixed_keep_target_arrays_sequential(
     fixed_simulations = [line for line in fixed_calls if "simulation_array.slurm" in line]
     assert len(fixed_simulations) == 2
     assert "--dependency=afterok:" in fixed_simulations[1]
+
+
+def test_base9_remesh_uses_isolated_roots_and_exact_360_task_array(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env, cohort="base9")
+    _configs(env, cohort="base9")
+
+    result = _run(
+        env,
+        "remesh",
+        "left-hippocampus",
+        "--cohort=base9",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "  cohort: base9\n" in result.stdout
+    assert "  subjects: 9\n" in result.stdout
+    assert "authorized reduced scope" in result.stdout
+    submitted = _calls(calls)
+    assert len(submitted) == 1
+    assert "--array=0-359%50" in submitted[0]
+    assert str(Path(env["SIMNIBS326H_BASE9_LEFT_ROOT"]) / "_pipeline/configs/remesh_only.json") in submitted[0]
+    assert str(Path(env["SIMNIBS326H_LEFT_ROOT"])) not in submitted[0]
+
+
+def test_base9_all_remesh_uses_nine_subject_roi_arrays(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env, cohort="base9")
+    _configs(env, cohort="base9")
+
+    result = _run(env, "all-remesh", "--cohort=base9")
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    simulations = [line for line in submitted if "simulation_array.slurm" in line]
+    roi_arrays = [line for line in submitted if "optimizer_roi_array.slurm" in line]
+    assert len(simulations) == 2
+    assert all("--array=0-359%50" in line for line in simulations)
+    assert len(roi_arrays) == 2
+    assert all("--array=0-8%9" in line for line in roi_arrays)
+
+
+def test_base9_collector_only_submits_no_headmodel_build_array(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env, cohort="base9")
+
+    result = _run(env, "collect-headmodels", "--cohort=base9")
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    assert len(submitted) == 1
+    assert "headmodel_collect.slurm" in submitted[0]
+    assert "--dependency=" not in submitted[0]
+    assert "headmodel_array.slurm" not in submitted[0]
+
+
+def test_one_subject_diagnosis_submits_exact_task_without_retry_or_collector(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env)
+
+    result = _run(env, "diagnose-headmodel", "sub-CC520083")
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    assert len(submitted) == 1
+    assert "--job-name=ti326h_diag" in submitted[0]
+    assert "--array=6-6%1" in submitted[0]
+    assert "SIMNIBS326H_MAX_RETRIES=0" in submitted[0]
+    assert "SIMNIBS326H_DIAGNOSTIC=1" in submitted[0]
+    assert "headmodel_array.slurm" in submitted[0]
+    assert "headmodel_collect.slurm" not in submitted[0]
 
 
 def test_launchers_remove_matlab_cat12_and_preserve_retry_contract() -> None:

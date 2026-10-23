@@ -57,6 +57,10 @@ case "$COHORT" in
     full10|base9) ;;
     *) echo "[ERROR] Unsupported cohort: $COHORT (expected full10 or base9)." >&2; exit 2 ;;
 esac
+if [ "$COHORT" = base9 ] && [ "$MODE" = analysis ]; then
+    echo "[ERROR] base9 analysis is intentionally blocked until a provenance-safe base9 or 9+1 aggregation is implemented." >&2
+    exit 2
+fi
 export SIMNIBS326H_COHORT="$COHORT"
 [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid retry cap." >&2; exit 2; }
 [ -z "$DEPENDENCY" ] || [[ "$DEPENDENCY" =~ ^[0-9]+$ ]] || {
@@ -158,8 +162,10 @@ require_file() {
 }
 record_submission() {
     local mode="$1" target="$2" dependency="$3" jobs="$4"
+    local receipt_mode="$mode"
     local receipt="$HEADMODEL_ROOT/_pipeline/submissions.tsv"
     local commit
+    [ "$COHORT" != base9 ] || receipt_mode="base9:$mode"
     jobs="${jobs//$'\t'/,}"
     jobs="${jobs//\\t/,}"
     mkdir -p "$(dirname "$receipt")"
@@ -168,7 +174,7 @@ record_submission() {
     fi
     commit="$(git -C "$PIPELINE_PARENT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COHORT:$mode" "$target" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$receipt_mode" "$target" \
         "$dependency" "$jobs" "$commit" >> "$receipt"
 }
 
@@ -280,7 +286,7 @@ submit_headmodel_diagnosis() {
         --receipt "$PREFLIGHT_RECEIPT" >/dev/null
     local log_dir="$HEADMODEL_ROOT/_pipeline/logs/headmodel_diagnostics/$DIAGNOSTIC_SUBJECT"
     mkdir -p "$log_dir"
-    submit_job --job-name=ti326h_diag --partition="$PARTITION" \
+    submit_job --job-name=ti326h_diag --partition="$PARTITION" --no-requeue \
         --cpus-per-task=8 --mem=32G --time=08:00:00 --array="6-6%1" \
         --output="$log_dir/slurm-%A_%a.out" --open-mode=append \
         --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LOG_DIR=$log_dir,PREFLIGHT_RECEIPT=$PREFLIGHT_RECEIPT,SIMNIBS326H_MAX_RETRIES=0,SIMNIBS326H_DIAGNOSTIC=1,SIMNIBS326H_COHORT=full10" \
@@ -426,7 +432,7 @@ case "$MODE" in
         echo "[INFO] Fixed/final chain: $jobs"
         ;;
     all-remesh)
-        left_sim="$(submit_simulation left-hippocampus remesh_only.json remesh)"
+        left_sim="$(submit_simulation left-hippocampus remesh_only.json remesh "$DEPENDENCY")"
         left_chain="$(submit_post_remesh left-hippocampus "$left_sim")"
         left_terminal="${left_chain##*$'\t'}"
         right_sim="$(submit_simulation right-m1 remesh_only.json remesh "$left_terminal")"
@@ -435,7 +441,7 @@ case "$MODE" in
         echo "[INFO] Sequential remesh chains: left=$left_sim/$left_chain right=$right_sim/$right_chain"
         ;;
     all-fixed)
-        left_chain="$(submit_fixed_chain left-hippocampus)"
+        left_chain="$(submit_fixed_chain left-hippocampus "$DEPENDENCY")"
         left_terminal="${left_chain##*$'\t'}"
         right_chain="$(submit_fixed_chain right-m1 "$left_terminal")"
         record_submission "$MODE" both "$DEPENDENCY" "$left_chain\t$right_chain"

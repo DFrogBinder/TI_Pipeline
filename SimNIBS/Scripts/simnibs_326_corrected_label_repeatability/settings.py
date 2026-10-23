@@ -145,6 +145,12 @@ def _resolved(value: str | Path) -> Path:
     return Path(value).expanduser().resolve(strict=False)
 
 
+def _paths_overlap(left: Path, right: Path) -> bool:
+    left = left.resolve(strict=False)
+    right = right.resolve(strict=False)
+    return left == right or left in right.parents or right in left.parents
+
+
 def cohort_name(environ: Mapping[str, str] | None = None) -> str:
     source = os.environ if environ is None else environ
     name = source.get(COHORT_ENV, "full10").strip().lower()
@@ -181,6 +187,33 @@ def campaign_paths_from_environment(
                 )
             )
         return get(key)
+
+    full10_roots = {
+        "left": get("LEFT_ROOT"),
+        "right": get("RIGHT_ROOT"),
+    }
+    base9_roots = {
+        "left": _resolved(
+            source.get(
+                f"{ENV_PREFIX}BASE9_LEFT_ROOT",
+                _BASE9_ROOT_DEFAULTS["LEFT_ROOT"],
+            )
+        ),
+        "right": _resolved(
+            source.get(
+                f"{ENV_PREFIX}BASE9_RIGHT_ROOT",
+                _BASE9_ROOT_DEFAULTS["RIGHT_ROOT"],
+            )
+        ),
+    }
+    for base9_name, base9_root in base9_roots.items():
+        for full10_name, full10_root in full10_roots.items():
+            if _paths_overlap(base9_root, full10_root):
+                raise ValueError(
+                    "base9 writable result root overlaps a full10 writable result "
+                    f"root: base9_{base9_name}={base9_root}; "
+                    f"full10_{full10_name}={full10_root}"
+                )
 
     return CampaignPaths(
         corrected_root=get("CORRECTED_ROOT"),
@@ -247,12 +280,6 @@ def target_settings(value: str, paths: CampaignPaths | None = None) -> TargetSet
         raise ValueError(
             f"Unsupported target {value!r}; expected one of {sorted(targets)}"
         ) from exc
-
-
-def _paths_overlap(left: Path, right: Path) -> bool:
-    left = left.resolve(strict=False)
-    right = right.resolve(strict=False)
-    return left == right or left in right.parents or right in left.parents
 
 
 def assert_root_isolation(paths: CampaignPaths) -> dict[str, dict[str, str]]:

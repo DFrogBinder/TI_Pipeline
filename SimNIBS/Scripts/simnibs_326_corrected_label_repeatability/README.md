@@ -143,6 +143,11 @@ The fixed-mesh stage is intentionally not released until remesh validation,
 ROI extraction, and median-mesh preparation complete. The eventual base-nine
 total is 1,440 simulations and 2,880 component solves.
 
+`analysis --cohort=base9` is intentionally blocked: the existing manuscript
+analyzer is pinned to the complete ten-subject cohort. A provenance-safe
+base-nine or eventual 9+1 aggregation will be implemented as a separate step,
+so a partial cohort cannot be mislabeled as the final analysis.
+
 The failed subject can be diagnosed independently at any time:
 
 ```bash
@@ -244,6 +249,13 @@ are `CORRECTED_ROOT`, `LEGACY_REFERENCE_ROOT`, `ATLAS_ROOT`, `HEADMODEL_ROOT`,
 `LEFT_ROOT`, `RIGHT_ROOT`, and `TARGETS_CSV`; for example,
 `SIMNIBS326H_HEADMODEL_ROOT`. The launcher additionally accepts
 `SIMNIBS326H_RENDER_PYTHON` and `SIMNIBS326H_MAX_RETRIES`.
+
+The opt-in reduced profile uses `SIMNIBS326H_COHORT=base9` (normally set by
+`--cohort=base9`) and the dedicated result-root overrides
+`SIMNIBS326H_BASE9_LEFT_ROOT` and `SIMNIBS326H_BASE9_RIGHT_ROOT`. The ordinary
+`LEFT_ROOT` and `RIGHT_ROOT` remain the full-ten overrides and are deliberately
+ignored for base-nine outputs. Base-nine and full-ten result roots are checked
+for equality and ancestor/descendant collisions before any work begins.
 
 The protected completed v3/v4 roots and corrected-source root are checked for
 equality, ancestor, and descendant collisions before writes.

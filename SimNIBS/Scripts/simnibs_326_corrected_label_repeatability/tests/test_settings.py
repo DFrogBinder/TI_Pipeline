@@ -118,6 +118,22 @@ def test_base9_profile_uses_only_namespaced_base9_root_overrides(tmp_path: Path)
     assert paths.right_root == (tmp_path / "base9-right").resolve()
 
 
+def test_base9_profile_rejects_collision_with_full10_writable_roots(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared-result-root"
+    environ = {
+        "SIMNIBS326H_COHORT": "base9",
+        "SIMNIBS326H_LEFT_ROOT": str(shared),
+        "SIMNIBS326H_BASE9_LEFT_ROOT": str(shared),
+        "SIMNIBS326H_RIGHT_ROOT": str(tmp_path / "full-right"),
+        "SIMNIBS326H_BASE9_RIGHT_ROOT": str(tmp_path / "base9-right"),
+    }
+
+    with pytest.raises(ValueError, match="base9.*full10 writable result root"):
+        campaign_paths_from_environment(environ)
+
+
 def test_unknown_cohort_profile_fails_closed() -> None:
     environ = {"SIMNIBS326H_COHORT": "partial"}
 

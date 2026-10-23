@@ -210,6 +210,24 @@ def test_all_remesh_and_all_fixed_keep_target_arrays_sequential(
     assert "--dependency=afterok:" in fixed_simulations[1]
 
 
+@pytest.mark.parametrize("mode", ["all-remesh", "all-fixed"])
+def test_aggregate_modes_forward_requested_dependency_to_first_simulation(
+    launcher_env: tuple[dict[str, str], Path],
+    mode: str,
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env, cohort="base9")
+    _configs(env, cohort="base9")
+
+    result = _run(env, mode, "--cohort=base9", "--dependency=777")
+
+    assert result.returncode == 0, result.stderr
+    simulations = [
+        line for line in _calls(calls) if "simulation_array.slurm" in line
+    ]
+    assert "--dependency=afterok:777" in simulations[0]
+
+
 def test_base9_remesh_uses_isolated_roots_and_exact_360_task_array(
     launcher_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -282,11 +300,43 @@ def test_one_subject_diagnosis_submits_exact_task_without_retry_or_collector(
     submitted = _calls(calls)
     assert len(submitted) == 1
     assert "--job-name=ti326h_diag" in submitted[0]
+    assert "--no-requeue" in submitted[0]
     assert "--array=6-6%1" in submitted[0]
     assert "SIMNIBS326H_MAX_RETRIES=0" in submitted[0]
     assert "SIMNIBS326H_DIAGNOSTIC=1" in submitted[0]
     assert "headmodel_array.slurm" in submitted[0]
     assert "headmodel_collect.slurm" not in submitted[0]
+
+
+def test_base9_analysis_is_rejected_until_provenance_safe_aggregation_exists(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+
+    result = _run(env, "analysis", "--cohort=base9")
+
+    assert result.returncode == 2
+    assert "base9 analysis is intentionally blocked" in result.stderr
+    assert _calls(calls) == []
+
+
+def test_default_full10_submission_ledger_preserves_legacy_mode_value(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, _calls_path = launcher_env
+    _ready_prerequisites(env)
+    _configs(env)
+
+    result = _run(env, "remesh", "left-hippocampus")
+
+    assert result.returncode == 0, result.stderr
+    receipt = (
+        Path(env["SIMNIBS326H_HEADMODEL_ROOT"])
+        / "_pipeline"
+        / "submissions.tsv"
+    )
+    row = receipt.read_text(encoding="utf-8").splitlines()[1].split("\t")
+    assert row[1] == "remesh"
 
 
 def test_launchers_remove_matlab_cat12_and_preserve_retry_contract() -> None:

@@ -228,3 +228,157 @@ def prepare(config: ReplacementConfig) -> dict[str, object]:
         if not promoted and temporary.exists():
             shutil.rmtree(temporary)
     return {"action": "created", **load_prepared_manifest(paths.manifest)}
+
+
+def _require_current_manifest(manifest: dict[str, object]) -> dict[str, str]:
+    if (
+        manifest.get("workflow") != WORKFLOW
+        or manifest.get("profile") != "external1"
+        or manifest.get("status") != "prepared"
+    ):
+        raise RuntimeError("Replacement manifest is not a prepared external1 manifest")
+    paths = manifest.get("paths")
+    if not isinstance(paths, dict):
+        raise RuntimeError("Replacement manifest has no path binding")
+    manifest_path = Path(str(paths.get("manifest", ""))).resolve(strict=False)
+    current = load_prepared_manifest(manifest_path)
+    if current != manifest:
+        raise RuntimeError("Replacement manifest differs from its immutable on-disk copy")
+    return {str(key): str(value) for key, value in paths.items()}
+
+
+def require_v3_promotion(manifest: dict[str, object]) -> dict[str, object]:
+    """Require a reviewed, hash-valid singleton v3 head-model promotion."""
+    paths = _require_current_manifest(manifest)
+    subject = str(manifest.get("subject", ""))
+    collection = (
+        Path(paths["v3_headmodel_root"])
+        / "_pipeline"
+        / "headmodels"
+        / "external1"
+    )
+    headmodel_manifest_path = collection / "manifest.json"
+    promotion_path = collection / "promoted.json"
+    try:
+        headmodel_manifest = json.loads(
+            headmodel_manifest_path.read_text(encoding="utf-8")
+        )
+        promotion = json.loads(promotion_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Reviewed v3 head-model promotion is missing or unreadable: {promotion_path}"
+        ) from exc
+    if (
+        not isinstance(headmodel_manifest, dict)
+        or headmodel_manifest.get("status") != "complete"
+        or headmodel_manifest.get("headmodel_root") != paths["v3_headmodel_root"]
+        or headmodel_manifest.get("subject_count") != 1
+        or headmodel_manifest.get("subject_order") != [subject]
+    ):
+        raise RuntimeError("V3 head-model manifest has a different subject/root binding")
+    if not isinstance(promotion, dict) or promotion.get("status") != "promoted":
+        raise RuntimeError("V3 head-model promotion is not complete")
+    if promotion.get("subjects") != [subject]:
+        raise RuntimeError("V3 head-model promotion has a different subject binding")
+    if promotion.get("confirm_reviewed") is not True:
+        raise RuntimeError("V3 head-model promotion does not prove human review")
+    if Path(str(promotion.get("manifest_path", ""))).resolve(
+        strict=False
+    ) != headmodel_manifest_path.resolve():
+        raise RuntimeError("V3 promotion names a different head-model manifest")
+    observed = _sha256(headmodel_manifest_path)
+    if promotion.get("manifest_sha256") != observed:
+        raise RuntimeError("V3 promotion head-model manifest hash mismatch")
+    return {
+        "status": "ready",
+        "subject": subject,
+        "subjects": [subject],
+        "promotion_path": str(promotion_path),
+        "promotion_sha256": _sha256(promotion_path),
+        "headmodel_manifest_path": str(headmodel_manifest_path),
+        "headmodel_manifest_sha256": observed,
+        "replacement_manifest_sha256": _sha256(Path(paths["manifest"])),
+    }
+
+
+def _load_json_object(path: Path, label: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} is missing or unreadable: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} is not a JSON object: {path}")
+    return payload
+
+
+def require_left_complete(
+    manifest: dict[str, object], version: str
+) -> dict[str, object]:
+    """Require the same-version left target to be terminal before right M1."""
+    if version not in ("v3", "v4"):
+        raise ValueError("version must be v3 or v4")
+    require_v3_promotion(manifest)
+    paths = _require_current_manifest(manifest)
+    subject = str(manifest["subject"])
+    root = Path(paths[f"{version}_left_root"])
+    completion_path = root / "_pipeline" / "workflow" / "complete.json"
+    completion = _load_json_object(
+        completion_path, f"{version} left-hippocampus terminal receipt"
+    )
+    if completion.get("status") != "complete":
+        raise RuntimeError(f"{version} left-hippocampus receipt is not complete")
+
+    config_path = root / "_pipeline" / "configs" / "paired_analysis.json"
+    config = _load_json_object(
+        config_path, f"{version} left-hippocampus paired config"
+    )
+    if config.get("subjects") != [subject]:
+        raise RuntimeError(f"{version} left-hippocampus config has a different subject")
+    conditions = config.get("conditions")
+    if not isinstance(conditions, list) or [
+        (item.get("name"), item.get("repeat_count"))
+        for item in conditions
+        if isinstance(item, dict)
+    ] != [("remesh", 40), ("fixed_mesh", 40)]:
+        raise RuntimeError(
+            f"{version} left-hippocampus config does not prove 40 remesh and fixed repeats"
+        )
+
+    if version == "v3":
+        if completion.get("stage") != "final":
+            raise RuntimeError("v3 left-hippocampus receipt is not the final stage")
+        if Path(str(completion.get("config", ""))).resolve(
+            strict=False
+        ) != config_path.resolve() or completion.get("config_sha256") != _sha256(
+            config_path
+        ):
+            raise RuntimeError("v3 left-hippocampus receipt/config hash mismatch")
+        scope = completion.get("scope")
+        validation = completion.get("validation")
+        if (
+            not isinstance(scope, dict)
+            or scope.get("target") != "left-hippocampus"
+            or scope.get("subject_count") != 1
+            or not isinstance(validation, dict)
+            or validation.get("total_tasks") != 80
+        ):
+            raise RuntimeError("v3 left-hippocampus receipt has the wrong scope")
+    else:
+        scope = completion.get("scope")
+        if (
+            not isinstance(scope, dict)
+            or scope.get("roi") != "left-hippocampus"
+            or scope.get("subjects") != [subject]
+            or scope.get("subject_count") != 1
+            or scope.get("repeats_per_condition") != 40
+            or scope.get("total_simulation_tasks") != 80
+        ):
+            raise RuntimeError("v4 left-hippocampus receipt has the wrong scope")
+    return {
+        "status": "ready",
+        "version": version,
+        "subject": subject,
+        "target": "left-hippocampus",
+        "completion_path": str(completion_path),
+        "completion_sha256": _sha256(completion_path),
+    }

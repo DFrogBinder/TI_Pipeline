@@ -106,7 +106,7 @@ setting_path() {
     local env_name="$full_env_name"
     [ "$COHORT" != base9 ] || env_name="$base9_env_name"
     local override="${!env_name:-}"
-    if [ -n "$override" ]; then printf '%s\n' "$override"; return; fi
+    if [ -n "$override" ]; then realpath -m -- "$override"; return; fi
     "$PYTHON_BIN" -c "from simnibs_326_corrected_label_repeatability.settings import campaign_paths_from_environment; print(campaign_paths_from_environment().$expression)"
 }
 

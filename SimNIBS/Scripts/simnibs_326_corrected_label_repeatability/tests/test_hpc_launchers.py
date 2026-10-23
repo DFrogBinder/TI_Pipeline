@@ -348,6 +348,29 @@ def test_explicit_cross_profile_root_collision_fails_before_any_submission(
     assert not shared.exists()
 
 
+def test_explicit_relative_result_override_is_canonicalized_before_submission(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    canonical = tmp_path / "relative-base9-left"
+    env["SIMNIBS326H_BASE9_LEFT_ROOT"] = os.path.relpath(canonical, Path.cwd())
+    _ready_prerequisites(env, cohort="base9")
+    _configs(env, cohort="base9")
+
+    result = _run(
+        env,
+        "remesh",
+        "left-hippocampus",
+        "--cohort=base9",
+    )
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    assert len(submitted) == 1
+    assert str(canonical / "_pipeline/configs/remesh_only.json") in submitted[0]
+
+
 def test_default_full10_submission_ledger_preserves_legacy_mode_value(
     launcher_env: tuple[dict[str, str], Path],
 ) -> None:

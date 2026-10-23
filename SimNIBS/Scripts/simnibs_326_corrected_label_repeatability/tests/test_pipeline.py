@@ -169,6 +169,18 @@ def test_base9_initialize_writes_exact_360_task_remesh_plans(
         assert manifest["total_simulation_tasks"] == 1440
 
 
+def test_base9_scope_reports_reused_reference_and_headmodels_as_zero_build_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(COHORT_ENV, "base9")
+
+    scope = pipeline.campaign_scope(_paths(tmp_path))
+
+    assert scope["reference_stage_tasks"] == 0
+    assert scope["headmodel_tasks"] == 0
+
+
 def test_initialize_fails_closed_on_missing_or_stale_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

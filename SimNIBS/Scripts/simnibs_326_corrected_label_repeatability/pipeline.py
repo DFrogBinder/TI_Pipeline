@@ -158,8 +158,8 @@ def campaign_scope(paths: CampaignPaths | None = None) -> dict[str, Any]:
             else "corrected-label SimNIBS 3.2.6 base-nine early release"
         ),
         **base,
-        "headmodel_tasks": len(subjects),
-        "reference_stage_tasks": len(SUBJECTS),
+        "headmodel_tasks": len(subjects) if profile == "full10" else 0,
+        "reference_stage_tasks": len(SUBJECTS) if profile == "full10" else 0,
         "remesh_tasks": per_target * 2,
         "fixed_mesh_tasks": per_target * 2,
         "execution_scope": (

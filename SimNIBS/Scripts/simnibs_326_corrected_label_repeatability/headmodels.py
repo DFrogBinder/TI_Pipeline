@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from typing import Sequence
 
 import nibabel as nib
 import numpy as np
@@ -17,9 +18,11 @@ import numpy as np
 from .label_io import harmonize_subject_labels, temporary_surface_masks
 from .reference_stage import validate_collected_reference as validate_staged_reference
 from .settings import (
+    BASE9_SUBJECTS,
     CampaignPaths,
     SUBJECTS,
     assert_root_isolation,
+    cohort_subjects,
     subject_paths,
 )
 from .v3_meshing import (
@@ -154,7 +157,31 @@ def validate_headmodel(
     return payload
 
 
-def write_qc_request(paths: CampaignPaths, subject: str) -> Path:
+def _selected_subjects(subjects: Sequence[str] | None = None) -> tuple[str, ...]:
+    selected = tuple(cohort_subjects() if subjects is None else subjects)
+    if selected not in (SUBJECTS, BASE9_SUBJECTS):
+        raise HeadModelError(
+            "Head-model cohort must be exactly the pinned full10 or base9 profile"
+        )
+    return selected
+
+
+def headmodel_output_dir(
+    paths: CampaignPaths,
+    subjects: Sequence[str] | None = None,
+) -> Path:
+    selected = _selected_subjects(subjects)
+    root = paths.headmodel_root / "_pipeline" / "headmodels"
+    return root if selected == SUBJECTS else root / "base9"
+
+
+def write_qc_request(
+    paths: CampaignPaths,
+    subject: str,
+    *,
+    output_png: Path | None = None,
+    request_dir: Path | None = None,
+) -> Path:
     """Write a content-addressed request for the separate render interpreter."""
     resolved = subject_paths(paths, subject)
     if not resolved.headmodel_receipt.is_file():
@@ -176,7 +203,9 @@ def write_qc_request(paths: CampaignPaths, subject: str) -> Path:
         "t1": _file_record(t1_path),
         "labels": _file_record(resolved.harmonized_label),
         "headmodel_marker": _file_record(resolved.headmodel_receipt),
-        "output_png": str(resolved.harmonization_figure.resolve(strict=False)),
+        "output_png": str(
+            (output_png or resolved.harmonization_figure).resolve(strict=False)
+        ),
         "views": ["sagittal", "coronal", "axial"],
         "slices": {
             "sagittal": int(center[0]),
@@ -194,16 +223,24 @@ def write_qc_request(paths: CampaignPaths, subject: str) -> Path:
         },
     }
     request_payload["request_sha256"] = _json_sha256(request_payload)
-    request = (
-        paths.headmodel_root / "_pipeline" / "headmodels" / "qc_requests" / f"{subject}.json"
+    request_root = request_dir or (
+        paths.headmodel_root / "_pipeline" / "headmodels" / "qc_requests"
     )
+    request = request_root / f"{subject}.json"
     _atomic_write_json(request, request_payload)
     return request
 
 
-def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, object]:
-    """Validate and render all ten subjects, then write the cohort manifest."""
+def collect_headmodels(
+    paths: CampaignPaths,
+    render_python: str,
+    *,
+    subjects: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """Validate and render the active pinned cohort, then write its manifest."""
     assert_root_isolation(paths)
+    selected = _selected_subjects(subjects)
+    output_dir = headmodel_output_dir(paths, selected)
     api = load_v3_meshing_api()
     entries: list[dict[str, object]] = []
     artifact_paths: list[Path] = []
@@ -211,13 +248,23 @@ def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, ob
         "subject\tharmonized_map\tharmonized_sha256\tmesh\tmesh_sha256\t"
         "tetrahedra\ttissue_tags\tqc_panel\tqc_panel_sha256"
     ]
-    for subject in SUBJECTS:
+    for subject in selected:
         resolved = subject_paths(paths, subject)
+        panel_path = (
+            resolved.harmonization_figure
+            if selected == SUBJECTS
+            else output_dir / "qc_panels" / f"{subject}.png"
+        )
         try:
             marker = validate_headmodel(paths, subject, api)
-            request = write_qc_request(paths, subject)
+            request = write_qc_request(
+                paths,
+                subject,
+                output_png=panel_path,
+                request_dir=output_dir / "qc_requests",
+            )
             _run_renderer(render_python, request)
-            _validate_png(resolved.harmonization_figure)
+            _validate_png(panel_path)
         except Exception as exc:
             raise HeadModelError(
                 f"Head-model collection failed for {subject}: {exc}"
@@ -229,7 +276,7 @@ def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, ob
             *[_file_record(Path(record["path"])) for record in marker["surfaces"]],
             _file_record(resolved.head_mesh),
             _file_record(request),
-            _file_record(resolved.harmonization_figure),
+            _file_record(panel_path),
         ]
         artifact_paths.extend(Path(str(record["path"])) for record in artifacts)
         validation = marker["mesh_validation"]
@@ -238,7 +285,7 @@ def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, ob
             "marker_sha256": _sha256(resolved.headmodel_receipt),
             "harmonized_map_sha256": _sha256(resolved.harmonized_label),
             "mesh_sha256": _sha256(resolved.head_mesh),
-            "panel_sha256": _sha256(resolved.harmonization_figure),
+            "panel_sha256": _sha256(panel_path),
             "artifacts": artifacts,
         }
         entries.append(entry)
@@ -252,12 +299,11 @@ def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, ob
                     str(entry["mesh_sha256"]),
                     str(validation["tetrahedra"]),
                     ",".join(str(tag) for tag in validation["tissue_tags"]),
-                    str(resolved.harmonization_figure.resolve()),
+                    str(panel_path.resolve()),
                     str(entry["panel_sha256"]),
                 ]
             )
         )
-    output_dir = paths.headmodel_root / "_pipeline" / "headmodels"
     output_dir.mkdir(parents=True, exist_ok=True)
     tsv_path = output_dir / "headmodels.tsv"
     _atomic_write_text(tsv_path, "\n".join(tsv_rows) + "\n")
@@ -282,7 +328,7 @@ def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, ob
         "git_commit": _git_commit(),
         "headmodel_root": str(paths.headmodel_root.resolve()),
         "subject_count": len(entries),
-        "subject_order": list(SUBJECTS),
+        "subject_order": list(selected),
         "subjects": entries,
         "cohort_files": {
             "tsv": _file_record(tsv_path),
@@ -295,8 +341,13 @@ def collect_headmodels(paths: CampaignPaths, render_python: str) -> dict[str, ob
     return {**payload, "manifest_sha256": _sha256(manifest_path)}
 
 
-def validate_headmodel_manifest(paths: CampaignPaths) -> dict[str, object]:
-    manifest_path = paths.headmodel_root / "_pipeline" / "headmodels" / "manifest.json"
+def validate_headmodel_manifest(
+    paths: CampaignPaths,
+    *,
+    subjects: Sequence[str] | None = None,
+) -> dict[str, object]:
+    selected = _selected_subjects(subjects)
+    manifest_path = headmodel_output_dir(paths, selected) / "manifest.json"
     if not manifest_path.is_file():
         raise HeadModelError(f"Head-model manifest is missing: {manifest_path}")
     try:
@@ -307,12 +358,14 @@ def validate_headmodel_manifest(paths: CampaignPaths) -> dict[str, object]:
         raise HeadModelError("Head-model manifest is not complete")
     if payload.get("headmodel_root") != str(paths.headmodel_root.resolve()):
         raise HeadModelError("Head-model manifest is bound to a different root")
-    if payload.get("subject_count") != len(SUBJECTS):
-        raise HeadModelError("Head-model manifest does not contain ten subjects")
-    if payload.get("subject_order") != list(SUBJECTS):
+    if payload.get("subject_count") != len(selected):
+        raise HeadModelError(
+            f"Head-model manifest does not contain {len(selected)} subjects"
+        )
+    if payload.get("subject_order") != list(selected):
         raise HeadModelError("Head-model manifest subject order differs from the pin")
     entries = payload.get("subjects")
-    if not isinstance(entries, list) or [entry.get("subject") for entry in entries] != list(SUBJECTS):
+    if not isinstance(entries, list) or [entry.get("subject") for entry in entries] != list(selected):
         raise HeadModelError("Head-model manifest subject entries are incomplete")
     for entry in entries:
         artifacts = entry.get("artifacts")
@@ -338,24 +391,32 @@ def promote_headmodels(
     paths: CampaignPaths,
     manifest_sha256: str,
     confirm_reviewed: bool,
+    *,
+    subjects: Sequence[str] | None = None,
 ) -> dict[str, object]:
     if confirm_reviewed is not True:
         raise HeadModelError(
             "Head-model promotion requires explicit confirm_reviewed=True"
         )
-    manifest = validate_headmodel_manifest(paths)
+    selected = _selected_subjects(subjects)
+    manifest = validate_headmodel_manifest(paths, subjects=selected)
     observed = str(manifest["manifest_sha256"])
     if manifest_sha256 != observed:
         raise HeadModelError(
             f"Requested manifest hash does not match current manifest hash: {observed}"
         )
-    path = paths.headmodel_root / "_pipeline" / "headmodels" / "promoted.json"
+    output_dir = headmodel_output_dir(paths, selected)
+    path = output_dir / "promoted.json"
     if path.exists():
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise HeadModelError(f"Existing promotion receipt is unreadable: {path}") from exc
-        if existing.get("manifest_sha256") != observed:
+        if (
+            existing.get("manifest_sha256") != observed
+            or existing.get("subjects") != list(selected)
+            or existing.get("confirm_reviewed") is not True
+        ):
             raise HeadModelError("Existing promotion receipt names a stale manifest")
         return {"action": "reused", **existing}
     payload: dict[str, object] = {
@@ -364,12 +425,12 @@ def promote_headmodels(
         "promoted_utc": _utc_now(),
         "git_commit": _git_commit(),
         "manifest_path": str(
-            (paths.headmodel_root / "_pipeline" / "headmodels" / "manifest.json").resolve()
+            (output_dir / "manifest.json").resolve()
         ),
         "manifest_sha256": observed,
         "confirm_reviewed": True,
-        "panels_reviewed": len(SUBJECTS),
-        "subjects": list(SUBJECTS),
+        "panels_reviewed": len(selected),
+        "subjects": list(selected),
     }
     _atomic_write_json(path, payload)
     return {"action": "created", **payload}

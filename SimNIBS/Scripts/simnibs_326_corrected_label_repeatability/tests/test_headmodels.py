@@ -17,12 +17,14 @@ from simnibs_326_corrected_label_repeatability.headmodels import (
     HeadModelError,
     build_headmodel,
     collect_headmodels,
+    headmodel_output_dir,
     promote_headmodels,
     validate_headmodel_manifest,
     write_qc_request,
 )
 from simnibs_326_corrected_label_repeatability.reference_stage import StageReceipt
 from simnibs_326_corrected_label_repeatability.settings import (
+    BASE9_SUBJECTS,
     SUBJECTS,
     campaign_paths_from_environment,
     subject_paths,
@@ -301,6 +303,51 @@ def test_promotion_requires_exact_manifest_hash_and_explicit_review(
     assert result["manifest_sha256"] == collected["manifest_sha256"]
     assert result["panels_reviewed"] == 10
     assert promotion.is_file()
+
+
+def test_base9_collection_and_promotion_use_separate_immutable_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, _ = _build_fake_cohort(tmp_path, monkeypatch)
+    monkeypatch.setattr(headmodel_module, "load_v3_meshing_api", lambda: SimpleNamespace())
+
+    def renderer(_python: str, request: Path) -> None:
+        payload = json.loads(request.read_text(encoding="utf-8"))
+        _write_fake_png(Path(payload["output_png"]))
+
+    monkeypatch.setattr(headmodel_module, "_run_renderer", renderer)
+
+    collected = collect_headmodels(
+        paths,
+        "/fake/ti-post/python",
+        subjects=BASE9_SUBJECTS,
+    )
+    output_dir = paths.headmodel_root / "_pipeline" / "headmodels" / "base9"
+    manifest = output_dir / "manifest.json"
+
+    assert headmodel_output_dir(paths, BASE9_SUBJECTS) == output_dir
+    assert collected["subject_count"] == 9
+    assert collected["subject_order"] == list(BASE9_SUBJECTS)
+    assert manifest.is_file()
+    assert not (paths.headmodel_root / "_pipeline/headmodels/manifest.json").exists()
+    assert all(
+        Path(entry["artifacts"][-1]["path"]).parent == output_dir / "qc_panels"
+        for entry in collected["subjects"]
+    )
+    validated = validate_headmodel_manifest(paths, subjects=BASE9_SUBJECTS)
+    assert validated["manifest_sha256"] == collected["manifest_sha256"]
+
+    promoted = promote_headmodels(
+        paths,
+        collected["manifest_sha256"],
+        True,
+        subjects=BASE9_SUBJECTS,
+    )
+    assert promoted["subjects"] == list(BASE9_SUBJECTS)
+    assert promoted["panels_reviewed"] == 9
+    assert (output_dir / "promoted.json").is_file()
+    assert not (paths.headmodel_root / "_pipeline/headmodels/promoted.json").exists()
 
 
 def test_tampered_panel_invalidates_manifest_and_blocks_promotion(

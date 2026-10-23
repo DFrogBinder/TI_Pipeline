@@ -11,7 +11,10 @@ import numpy as np
 import pytest
 
 import simnibs_326_corrected_label_repeatability.simulation_runner as simulation_runner
+from simnibs_326_corrected_label_repeatability.headmodels import headmodel_output_dir
 from simnibs_326_corrected_label_repeatability.settings import (
+    BASE9_SUBJECTS,
+    COHORT_ENV,
     SUBJECTS,
     campaign_paths_from_environment,
     subject_paths,
@@ -246,6 +249,63 @@ def test_config_and_task_reject_unpromoted_or_stale_headmodels(
             force_mesh=False,
             paths=paths,
         )
+
+
+def test_base9_simulation_boundary_uses_base9_promotion_and_subject_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, _, _ = _promoted_subject_layout(tmp_path)
+    monkeypatch.setenv(COHORT_ENV, "base9")
+    output_dir = headmodel_output_dir(paths, BASE9_SUBJECTS)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    promotion_path = output_dir / "promoted.json"
+    manifest_hash = "3" * 64
+    promotion_path.write_text(
+        json.dumps(
+            {
+                "status": "promoted",
+                "confirm_reviewed": True,
+                "manifest_sha256": manifest_hash,
+                "subjects": list(BASE9_SUBJECTS),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        simulation_runner,
+        "validate_headmodel_manifest",
+        lambda _paths, **_kwargs: {
+            "manifest_sha256": manifest_hash,
+            "subject_order": list(BASE9_SUBJECTS),
+        },
+    )
+
+    promotion = simulation_runner._validated_promotion(paths)
+
+    assert promotion["promotion_path"] == str(promotion_path.resolve())
+    config = _valid_config(paths, promotion)
+    config["subjects"] = list(BASE9_SUBJECTS)
+    config_path = tmp_path / "base9-config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(simulation_runner, "_validated_promotion", lambda _paths: promotion)
+    simulation_runner._validate_campaign_config(config_path, paths=paths)
+
+    bad = json.loads(promotion_path.read_text(encoding="utf-8"))
+    bad["subjects"] = list(SUBJECTS)
+    promotion_path.write_text(json.dumps(bad), encoding="utf-8")
+    monkeypatch.undo()
+    monkeypatch.setenv(COHORT_ENV, "base9")
+    monkeypatch.setattr(
+        simulation_runner,
+        "validate_headmodel_manifest",
+        lambda _paths, **_kwargs: {
+            "manifest_sha256": manifest_hash,
+            "subject_order": list(BASE9_SUBJECTS),
+        },
+    )
+    with pytest.raises(simulation_runner.SimulationBoundaryError, match="stale"):
+        simulation_runner._validated_promotion(paths)
 
 
 def test_seeded_fixed_config_uses_the_initialized_campaign_runtime(

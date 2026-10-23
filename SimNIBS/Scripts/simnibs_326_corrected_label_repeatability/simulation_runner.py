@@ -27,12 +27,12 @@ finally:
     if _added_current_repair_path:
         sys.path.remove(str(CURRENT_REPAIR_ROOT))
 
-from .headmodels import validate_headmodel_manifest  # noqa: E402
+from .headmodels import headmodel_output_dir, validate_headmodel_manifest  # noqa: E402
 from .settings import (  # noqa: E402
     CampaignPaths,
     SIMNIBS_MODULE,
-    SUBJECTS,
     campaign_paths_from_environment,
+    cohort_subjects,
     subject_paths,
 )
 from .v3_meshing import build_volume_mesh, load_v3_meshing_api  # noqa: E402
@@ -161,8 +161,9 @@ def _write_label_volume_326(
 
 
 def _validated_promotion(paths: CampaignPaths) -> dict[str, str]:
-    manifest = validate_headmodel_manifest(paths)
-    promotion_path = paths.headmodel_root / "_pipeline" / "headmodels" / "promoted.json"
+    subjects = cohort_subjects()
+    manifest = validate_headmodel_manifest(paths, subjects=subjects)
+    promotion_path = headmodel_output_dir(paths, subjects) / "promoted.json"
     if not promotion_path.is_file():
         raise SimulationBoundaryError("Head models are not promoted")
     try:
@@ -174,7 +175,7 @@ def _validated_promotion(paths: CampaignPaths) -> dict[str, str]:
         promotion.get("status") != "promoted"
         or promotion.get("confirm_reviewed") is not True
         or promotion.get("manifest_sha256") != manifest_hash
-        or promotion.get("subjects") != list(SUBJECTS)
+        or promotion.get("subjects") != list(subjects)
     ):
         raise SimulationBoundaryError(
             "Head-model promotion receipt is stale or incomplete"
@@ -388,8 +389,11 @@ def _validate_campaign_config(
         raise SystemExit(
             "Config source_root differs from the pinned corrected read-only source"
         )
-    if payload.get("subjects") != list(SUBJECTS):
-        raise SystemExit("Config subject order differs from the pinned balanced-10 cohort")
+    subjects = cohort_subjects()
+    if payload.get("subjects") != list(subjects):
+        raise SystemExit(
+            "Config subject order differs from the active pinned cohort profile"
+        )
     conditions = payload.get("conditions")
     valid_condition_scopes = (
         [{"name": "remesh", "mesh_mode": "remesh", "repeat_count": 40}],

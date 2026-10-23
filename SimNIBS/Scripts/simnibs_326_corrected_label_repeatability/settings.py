@@ -38,6 +38,12 @@ SUBJECTS = (
     "sub-CC610631",
     "sub-CC720941",
 )
+BASE9_EXCLUDED_SUBJECT = "sub-CC520083"
+BASE9_SUBJECTS = tuple(
+    subject for subject in SUBJECTS if subject != BASE9_EXCLUDED_SUBJECT
+)
+COHORT_ENV = f"{ENV_PREFIX}COHORT"
+COHORT_PROFILES = ("full10", "base9")
 
 
 @dataclass(frozen=True)
@@ -121,9 +127,38 @@ _DEFAULTS = {
     ),
 }
 
+_BASE9_ROOT_DEFAULTS = {
+    "LEFT_ROOT": (
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_balanced_10_simnibs326_harmonized_"
+        "base9_left_hippocampus_v2"
+    ),
+    "RIGHT_ROOT": (
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_balanced_10_simnibs326_harmonized_"
+        "base9_right_m1_v2"
+    ),
+}
+
 
 def _resolved(value: str | Path) -> Path:
     return Path(value).expanduser().resolve(strict=False)
+
+
+def cohort_name(environ: Mapping[str, str] | None = None) -> str:
+    source = os.environ if environ is None else environ
+    name = source.get(COHORT_ENV, "full10").strip().lower()
+    if name not in COHORT_PROFILES:
+        raise ValueError(
+            f"Unsupported cohort profile {name!r}; expected one of {COHORT_PROFILES}"
+        )
+    return name
+
+
+def cohort_subjects(
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    return BASE9_SUBJECTS if cohort_name(environ) == "base9" else SUBJECTS
 
 
 def campaign_paths_from_environment(
@@ -132,16 +167,28 @@ def campaign_paths_from_environment(
     """Resolve every campaign root from one namespaced environment contract."""
     source = os.environ if environ is None else environ
 
+    profile = cohort_name(source)
+
     def get(key: str) -> Path:
         return _resolved(source.get(f"{ENV_PREFIX}{key}", _DEFAULTS[key]))
+
+    def get_result_root(key: str) -> Path:
+        if profile == "base9":
+            return _resolved(
+                source.get(
+                    f"{ENV_PREFIX}BASE9_{key}",
+                    _BASE9_ROOT_DEFAULTS[key],
+                )
+            )
+        return get(key)
 
     return CampaignPaths(
         corrected_root=get("CORRECTED_ROOT"),
         legacy_reference_root=get("LEGACY_REFERENCE_ROOT"),
         atlas_root=get("ATLAS_ROOT"),
         headmodel_root=get("HEADMODEL_ROOT"),
-        left_root=get("LEFT_ROOT"),
-        right_root=get("RIGHT_ROOT"),
+        left_root=get_result_root("LEFT_ROOT"),
+        right_root=get_result_root("RIGHT_ROOT"),
         completed_v3_left_root=get("COMPLETED_V3_LEFT_ROOT"),
         completed_v3_right_root=get("COMPLETED_V3_RIGHT_ROOT"),
         completed_v4_left_root=get("COMPLETED_V4_LEFT_ROOT"),
@@ -248,12 +295,18 @@ def assert_root_isolation(paths: CampaignPaths) -> dict[str, dict[str, str]]:
     }
 
 
-def campaign_scope(paths: CampaignPaths | None = None) -> dict[str, object]:
-    resolved = paths or campaign_paths_from_environment()
-    per_target_condition = len(SUBJECTS) * REPEAT_COUNT
+def campaign_scope(
+    paths: CampaignPaths | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    resolved = paths or campaign_paths_from_environment(environ)
+    subjects = cohort_subjects(environ)
+    per_target_condition = len(subjects) * REPEAT_COUNT
     return {
-        "subjects": list(SUBJECTS),
-        "subject_count": len(SUBJECTS),
+        "cohort": cohort_name(environ),
+        "subjects": list(subjects),
+        "subject_count": len(subjects),
         "targets": ["left-hippocampus", "right-m1"],
         "conditions": ["remesh", "fixed_mesh"],
         "repeats_per_condition": REPEAT_COUNT,

@@ -7,12 +7,15 @@ from pathlib import Path
 import pytest
 
 from simnibs_326_corrected_label_repeatability.settings import (
+    BASE9_SUBJECTS,
     ENV_PREFIX,
     REPEAT_COUNT,
     SUBJECTS,
     assert_root_isolation,
     campaign_paths_from_environment,
     campaign_scope,
+    cohort_name,
+    cohort_subjects,
     subject_paths,
     target_settings,
 )
@@ -65,6 +68,63 @@ def test_pins_full_campaign_scope_and_default_roots() -> None:
     }
     assert target_settings("left-hippocampus", paths).experiment_root == paths.left_root
     assert target_settings("right-m1", paths).experiment_root == paths.right_root
+
+
+def test_base9_profile_excludes_only_failed_subject_and_uses_isolated_roots() -> None:
+    environ = {"SIMNIBS326H_COHORT": "base9"}
+
+    paths = campaign_paths_from_environment(environ)
+    scope = campaign_scope(paths, environ=environ)
+
+    assert cohort_name(environ) == "base9"
+    assert cohort_subjects(environ) == BASE9_SUBJECTS
+    assert BASE9_SUBJECTS == tuple(
+        subject for subject in EXPECTED_SUBJECTS if subject != "sub-CC520083"
+    )
+    assert scope["subjects"] == list(BASE9_SUBJECTS)
+    assert scope["subject_count"] == 9
+    assert scope["total_simulation_tasks"] == 1440
+    assert scope["component_fem_solves"] == 2880
+    assert scope["arrays"] == {
+        "left_hippocampus_remesh": "0-359%50",
+        "left_hippocampus_fixed": "0-359%50",
+        "right_m1_remesh": "0-359%50",
+        "right_m1_fixed": "0-359%50",
+    }
+    assert paths.left_root == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_balanced_10_simnibs326_harmonized_"
+        "base9_left_hippocampus_v2"
+    )
+    assert paths.right_root == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_balanced_10_simnibs326_harmonized_"
+        "base9_right_m1_v2"
+    )
+
+
+def test_base9_profile_uses_only_namespaced_base9_root_overrides(tmp_path: Path) -> None:
+    environ = {
+        "SIMNIBS326H_COHORT": "base9",
+        "SIMNIBS326H_LEFT_ROOT": str(tmp_path / "full-left"),
+        "SIMNIBS326H_RIGHT_ROOT": str(tmp_path / "full-right"),
+        "SIMNIBS326H_BASE9_LEFT_ROOT": str(tmp_path / "base9-left"),
+        "SIMNIBS326H_BASE9_RIGHT_ROOT": str(tmp_path / "base9-right"),
+    }
+
+    paths = campaign_paths_from_environment(environ)
+
+    assert paths.left_root == (tmp_path / "base9-left").resolve()
+    assert paths.right_root == (tmp_path / "base9-right").resolve()
+
+
+def test_unknown_cohort_profile_fails_closed() -> None:
+    environ = {"SIMNIBS326H_COHORT": "partial"}
+
+    with pytest.raises(ValueError, match="Unsupported cohort profile"):
+        cohort_subjects(environ)
+    with pytest.raises(ValueError, match="Unsupported cohort profile"):
+        campaign_paths_from_environment(environ)
 
 
 def test_environment_overrides_share_one_prefix(tmp_path: Path) -> None:

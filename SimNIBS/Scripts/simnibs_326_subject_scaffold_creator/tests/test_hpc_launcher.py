@@ -90,6 +90,15 @@ def test_launcher_contract_is_exactly_simnibs_326_singleton() -> None:
     assert "sub-CC510415" not in combined
 
 
+def test_worker_maps_repeatability_directory_to_compatibility_contract() -> None:
+    worker = WORKER.read_text(encoding="utf-8")
+    mapping = 'export PIPELINE_DIR="$REPEATABILITY_DIR"'
+    activation = 'source "$REPEATABILITY_DIR/hpc/activate_compat.sh"'
+
+    assert mapping in worker
+    assert worker.index(mapping) < worker.index(activation)
+
+
 def test_wrapper_requires_runtime_subject_and_exact_confirmation(
     creator_layout: dict[str, Path | str],
 ) -> None:

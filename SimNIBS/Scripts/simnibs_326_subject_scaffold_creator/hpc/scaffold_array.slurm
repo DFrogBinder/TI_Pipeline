@@ -29,6 +29,10 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 : "${FINAL132_SUBJECTS:?Set FINAL132_SUBJECTS.}"
 : "${LOG_DIR:?Set LOG_DIR.}"
 
+# The shared SimNIBS 3.2.6 compatibility shim names its package-root
+# interface PIPELINE_DIR. This worker exposes the same directory under the
+# more specific REPEATABILITY_DIR name, so map it explicitly at the boundary.
+export PIPELINE_DIR="$REPEATABILITY_DIR"
 # shellcheck source=/dev/null
 source "$REPEATABILITY_DIR/hpc/activate_compat.sh"
 cd "$REPEATABILITY_DIR"

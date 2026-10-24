@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -29,7 +30,6 @@ from .settings import (
     CreatorPaths,
     assert_output_root_isolation,
     creator_paths,
-    production_paths,
     validate_subject,
 )
 
@@ -64,6 +64,24 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _json_sha256(payload: object) -> str:
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _file_record(path: Path, label: str) -> dict[str, object]:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file() or resolved.stat().st_size <= 0:
+        raise RuntimeError(f"{label} is missing or empty: {resolved}")
+    return {
+        "path": str(resolved),
+        "size_bytes": resolved.stat().st_size,
+        "sha256": sha256_file(resolved),
+    }
+
+
 def _corrected_inventory(
     config: CreatorConfig,
 ) -> tuple[list[Any], list[dict[str, object]]]:
@@ -77,18 +95,26 @@ def _corrected_inventory(
         raise ValueError(
             f"Corrected-v4 source audit returned {len(ready)} files; expected three"
         )
-    records = [
-        {
-            "kind": item.kind,
-            "source_path": str(item.source_path.resolve()),
-            "source_sha256": item.source_sha256,
-            "expected_source_sha256": item.expected_source_sha256,
-            "destination_name": item.destination_name,
-            "transform": item.transform,
-            "provenance_record": item.provenance_record,
-        }
-        for item in sorted(ready, key=lambda item: item.kind)
-    ]
+    records: list[dict[str, object]] = []
+    for item in sorted(ready, key=lambda item: item.kind):
+        provenance_record = Path(item.provenance_record).expanduser().resolve()
+        if not provenance_record.is_file() or provenance_record.stat().st_size <= 0:
+            raise ValueError(
+                "Corrected-v4 provenance receipt is missing or empty: "
+                f"{provenance_record}"
+            )
+        records.append(
+            {
+                "kind": item.kind,
+                "source_path": str(item.source_path.resolve()),
+                "source_sha256": item.source_sha256,
+                "expected_source_sha256": item.expected_source_sha256,
+                "destination_name": item.destination_name,
+                "transform": item.transform,
+                "provenance_record": str(provenance_record),
+                "provenance_record_sha256": sha256_file(provenance_record),
+            }
+        )
     return ready, records
 
 
@@ -114,13 +140,14 @@ def _owner_binding(
         "cat12_compatibility_patch": PATCH_ID,
         "head_model_strategy": HEAD_MODEL_STRATEGY,
         "segmentation_provenance": SEGMENTATION_PROVENANCE,
+        "authoritative_subjects": _file_record(
+            config.final132_subjects_file, "authoritative final-132 subject list"
+        ),
         "sources": source_records,
     }
 
 
-def _matches_binding(
-    payload: dict[str, object], binding: dict[str, object]
-) -> bool:
+def _matches_binding(payload: dict[str, object], binding: dict[str, object]) -> bool:
     return all(payload.get(key) == value for key, value in binding.items())
 
 
@@ -176,6 +203,7 @@ def preflight(config: CreatorConfig) -> dict[str, object]:
         "headreco_command": "headreco all --noclean",
         "paths": _paths_payload(paths),
         "sources": source_records,
+        "authoritative_subjects": binding["authoritative_subjects"],
         "root_isolation": isolation,
         "owner_state": "matched" if owner_present else "absent",
         "source_outputs_modified": False,
@@ -183,8 +211,9 @@ def preflight(config: CreatorConfig) -> dict[str, object]:
     }
 
 
-def _module_receipt(paths: CreatorPaths) -> dict[str, object]:
-    payload = _read_json(paths.module_receipt, "module preflight receipt")
+def _validate_module_payload(
+    payload: dict[str, object], label: str
+) -> dict[str, object]:
     compatibility = payload.get("cat12_compatibility")
     if (
         payload.get("status") != "ready"
@@ -194,10 +223,13 @@ def _module_receipt(paths: CreatorPaths) -> dict[str, object]:
         or compatibility.get("status") != "ready"
         or compatibility.get("patch_id") != PATCH_ID
     ):
-        raise RuntimeError(
-            "Module preflight receipt is stale or bound to a different runtime"
-        )
+        raise RuntimeError(f"{label} is stale or bound to a different runtime")
     return payload
+
+
+def _module_receipt(paths: CreatorPaths) -> dict[str, object]:
+    payload = _read_json(paths.module_receipt, "module preflight receipt")
+    return _validate_module_payload(payload, "Module preflight receipt")
 
 
 def _completion_binding(
@@ -219,7 +251,6 @@ def _completion_binding(
         "owner_receipt": str(paths.owner_receipt),
         "owner_receipt_sha256": sha256_file(paths.owner_receipt),
         "module_receipt": str(paths.module_receipt),
-        "module_receipt_sha256": sha256_file(paths.module_receipt),
         "ready_marker": str(scaffold.ready_marker),
         "ready_marker_sha256": sha256_file(scaffold.ready_marker),
         "native_mesh": str(scaffold.native_mesh),
@@ -250,6 +281,20 @@ def validate(config: CreatorConfig) -> dict[str, object]:
         raise RuntimeError(
             "Creator completion receipt is stale or bound to different evidence"
         )
+    historical_module_sha256 = completion.get("module_receipt_sha256")
+    module_evidence = completion.get("module_receipt_evidence")
+    module_evidence_sha256 = completion.get("module_receipt_evidence_sha256")
+    if (
+        not isinstance(historical_module_sha256, str)
+        or len(historical_module_sha256) != 64
+        or not isinstance(module_evidence, dict)
+        or not isinstance(module_evidence_sha256, str)
+        or module_evidence_sha256 != _json_sha256(module_evidence)
+    ):
+        raise RuntimeError(
+            "Creator completion receipt has invalid historical module evidence"
+        )
+    _validate_module_payload(module_evidence, "Historical module evidence")
     return {
         **audited,
         "status": "ready",
@@ -257,13 +302,14 @@ def validate(config: CreatorConfig) -> dict[str, object]:
         "owner_receipt_sha256": sha256_file(paths.owner_receipt),
         "completion_receipt_sha256": sha256_file(paths.completion_receipt),
         "module_receipt_sha256": sha256_file(paths.module_receipt),
+        "historical_module_receipt_sha256": historical_module_sha256,
     }
 
 
 def build(config: CreatorConfig) -> dict[str, object]:
     preflight(config)
     paths = creator_paths(config)
-    _module_receipt(paths)
+    module_evidence = _module_receipt(paths)
     if paths.completion_receipt.is_file():
         try:
             result = validate(config)
@@ -289,6 +335,9 @@ def build(config: CreatorConfig) -> dict[str, object]:
         raise RuntimeError("Shared scaffold builder did not return ready")
     completion = {
         **_completion_binding(config, paths, source_records, request),
+        "module_receipt_sha256": sha256_file(paths.module_receipt),
+        "module_receipt_evidence": module_evidence,
+        "module_receipt_evidence_sha256": _json_sha256(module_evidence),
         "created_utc": _utc_now(),
     }
     _atomic_json(paths.completion_receipt, completion)

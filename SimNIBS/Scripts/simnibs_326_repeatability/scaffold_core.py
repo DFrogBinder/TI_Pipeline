@@ -140,10 +140,13 @@ def _marker_matches(
     # core. Their absence is accepted for an otherwise fully bound historical
     # balanced-10 marker; newly written markers always contain both fields.
     optional_legacy_fields = {"workflow", "compatibility_mesh_sha256"}
+    specially_compared_fields = {"command"}
     differences = {
         key: {"expected": value, "observed": marker.get(key)}
         for key, value in expected.items()
-        if key not in optional_legacy_fields and marker.get(key) != value
+        if key not in optional_legacy_fields
+        and key not in specially_compared_fields
+        and marker.get(key) != value
     }
     for key in optional_legacy_fields:
         if key in marker and marker[key] != expected[key]:
@@ -151,6 +154,22 @@ def _marker_matches(
                 "expected": expected[key],
                 "observed": marker[key],
             }
+    expected_command = expected["command"]
+    observed_command = marker.get("command")
+    command_matches = bool(
+        isinstance(expected_command, list)
+        and isinstance(observed_command, list)
+        and len(observed_command) == len(expected_command)
+        and observed_command
+        and isinstance(observed_command[0], str)
+        and observed_command[0]
+        and observed_command[1:] == expected_command[1:]
+    )
+    if not command_matches:
+        differences["command"] = {
+            "expected": expected_command,
+            "observed": observed_command,
+        }
     if differences:
         return False, json.dumps(differences, sort_keys=True)
     return True, None
@@ -166,9 +185,7 @@ def validate_scaffold(request: ScaffoldRequest) -> dict[str, object]:
     required = {
         "source_t1": _nonempty_file(request.t1),
         "source_t2": _nonempty_file(request.t2),
-        "corrected_v4_labels_provenance_only": _nonempty_file(
-            request.corrected_labels
-        ),
+        "corrected_v4_labels_provenance_only": _nonempty_file(request.corrected_labels),
         "m2m_directory": paths.m2m.is_dir(),
         "t1fs_conform": _nonempty_file(paths.m2m / "T1fs_conform.nii.gz"),
         "t1fs_nu_conform": _nonempty_file(paths.m2m / "T1fs_nu_conform.nii.gz"),

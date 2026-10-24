@@ -21,7 +21,12 @@ of `simnibs_subject_replacement` after this scaffold validates.
 - The default isolated output root is
   `/mnt/parscratch/users/cop23bi/simnibs326_subject_scaffolds_v1`.
 - A partial subject tree can be rebuilt only when its creator `owner.json` still matches
-  the subject, source hashes, output root, module, CAT12 patch, and workflow.
+  the subject, source files and source-receipt hashes, authoritative final-132 list,
+  output root, module, CAT12 patch, and workflow.
+- Each subject completion receipt embeds the module/CAT12 evidence used for its build.
+  A later equivalent module check may safely replace the shared current receipt without
+  invalidating an earlier subject, while both the historical and current evidence remain
+  available for audit.
 - The Slurm worker is one array element (`0-0%1`), allows one exact-element retry, and
   keeps append-only scheduler output plus a distinct timestamped attempt log.
 

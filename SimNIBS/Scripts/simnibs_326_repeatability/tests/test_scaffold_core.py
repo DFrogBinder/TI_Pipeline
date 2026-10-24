@@ -173,6 +173,31 @@ def test_validation_detects_stale_inputs_and_different_meshes(
     assert mismatched["checks"]["mesh_copies_match"] is False
 
 
+def test_validation_allows_a_different_python_interpreter_but_not_command_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = _request(tmp_path)
+
+    def fake_run(command, *, cwd, check):
+        _complete_fake_headreco(request)
+
+    monkeypatch.setattr(scaffold_core.subprocess, "run", fake_run)
+    monkeypatch.setattr(scaffold_core, "_simnibs_version", lambda: "3.2.6")
+    scaffold_core.build_scaffold(request)
+    marker_path = scaffold_core.scaffold_paths(request).ready_marker
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+
+    marker["command"][0] = "/different/module/python"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert scaffold_core.validate_scaffold(request)["status"] == "ready"
+
+    marker["command"][2] = "not-headreco"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    drifted = scaffold_core.validate_scaffold(request)
+    assert drifted["status"] == "incomplete"
+    assert drifted["checks"]["ready_marker_binding"] is False
+
+
 def test_build_fails_when_headreco_does_not_create_native_mesh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

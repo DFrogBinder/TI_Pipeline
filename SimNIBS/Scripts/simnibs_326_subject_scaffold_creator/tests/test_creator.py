@@ -13,6 +13,7 @@ from simnibs_326_subject_scaffold_creator.settings import (
     CreatorConfig,
     assert_output_root_isolation,
     creator_paths,
+    production_paths,
     validate_subject,
 )
 
@@ -128,7 +129,7 @@ def test_preflight_rejects_protected_production_root(
     creator_layout: dict[str, Path | str],
 ) -> None:
     config = _config(creator_layout)
-    production = creator.production_paths().headmodel_root
+    production = production_paths().headmodel_root
     with pytest.raises(ValueError, match="overlap"):
         assert_output_root_isolation(replace(config, output_root=production))
 
@@ -184,9 +185,7 @@ def test_owned_partial_build_retries_and_writes_bound_receipts(
     assert paths.completion_receipt.is_file()
     assert not (paths.subject_anat / "partial.txt").exists()
     assert (
-        paths.subject_anat
-        / f"m2m_{config.subject}"
-        / "retained_diagnostic.nii.gz"
+        paths.subject_anat / f"m2m_{config.subject}" / "retained_diagnostic.nii.gz"
     ).is_file()
     owner = json.loads(paths.owner_receipt.read_text(encoding="utf-8"))
     completion = json.loads(paths.completion_receipt.read_text(encoding="utf-8"))
@@ -197,10 +196,69 @@ def test_owned_partial_build_retries_and_writes_bound_receipts(
     assert completion["ready_marker_sha256"] == creator.sha256_file(
         paths.subject_anat / scaffold_core.READY_MARKER
     )
+    assert completion["module_receipt_sha256"] == creator.sha256_file(
+        paths.module_receipt
+    )
+    assert completion["module_receipt_evidence_sha256"] == creator._json_sha256(
+        completion["module_receipt_evidence"]
+    )
 
     reused = creator.build(config)
     assert reused["status"] == "ready"
     assert reused["action"] == "reused"
+
+
+def test_validation_accepts_equivalent_replacement_of_shared_module_receipt(
+    creator_layout: dict[str, Path | str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(creator_layout)
+    paths = creator_paths(config)
+    _write_module_receipt(config)
+    monkeypatch.setattr(scaffold_core.subprocess, "run", _fake_headreco)
+    monkeypatch.setattr(scaffold_core, "_simnibs_version", lambda: "3.2.6")
+    creator.build(config)
+    original_completion = json.loads(
+        paths.completion_receipt.read_text(encoding="utf-8")
+    )
+
+    current_module = json.loads(paths.module_receipt.read_text(encoding="utf-8"))
+    current_module["created_utc"] = "2026-10-24T12:00:00+00:00"
+    paths.module_receipt.write_text(
+        json.dumps(current_module, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        creator.sha256_file(paths.module_receipt)
+        != original_completion["module_receipt_sha256"]
+    )
+    assert creator.validate(config)["status"] == "ready"
+
+
+def test_validation_binds_source_receipt_and_authoritative_subject_list(
+    creator_layout: dict[str, Path | str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(creator_layout)
+    _write_module_receipt(config)
+    monkeypatch.setattr(scaffold_core.subprocess, "run", _fake_headreco)
+    monkeypatch.setattr(scaffold_core, "_simnibs_version", lambda: "3.2.6")
+    creator.build(config)
+
+    source_receipt = Path(creator_layout["record"])
+    original_source_receipt = source_receipt.read_text(encoding="utf-8")
+    receipt_payload = json.loads(original_source_receipt)
+    receipt_payload["review_note"] = "changed provenance"
+    source_receipt.write_text(json.dumps(receipt_payload), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="owner receipt.*mismatch|different binding"):
+        creator.validate(config)
+
+    source_receipt.write_text(original_source_receipt, encoding="utf-8")
+    config.final132_subjects_file.write_text(
+        config.final132_subjects_file.read_text(encoding="utf-8") + "sub-CC220088\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="owner receipt.*mismatch|different binding"):
+        creator.validate(config)
 
 
 def test_validation_detects_stale_source_marker_and_mesh(

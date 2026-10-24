@@ -196,6 +196,7 @@ def test_external_scope_and_cli_use_manifest_singleton(
                 "status": "prepared",
                 "subject": subject,
                 "subjects": [subject],
+                    "paths": {"manifest": str(manifest.resolve())},
             }
         ),
         encoding="utf-8",

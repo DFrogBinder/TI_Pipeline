@@ -125,6 +125,21 @@ def test_v3_delegation_exports_manifest_bound_singleton_roots(
     )
 
 
+def test_operational_command_rejects_source_changed_after_prepare(
+    replacement_layout: dict[str, Path | str],
+) -> None:
+    config = _config(replacement_layout)
+    prepare(config)
+    (config.atlas_root / f"{config.subject}.nii.gz").write_bytes(b"changed")
+    env = os.environ.copy()
+    env["PYTHON_BIN"] = sys.executable
+
+    result = _run(env, config, "status")
+
+    assert result.returncode != 0
+    assert "changed after preparation" in result.stderr
+
+
 def test_right_v3_is_blocked_until_left_terminal_receipt(
     replacement_layout: dict[str, Path | str],
 ) -> None:

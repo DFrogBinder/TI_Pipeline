@@ -113,7 +113,7 @@ def replacement_status(manifest: dict[str, object]) -> dict[str, object]:
             target_status[f"{version}:{target}"] = {
                 "initialized": (root / "_pipeline").is_dir(),
                 "terminal_receipt": str(completion),
-                "complete": completion.is_file(),
+                "terminal_receipt_present": completion.is_file(),
             }
     values["targets"] = target_status
     return values

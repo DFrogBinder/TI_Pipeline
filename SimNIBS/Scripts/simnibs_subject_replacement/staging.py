@@ -51,4 +51,3 @@ def stage_corrected_dataset(
         ready,
         "final132-scaffold",
     )
-

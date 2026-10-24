@@ -205,7 +205,70 @@ def load_external_manifest(
         raise ValueError("External manifest subject must match subjects[0]")
     if not isinstance(subject, str) or not _CANONICAL_SUBJECT_RE.fullmatch(subject):
         raise ValueError("External manifest subject must be a canonical subject ID")
+    paths = payload.get("paths")
+    if not isinstance(paths, dict):
+        raise ValueError("External manifest must contain path bindings")
+    bound_manifest = paths.get("manifest")
+    if not isinstance(bound_manifest, str) or _resolved(bound_manifest) != _resolved(
+        manifest_path
+    ):
+        raise ValueError("External manifest is bound to a different path")
     return payload
+
+
+def _validate_external_root_bindings(
+    payload: dict[str, object],
+    paths: CampaignPaths,
+    source: Mapping[str, str],
+) -> None:
+    """Fail closed if runtime roots differ from the prepared replacement manifest."""
+    manifest_paths = payload.get("paths")
+    inputs = payload.get("inputs")
+    if not isinstance(manifest_paths, dict) or not isinstance(inputs, dict):
+        raise ValueError("External manifest lacks required path/input bindings")
+
+    expected_roots = {
+        "CORRECTED_ROOT": (paths.corrected_root, "v4_corrected_root"),
+        "HEADMODEL_ROOT": (paths.headmodel_root, "v3_headmodel_root"),
+        "LEFT_ROOT": (paths.left_root, "v3_left_root"),
+        "RIGHT_ROOT": (paths.right_root, "v3_right_root"),
+    }
+    for environment_name, (observed, manifest_name) in expected_roots.items():
+        bound = manifest_paths.get(manifest_name)
+        if not isinstance(bound, str) or observed != _resolved(bound):
+            raise ValueError(
+                f"{ENV_PREFIX}{environment_name} does not match the external "
+                f"manifest binding {manifest_name}"
+            )
+
+    subject = str(payload["subject"])
+    legacy = inputs.get("legacy_reference")
+    atlas = inputs.get("atlas")
+    targets = inputs.get("targets_csv")
+    if not isinstance(legacy, dict) or not isinstance(legacy.get("anat_root"), str):
+        raise ValueError("External manifest lacks the legacy reference binding")
+    if _resolved(str(legacy["anat_root"])) != (
+        paths.legacy_reference_root / subject / "anat"
+    ):
+        raise ValueError(
+            f"{ENV_PREFIX}LEGACY_REFERENCE_ROOT does not match the external "
+            "manifest binding"
+        )
+    if not isinstance(atlas, dict) or not isinstance(atlas.get("path"), str):
+        raise ValueError("External manifest lacks the atlas binding")
+    if _resolved(str(atlas["path"])) != paths.atlas_root / f"{subject}.nii.gz":
+        raise ValueError(
+            f"{ENV_PREFIX}ATLAS_ROOT does not match the external manifest binding"
+        )
+    if not isinstance(targets, dict) or not isinstance(targets.get("path"), str):
+        raise ValueError("External manifest lacks the targets CSV binding")
+    runtime_targets = _resolved(
+        source.get(f"{ENV_PREFIX}TARGETS_CSV", str(TARGETS_CSV))
+    )
+    if _resolved(str(targets["path"])) != runtime_targets:
+        raise ValueError(
+            f"{ENV_PREFIX}TARGETS_CSV does not match the external manifest binding"
+        )
 
 
 def cohort_subjects(
@@ -267,7 +330,7 @@ def campaign_paths_from_environment(
                     f"full10_{full10_name}={full10_root}"
                 )
 
-    return CampaignPaths(
+    resolved_paths = CampaignPaths(
         corrected_root=get("CORRECTED_ROOT"),
         legacy_reference_root=get("LEGACY_REFERENCE_ROOT"),
         atlas_root=get("ATLAS_ROOT"),
@@ -279,6 +342,11 @@ def campaign_paths_from_environment(
         completed_v4_left_root=get("COMPLETED_V4_LEFT_ROOT"),
         completed_v4_right_root=get("COMPLETED_V4_RIGHT_ROOT"),
     )
+    if profile == "external1":
+        _validate_external_root_bindings(
+            load_external_manifest(source), resolved_paths, source
+        )
+    return resolved_paths
 
 
 def subject_paths(paths: CampaignPaths, subject: str) -> SubjectPaths:

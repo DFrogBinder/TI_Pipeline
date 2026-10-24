@@ -58,6 +58,12 @@ def _manifest(config: ReplacementConfig) -> dict[str, object]:
     manifest = load_prepared_manifest(replacement_paths(config).manifest)
     if manifest.get("subject") != config.subject or manifest.get("replaces") != config.replaces:
         raise RuntimeError("Prepared manifest is bound to different runtime identity")
+    expected = {**preflight(config), "status": "prepared"}
+    if manifest != expected:
+        raise RuntimeError(
+            "A replacement input or path changed after preparation; rerun read-only "
+            "preflight and choose a new isolated work root"
+        )
     return manifest
 
 
@@ -94,12 +100,15 @@ def main(argv: list[str] | None = None) -> int:
         manifest = _manifest(config)
         if args.command == "bindings":
             paths = manifest["paths"]
-            assert isinstance(paths, dict)
+            if not isinstance(paths, dict):
+                raise RuntimeError("Prepared manifest lacks path bindings")
             inputs = manifest["inputs"]
-            assert isinstance(inputs, dict)
+            if not isinstance(inputs, dict):
+                raise RuntimeError("Prepared manifest lacks input bindings")
             atlas = inputs["atlas"]
             targets_csv = inputs["targets_csv"]
-            assert isinstance(atlas, dict) and isinstance(targets_csv, dict)
+            if not isinstance(atlas, dict) or not isinstance(targets_csv, dict):
+                raise RuntimeError("Prepared manifest lacks atlas/target bindings")
             values = (
                 paths["manifest"],
                 paths["v4_corrected_root"],

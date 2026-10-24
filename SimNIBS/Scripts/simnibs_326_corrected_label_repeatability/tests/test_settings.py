@@ -150,6 +150,7 @@ def _write_external_manifest(
     subject: str = "sub-CC999999",
     **overrides: object,
 ) -> Path:
+    path = tmp_path / "replacement_manifest.json"
     payload: dict[str, object] = {
         "schema_version": 1,
         "workflow": "simnibs_subject_replacement",
@@ -157,9 +158,26 @@ def _write_external_manifest(
         "status": "prepared",
         "subject": subject,
         "subjects": [subject],
+        "paths": {
+            "manifest": str(path.resolve()),
+            "v4_corrected_root": str((tmp_path / "corrected").resolve()),
+            "v3_headmodel_root": str((tmp_path / "headmodels").resolve()),
+            "v3_left_root": str((tmp_path / "left").resolve()),
+            "v3_right_root": str((tmp_path / "right").resolve()),
+        },
+        "inputs": {
+            "legacy_reference": {
+                "anat_root": str((tmp_path / "legacy" / subject / "anat").resolve())
+            },
+            "atlas": {
+                "path": str((tmp_path / "atlas" / f"{subject}.nii.gz").resolve())
+            },
+            "targets_csv": {
+                "path": str((tmp_path / "targets.csv").resolve())
+            },
+        },
     }
     payload.update(overrides)
-    path = tmp_path / "replacement_manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -203,6 +221,41 @@ def test_external_manifest_rejects_invalid_binding(
         cohort_subjects(environ)
 
 
+def test_external_manifest_rejects_different_self_path(tmp_path: Path) -> None:
+    manifest_path = _write_external_manifest(tmp_path)
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["paths"]["manifest"] = str(tmp_path / "other.json")
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="different path"):
+        cohort_subjects(
+            {
+                "SIMNIBS326H_COHORT": "external1",
+                "SIMNIBS326H_EXTERNAL_MANIFEST": str(manifest_path),
+            }
+        )
+
+
+def test_external_profile_rejects_environment_root_not_bound_to_manifest(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_external_manifest(tmp_path)
+    environ = {
+        "SIMNIBS326H_COHORT": "external1",
+        "SIMNIBS326H_EXTERNAL_MANIFEST": str(manifest_path),
+        "SIMNIBS326H_CORRECTED_ROOT": str(tmp_path / "wrong-corrected"),
+        "SIMNIBS326H_LEGACY_REFERENCE_ROOT": str(tmp_path / "legacy"),
+        "SIMNIBS326H_ATLAS_ROOT": str(tmp_path / "atlas"),
+        "SIMNIBS326H_TARGETS_CSV": str(tmp_path / "targets.csv"),
+        "SIMNIBS326H_HEADMODEL_ROOT": str(tmp_path / "headmodels"),
+        "SIMNIBS326H_LEFT_ROOT": str(tmp_path / "left"),
+        "SIMNIBS326H_RIGHT_ROOT": str(tmp_path / "right"),
+    }
+
+    with pytest.raises(ValueError, match="CORRECTED_ROOT.*manifest"):
+        campaign_paths_from_environment(environ)
+
+
 def test_external_manifest_is_mandatory_absolute_and_valid_json(
     tmp_path: Path,
 ) -> None:
@@ -240,6 +293,7 @@ def test_external_profile_has_singleton_scope_and_subject_paths(
         "SIMNIBS326H_CORRECTED_ROOT": str(tmp_path / "corrected"),
         "SIMNIBS326H_LEGACY_REFERENCE_ROOT": str(tmp_path / "legacy"),
         "SIMNIBS326H_ATLAS_ROOT": str(tmp_path / "atlas"),
+        "SIMNIBS326H_TARGETS_CSV": str(tmp_path / "targets.csv"),
         "SIMNIBS326H_HEADMODEL_ROOT": str(tmp_path / "headmodels"),
         "SIMNIBS326H_LEFT_ROOT": str(tmp_path / "left"),
         "SIMNIBS326H_RIGHT_ROOT": str(tmp_path / "right"),

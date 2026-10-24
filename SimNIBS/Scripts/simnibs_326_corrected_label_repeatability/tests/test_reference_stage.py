@@ -182,6 +182,7 @@ def test_external_collection_contains_only_manifest_subject(
                 "status": "prepared",
                 "subject": subject,
                 "subjects": [subject],
+                    "paths": {"manifest": str(manifest.resolve())},
             }
         ),
         encoding="utf-8",

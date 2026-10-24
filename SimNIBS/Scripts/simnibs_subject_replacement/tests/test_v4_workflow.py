@@ -98,3 +98,21 @@ def test_v4_rejects_unknown_target(
 
     with pytest.raises(ValueError, match="target"):
         workflow.initialize_v4_target(manifest, "other")
+
+
+def test_status_reports_receipt_presence_without_claiming_validation(
+    replacement_layout: dict[str, Path | str],
+) -> None:
+    config = _config(replacement_layout)
+    paths = replacement_paths(config)
+    prepare(config)
+    manifest = load_prepared_manifest(paths.manifest)
+    receipt = paths.v4_left_root / "_pipeline/workflow/complete.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{}", encoding="utf-8")
+
+    status = workflow.replacement_status(manifest)
+    left = status["targets"]["v4:left-hippocampus"]
+
+    assert left["terminal_receipt_present"] is True
+    assert "complete" not in left

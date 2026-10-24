@@ -398,6 +398,7 @@ def test_external_collection_and_promotion_use_external1_directory(
                 "status": "prepared",
                 "subject": subject,
                 "subjects": [subject],
+                    "paths": {"manifest": str(manifest_path.resolve())},
             }
         ),
         encoding="utf-8",

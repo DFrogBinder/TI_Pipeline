@@ -151,4 +151,3 @@ v3 and v4 simulations.
   `--noclean` output for inspection until the bounded retry begins.
 - Retry exhaustion leaves the subject incomplete and never writes a ready receipt.
 - Re-running a ready, hash-valid request is idempotent and reports reuse.
-

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
+from typing import Callable, Optional
 
 import pytest
 
@@ -14,6 +16,43 @@ from simnibs_headmodel_supervisor_review.package import (
     select_subject,
     validate_package,
 )
+
+
+def test_label_exporter_alias_imports_with_python39_union_semantics() -> None:
+    package_source = Path(
+        __import__(
+            "simnibs_headmodel_supervisor_review.package", fromlist=["__file__"]
+        ).__file__
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(package_source)
+    alias = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "LabelExporter"
+            for target in node.targets
+        )
+    )
+
+    class Python39Type(type):
+        def __or__(cls, other):
+            raise TypeError("unsupported operand type(s) for |")
+
+    class LegacyPath(metaclass=Python39Type):
+        pass
+
+    namespace = {
+        "Callable": Callable,
+        "Optional": Optional,
+        "Path": LegacyPath,
+    }
+    exec(
+        compile(ast.Module(body=[alias], type_ignores=[]), "package.py", "exec"),
+        namespace,
+    )
+
+    assert "LabelExporter" in namespace
 
 
 def test_audit_resolves_exact_eight_artifacts_from_distinct_provenance_branches(

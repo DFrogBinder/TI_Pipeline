@@ -13,7 +13,7 @@ import secrets
 import shutil
 import tarfile
 import tempfile
-from typing import Callable
+from typing import Callable, Optional
 
 from .settings import BASE9_SUBJECTS, EXPECTED_ARTIFACTS, ReviewPaths
 
@@ -648,7 +648,7 @@ def select_subject(
     return load_selection(paths, verify_current=True)
 
 
-LabelExporter = Callable[[Path, Path, Path], Path | None]
+LabelExporter = Callable[[Path, Path, Path], Optional[Path]]
 
 
 def _default_label_exporter(

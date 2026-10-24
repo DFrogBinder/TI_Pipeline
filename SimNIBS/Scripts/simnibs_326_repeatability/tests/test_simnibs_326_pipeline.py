@@ -406,9 +406,10 @@ def test_module_receipt_requires_cat12_compatibility(tmp_path: Path) -> None:
 
 
 def test_scaffold_runner_uses_cat12_compatibility_wrapper() -> None:
-    text = (PACKAGE_ROOT / "scaffold_runner.py").read_text(encoding="utf-8")
-    assert '"cat12_compat.py"' in text
-    assert '"headreco"' in text
+    runner = (PACKAGE_ROOT / "scaffold_runner.py").read_text(encoding="utf-8")
+    core = (PACKAGE_ROOT / "scaffold_core.py").read_text(encoding="utf-8")
+    assert '"cat12_compat.py"' in runner
+    assert '"headreco"' in core
     launcher = (PACKAGE_ROOT / "hpc" / "scaffold_array.slurm").read_text(
         encoding="utf-8"
     )

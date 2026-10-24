@@ -224,6 +224,18 @@ bash "$PIPELINE" post-remesh left-hippocampus --dependency=<remesh-array-job-id>
 bash "$PIPELINE" fixed left-hippocampus --dependency=<optional-prerequisite-job-id>
 ```
 
+If the remesh array is already complete but its historical Slurm job can no
+longer be used as a live dependency, resume only the validation and
+post-processing chain:
+
+```bash
+bash "$PIPELINE" resume-post-remesh left-hippocampus --cohort=base9
+```
+
+This mode submits no FEM simulations. Its first control job revalidates every
+output in the existing remesh config before releasing ROI extraction,
+collection, and fixed-stage preparation.
+
 `all-remesh` and `all-fixed` keep the target arrays sequential so no more than
 50 simulation tasks run concurrently. Simulation tasks retain the established
 `sheffield`, 8 CPU, 32 GB, 8-hour profile, one retry, append-only Slurm output,

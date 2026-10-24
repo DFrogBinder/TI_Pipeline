@@ -46,10 +46,10 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
+    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
     *)
         echo "[ERROR] Unsupported mode: $MODE" >&2
-        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target|subject] [options]" >&2
+        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target|subject] [options]" >&2
         exit 2
         ;;
 esac
@@ -81,11 +81,14 @@ export SIMNIBS326H_COHORT="$COHORT"
 [ -z "$DEPENDENCY" ] || [[ "$DEPENDENCY" =~ ^[0-9]+$ ]] || {
     echo "[ERROR] Dependency must be a numeric Slurm job ID." >&2; exit 2;
 }
-if { [ "$MODE" = remesh ] || [ "$MODE" = target-remesh ] || [ "$MODE" = post-remesh ] || [ "$MODE" = fixed ]; } && [ -z "$TARGET" ]; then
+if { [ "$MODE" = remesh ] || [ "$MODE" = target-remesh ] || [ "$MODE" = post-remesh ] || [ "$MODE" = resume-post-remesh ] || [ "$MODE" = fixed ]; } && [ -z "$TARGET" ]; then
     echo "[ERROR] Mode $MODE requires a target." >&2; exit 2
 fi
 if [ "$MODE" = post-remesh ] && [ -z "$DEPENDENCY" ]; then
     echo "[ERROR] post-remesh requires --dependency=JOBID." >&2; exit 2
+fi
+if [ "$MODE" = resume-post-remesh ] && [ -n "$DEPENDENCY" ]; then
+    echo "[ERROR] resume-post-remesh validates existing outputs and does not accept --dependency." >&2; exit 2
 fi
 if [ "$MODE" = diagnose-headmodel ] && [ "$DIAGNOSTIC_SUBJECT" != "sub-CC520083" ]; then
     echo "[ERROR] diagnose-headmodel requires sub-CC520083." >&2; exit 2
@@ -182,11 +185,16 @@ paired_metrics_root() {
 }
 parse_job_id() {
     local job_id="${1%%;*}"
-    [[ "$job_id" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid sbatch response: $1" >&2; exit 2; }
+    [[ "$job_id" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid sbatch response: $1" >&2; return 2; }
     printf '%s\n' "$job_id"
 }
 submit_job() {
-    parse_job_id "$("$SBATCH_BIN" --parsable "$@")"
+    local response
+    if ! response="$("$SBATCH_BIN" --parsable "$@")"; then
+        echo "[ERROR] sbatch rejected the submission." >&2
+        return 2
+    fi
+    parse_job_id "$response"
 }
 require_file() {
     [ -s "$1" ] || { echo "[ERROR] Required receipt/config is missing: $1" >&2; exit 2; }
@@ -210,6 +218,20 @@ record_submission() {
 }
 
 print_scope() {
+    if [ "$MODE" = resume-post-remesh ]; then
+        echo "Scope:"
+        echo "  study: corrected-label SimNIBS 3.2.6 post-remesh recovery"
+        echo "  cohort: $COHORT"
+        echo "  target: $TARGET"
+        echo "  subjects: $SUBJECT_COUNT"
+        echo "  existing remesh outputs reused: $TASKS_PER_CONDITION"
+        echo "  new FEM simulation tasks: 0"
+        echo "  validation controls: 1"
+        echo "  ROI extraction tasks: $SUBJECT_COUNT (0-${ROI_ARRAY_LAST}%$ROI_MAX_CONCURRENT)"
+        echo "  collection/preparation controls: 2"
+        echo "  execution: full post-processing recovery; existing FEM outputs are revalidated"
+        return
+    fi
     if [ "$MODE" = diagnose-headmodel ]; then
         echo "Scope:"
         echo "  study: corrected-label SimNIBS 3.2.6 one-subject head-model diagnosis"
@@ -353,8 +375,10 @@ submit_control() {
     mkdir -p "$log_dir"
     exports="ALL,PIPELINE_DIR=$PIPELINE_DIR,CONTROL_ACTION=$action,TARGET=$target,SIMNIBS326H_COHORT=$COHORT"
     [ -z "$metrics_csv" ] || exports="$exports,METRICS_CSV=$metrics_csv"
+    local dependency_args=()
+    [ -z "$after_job" ] || dependency_args+=("--dependency=afterok:$after_job")
     submit_job --job-name="ti326h_${JOB_SCOPE}${action}" --partition="$PARTITION" \
-        --dependency="afterok:$after_job" --output="$log_dir/${action}-%j.out" \
+        "${dependency_args[@]}" --output="$log_dir/${action}-%j.out" \
         --export="$exports" "$CONTROL"
 }
 submit_post_remesh() {
@@ -366,14 +390,14 @@ submit_post_remesh() {
     log_dir="$root/_simnibs326/logs/optimizer_roi"
     mkdir -p "$log_dir" "$metrics/logs"
     local complete roi collect prepare
-    complete="$(submit_control "$target" complete-remesh "$remesh_job")"
+    complete="$(submit_control "$target" complete-remesh "$remesh_job")" || return $?
     roi="$(submit_job --partition="$PARTITION" --array="0-${ROI_ARRAY_LAST}%$ROI_MAX_CONCURRENT" \
         --dependency="afterok:$complete" --output="$log_dir/extract-%A_%a.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_ARRAY")"
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_ARRAY")" || return $?
     collect="$(submit_job --partition="$PARTITION" --dependency="afterok:$roi" \
         --output="$log_dir/collect-%j.out" \
-        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_COLLECT")"
-    prepare="$(submit_control "$target" prepare-fixed "$collect" "$metrics_csv")"
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_COLLECT")" || return $?
+    prepare="$(submit_control "$target" prepare-fixed "$collect" "$metrics_csv")" || return $?
     printf '%s\t%s\t%s\t%s\n' "$complete" "$roi" "$collect" "$prepare"
 }
 submit_fixed_chain() {
@@ -463,9 +487,14 @@ case "$MODE" in
         echo "[INFO] Target remesh/preparation chain: simulation=$simulation_job post=$post_jobs"
         ;;
     post-remesh)
-        jobs="$(submit_post_remesh "$TARGET" "$DEPENDENCY")"
+        jobs="$(submit_post_remesh "$TARGET" "$DEPENDENCY")" || exit $?
         record_submission "$MODE" "$TARGET" "$DEPENDENCY" "$jobs"
         echo "[INFO] Post-remesh chain: $jobs"
+        ;;
+    resume-post-remesh)
+        jobs="$(submit_post_remesh "$TARGET" "")" || exit $?
+        record_submission "$MODE" "$TARGET" none "$jobs"
+        echo "[INFO] Resumed post-remesh chain: $jobs"
         ;;
     fixed)
         jobs="$(submit_fixed_chain "$TARGET" "$DEPENDENCY")"

@@ -38,6 +38,8 @@ def launcher_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         'printf "%s\\n" "$*" >> "$FAKE_SBATCH_CALLS"\n'
+        'if [ "${FAKE_SBATCH_FAIL_FIRST:-0}" = 1 ] && '
+        '[ ! -f "$FAKE_SBATCH_COUNTER" ]; then exit 1; fi\n'
         'n=0; [ ! -f "$FAKE_SBATCH_COUNTER" ] || n="$(cat "$FAKE_SBATCH_COUNTER")"\n'
         'n=$((n+1)); printf "%s\\n" "$n" > "$FAKE_SBATCH_COUNTER"\n'
         'printf "10%03d\\n" "$n"\n',
@@ -293,6 +295,60 @@ def test_base9_all_remesh_uses_nine_subject_roi_arrays(
     assert all("--array=0-359%50" in line for line in simulations)
     assert len(roi_arrays) == 2
     assert all("--array=0-8%9" in line for line in roi_arrays)
+
+
+def test_base9_resume_post_remesh_reuses_outputs_without_live_dependency(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env, cohort="base9")
+    _configs(env, cohort="base9")
+
+    result = _run(
+        env,
+        "resume-post-remesh",
+        "left-hippocampus",
+        "--cohort=base9",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "existing remesh outputs reused: 360" in result.stdout
+    assert "new FEM simulation tasks: 0" in result.stdout
+    submitted = _calls(calls)
+    assert len(submitted) == 4
+    assert "CONTROL_ACTION=complete-remesh" in submitted[0]
+    assert "--dependency=" not in submitted[0]
+    assert "simulation_array.slurm" not in "\n".join(submitted)
+    assert "--array=0-8%9" in submitted[1]
+    assert "--dependency=afterok:10001" in submitted[1]
+    assert "--dependency=afterok:10002" in submitted[2]
+    assert "CONTROL_ACTION=prepare-fixed" in submitted[3]
+    assert "--dependency=afterok:10003" in submitted[3]
+
+
+def test_resume_post_remesh_stops_after_first_rejected_submission(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _ready_prerequisites(env, cohort="base9")
+    _configs(env, cohort="base9")
+    env["FAKE_SBATCH_FAIL_FIRST"] = "1"
+
+    result = _run(
+        env,
+        "resume-post-remesh",
+        "left-hippocampus",
+        "--cohort=base9",
+    )
+
+    assert result.returncode != 0
+    assert len(_calls(calls)) == 1
+    ledger = (
+        Path(env["SIMNIBS326H_HEADMODEL_ROOT"])
+        / "_pipeline"
+        / "submissions.tsv"
+    )
+    assert not ledger.exists()
 
 
 def test_base9_collector_only_submits_no_headmodel_build_array(

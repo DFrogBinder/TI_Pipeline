@@ -25,14 +25,39 @@ that is 320 simulation tasks and 640 component solves.
 - Scheduler submission is not treated as completion. Use `status`, the delegated
   pipeline status, and terminal receipts.
 
+## Prerequisite: create and validate the subject's v3 scaffold
+
+For a subject that has not previously been processed with SimNIBS 3.2.6, first use
+`simnibs_326_subject_scaffold_creator`. It runs the pinned
+`SimNIBS/3.2.6-foss-2023a` `headreco all --noclean` workflow, retains complete
+diagnostic output, and writes hash-bound owner and completion receipts. Follow that
+package's runbook through terminal accounting and validation; submitting the scaffold
+job is not sufficient.
+
+After validation reports `status: ready`, the creator's output root is the replacement
+workflow's legacy reference root:
+
+```bash
+SUBJECT=sub-CC510415
+SCAFFOLD_CREATOR=simnibs_326_subject_scaffold_creator/hpc/submit.sh
+LEGACY_V3_ROOT=/mnt/parscratch/users/cop23bi/simnibs326_subject_scaffolds_v1
+
+bash "$SCAFFOLD_CREATOR" validate \
+    "--subject=$SUBJECT" \
+    "--output-root=$LEGACY_V3_ROOT"
+```
+
+This prerequisite creates no FEM simulations. The v3 head-model QC/promotion gate and
+all matched v3/v4 simulation commands below are unchanged.
+
 ## Set the candidate once
 
 Run from `~/Repos/TI_Pipeline/SimNIBS/Scripts` on the HPC login node:
 
 ```bash
-SUBJECT=sub-CCXXXXXX
+SUBJECT=sub-CC510415
 REPLACES=sub-CC520083
-LEGACY_V3_ROOT=/absolute/path/to/final132_simnibs326_reference_scaffolds
+LEGACY_V3_ROOT=/mnt/parscratch/users/cop23bi/simnibs326_subject_scaffolds_v1
 WORK_ROOT=/mnt/parscratch/users/cop23bi/simnibs_subject_replacements
 
 REPLACEMENT=simnibs_subject_replacement/hpc/submit.sh

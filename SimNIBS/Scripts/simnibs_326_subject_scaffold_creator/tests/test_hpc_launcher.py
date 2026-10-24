@@ -12,6 +12,7 @@ from simnibs_326_subject_scaffold_creator.settings import CreatorConfig
 PACKAGE = Path(__file__).resolve().parents[1]
 SUBMIT = PACKAGE / "hpc" / "submit.sh"
 WORKER = PACKAGE / "hpc" / "scaffold_array.slurm"
+README = PACKAGE / "README.md"
 
 
 def _config(layout: dict[str, Path | str]) -> CreatorConfig:
@@ -200,3 +201,16 @@ def test_malformed_or_empty_scheduler_response_fails_closed(
         )
         assert result.returncode == 2
         assert "parse Slurm job ID" in result.stderr
+
+
+def test_runbook_documents_version_retention_and_replacement_handoff() -> None:
+    text = README.read_text(encoding="utf-8")
+    assert "SimNIBS/3.2.6-foss-2023a" in text
+    assert "MATLAB/2023b" in text
+    assert "headreco all --noclean" in text
+    assert "complete diagnostic" in text
+    assert "does not submit FEM" in text
+    assert "/mnt/parscratch/users/cop23bi/simnibs326_subject_scaffolds_v1" in text
+    assert "--legacy-v3-root" in text
+    assert "sub-CC510415" in text
+    assert "Scheduler submission is not completion" in text

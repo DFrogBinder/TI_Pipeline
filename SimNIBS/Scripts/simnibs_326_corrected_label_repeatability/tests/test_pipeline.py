@@ -349,6 +349,33 @@ def test_base9_completion_gates_require_360_then_720_tasks(
         pipeline.complete_remesh("left-hippocampus", paths=paths)
 
 
+def test_base9_completion_receipt_scope_records_per_subject_repeat_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "remesh_only.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        pipeline,
+        "load_experiment_config",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            subjects=list(BASE9_SUBJECTS),
+            conditions=[SimpleNamespace(name="remesh", repeat_count=40)],
+        ),
+    )
+
+    scope = pipeline._receipt_scope(
+        config_path,
+        target="left-hippocampus",
+        stage="remesh",
+    )
+
+    assert scope["subject_count"] == 9
+    assert scope["repeats_per_condition"] == 40
+    assert scope["expected_ti_nifti"] == 360
+    assert scope["roi"] == "left-hippocampus"
+
+
 def test_fixed_preparation_uses_established_median_selector(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

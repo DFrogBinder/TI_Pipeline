@@ -499,10 +499,14 @@ def _receipt_scope(config_path: Path, *, target: str, stage: str) -> dict[str, A
     config = load_experiment_config(config_path, validate_paths=False)
     counts = {condition.name: condition.repeat_count for condition in config.conditions}
     total = len(config.subjects) * sum(counts.values())
+    if len(set(counts.values())) != 1:
+        raise RuntimeError("All repeatability conditions must have the same repeat count")
     return {
         "target": target,
+        "roi": target,
         "stage": stage,
         "subject_count": len(config.subjects),
+        "repeats_per_condition": next(iter(counts.values())),
         "conditions": counts,
         "expected_ti_nifti": total,
         "expected_ti_msh": total,

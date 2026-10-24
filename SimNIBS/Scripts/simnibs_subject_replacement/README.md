@@ -66,6 +66,12 @@ per version, 320 simulations overall, and zero submitted jobs.
 ```bash
 bash "$REPLACEMENT" v3-module-check "${COMMON[@]}"
 bash "$REPLACEMENT" v3-stage-references "${COMMON[@]}"
+```
+
+The module check and reference staging may run together. Wait for both to finish
+successfully and for their receipts to exist, then submit the head model:
+
+```bash
 bash "$REPLACEMENT" v3-headmodels "${COMMON[@]}"
 ```
 

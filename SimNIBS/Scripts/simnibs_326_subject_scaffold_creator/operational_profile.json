@@ -1,0 +1,35 @@
+{
+  "profile": "simnibs326-generic-subject-scaffold-creator-v1",
+  "status": "candidate_not_submitted",
+  "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
+  "matlab_module": "MATLAB/2023b",
+  "segmentation_command": "headreco all --noclean",
+  "cat12_compatibility": "reuse simnibs_326_repeatability hash-pinned overlay",
+  "subject_contract": "one runtime-selected canonical final-132 subject; no executable subject ID is hardcoded",
+  "source_root": "/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Scaffolds",
+  "output_root": "/mnt/parscratch/users/cop23bi/simnibs326_subject_scaffolds_v1",
+  "retention": "complete successful and partial headreco --noclean trees retained for diagnosis; matching owner receipt required before rebuild",
+  "scheduler": {
+    "partition": "sheffield",
+    "array": "0-0%1",
+    "cpus_per_task": 8,
+    "memory": "32G",
+    "time_limit": "08:00:00",
+    "worker_timeout": "07:00:00"
+  },
+  "retry": {
+    "maximum_retries": 1,
+    "maximum_attempts": 2,
+    "requeue_target": "qualified array element",
+    "logs": "append-only Slurm output and immutable timestamped attempt logs"
+  },
+  "submission_gate": "exact --confirm-output-root plus read-only preflight and successful dependent module check",
+  "validation": [
+    "python -m simnibs_326_subject_scaffold_creator preflight --subject=<ID>",
+    "python -m simnibs_326_subject_scaffold_creator validate --subject=<ID>"
+  ],
+  "execution_evidence": {
+    "jobs_submitted": 0,
+    "runtime_validation": "pending Stanage execution"
+  }
+}

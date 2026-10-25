@@ -754,6 +754,7 @@ def build_package(
         path.name
         for path in paths.output_root.iterdir()
         if path.name not in known_root_entries
+        and not (path.name == "logs" and path.is_dir() and not path.is_symlink())
     ]
     if unexpected:
         raise ReviewPackageError(

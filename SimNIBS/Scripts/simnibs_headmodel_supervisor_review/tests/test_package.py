@@ -253,6 +253,43 @@ def test_unowned_partial_output_is_not_overwritten(
     assert (paths.package_dir / "unknown.txt").read_text(encoding="utf-8") == "do not replace"
 
 
+def test_build_accepts_launcher_owned_logs_directory(
+    review_layout: tuple[object, tuple[str, ...]],
+) -> None:
+    paths, _ = review_layout
+    select_subject(paths, chooser=lambda candidates: candidates[0])
+    log_dir = paths.output_root / "logs"
+    log_dir.mkdir()
+    slurm_log = log_dir / "slurm-12345.out"
+    slurm_log.write_text("launcher-owned log\n", encoding="utf-8")
+
+    def exporter(mesh: Path, reference: Path, destination: Path) -> Path:
+        destination.write_bytes(b"derived-labels")
+        return destination
+
+    result = build_package(paths, exporter=exporter)
+
+    assert result["action"] == "built"
+    assert validate_package(paths)["status"] == "complete"
+    assert slurm_log.read_text(encoding="utf-8") == "launcher-owned log\n"
+
+
+def test_build_still_rejects_unowned_output_root_directory(
+    review_layout: tuple[object, tuple[str, ...]],
+) -> None:
+    paths, _ = review_layout
+    select_subject(paths, chooser=lambda candidates: candidates[0])
+    unowned = paths.output_root / "unowned"
+    unowned.mkdir()
+    marker = unowned / "do-not-replace.txt"
+    marker.write_text("preserve me", encoding="utf-8")
+
+    with pytest.raises(ReviewPackageError, match="unowned output root: unowned"):
+        build_package(paths, exporter=lambda *_: None)
+
+    assert marker.read_text(encoding="utf-8") == "preserve me"
+
+
 def test_validation_rejects_wrong_subject_and_artifact_count_in_manifest(
     review_layout: tuple[object, tuple[str, ...]],
 ) -> None:

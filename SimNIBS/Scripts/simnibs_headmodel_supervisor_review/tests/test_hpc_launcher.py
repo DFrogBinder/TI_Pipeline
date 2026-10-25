@@ -71,6 +71,69 @@ def test_launcher_contract_is_one_pinned_simnibs326_job() -> None:
     assert "sub-CC" not in combined
 
 
+def test_worker_activates_validated_simnibs326_compatibility_runtime(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    observed_build = tmp_path / "build.pythonpath"
+    observed_validate = tmp_path / "validate.pythonpath"
+
+    fake_module = fake_bin / "module"
+    fake_module.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    fake_timeout = fake_bin / "timeout"
+    fake_timeout.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' \"$PYTHONPATH\" > \"$OBSERVED_BUILD_PYTHONPATH\"\n",
+        encoding="utf-8",
+    )
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' \"$PYTHONPATH\" > \"$OBSERVED_VALIDATE_PYTHONPATH\"\n",
+        encoding="utf-8",
+    )
+    for executable in (fake_module, fake_timeout, fake_python):
+        executable.chmod(0o755)
+
+    scripts_root = PACKAGE.parent
+    slurm_tmpdir = tmp_path / "slurm"
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(tmp_path / "home"),
+            "USER": "review-test",
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "SCRIPTS_ROOT": str(scripts_root),
+            "SIMNIBS_REVIEW_OUTPUT_ROOT": str(tmp_path / "review-output"),
+            "SLURM_CPUS_PER_TASK": "8",
+            "SLURM_JOB_ID": "11940631",
+            "SLURM_TMPDIR": str(slurm_tmpdir),
+            "OBSERVED_BUILD_PYTHONPATH": str(observed_build),
+            "OBSERVED_VALIDATE_PYTHONPATH": str(observed_validate),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(WORKER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    expected_pipeline = str(scripts_root / "simnibs_326_repeatability")
+    for observed in (observed_build, observed_validate):
+        pythonpath = observed.read_text(encoding="utf-8").strip().split(":")
+        assert expected_pipeline in pythonpath
+        shim_dir = Path(pythonpath[0])
+        assert shim_dir.parent == slurm_tmpdir
+        assert (shim_dir / "sitecustomize.py").is_file()
+
+
 def test_preflight_is_read_only_and_reports_exact_scope(
     review_layout: tuple[ReviewPaths, tuple[str, ...]], tmp_path: Path
 ) -> None:

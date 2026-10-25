@@ -20,6 +20,8 @@ export PYTHONNOUSERSITE=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export PIPELINE_DIR="$SCRIPTS_ROOT/simnibs_326_repeatability"
 export PYTHONPATH="$SCRIPTS_ROOT:${PYTHONPATH:-}"
+# shellcheck source=/dev/null
+source "$PIPELINE_DIR/hpc/activate_compat.sh"
 
 cd "$SCRIPTS_ROOT"
 echo "[INFO] Building receipt-bound supervisor review package"

@@ -11,11 +11,16 @@
 #SBATCH --output=slurm-%A_%a.out
 #SBATCH --requeue
 
+set -euo pipefail
+
 module purge
 module use "$HOME/modules"
 module load SimNIBS/4.0.1-foss-2023a
 
 export PYTHONNOUSERSITE=1
+
+SIMNIBS_PYTHON_BIN="${SIMNIBS_PYTHON_BIN:-python}"
+"${SIMNIBS_PYTHON_BIN}" -c 'import nibabel, simnibs, sys; version = str(getattr(simnibs, "__version__", "unknown")); print(f"[INFO] Runtime ready: python={sys.executable} simnibs={version} nibabel={nibabel.__version__}"); sys.exit(0 if version.startswith("4.0.1") else f"Expected SimNIBS 4.0.1, observed {version}")'
 
 SHIM_DIR="${SLURM_TMPDIR:-/tmp}/${USER}_simnibs_shim_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$SHIM_DIR"
@@ -56,10 +61,8 @@ EOF
 export PYTHONPATH="${SHIM_DIR}:${PYTHONPATH:-}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
-set -euo pipefail
-
 MESH_TIMEOUT_HOURS="${TI_MESH_TIMEOUT_HOURS:-4}"
-MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-0}"
+MESH_MAX_RETRIES="${TI_MESH_MAX_RETRIES:-4}"
 TASK_OFFSET="${TASK_OFFSET:-0}"
 MESH_TIMEOUT_EXIT_CODE=124
 SIM_INCOMPLETE_EXIT_CODE=125
@@ -170,7 +173,7 @@ requeue_or_fail() {
 }
 
 PYTHON_CMD=(
-    python -u "${SCRIPT_DIR}/simulation_runners/repeatability_experiment.py"
+    "${SIMNIBS_PYTHON_BIN}" -u "${SCRIPT_DIR}/simulation_runners/repeatability_experiment.py"
     run-task
     --config "${EXPERIMENT_CONFIG}"
     --task-index "${TASK_INDEX}"
@@ -197,7 +200,7 @@ fi
 
 if [ -f "$COMPLETION_CHECK_PY" ]; then
     set +e
-    python -u "$COMPLETION_CHECK_PY" \
+    "${SIMNIBS_PYTHON_BIN}" -u "$COMPLETION_CHECK_PY" \
         --config "$EXPERIMENT_CONFIG" \
         --task-index "$TASK_INDEX" 2>&1 | tee -a "$LOG_FILE"
     VALIDATION_EXIT=${PIPESTATUS[0]}

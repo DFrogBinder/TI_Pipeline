@@ -25,10 +25,10 @@ MAX_CONCURRENT_TASKS_CONFIG="16"
 # Leave blank to write Slurm stdout/stderr under LOG_DIR.
 SLURM_OUTPUT_CONFIG=""
 
-# Retry behavior. 0 or a negative value means unlimited retries until task
-# validation passes. Retries automatically rerun incomplete outputs.
+# Retry behavior. A positive value caps requeues after the initial attempt.
+# Retries automatically rerun incomplete outputs.
 MESH_TIMEOUT_HOURS_CONFIG="4"
-MESH_MAX_RETRIES_CONFIG="0"
+MESH_MAX_RETRIES_CONFIG="4"
 
 # Rerun controls. Leave these at 0 for normal recovery submissions.
 OVERWRITE_OUTPUT_CONFIG="0"

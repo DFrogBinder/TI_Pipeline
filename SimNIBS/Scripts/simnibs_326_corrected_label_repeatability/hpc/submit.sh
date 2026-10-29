@@ -46,10 +46,10 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status) ;;
+    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-final|analysis-status|status) ;;
     *)
         echo "[ERROR] Unsupported mode: $MODE" >&2
-        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-status|status} [target|subject] [options]" >&2
+        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-final|analysis-status|status} [target|subject] [options]" >&2
         exit 2
         ;;
 esac
@@ -69,7 +69,7 @@ if [ "$COHORT" = external1 ]; then
         echo "[ERROR] External manifest is missing or empty: $EXTERNAL_MANIFEST" >&2; exit 2;
     }
 fi
-if [ "$COHORT" = base9 ] && [ "$MODE" = analysis ]; then
+if [ "$COHORT" = base9 ] && { [ "$MODE" = analysis ] || [ "$MODE" = analysis-final ]; }; then
     echo "[ERROR] base9 analysis is intentionally blocked until a provenance-safe base9 or 9+1 aggregation is implemented." >&2
     exit 2
 fi
@@ -218,6 +218,19 @@ record_submission() {
 }
 
 print_scope() {
+    if [ "$MODE" = analysis-final ]; then
+        echo "Scope:"
+        echo "  study: corrected-label SimNIBS 3.2.6 final-analysis recovery"
+        echo "  cohort: $COHORT"
+        echo "  subjects: $SUBJECT_COUNT"
+        echo "  completed target metric tables reused: 2"
+        echo "  new FEM simulation tasks: 0"
+        echo "  new ROI extraction tasks: 0"
+        echo "  final aggregation jobs: 1"
+        echo "  expected combined rows: $((SUBJECT_COUNT * 160))"
+        echo "  execution: final aggregation only; existing metrics remain read-only"
+        return
+    fi
     if [ "$MODE" = resume-post-remesh ]; then
         echo "Scope:"
         echo "  study: corrected-label SimNIBS 3.2.6 post-remesh recovery"
@@ -422,6 +435,24 @@ submit_paired_roi() {
         --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,EXPERIMENT_CONFIG=$config,METRICS_ROOT=$metrics,SIMNIBS326H_COHORT=$COHORT" "$ROI_COLLECT")"
     printf '%s\t%s\n' "$roi" "$collect"
 }
+submit_final_analysis() {
+    local after_jobs="${1:-}" left_csv right_csv
+    left_csv="$(paired_metrics_root left-hippocampus)/optimizer_roi_metrics.csv"
+    right_csv="$(paired_metrics_root right-m1)/optimizer_roi_metrics.csv"
+    if [ -z "$after_jobs" ]; then
+        require_file "$left_csv"
+        require_file "$right_csv"
+        require_file "$(paired_metrics_root left-hippocampus)/manifest.json"
+        require_file "$(paired_metrics_root right-m1)/manifest.json"
+    fi
+    mkdir -p "$ANALYSIS_ROOT/logs"
+    local dependency_args=()
+    [ -z "$after_jobs" ] || dependency_args+=("--dependency=afterok:$after_jobs")
+    submit_job --partition="$PARTITION" "${dependency_args[@]}" \
+        --output="$ANALYSIS_ROOT/logs/analysis-%j.out" \
+        --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_METRICS_CSV=$left_csv,RIGHT_METRICS_CSV=$right_csv,ANALYSIS_ROOT=$ANALYSIS_ROOT,EXPECTED_SUBJECTS=$SUBJECT_COUNT,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON,SIMNIBS326H_COHORT=$COHORT" \
+        "$ROI_ANALYSIS"
+}
 
 print_scope
 case "$MODE" in
@@ -526,14 +557,18 @@ case "$MODE" in
         right_jobs="$(submit_paired_roi right-m1)"
         left_collect="${left_jobs##*$'\t'}"
         right_collect="${right_jobs##*$'\t'}"
-        mkdir -p "$ANALYSIS_ROOT/logs"
-        analysis_job="$(submit_job --partition="$PARTITION" \
-            --dependency="afterok:$left_collect:$right_collect" \
-            --output="$ANALYSIS_ROOT/logs/analysis-%j.out" \
-            --export="ALL,PIPELINE_DIR=$PIPELINE_DIR,LEFT_METRICS_CSV=$(paired_metrics_root left-hippocampus)/optimizer_roi_metrics.csv,RIGHT_METRICS_CSV=$(paired_metrics_root right-m1)/optimizer_roi_metrics.csv,ANALYSIS_ROOT=$ANALYSIS_ROOT,SIMNIBS326H_RENDER_PYTHON=$RENDER_PYTHON,SIMNIBS326H_COHORT=$COHORT" \
-            "$ROI_ANALYSIS")"
+        analysis_job="$(submit_final_analysis "$left_collect:$right_collect")"
         record_submission "$MODE" both "$DEPENDENCY" "$left_jobs\t$right_jobs\t$analysis_job"
         echo "[INFO] Analysis jobs: left=$left_jobs right=$right_jobs final=$analysis_job"
+        ;;
+    analysis-final)
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-final \
+            --target left-hippocampus >/dev/null
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-final \
+            --target right-m1 >/dev/null
+        analysis_job="$(submit_final_analysis)"
+        record_submission "$MODE" both none "$analysis_job"
+        echo "[INFO] Final analysis recovery job: $analysis_job"
         ;;
     analysis-status)
         for file in \

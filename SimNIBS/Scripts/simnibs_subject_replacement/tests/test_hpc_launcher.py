@@ -179,10 +179,37 @@ def test_wrapper_lists_full_v3_and_v4_command_surface() -> None:
         "preflight", "prepare", "v3-module-check", "v3-stage-references",
         "v3-headmodels", "v3-collect-headmodels", "v3-promote", "v3-init",
         "v3-left-remesh", "v3-left-fixed", "v3-right-remesh",
-        "v3-right-fixed", "v3-analysis", "v3-status", "v4-init-left",
+        "v3-right-fixed", "v3-analysis", "v3-analysis-final", "v3-status", "v4-init-left",
         "v4-preflight-left", "v4-submit-left", "v4-init-right",
         "v4-preflight-right", "v4-submit-right", "status",
     }
     assert all(mode in text for mode in expected)
     assert "sub-CC110056" not in text
     assert "sub-CC510415" not in text
+
+
+def test_wrapper_delegates_external_final_analysis_recovery(
+    replacement_layout: dict[str, Path | str],
+) -> None:
+    from simnibs_subject_replacement.tests.test_replacement import (
+        _write_v3_promotion,
+    )
+
+    config = _config(replacement_layout)
+    manifest = prepare(config)
+    _write_v3_promotion(manifest)
+    calls = config.work_root.parent / "v3.calls"
+    fake_v3 = config.work_root.parent / "fake-v3-submit.sh"
+    fake_v3.write_text(
+        f"#!/bin/bash\nprintf '%s\\n' \"$*\" >> {calls}\n", encoding="utf-8"
+    )
+    fake_v3.chmod(0o755)
+    env = os.environ.copy()
+    env.update({"PYTHON_BIN": sys.executable, "V3_SUBMIT": str(fake_v3)})
+
+    result = _run(env, config, "v3-analysis-final")
+
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text(encoding="utf-8").strip() == (
+        "analysis-final --cohort=external1"
+    )

@@ -45,7 +45,7 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|prepare|v3-module-check|v3-stage-references|v3-headmodels|v3-collect-headmodels|v3-promote|v3-init|v3-left-remesh|v3-left-fixed|v3-right-remesh|v3-right-fixed|v3-analysis|v3-status|v4-init-left|v4-preflight-left|v4-submit-left|v4-init-right|v4-preflight-right|v4-submit-right|status) ;;
+    preflight|prepare|v3-module-check|v3-stage-references|v3-headmodels|v3-collect-headmodels|v3-promote|v3-init|v3-left-remesh|v3-left-fixed|v3-right-remesh|v3-right-fixed|v3-analysis|v3-analysis-final|v3-status|v4-init-left|v4-preflight-left|v4-submit-left|v4-init-right|v4-preflight-right|v4-submit-right|status) ;;
     *) echo "[ERROR] Unsupported mode: $MODE" >&2; exit 2 ;;
 esac
 
@@ -161,6 +161,10 @@ case "$MODE" in
     v3-analysis)
         run_cli require-promotion >/dev/null
         run_v3 analysis
+        ;;
+    v3-analysis-final)
+        run_cli require-promotion >/dev/null
+        run_v3 analysis-final
         ;;
     v3-status) run_v3 status ;;
     v4-init-left) run_cli v4-init --target=left-hippocampus ;;

@@ -67,21 +67,32 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate(frame: pd.DataFrame, target: str) -> None:
+def _validate(
+    frame: pd.DataFrame,
+    target: str,
+    *,
+    expected_subjects: int = 10,
+) -> None:
+    if expected_subjects < 1:
+        raise RuntimeError("expected_subjects must be at least one")
     missing = REQUIRED_COLUMNS.difference(frame.columns)
     if missing:
         raise RuntimeError(f"{target}: missing columns {sorted(missing)}")
     meta = TARGETS[target]
-    if len(frame) != 800:
-        raise RuntimeError(f"{target}: expected 800 rows, observed {len(frame)}")
+    expected_rows = expected_subjects * 2 * 40
+    if len(frame) != expected_rows:
+        raise RuntimeError(
+            f"{target}: expected {expected_rows} rows for "
+            f"{expected_subjects} subjects, observed {len(frame)}"
+        )
     if set(frame["schema_version"].astype(int)) != {2}:
         raise RuntimeError(f"{target}: expected schema version 2")
     if set(frame["roi"]) != {meta["roi"]}:
         raise RuntimeError(f"{target}: unexpected ROI values")
     if set(frame["condition"]) != {"remesh", "fixed_mesh"}:
         raise RuntimeError(f"{target}: unexpected conditions")
-    if frame["subject"].nunique() != 10:
-        raise RuntimeError(f"{target}: expected ten subjects")
+    if frame["subject"].nunique() != expected_subjects:
+        raise RuntimeError(f"{target}: expected {expected_subjects} subjects")
     requested = frame["requested_roi_volume_mm3"].to_numpy(dtype=float)
     if not np.allclose(requested, meta["requested_volume_mm3"]):
         raise RuntimeError(f"{target}: unexpected requested ROI volume")
@@ -126,14 +137,19 @@ def _validate(frame: pd.DataFrame, target: str) -> None:
         raise RuntimeError(f"{target}: inconsistent finite-support fractions")
 
 
-def _load(left_csv: Path, right_csv: Path) -> pd.DataFrame:
+def _load(
+    left_csv: Path,
+    right_csv: Path,
+    *,
+    expected_subjects: int = 10,
+) -> pd.DataFrame:
     frames = []
     for target, path in (
         ("left_hippocampus", left_csv),
         ("right_m1", right_csv),
     ):
         frame = pd.read_csv(path)
-        _validate(frame, target)
+        _validate(frame, target, expected_subjects=expected_subjects)
         frame.insert(0, "target", target)
         frames.append(frame)
     return pd.concat(frames, ignore_index=True)
@@ -559,7 +575,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     out_dir.mkdir(parents=True, exist_ok=True)
     left_csv = args.left_csv.resolve()
     right_csv = args.right_csv.resolve()
-    frame = _load(left_csv, right_csv)
+    expected_subjects = int(args.expected_subjects)
+    frame = _load(
+        left_csv,
+        right_csv,
+        expected_subjects=expected_subjects,
+    )
     frame.to_csv(out_dir / "combined_optimizer_roi_metrics.csv", index=False)
 
     geometry_summary = _geometry_summary(frame)
@@ -572,9 +593,33 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     subject_summary = _subject_summary(frame)
     subject_summary.to_csv(out_dir / "subject_condition_summary.csv", index=False)
 
-    pairs, draws, rank_summary = _rank_analysis(
-        frame, seed=args.seed, draws=args.rank_draws
-    )
+    if expected_subjects == 1:
+        pairs = pd.DataFrame(
+            columns=[
+                "target",
+                "higher_mean_subject",
+                "lower_mean_subject",
+                "higher_mean_v_per_m",
+                "lower_mean_v_per_m",
+                "mean_difference_v_per_m",
+                "single_run_reversal_probability",
+            ]
+        )
+        draws = pd.DataFrame(
+            columns=["target", "kendall_rank_agreement", "pairwise_reversals"]
+        )
+        rank_summary: dict[str, object] = {
+            "status": "not_applicable",
+            "reason": "single_subject_cohort",
+            "interpretation": (
+                "Cross-subject rank uncertainty requires at least two subjects. "
+                "No ranking statistic was computed for this replacement-only arm."
+            ),
+        }
+    else:
+        pairs, draws, rank_summary = _rank_analysis(
+            frame, seed=args.seed, draws=args.rank_draws
+        )
     pairs.to_csv(out_dir / "pairwise_rank_reversal_probabilities.csv", index=False)
     draws.to_csv(out_dir / "rank_selection_draws.csv", index=False)
     _write_json(out_dir / "rank_uncertainty_summary.json", rank_summary)
@@ -587,17 +632,19 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             target,
             target_dir / "01_primary_median_roi_repeat_distributions.png",
         )
-        _plot_rank(
-            frame,
-            pairs,
-            draws,
-            target,
-            target_dir / "02_single_repeat_subject_ranking_uncertainty.png",
-        )
+        if expected_subjects > 1:
+            _plot_rank(
+                frame,
+                pairs,
+                draws,
+                target,
+                target_dir / "02_single_repeat_subject_ranking_uncertainty.png",
+            )
     result = {
         "status": "complete",
         "schema_version": 2,
         "rows": int(len(frame)),
+        "subject_count": expected_subjects,
         "targets": list(TARGETS),
         "inputs": {
             "left_csv": {
@@ -636,6 +683,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument("--rank-draws", type=int, default=20_000)
+    parser.add_argument("--expected-subjects", type=int, default=10)
     return parser
 
 

@@ -499,6 +499,44 @@ def test_base9_analysis_is_rejected_until_provenance_safe_aggregation_exists(
     assert _calls(calls) == []
 
 
+def test_external_final_analysis_recovery_submits_only_one_subject_aggregator(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    env, calls = launcher_env
+    _external_launcher_env(env, tmp_path)
+    _ready_prerequisites(env, cohort="external1")
+    _configs(env)
+    for key in ("SIMNIBS326H_LEFT_ROOT", "SIMNIBS326H_RIGHT_ROOT"):
+        root = Path(env[key])
+        (root / "_pipeline/workflow").mkdir(parents=True, exist_ok=True)
+        (root / "_pipeline/workflow/complete.json").write_text(
+            '{"status":"complete","stage":"final"}', encoding="utf-8"
+        )
+        metrics = (
+            root
+            / "_post_processing/repeatability_optimizer_roi_metrics_simnibs326h_paired_v2"
+        )
+        metrics.mkdir(parents=True)
+        (metrics / "optimizer_roi_metrics.csv").write_text(
+            "subject,condition,repeat_tag\n", encoding="utf-8"
+        )
+        (metrics / "manifest.json").write_text(
+            '{"status":"complete","subject_count":1,"validation":{"rows":80}}',
+            encoding="utf-8",
+        )
+
+    result = _run(env, "analysis-final", "--cohort=external1")
+
+    assert result.returncode == 0, result.stderr
+    submitted = _calls(calls)
+    assert len(submitted) == 1
+    assert "analyze_optimizer_roi.slurm" in submitted[0]
+    assert "EXPECTED_SUBJECTS=1" in submitted[0]
+    assert "optimizer_roi_array.slurm" not in submitted[0]
+    assert "optimizer_roi_collect.slurm" not in submitted[0]
+
+
 def test_explicit_cross_profile_root_collision_fails_before_any_submission(
     launcher_env: tuple[dict[str, str], Path],
     tmp_path: Path,

@@ -147,6 +147,13 @@ bash "$REPLACEMENT" v3-right-fixed "${COMMON[@]}"
 bash "$REPLACEMENT" v3-analysis "${COMMON[@]}"
 ```
 
+If both target-level ROI collectors succeeded but only the final aggregation
+failed, rerun the aggregation without duplicating extraction jobs:
+
+```bash
+bash "$REPLACEMENT" v3-analysis-final "${COMMON[@]}"
+```
+
 `--dependency=JOBID` may be supplied to the v3 remesh/fixed modes when an
 explicit scheduler dependency is needed. The singleton analysis artifacts are
 QC and provenance inputs for the later 9+1 aggregation, not cohort-level

@@ -15,11 +15,11 @@ if str(CURRENT_REPAIR_ROOT) not in sys.path:
 from post import analyze_repeatability_optimizer_roi_metrics as analysis  # noqa: E402
 
 
-def _target_frame(target: str) -> pd.DataFrame:
+def _target_frame(target: str, *, subject_count: int = 10) -> pd.DataFrame:
     meta = analysis.TARGETS[target]
     roi_voxels = int(meta["requested_volume_mm3"])
     rows = []
-    for subject_index in range(10):
+    for subject_index in range(subject_count):
         subject = f"sub-CC{subject_index:06d}"
         radius = 3.5 + 0.05 * subject_index
         for condition in ("remesh", "fixed_mesh"):
@@ -52,11 +52,13 @@ def _target_frame(target: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _write_inputs(root: Path) -> tuple[Path, Path]:
+def _write_inputs(root: Path, *, subject_count: int = 10) -> tuple[Path, Path]:
     left = root / "left.csv"
     right = root / "right.csv"
-    _target_frame("left_hippocampus").to_csv(left, index=False)
-    _target_frame("right_m1").to_csv(right, index=False)
+    _target_frame("left_hippocampus", subject_count=subject_count).to_csv(
+        left, index=False
+    )
+    _target_frame("right_m1", subject_count=subject_count).to_csv(right, index=False)
     return left, right
 
 
@@ -126,6 +128,7 @@ def test_run_writes_portable_hashed_manifest(
             out_dir=out_dir,
             seed=101,
             rank_draws=100,
+            expected_subjects=10,
         )
     )
 
@@ -143,3 +146,46 @@ def test_run_writes_portable_hashed_manifest(
         path = out_dir / entry["path"]
         assert entry["size_bytes"] == path.stat().st_size
         assert entry["sha256"] == _sha256(path)
+
+
+def test_single_subject_run_marks_rank_analysis_not_applicable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    left, right = _write_inputs(tmp_path, subject_count=1)
+    out_dir = tmp_path / "analysis"
+    rank_plot_calls: list[str] = []
+
+    def write_primary_placeholder(*args, **kwargs) -> None:
+        path = args[-1]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"png-placeholder")
+
+    def record_rank_plot(*args, **kwargs) -> None:
+        rank_plot_calls.append(str(args[-1]))
+
+    monkeypatch.setattr(analysis, "_plot_primary", write_primary_placeholder)
+    monkeypatch.setattr(analysis, "_plot_rank", record_rank_plot)
+
+    result = analysis.run(
+        argparse.Namespace(
+            left_csv=left,
+            right_csv=right,
+            out_dir=out_dir,
+            seed=101,
+            rank_draws=100,
+            expected_subjects=1,
+        )
+    )
+
+    assert result["status"] == "complete"
+    assert result["rows"] == 160
+    assert result["subject_count"] == 1
+    assert result["rank_uncertainty"]["status"] == "not_applicable"
+    assert result["rank_uncertainty"]["reason"] == "single_subject_cohort"
+    assert rank_plot_calls == []
+    assert pd.read_csv(
+        out_dir / "pairwise_rank_reversal_probabilities.csv"
+    ).empty
+    assert pd.read_csv(out_dir / "rank_selection_draws.csv").empty
+    assert not list((out_dir / "figures").rglob("02_*.png"))

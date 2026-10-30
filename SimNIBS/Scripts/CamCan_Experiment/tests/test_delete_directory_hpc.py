@@ -133,3 +133,142 @@ def test_submitter_submits_one_task_without_deleting_locally(tmp_path):
     assert "--nodes=1" in fake_args.read_text().splitlines()
     request = (log_dir / "delete-directory-24680.request.tsv").read_text()
     assert "\tsubmitted\t" in request
+
+
+def test_submitter_accepts_multiple_positional_targets_with_short_confirmation(tmp_path):
+    allowed_root = tmp_path / "scratch"
+    first_target = allowed_root / "obsolete-one"
+    second_target = allowed_root / "obsolete-two"
+    log_dir = allowed_root / "logs"
+    first_target.mkdir(parents=True)
+    second_target.mkdir()
+    fake_sbatch = tmp_path / "sbatch"
+    fake_calls = tmp_path / "sbatch.calls"
+    fake_counter = tmp_path / "sbatch.counter"
+    fake_sbatch.write_text(
+        "#!/bin/bash\n"
+        'count=0\n'
+        'if [ -f "$FAKE_SBATCH_COUNTER" ]; then count="$(cat "$FAKE_SBATCH_COUNTER")"; fi\n'
+        'count=$((count + 1))\n'
+        'printf \'%s\\n\' "$count" > "$FAKE_SBATCH_COUNTER"\n'
+        'printf \'CALL %s\\n\' "$count" >> "$FAKE_SBATCH_CALLS"\n'
+        'printf \'%s\\n\' "$@" >> "$FAKE_SBATCH_CALLS"\n'
+        'printf \'%s\\n\' "$((24679 + count))"\n'
+    )
+    fake_sbatch.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "SBATCH_BIN": str(fake_sbatch),
+            "FAKE_SBATCH_CALLS": str(fake_calls),
+            "FAKE_SBATCH_COUNTER": str(fake_counter),
+        }
+    )
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SUBMITTER),
+            str(first_target),
+            str(second_target),
+            "--allowed-root",
+            str(allowed_root),
+            "--log-dir",
+            str(log_dir),
+        ],
+        env=env,
+        input="DELETE 2\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert first_target.is_dir()
+    assert second_target.is_dir()
+    assert "directories: 2" in completed.stdout
+    assert 'Type "DELETE 2" to submit' in completed.stdout
+    assert "Submitted deletion jobs: 2" in completed.stdout
+    assert fake_calls.read_text().count("CALL ") == 2
+    assert (log_dir / "delete-directory-24680.request.tsv").is_file()
+    assert (log_dir / "delete-directory-24681.request.tsv").is_file()
+
+
+def test_submitter_cancels_friendly_mode_without_submitting(tmp_path):
+    allowed_root = tmp_path / "scratch"
+    target = allowed_root / "keep"
+    log_dir = allowed_root / "logs"
+    target.mkdir(parents=True)
+    fake_sbatch = tmp_path / "sbatch"
+    fake_marker = tmp_path / "sbatch-was-called"
+    fake_sbatch.write_text(
+        '#!/bin/bash\nprintf \'called\\n\' > "$FAKE_SBATCH_MARKER"\nprintf \'24680\\n\'\n'
+    )
+    fake_sbatch.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {"SBATCH_BIN": str(fake_sbatch), "FAKE_SBATCH_MARKER": str(fake_marker)}
+    )
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SUBMITTER),
+            str(target),
+            "--allowed-root",
+            str(allowed_root),
+            "--log-dir",
+            str(log_dir),
+        ],
+        env=env,
+        input="no\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert target.is_dir()
+    assert "Cancelled; no jobs submitted" in completed.stdout
+    assert not fake_marker.exists()
+
+
+def test_submitter_validates_all_positional_targets_before_submitting(tmp_path):
+    allowed_root = tmp_path / "scratch"
+    valid_target = allowed_root / "keep"
+    missing_target = allowed_root / "missing"
+    log_dir = allowed_root / "logs"
+    valid_target.mkdir(parents=True)
+    fake_sbatch = tmp_path / "sbatch"
+    fake_marker = tmp_path / "sbatch-was-called"
+    fake_sbatch.write_text(
+        '#!/bin/bash\nprintf \'called\\n\' > "$FAKE_SBATCH_MARKER"\nprintf \'24680\\n\'\n'
+    )
+    fake_sbatch.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {"SBATCH_BIN": str(fake_sbatch), "FAKE_SBATCH_MARKER": str(fake_marker)}
+    )
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SUBMITTER),
+            str(valid_target),
+            str(missing_target),
+            "--allowed-root",
+            str(allowed_root),
+            "--log-dir",
+            str(log_dir),
+        ],
+        env=env,
+        input="DELETE 2\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert valid_target.is_dir()
+    assert "Target is not an existing directory" in completed.stderr
+    assert not fake_marker.exists()

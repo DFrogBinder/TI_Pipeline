@@ -8,7 +8,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from stimulation_config import StimulationConfig, validate_stimulation_config
+from stimulation_config import AnyStimulationConfig, validate_stimulation_config
 
 
 VALID_MESH_MODES = {"remesh", "fixed_mesh"}
@@ -21,6 +21,10 @@ VALID_COMPARE_METRICS = {
     "mean_head",
     "p95_head",
     "peak_head",
+}
+VALID_ROI_DEFINITIONS = {
+    "anatomical-parcel",
+    "optimizer-matched-spherical",
 }
 
 
@@ -42,6 +46,7 @@ class AnalysisConfig:
     cohort_region_name: str | None = None
     cohort_region_label: int | None = None
     compare_metric: str | None = None
+    roi_definition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,7 +56,7 @@ class ExperimentConfig:
     experiment_root: Path
     subjects: list[str]
     conditions: list[ConditionConfig]
-    stimulation: StimulationConfig
+    stimulation: AnyStimulationConfig
     analysis: AnalysisConfig
 
 
@@ -145,6 +150,15 @@ def _parse_analysis(raw: object) -> AnalysisConfig:
             f"Unsupported analysis.compare_metric '{compare_metric}'. "
             f"Valid values: {', '.join(sorted(VALID_COMPARE_METRICS))}."
         )
+    roi_definition = _optional_string(
+        raw.get("roi_definition"),
+        field_name="analysis.roi_definition",
+    )
+    if roi_definition is not None and roi_definition not in VALID_ROI_DEFINITIONS:
+        raise ValueError(
+            f"Unsupported analysis.roi_definition '{roi_definition}'. "
+            f"Valid values: {', '.join(sorted(VALID_ROI_DEFINITIONS))}."
+        )
     return AnalysisConfig(
         roi_preset=_optional_string(raw.get("roi_preset"), field_name="analysis.roi_preset"),
         roi_name=_optional_string(raw.get("roi_name"), field_name="analysis.roi_name"),
@@ -163,6 +177,7 @@ def _parse_analysis(raw: object) -> AnalysisConfig:
             field_name="analysis.cohort_region_label",
         ),
         compare_metric=compare_metric,
+        roi_definition=roi_definition,
     )
 
 

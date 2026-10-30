@@ -3,8 +3,8 @@
 """
 Repeatability analysis for SimNIBS mesh outputs.
 
-Compares per-repeat volumetric label maps derived from TI.msh, and links
-mesh differences to TI summary metrics (mean/median) within a user-selected
+Compares per-repeat volumetric label maps derived from field meshes, and links
+mesh differences to field summary metrics (mean/median) within a user-selected
 ROI (for example hippocampus or M1) and across the whole head model.
 """
 import argparse
@@ -14,6 +14,7 @@ import json
 import os
 import struct
 import subprocess
+import sys
 from configparser import ConfigParser
 from pathlib import Path
 from datetime import datetime
@@ -21,6 +22,13 @@ from datetime import datetime
 import numpy as np
 import nibabel as nib
 from nibabel.processing import resample_from_to
+
+
+PIPELINE_ROOT = Path(__file__).resolve().parents[1]
+if str(PIPELINE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PIPELINE_ROOT))
+
+from field_artifacts import artifacts_for_mode  # noqa: E402
 
 
 REPEAT_PREFIX = "repeat_"
@@ -134,30 +142,37 @@ def _run_msh2nii(
     result.check_returncode()
 
 
-def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tuple[Path, Path, Path]:
+def _load_or_create_volumes(
+    anat_dir: Path,
+    subject: str,
+    t1_path: Path,
+    *,
+    field_mode: str = "ti",
+) -> tuple[Path, Path, Path]:
+    artifacts = artifacts_for_mode(field_mode)
     out_dir = anat_dir / "SimNIBS" / "Output" / subject
     labels_dir = out_dir / "Volume_Labels"
     base_dir = out_dir / "Volume_Base"
-    ti_brain_only = anat_dir / "SimNIBS" / "ti_brain_only.nii.gz"
+    brain_only = anat_dir / "SimNIBS" / artifacts.brain_nifti_filename
 
-    label_file = _find_volume_candidate(labels_dir, "TI_Volumetric_")
-    base_file = _find_volume_candidate(base_dir, "TI_Volumetric_")
+    label_file = _find_volume_candidate(labels_dir, artifacts.volume_prefix)
+    base_file = _find_volume_candidate(base_dir, artifacts.volume_prefix)
 
-    if label_file and base_file and ti_brain_only.exists():
+    if label_file and base_file and brain_only.exists():
         log_event(
             "volume_found",
             subject=subject,
             anat_dir=str(anat_dir),
             label=str(label_file),
             base=str(base_file),
-            ti_brain_only=str(ti_brain_only),
+            brain_only=str(brain_only),
         )
-        return label_file, base_file, ti_brain_only
+        return label_file, base_file, brain_only
 
-    ti_msh = out_dir / "TI.msh"
-    if not ti_msh.exists():
-        log_event("missing", kind="ti_msh", path=str(ti_msh))
-        raise FileNotFoundError(f"Missing TI.msh at {ti_msh}")
+    field_msh = out_dir / artifacts.mesh_filename
+    if not field_msh.exists():
+        log_event("missing", kind="field_msh", path=str(field_msh))
+        raise FileNotFoundError(f"Missing {artifacts.mesh_filename} at {field_msh}")
     if not t1_path.exists():
         log_event("missing", kind="t1", path=str(t1_path))
         raise FileNotFoundError(f"Missing T1 at {t1_path}")
@@ -165,17 +180,18 @@ def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tupl
     labels_dir.mkdir(parents=True, exist_ok=True)
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    label_base = labels_dir / "TI_Volumetric_Labels"
-    base_base = base_dir / "TI_Volumetric_Base"
+    stem = artifacts.volume_prefix.rstrip("_")
+    label_base = labels_dir / f"{stem}_Labels"
+    base_base = base_dir / f"{stem}_Base"
 
     if not label_file:
-        _run_msh2nii(ti_msh, t1_path, label_base, mode="--create_label")
-        label_file = _find_volume_candidate(labels_dir, "TI_Volumetric_")
+        _run_msh2nii(field_msh, t1_path, label_base, mode="--create_label")
+        label_file = _find_volume_candidate(labels_dir, artifacts.volume_prefix)
     if not base_file:
-        # Match the simulation runner: base TI volumes are created without an
+        # Match the simulation runner: base field volumes are created without an
         # extra msh2nii mode flag.
-        _run_msh2nii(ti_msh, t1_path, base_base, mode=None)
-        base_file = _find_volume_candidate(base_dir, "TI_Volumetric_")
+        _run_msh2nii(field_msh, t1_path, base_base, mode=None)
+        base_file = _find_volume_candidate(base_dir, artifacts.volume_prefix)
 
     if not label_file or not base_file:
         log_event(
@@ -186,11 +202,11 @@ def _load_or_create_volumes(anat_dir: Path, subject: str, t1_path: Path) -> tupl
         )
         raise FileNotFoundError("Failed to generate label/base volumes with msh2nii.")
 
-    if not ti_brain_only.exists():
-        log_event("missing", kind="ti_brain_only", path=str(ti_brain_only))
-        raise FileNotFoundError(f"Missing ti_brain_only at {ti_brain_only}")
+    if not brain_only.exists():
+        log_event("missing", kind="brain_only", path=str(brain_only))
+        raise FileNotFoundError(f"Missing brain-only field at {brain_only}")
 
-    return label_file, base_file, ti_brain_only
+    return label_file, base_file, brain_only
 
 
 def _ensure_label_grid(label_img: nib.Nifti1Image, ref_img: nib.Nifti1Image, *, label: str) -> nib.Nifti1Image:
@@ -225,6 +241,61 @@ def _ensure_scalar_grid(scalar_img: nib.Nifti1Image, ref_img: nib.Nifti1Image, *
         return scalar_img
     log_event("resample", label=label, mode="linear")
     return resample_from_to(scalar_img, ref_img, order=1)
+
+
+def _build_analysis_roi(
+    *,
+    anatomical_mask: np.ndarray,
+    reference_img: nib.Nifti1Image,
+    roi_name: str,
+    roi_labels: list[int],
+    roi_definition: str,
+    optimizer_roi_name: str | None,
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Construct an auditable anatomical or optimizer-matched analysis ROI."""
+    anatomical_mask = np.asarray(anatomical_mask, dtype=bool)
+    if not np.any(anatomical_mask):
+        raise ValueError(f"Anatomical ROI mask is empty for {roi_name}.")
+    if roi_definition == "optimizer-matched-spherical":
+        if not optimizer_roi_name:
+            raise ValueError(
+                "optimizer-matched-spherical analysis requires an explicit "
+                "optimizer_roi_name."
+            )
+        scripts_root = PIPELINE_ROOT.parent
+        if str(scripts_root) not in sys.path:
+            sys.path.insert(0, str(scripts_root))
+        from CamCan_Experiment.post.optimizer_target_roi import (  # noqa: PLC0415
+            build_optimizer_target_roi,
+            validate_optimizer_target_metadata,
+        )
+
+        optimizer_roi = build_optimizer_target_roi(
+            anatomical_mask=anatomical_mask,
+            reference_img=reference_img,
+            roi=optimizer_roi_name,
+        )
+        validate_optimizer_target_metadata(
+            optimizer_roi.metadata,
+            roi=optimizer_roi_name,
+        )
+        return optimizer_roi.mask, {
+            "roi_definition": roi_definition,
+            "anatomical_label_ids": roi_labels,
+            **optimizer_roi.metadata,
+        }
+    if roi_definition == "anatomical-parcel":
+        voxel_volume_mm3 = float(abs(np.linalg.det(reference_img.affine[:3, :3])))
+        return anatomical_mask, {
+            "roi_definition": roi_definition,
+            "roi": roi_name,
+            "anatomical_label_ids": roi_labels,
+            "target_voxels": int(np.count_nonzero(anatomical_mask)),
+            "achieved_volume_mm3": float(
+                np.count_nonzero(anatomical_mask) * voxel_volume_mm3
+            ),
+        }
+    raise ValueError(f"Unsupported ROI definition: {roi_definition!r}.")
 
 
 def _dice(a: np.ndarray, b: np.ndarray) -> float:
@@ -1321,6 +1392,8 @@ def _write_markdown_report(
     subject: str,
     roi_name: str,
     roi_labels: list[int],
+    roi_definition: str,
+    field_display_name: str,
     reference_repeat: str,
     repeats: int,
     primary_repeatability: dict[str, float],
@@ -1338,10 +1411,11 @@ def _write_markdown_report(
         "",
         f"- ROI: {roi_name}",
         f"- ROI labels: {', '.join(str(x) for x in roi_labels)}",
+        f"- ROI definition: {roi_definition}",
         f"- Reference repeat: {reference_repeat}",
         f"- Repeats analysed: {repeats}",
         "",
-        "## Primary Metric: Median TI in ROI Across Repeats",
+        f"## Primary Metric: Median {field_display_name} in ROI Across Repeats",
         "",
         "| Mean | SD | Min | Max | CV |",
         "| --- | --- | --- | --- | --- |",
@@ -1408,6 +1482,8 @@ def _run_subject_analysis(
     output_dir_override: Path | None = None,
     condition_name: str | None = None,
 ) -> dict[str, object]:
+    artifacts = artifacts_for_mode(getattr(args, "field_mode", "ti"))
+    field_label = "TI" if artifacts.mode == "ti" else "tDCS electric-field magnitude"
     rootdir, repeats_root = _resolve_rootdir_and_repeats(
         subject,
         str(rootdir_override) if rootdir_override is not None else args.rootdir,
@@ -1444,15 +1520,32 @@ def _run_subject_analysis(
     atlas_img = _ensure_label_grid(atlas_img, ref_t1, label="atlas_to_t1")
     atlas_data = np.asarray(atlas_img.dataobj).astype(np.int32, copy=False)
 
-    roi_mask = np.isin(atlas_data, roi_labels)
-    if not np.any(roi_mask):
+    anatomical_roi_mask = np.isin(atlas_data, roi_labels)
+    if not np.any(anatomical_roi_mask):
         raise SystemExit(
             f"{roi_name} mask is empty after resampling; check label IDs and atlas alignment."
         )
+    roi_definition = getattr(args, "roi_definition", "anatomical-parcel")
+    roi_mask, roi_provenance = _build_analysis_roi(
+        anatomical_mask=anatomical_roi_mask,
+        reference_img=ref_t1,
+        roi_name=roi_name,
+        roi_labels=roi_labels,
+        roi_definition=roi_definition,
+        optimizer_roi_name=getattr(args, "optimizer_roi_name", None),
+    )
+    with (output_dir / "roi_definition.json").open("w", encoding="utf-8") as handle:
+        json.dump(roi_provenance, handle, indent=2, sort_keys=True)
+        handle.write("\n")
     ref_roi_mask_img = nib.Nifti1Image(roi_mask.astype(np.uint8), ref_t1.affine, ref_t1.header)
     ref_roi_mask_img.header.set_data_dtype(np.uint8)
 
-    ref_label_path, ref_raw_ti_path, ref_ti_path = _load_or_create_volumes(ref_anat, subject, ref_t1_path)
+    ref_label_path, ref_raw_ti_path, ref_ti_path = _load_or_create_volumes(
+        ref_anat,
+        subject,
+        ref_t1_path,
+        field_mode=artifacts.mode,
+    )
     ref_label_img = nib.load(ref_label_path)
     ref_label_img = _ensure_label_grid(ref_label_img, ref_t1, label="ref_labels_to_t1")
     ref_labels = np.asarray(ref_label_img.dataobj).astype(np.int32, copy=False)
@@ -1493,7 +1586,12 @@ def _run_subject_analysis(
         repeat_tag = anat_dir.parent.parent.name
         try:
             t1_path = _resolve_t1_path(subject, anat_dir, t1_root)
-            label_path, raw_ti_path, ti_path = _load_or_create_volumes(anat_dir, subject, t1_path)
+            label_path, raw_ti_path, ti_path = _load_or_create_volumes(
+                anat_dir,
+                subject,
+                t1_path,
+                field_mode=artifacts.mode,
+            )
         except FileNotFoundError as exc:
             skipped_repeats.append({"repeat_tag": repeat_tag, "reason": str(exc)})
             log_event("repeat_skip", subject=subject, repeat_tag=repeat_tag, reason=str(exc))
@@ -1588,7 +1686,13 @@ def _run_subject_analysis(
             for lab in TISSUE_LABELS
         }
 
-        ti_msh_path = anat_dir / "SimNIBS" / "Output" / subject / "TI.msh"
+        ti_msh_path = (
+            anat_dir
+            / "SimNIBS"
+            / "Output"
+            / subject
+            / artifacts.mesh_filename
+        )
         if not ti_msh_path.exists():
             log_event("missing", subject=subject, kind="ti_msh", path=str(ti_msh_path))
             mesh_nodes = float("nan")
@@ -1704,7 +1808,8 @@ def _run_subject_analysis(
         ref_t1,
         ref_roi_mask_img,
         output_dir / "roi_outline_on_mean_ti.png",
-        title=f"{roi_name} outline on mean TI + T1 | labels: {', '.join(str(x) for x in roi_labels)}",
+        title=f"{roi_name} outline on mean {field_label} + T1 | labels: {', '.join(str(x) for x in roi_labels)}",
+        ti_label=f"{field_label} (V/m)",
     )
 
     repeatability_metric_order = [
@@ -1813,6 +1918,8 @@ def _run_subject_analysis(
         subject=subject,
         roi_name=roi_name,
         roi_labels=roi_labels,
+        roi_definition=roi_definition,
+        field_display_name=field_label,
         reference_repeat=ref_anat.parent.parent.name,
         repeats=len(summary_rows),
         primary_repeatability=metric_stats_map["median_roi"],
@@ -1851,14 +1958,14 @@ def _run_subject_analysis(
             plt.savefig(output_dir / fname, dpi=150)
             plt.close()
 
-        _plot_metric_line("mean_roi", "Mean ROI TI (V/m)", "mean_roi_by_repeat.png")
-        _plot_metric_line("median_roi", "Median ROI TI (V/m)", "median_roi_by_repeat.png")
-        _plot_metric_line("p95_roi", "95th-percentile ROI TI (V/m)", "p95_roi_by_repeat.png")
-        _plot_metric_line("peak_roi", "Peak ROI TI (V/m)", "peak_roi_by_repeat.png")
-        _plot_metric_line("mean_head", "Mean head TI (V/m)", "mean_head_by_repeat.png")
-        _plot_metric_line("median_head", "Median head TI (V/m)", "median_head_by_repeat.png")
-        _plot_metric_line("p95_head", "95th-percentile head TI (V/m)", "p95_head_by_repeat.png")
-        _plot_metric_line("peak_head", "Peak head TI (V/m)", "peak_head_by_repeat.png")
+        _plot_metric_line("mean_roi", f"Mean ROI {field_label} (V/m)", "mean_roi_by_repeat.png")
+        _plot_metric_line("median_roi", f"Median ROI {field_label} (V/m)", "median_roi_by_repeat.png")
+        _plot_metric_line("p95_roi", f"95th-percentile ROI {field_label} (V/m)", "p95_roi_by_repeat.png")
+        _plot_metric_line("peak_roi", f"Peak ROI {field_label} (V/m)", "peak_roi_by_repeat.png")
+        _plot_metric_line("mean_head", f"Mean head {field_label} (V/m)", "mean_head_by_repeat.png")
+        _plot_metric_line("median_head", f"Median head {field_label} (V/m)", "median_head_by_repeat.png")
+        _plot_metric_line("p95_head", f"95th-percentile head {field_label} (V/m)", "p95_head_by_repeat.png")
+        _plot_metric_line("peak_head", f"Peak head {field_label} (V/m)", "peak_head_by_repeat.png")
         _plot_metric_line("high_field_dice_head", "High-field Dice", "high_field_dice_head_by_repeat.png")
         _plot_metric_line(
             "hotspot_distance_head_mm",
@@ -1989,6 +2096,8 @@ def _run_subject_analysis(
         "reference_repeat": ref_anat.parent.parent.name,
         "roi_name": roi_name,
         "roi_labels": ",".join(str(x) for x in roi_labels),
+        "roi_definition": roi_definition,
+        "roi_definition_json": str(output_dir / "roi_definition.json"),
         "median_roi_mean": metric_stats_map["median_roi"]["mean"],
         "median_roi_std": metric_stats_map["median_roi"]["std"],
         "median_roi_cv_percent": metric_stats_map["median_roi"]["cv_percent"],
@@ -2039,6 +2148,12 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--field-mode",
+        choices=("ti", "tdcs"),
+        default="ti",
+        help="Field artifact contract. Legacy direct runs default to TI.",
+    )
+    parser.add_argument(
         "--repeats-dir",
         default=None,
         help="Overrides rootdir/repeats if set.",
@@ -2080,6 +2195,17 @@ def main() -> None:
         "--roi-name",
         default=None,
         help="Manual human-readable ROI name for titles and reports.",
+    )
+    parser.add_argument(
+        "--roi-definition",
+        choices=("anatomical-parcel", "optimizer-matched-spherical"),
+        default="anatomical-parcel",
+        help="Use the full parcel or the optimizer-matched parcel-clipped sphere.",
+    )
+    parser.add_argument(
+        "--optimizer-roi-name",
+        default=None,
+        help="Canonical optimizer ROI name, for example Left_M1.",
     )
     parser.add_argument(
         "--roi-labels",

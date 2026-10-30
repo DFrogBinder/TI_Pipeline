@@ -293,6 +293,9 @@ def _resolve_roi_from_config(args: argparse.Namespace, config) -> tuple[str, lis
 
 def _build_single_condition_args(args: argparse.Namespace, config) -> argparse.Namespace:
     single_args = argparse.Namespace()
+    single_args.field_mode = config.stimulation.mode
+    single_args.roi_definition = config.analysis.roi_definition or "anatomical-parcel"
+    single_args.optimizer_roi_name = config.stimulation.target_roi
     single_args.rootdir = str(config.experiment_root)
     single_args.repeats_dir = None
     single_args.max_subjects = None

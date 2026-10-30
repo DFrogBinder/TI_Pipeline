@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 CURRENT_REPAIR_ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +16,9 @@ if str(CURRENT_REPAIR_ROOT) not in sys.path:
     sys.path.insert(0, str(CURRENT_REPAIR_ROOT))
 
 from pipeline import provenance
+from pipeline import audit_existing_right_m1_meshes as mesh_audit
 from pipeline import setup_final132_right_m1_repeatability as right_m1_setup
+from pipeline import setup_final132_right_m1_tdcs_repeatability as tdcs_setup
 from pipeline import staged_median_fixed_experiment as staged
 from post import aggregate_paired_analysis
 from post import extract_repeatability_mesh_metrics
@@ -28,7 +31,9 @@ from simulation_runners import repeatability_experiment
 from stimulation_config import (
     CONFIRMED_TARGETS_SHA256,
     TARGETS_CSV_PATH,
+    PROVISIONAL_TDCS_REVIEW_STATUS,
     resolve_confirmed_stimulation,
+    resolve_provisional_tdcs_stimulation,
     validate_stimulation_config,
 )
 
@@ -62,6 +67,21 @@ def _write_summary(path: Path, rows: list[dict[str, object]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _synthetic_right_m1_tdcs_stimulation():
+    """Return explicit test-only values, not a proposed study montage."""
+    return resolve_provisional_tdcs_stimulation(
+        anode="TEST_ANODE",
+        cathode="TEST_CATHODE",
+        current_ma=1.5,
+        montage_preset="test-only-right-m1",
+        target_roi="Right_M1",
+        electrode_radius_mm=9.0,
+        electrode_thickness_mm=1.5,
+        electrode_shape="test-shape",
+        electrode_conductivity=1.2,
+    )
 
 
 def _seed_remesh_anat(experiment_root: Path, subject: str, repeat_tag: str, *, mesh_text: str = "mesh\n") -> Path:
@@ -153,6 +173,164 @@ def test_confirmed_right_m1_stimulation_is_loaded_from_targets_csv():
         "CP2",
         pytest.approx(-0.0006324555320336759),
     )
+
+
+def test_provisional_tdcs_stimulation_is_single_pair_and_canonical():
+    stimulation = _synthetic_right_m1_tdcs_stimulation()
+    params = repeatability_experiment._tdcs_montage_parameters(stimulation)
+
+    assert stimulation.mode == "tdcs"
+    assert stimulation.review_status == PROVISIONAL_TDCS_REVIEW_STATUS
+    assert stimulation.target_roi == "Right_M1"
+    assert params["montage_pair"] == (
+        "TEST_ANODE",
+        0.0015,
+        "TEST_CATHODE",
+        -0.0015,
+    )
+    assert params["electrode_size"] == [9.0, 1.5]
+    assert params["electrode_shape"] == "test-shape"
+    assert params["electrode_conductivity"] == 1.2
+    assert validate_stimulation_config(stimulation.to_dict()) == stimulation
+
+    drifted = stimulation.to_dict()
+    drifted["unexpected"] = True
+    with pytest.raises(ValueError, match="not canonical"):
+        validate_stimulation_config(drifted)
+
+
+def test_provisional_tdcs_stimulation_has_no_implicit_study_parameters():
+    with pytest.raises(TypeError, match="required keyword-only argument"):
+        resolve_provisional_tdcs_stimulation()
+
+
+def test_tdcs_runner_creates_one_fem_solve_and_e_magnitude(tmp_path, monkeypatch):
+    sessions = []
+    writes = []
+
+    class FakeConductivity:
+        def __init__(self, name):
+            self.name = name
+            self.value = None
+
+    class FakeElectrode:
+        pass
+
+    class FakeTDCSList:
+        def __init__(self):
+            self.cond = [FakeConductivity(name) for name in ("WM", "GM", "Saline")]
+            self.currents = []
+            self.electrode = []
+
+        def add_electrode(self):
+            electrode = FakeElectrode()
+            self.electrode.append(electrode)
+            return electrode
+
+    class FakeSession:
+        def __init__(self):
+            self.tdcs_lists = []
+            sessions.append(self)
+
+        def add_tdcslist(self):
+            tdcs = FakeTDCSList()
+            self.tdcs_lists.append(tdcs)
+            return tdcs
+
+    class FakeField:
+        value = np.asarray([[3.0, 4.0, 0.0], [0.0, 0.0, -2.0]])
+
+    class FakeMesh:
+        def __init__(self):
+            self.field = {"E": FakeField()}
+            self.elmdata = ["original"]
+            self.added = None
+
+        def crop_mesh(self, *, tags):
+            assert len(tags) == 998
+            return self
+
+        def add_element_field(self, values, name):
+            self.added = (np.asarray(values), name)
+
+    source_mesh = FakeMesh()
+
+    class FakeMeshIO:
+        @staticmethod
+        def read_msh(path):
+            assert path.endswith("sub-01_TDCS_1_scalar.msh")
+            return source_mesh
+
+        @staticmethod
+        def write_msh(mesh, path):
+            writes.append((mesh, path))
+
+    class FakeSimNIBS:
+        @staticmethod
+        def run_simnibs(session):
+            assert len(session.tdcs_lists) == 1
+
+    monkeypatch.setattr(repeatability_experiment, "_ensure_simnibs_imports", lambda: None)
+    monkeypatch.setattr(repeatability_experiment, "NP_MODULE", np)
+    monkeypatch.setattr(repeatability_experiment, "SIM_STRUCT", type("Struct", (), {"SESSION": FakeSession}))
+    monkeypatch.setattr(repeatability_experiment, "SIM_MESH_IO", FakeMeshIO)
+    monkeypatch.setattr(repeatability_experiment, "SIM_MODULE", FakeSimNIBS)
+    monkeypatch.setattr(
+        repeatability_experiment,
+        "_write_field_volumes_and_brain_mask",
+        lambda **kwargs: Path(kwargs["output_root"]) / "tdcs_brain_only.nii.gz",
+    )
+
+    repeatability_experiment._run_tdcs_pipeline(
+        subject="sub-01",
+        subject_dir=tmp_path / "sub-01" / "anat",
+        output_root=tmp_path / "output",
+        fnamehead=tmp_path / "sub-01.msh",
+        repeat_tag_value="repeat_001",
+        condition_name="remesh",
+        stimulation=_synthetic_right_m1_tdcs_stimulation(),
+    )
+
+    assert len(sessions) == 1
+    assert len(sessions[0].tdcs_lists) == 1
+    tdcs = sessions[0].tdcs_lists[0]
+    assert tdcs.currents == [0.0015, -0.0015]
+    assert [electrode.centre for electrode in tdcs.electrode] == [
+        "TEST_ANODE",
+        "TEST_CATHODE",
+    ]
+    assert len(writes) == 1
+    output_mesh, output_path = writes[0]
+    assert output_path.endswith("TDCS.msh")
+    values, field_name = output_mesh.added
+    assert field_name == "E_magnitude"
+    assert values.tolist() == pytest.approx([5.0, 2.0])
+
+
+def test_tdcs_analysis_uses_optimizer_matched_right_m1_roi():
+    import nibabel as nib
+
+    reference = nib.Nifti1Image(np.zeros((21, 21, 21), dtype=np.float32), np.eye(4))
+    anatomical_mask = np.zeros(reference.shape, dtype=bool)
+    anatomical_mask[3:18, 3:18, 3:18] = True
+
+    mask, provenance = mesh_repeat_report._build_analysis_roi(
+        anatomical_mask=anatomical_mask,
+        reference_img=reference,
+        roi_name="ctx_rh_G_precentral",
+        roi_labels=[12129],
+        roi_definition="optimizer-matched-spherical",
+        optimizer_roi_name="Right_M1",
+    )
+
+    assert provenance["roi"] == "Right_M1"
+    assert provenance["roi_class"] == "cortical"
+    assert provenance["requested_volume_mm3"] == 100.0
+    assert provenance["clipped_to_anatomical_parcel"] is True
+    assert provenance["distance_comparator"] == "<"
+    assert np.all(mask <= anatomical_mask)
+    assert np.count_nonzero(mask) == provenance["target_voxels"]
+    assert provenance["achieved_volume_mm3"] >= 100.0
 
 
 def test_right_m1_analysis_preset_uses_destrieux_precentral_label():
@@ -601,6 +779,127 @@ def test_right_m1_setup_preflights_full_isolated_study(tmp_path, capsys):
     assert not (
         experiment_root / "_pipeline" / "workflow" / "submission.json"
     ).exists()
+
+
+def test_tdcs_setup_requires_explicit_blocked_right_m1_plan_and_never_submits(
+    tmp_path,
+    capsys,
+):
+    with pytest.raises(SystemExit):
+        tdcs_setup.main([])
+
+    plan = {
+        "schema_version": 1,
+        "study": "test-only right-M1 tDCS replay",
+        "status": "blocked_pending_stimulation_parameters_and_hpc_mesh_audit",
+        "submission_allowed": False,
+        "target": {
+            "roi_preset": "right-m1",
+            "optimizer_roi_name": "Right_M1",
+            "roi_definition": "optimizer-matched-spherical",
+        },
+        "cohort": {
+            "subjects": [f"sub-test{index:02d}" for index in range(1, 11)],
+            "subject_count": 10,
+            "repeats_per_arm": 40,
+        },
+        "design": {
+            "arms": [
+                {"name": "simnibs_v4_remesh_heads", "tdcs_solves": 400},
+                {"name": "simnibs_v4_fixed_head_control", "tdcs_solves": 400},
+                {"name": "simnibs_v3_deterministic_head_control", "tdcs_solves": 400},
+            ],
+            "total_tdcs_solves": 1200,
+        },
+        "existing_inputs": {
+            "policy": "read_only",
+            "simnibs_v4_root": str(tmp_path / "inputs" / "v4"),
+            "simnibs_v3_root": str(tmp_path / "inputs" / "v3"),
+        },
+        "proposed_output_roots": {
+            "simnibs_v4": str(tmp_path / "outputs" / "v4"),
+            "simnibs_v3": str(tmp_path / "outputs" / "v3"),
+        },
+        "analysis": {"atlas_dir": str(tmp_path / "atlases")},
+        "stimulation_parameters": {
+            key: None for key in tdcs_setup.REQUIRED_STIMULATION_FIELDS
+        },
+        "required_gates": [
+            "approved_stimulation_parameters",
+            "passing_mesh_audit",
+            "explicit_submission_release",
+        ],
+    }
+    plan_path = tmp_path / "pending-plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert tdcs_setup.main(["--plan", str(plan_path)]) == 0
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "blocked_pending_stimulation_parameters_and_hpc_mesh_audit"
+    assert summary["submission_allowed"] is False
+    assert summary["target"]["roi_preset"] == "right-m1"
+    assert summary["target"]["optimizer_roi_name"] == "Right_M1"
+    assert summary["subject_count"] == 10
+    assert len(summary["arms"]) == 3
+    assert summary["total_tdcs_solves"] == 1200
+    assert set(summary["pending_stimulation_parameters"]) == set(
+        tdcs_setup.REQUIRED_STIMULATION_FIELDS
+    )
+
+    with pytest.raises(RuntimeError, match="Submission is blocked"):
+        tdcs_setup.main(["--plan", str(plan_path), "--submit"])
+
+
+def test_read_only_mesh_audit_validates_v4_distinct_and_v3_deterministic_heads(
+    tmp_path,
+    capsys,
+):
+    subjects = ("sub-test01", "sub-test02")
+    v4_root = tmp_path / "v4"
+    v3_root = tmp_path / "v3"
+    for subject in subjects:
+        for index in range(1, 4):
+            v4_mesh = mesh_audit.remesh_path(v4_root, subject, index)
+            v4_mesh.parent.mkdir(parents=True, exist_ok=True)
+            v4_mesh.write_bytes(f"{subject}-v4-{index}".encode())
+
+            v3_mesh = mesh_audit.remesh_path(v3_root, subject, index)
+            v3_mesh.parent.mkdir(parents=True, exist_ok=True)
+            v3_mesh.write_bytes(f"{subject}-v3-deterministic".encode())
+
+        for root, content in (
+            (v4_root, f"{subject}-v4-2"),
+            (v3_root, f"{subject}-v3-deterministic"),
+        ):
+            fixed = mesh_audit.fixed_cache_path(root, subject)
+            fixed.parent.mkdir(parents=True, exist_ok=True)
+            fixed.write_bytes(content.encode())
+
+    assert mesh_audit.main(
+        [
+            "--v4-root",
+            str(v4_root),
+            "--v3-root",
+            str(v3_root),
+            "--subjects",
+            ",".join(subjects),
+            "--repeat-count",
+            "3",
+        ]
+    ) == 0
+
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["mode"] == "read_only_stdout_only"
+    assert receipt["status"] == "pass"
+    by_label = {item["label"]: item for item in receipt["versions"]}
+    assert by_label["simnibs_v4"]["expected_unique_remesh_meshes_per_subject"] == 3
+    assert by_label["simnibs_v3_2_6"]["expected_unique_remesh_meshes_per_subject"] == 1
+    assert len(by_label["simnibs_v4"]["subjects"][0]["remesh"]["mesh_records"]) == 3
+    assert all(
+        record["sha256"]
+        for record in by_label["simnibs_v3_2_6"]["subjects"][0]["remesh"]["mesh_records"]
+    )
 
 
 def test_submit_all_preflight_verifies_staged_dataset_manifest_hashes(tmp_path):

@@ -203,6 +203,19 @@ def _roi_context(experiment_root: Path) -> tuple[str | None, str]:
     )
 
 
+def _field_context(experiment_root: Path) -> tuple[str, str]:
+    manifest_path = experiment_root / "_pipeline" / "experiment_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return "TI E-field", "TI.msh"
+    stimulation = manifest.get("stimulation")
+    mode = stimulation.get("mode", "ti") if isinstance(stimulation, dict) else "ti"
+    if mode == "tdcs":
+        return "tDCS electric-field magnitude", "TDCS.msh"
+    return "TI E-field", "TI.msh"
+
+
 def _repeat_number(value: object) -> int:
     text = str(value)
     try:
@@ -401,6 +414,7 @@ def _write_primary_repeat_distribution(
     rows: list[dict[str, object]],
     *,
     roi_display_name: str,
+    field_display_name: str = "TI",
     metric: str = "median_roi",
     ylabel: str | None = None,
     title: str | None = None,
@@ -565,7 +579,7 @@ def _write_primary_repeat_distribution(
                 title.format(roi=roi_display_name)
                 if title
                 else (
-                    f"{roi_display_name.capitalize()} TI across remeshed "
+                    f"{roi_display_name.capitalize()} {field_display_name} across remeshed "
                     "and fixed-mesh runs"
                 )
             ),
@@ -574,7 +588,7 @@ def _write_primary_repeat_distribution(
         axis.set_ylabel(
             ylabel.format(roi=roi_display_name)
             if ylabel
-            else f"Median {roi_display_name} TI (V/m)"
+            else f"Median {roi_display_name} {field_display_name} (V/m)"
         )
         axis.set_xlabel("Subject (ordered by decreasing remesh mean)")
         axis.set_xticks(x_positions)
@@ -1048,6 +1062,7 @@ def _repeatability_captions(
     rows: list[dict[str, object]],
     figures: list[str],
     roi_display_name: str,
+    field_display_name: str,
     rank_summary: dict[str, object] | None,
 ) -> dict[str, str]:
     generated = {Path(path).stem for path in figures}
@@ -1055,7 +1070,7 @@ def _repeatability_captions(
     primary_stem = "01_primary_median_roi_repeat_distributions"
     if primary_stem in generated:
         captions[primary_stem] = (
-            f"Repeat-level median TI E-field in the {roi_display_name} target "
+            f"Repeat-level median {field_display_name} in the {roi_display_name} target "
             "ROI. Pale blue and orange points show remesh and fixed-mesh "
             "repeats, respectively. Dark open markers show each condition "
             "mean and error bars show ±1 SD. Subjects are ordered by "
@@ -1065,7 +1080,7 @@ def _repeatability_captions(
     if rank_stem in generated and rank_summary is not None:
         captions[rank_stem] = (
             f"Uncertainty in the between-subject ordering of median "
-            f"{roi_display_name} TI E-field when one remesh repeat is "
+            f"{roi_display_name} {field_display_name} when one remesh repeat is "
             "selected. Panel A shows the probability that each subject pair "
             "reverses its ordering relative to the 40-repeat means; darker "
             "cells indicate less stable ordering. Panel B shows Kendall rank "
@@ -1144,6 +1159,7 @@ def make_figures(
     output_dir = output_dir or experiment_root / "_figures" / "presentation"
     output_dir.mkdir(parents=True, exist_ok=True)
     roi_preset, roi_display_name = _roi_context(experiment_root)
+    field_display_name, field_mesh_filename = _field_context(experiment_root)
     paired_source = experiment_root / "_analysis" / "paired_condition_summary.csv"
     if (
         not paired_source.is_file()
@@ -1202,6 +1218,7 @@ def make_figures(
         primary_figure,
         condition_rows,
         roi_display_name=roi_display_name,
+        field_display_name=field_display_name,
     ):
         figures.append(str(primary_figure))
     rank_figure = output_dir / "02_single_repeat_subject_ranking_uncertainty.png"
@@ -1220,6 +1237,7 @@ def make_figures(
         element_figure,
         condition_rows,
         roi_display_name=roi_display_name,
+        field_display_name=field_display_name,
         metric="mesh_elements",
         ylabel="Deviation from 40-repeat mean (elements)",
         title="Within-subject variation in mesh element count",
@@ -1269,7 +1287,7 @@ def make_figures(
         (
             "The revised repeatability analysis now extracts tetrahedral "
             "element counts and tetrahedral volumes by SimNIBS tissue tag "
-            "directly from each `TI.msh` file."
+            f"directly from each `{field_mesh_filename}` file."
         ),
         "",
     ]
@@ -1353,7 +1371,8 @@ def make_figures(
             "",
             (
                 "The analysis now extracts tetrahedral element counts and "
-                "tetrahedral volume by tissue directly from each `TI.msh`. "
+                "tetrahedral volume by tissue directly from each "
+                f"`{field_mesh_filename}`. "
                 "See `ELEMENT_TISSUE_DATA_STATUS.md` for whether those fields "
                 "were present in this downloaded analysis bundle."
             ),
@@ -1372,6 +1391,7 @@ def make_figures(
         rows=condition_rows,
         figures=figures,
         roi_display_name=roi_display_name,
+        field_display_name=field_display_name,
         rank_summary=rank_summary,
     )
     caption_md, caption_csv = _write_caption_outputs(
@@ -1386,6 +1406,8 @@ def make_figures(
         ),
         "roi_preset": roi_preset,
         "roi_display_name": roi_display_name,
+        "field_display_name": field_display_name,
+        "field_mesh_filename": field_mesh_filename,
         "condition_rows": len(condition_rows),
         "figures": figures,
         "figures_written": len(figures),

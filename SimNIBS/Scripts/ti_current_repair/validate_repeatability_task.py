@@ -20,6 +20,7 @@ from experiment_config import (  # noqa: E402
     subject_condition_mesh_cache_root,
     subject_condition_repeats_root,
 )
+from field_artifacts import artifacts_for_stimulation  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ def _task_from_index(config: ExperimentConfig, task_index: int) -> ExperimentTas
 
 
 def validate_task(config: ExperimentConfig, task: ExperimentTask) -> list[OutputCheck]:
+    artifacts = artifacts_for_stimulation(config.stimulation)
     repeat_root = subject_condition_repeats_root(
         config,
         task.subject,
@@ -107,10 +109,21 @@ def validate_task(config: ExperimentConfig, task: ExperimentTask) -> list[Output
         ),
         _check_file(subject_root / "task_manifest.json", name="task_manifest"),
         _check_file(mesh_dir / f"{task.subject}.msh", name="head_mesh"),
-        _check_file(sim_root / "ti_brain_only.nii.gz", name="ti_brain_only"),
-        _check_file(output_root / "TI.msh", name="ti_msh"),
-        _check_first_match(output_root / "Volume_Labels", "TI_Volumetric_*", name="volume_labels"),
-        _check_first_match(output_root / "Volume_Base", "TI_Volumetric_*", name="volume_base"),
+        _check_file(
+            sim_root / artifacts.brain_nifti_filename,
+            name="brain_only_field",
+        ),
+        _check_file(output_root / artifacts.mesh_filename, name="field_mesh"),
+        _check_first_match(
+            output_root / "Volume_Labels",
+            f"{artifacts.volume_prefix}*",
+            name="volume_labels",
+        ),
+        _check_first_match(
+            output_root / "Volume_Base",
+            f"{artifacts.volume_prefix}*",
+            name="volume_base",
+        ),
     ]
 
     if task.mesh_mode == "fixed_mesh":

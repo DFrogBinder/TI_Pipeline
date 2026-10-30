@@ -128,6 +128,73 @@ python ti_current_repair/pipeline/staged_median_fixed_experiment.py status \
   --experiment-root /mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1
 ```
 
+## Pending right-M1 tDCS repeatability extension
+
+The former provisional left-M1/C3-Fp2 variability launcher has been removed.
+The replacement workflow targets the optimizer-matched right-M1 ROI and
+deliberately contains no inferred montage, current, or electrode values. The
+runner, preflight, Slurm chain, retry validation, and completion receipts are
+implemented, but the repository does not ship a scientific plan. A separately
+reviewed plan must be supplied explicitly, keeping execution and submission
+fail-closed.
+
+Review the machine-readable study plan locally:
+
+```bash
+bash ti_current_repair/hpc_scripts/review_final132_right_m1_tdcs_repeatability.sh \
+  --plan /path/to/reviewed-right-m1-tdcs-plan.json
+```
+
+The full scope is 1,200 tDCS solves: 400 replays on the existing v4
+remesh heads, 400 repeated v4 fixed-head solves, and 400 repeated v3.2.6
+deterministic-head solves. The v3 arm is a solver/reproducibility control, not a
+v3 remeshing-variability arm. Existing v3 and v4 roots are read-only inputs;
+new outputs must use the isolated roots recorded in the reviewed plan.
+
+Downloaded manifests and analysis exports may establish experiment identities
+and completed TI task counts, but contain no `.msh` heads. When logged into
+Stanage, run the content audit directly there; it writes nothing to either
+experiment root and emits its receipt to stdout:
+
+```bash
+python ti_current_repair/pipeline/audit_existing_right_m1_meshes.py \
+  > right_m1_mesh_audit.json
+```
+
+The redirection target should be a user-chosen receipt location. The audit must
+pass for all ten subjects before the replay preflight accepts the existing
+heads. Exact montage, current, electrode geometry, shape, and conductivity must
+also be approved and entered explicitly. Generic tDCS initialization supplies
+no defaults for these fields.
+
+Once those two inputs exist, the full read-only source preflight is:
+
+```bash
+python ti_current_repair/pipeline/tdcs_replay_workflow.py preflight \
+  --plan /path/to/reviewed-right-m1-tdcs-plan.json \
+  --audit /path/to/right_m1_mesh_audit.json
+```
+
+It verifies all 420 unique source meshes used by the 1,200 tasks, all ten atlas
+files, source/output isolation, exact task counts, and any resumable outputs.
+`prepare` writes version-specific analysis configs and provenance receipts only
+under the new output roots. The candidate Slurm chain preserves the established
+Stanage settings: `sheffield`, 8 CPUs, 32 GB, 8 hours, `%50` concurrency,
+SimNIBS 4.0.1 then 3.2.6, and one exact-array-element retry. It runs v4
+`0-799%50`, validates it, then v3 `0-399%50`, and writes version and combined
+completion receipts.
+
+The submission helper prints scope without submitting unless `--submit` is
+provided. Even with that flag it refuses to call `sbatch` unless the plan has a
+passing audit, no pending stimulation values, `status=ready_for_submission`,
+and `submission_allowed=true`:
+
+```bash
+bash ti_current_repair/hpc_scripts/submit_final132_right_m1_tdcs_replay.sh \
+  --plan /path/to/reviewed-right-m1-tdcs-plan.json \
+  --audit /path/to/right_m1_mesh_audit.json
+```
+
 ### Manual stage-by-stage fallback
 
 The original commands remain available for deliberate recovery or inspection.

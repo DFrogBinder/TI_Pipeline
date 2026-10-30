@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Confirmed targets.csv-backed stimulation configuration."""
+"""Validated TI and explicitly specified provisional tDCS configurations."""
 
 from __future__ import annotations
 
@@ -61,6 +61,11 @@ class StimulationConfig:
     electrode_shape: str
     electrode_conductivity: float
 
+    @property
+    def mode(self) -> str:
+        """Keep legacy TI serialization unchanged while exposing a mode."""
+        return "ti"
+
     def to_dict(self) -> dict[str, object]:
         return {
             "montage_preset": self.montage_preset,
@@ -79,6 +84,45 @@ class StimulationConfig:
                 "conductivity": self.electrode_conductivity,
             },
         }
+
+
+PROVISIONAL_TDCS_REVIEW_STATUS = "provisional_pending_supervisor_review"
+
+
+@dataclass(frozen=True)
+class TDCSStimulationConfig:
+    """One-pair tDCS configuration that is intentionally not targets.csv-backed."""
+
+    montage_preset: str
+    target_roi: str
+    pair: StimulationPair
+    electrode_radius_mm: float
+    electrode_thickness_mm: float
+    electrode_shape: str
+    electrode_conductivity: float
+    review_status: str = PROVISIONAL_TDCS_REVIEW_STATUS
+
+    @property
+    def mode(self) -> str:
+        return "tdcs"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "review_status": self.review_status,
+            "montage_preset": self.montage_preset,
+            "target_roi": self.target_roi,
+            "pair": self.pair.to_dict(),
+            "electrode": {
+                "radius_mm": self.electrode_radius_mm,
+                "thickness_mm": self.electrode_thickness_mm,
+                "shape": self.electrode_shape,
+                "conductivity": self.electrode_conductivity,
+            },
+        }
+
+
+AnyStimulationConfig = StimulationConfig | TDCSStimulationConfig
 
 
 def file_sha256(path: str | Path) -> str:
@@ -206,10 +250,122 @@ def resolve_confirmed_stimulation(
     )
 
 
-def validate_stimulation_config(raw: object) -> StimulationConfig:
-    """Validate that a serialized config exactly matches its confirmed CSV row."""
+def resolve_provisional_tdcs_stimulation(
+    *,
+    anode: str,
+    cathode: str,
+    current_ma: float,
+    montage_preset: str,
+    target_roi: str,
+    electrode_radius_mm: float,
+    electrode_thickness_mm: float,
+    electrode_shape: str,
+    electrode_conductivity: float,
+    review_status: str = PROVISIONAL_TDCS_REVIEW_STATUS,
+) -> TDCSStimulationConfig:
+    """Build a provisional tDCS montage without silently supplying study parameters."""
+    anode = anode.strip()
+    cathode = cathode.strip()
+    montage_preset = montage_preset.strip()
+    target_roi = target_roi.strip()
+    review_status = review_status.strip()
+    for value, field_name in (
+        (anode, "anode"),
+        (cathode, "cathode"),
+        (montage_preset, "montage_preset"),
+        (target_roi, "target_roi"),
+        (review_status, "review_status"),
+    ):
+        if not value:
+            raise ValueError(f"Expected non-empty tDCS {field_name}.")
+    if anode.casefold() == cathode.casefold():
+        raise ValueError("tDCS anode and cathode must be different electrodes.")
+
+    current_ma_value = _finite_float(current_ma, field_name="current_ma")
+    radius = _finite_float(electrode_radius_mm, field_name="electrode_radius_mm")
+    thickness = _finite_float(
+        electrode_thickness_mm,
+        field_name="electrode_thickness_mm",
+    )
+    conductivity = _finite_float(
+        electrode_conductivity,
+        field_name="electrode_conductivity",
+    )
+    if current_ma_value <= 0:
+        raise ValueError("tDCS current_ma must be greater than zero.")
+    if radius <= 0 or thickness <= 0 or conductivity <= 0:
+        raise ValueError("tDCS electrode dimensions and conductivity must be positive.")
+    if not electrode_shape.strip():
+        raise ValueError("Expected non-empty tDCS electrode_shape.")
+
+    return TDCSStimulationConfig(
+        montage_preset=montage_preset,
+        target_roi=target_roi,
+        pair=StimulationPair(
+            anode=anode,
+            cathode=cathode,
+            current_a=current_ma_value * 1e-3,
+        ),
+        electrode_radius_mm=radius,
+        electrode_thickness_mm=thickness,
+        electrode_shape=electrode_shape.strip(),
+        electrode_conductivity=conductivity,
+        review_status=review_status,
+    )
+
+
+def validate_stimulation_config(raw: object) -> AnyStimulationConfig:
+    """Validate a serialized TI or provisional tDCS configuration exactly."""
     if not isinstance(raw, dict):
         raise ValueError("The top-level 'stimulation' section must be a JSON object.")
+
+    mode = raw.get("mode", "ti")
+    if mode == "tdcs":
+        pair = raw.get("pair")
+        electrode = raw.get("electrode")
+        if not isinstance(pair, dict):
+            raise ValueError("Expected 'stimulation.pair' to be a JSON object.")
+        if not isinstance(electrode, dict):
+            raise ValueError("Expected 'stimulation.electrode' to be a JSON object.")
+        resolved_tdcs = resolve_provisional_tdcs_stimulation(
+            anode=str(pair.get("anode", "")),
+            cathode=str(pair.get("cathode", "")),
+            current_ma=_finite_float(
+                pair.get("current_a"),
+                field_name="pair.current_a",
+            )
+            * 1e3,
+            montage_preset=str(raw.get("montage_preset", "")),
+            target_roi=str(raw.get("target_roi", "")),
+            electrode_radius_mm=_finite_float(
+                electrode.get("radius_mm"),
+                field_name="electrode.radius_mm",
+            ),
+            electrode_thickness_mm=_finite_float(
+                electrode.get("thickness_mm"),
+                field_name="electrode.thickness_mm",
+            ),
+            electrode_shape=str(electrode.get("shape", "")),
+            electrode_conductivity=_finite_float(
+                electrode.get("conductivity"),
+                field_name="electrode.conductivity",
+            ),
+            review_status=str(raw.get("review_status", "")),
+        )
+        expected_tdcs = resolved_tdcs.to_dict()
+        if raw != expected_tdcs:
+            differences = [
+                key
+                for key in sorted(set(raw) | set(expected_tdcs))
+                if raw.get(key) != expected_tdcs.get(key)
+            ]
+            raise ValueError(
+                "Serialized tDCS parameters are not canonical; differing fields: "
+                f"{', '.join(differences)}."
+            )
+        return resolved_tdcs
+    if mode != "ti":
+        raise ValueError(f"Unsupported stimulation mode: {mode!r}.")
 
     montage_preset = raw.get("montage_preset")
     targets_csv = raw.get("targets_csv")
@@ -236,8 +392,26 @@ def validate_stimulation_config(raw: object) -> StimulationConfig:
     return resolved
 
 
-def stimulation_summary(stimulation: StimulationConfig) -> dict[str, Any]:
+def stimulation_summary(stimulation: AnyStimulationConfig) -> dict[str, Any]:
+    if isinstance(stimulation, TDCSStimulationConfig):
+        return {
+            "mode": stimulation.mode,
+            "review_status": stimulation.review_status,
+            "montage_preset": stimulation.montage_preset,
+            "target_roi": stimulation.target_roi,
+            "pair": (
+                f"{stimulation.pair.anode}-{stimulation.pair.cathode} "
+                f"{stimulation.pair.current_a * 1e3:.15g} mA"
+            ),
+            "electrode": (
+                f"{stimulation.electrode_shape}, radius "
+                f"{stimulation.electrode_radius_mm:.15g} mm, thickness "
+                f"{stimulation.electrode_thickness_mm:.15g} mm, conductivity "
+                f"{stimulation.electrode_conductivity:.15g} S/m"
+            ),
+        }
     return {
+        "mode": stimulation.mode,
         "montage_preset": stimulation.montage_preset,
         "target_roi": stimulation.target_roi,
         "targets_csv": str(stimulation.targets_csv),

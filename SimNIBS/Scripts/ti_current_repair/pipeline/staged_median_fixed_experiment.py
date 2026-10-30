@@ -20,12 +20,14 @@ if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 
 from experiment_config import repeat_tag  # noqa: E402
+from field_artifacts import artifacts_for_stimulation  # noqa: E402
 from pipeline import provenance  # noqa: E402
 from post import make_presentation_figures, seed_fixed_from_median, select_median_remesh_repeats  # noqa: E402
 from stimulation_config import (  # noqa: E402
     TARGETS_CSV_PATH,
-    StimulationConfig,
+    AnyStimulationConfig,
     resolve_confirmed_stimulation,
+    resolve_provisional_tdcs_stimulation,
     stimulation_summary,
     validate_stimulation_config,
 )
@@ -142,11 +144,13 @@ def _base_config(
     roi_preset: str,
     atlas_dir: Path,
     compare_metric: str,
-    stimulation: StimulationConfig,
+    stimulation: AnyStimulationConfig,
+    roi_definition: str = "anatomical-parcel",
 ) -> dict[str, Any]:
     analysis: dict[str, Any] = {
         "roi_preset": roi_preset,
         "compare_metric": compare_metric,
+        "roi_definition": roi_definition,
     }
     analysis["atlas_dir"] = str(atlas_dir)
     return {
@@ -339,6 +343,20 @@ def _validate_workflow_inputs(config: dict[str, Any]) -> dict[str, Any]:
             + ", ".join(str(path) for path in missing_atlases)
         )
     stimulation = validate_stimulation_config(config.get("stimulation"))
+    roi_definition = str(analysis.get("roi_definition", "anatomical-parcel"))
+    if roi_definition == "optimizer-matched-spherical":
+        expected_target_by_preset = {
+            "left-m1": "Left_M1",
+            "right-m1": "Right_M1",
+            "left-hippocampus": "Left_Hippocampus",
+        }
+        roi_preset = str(analysis.get("roi_preset", ""))
+        expected_target = expected_target_by_preset.get(roi_preset)
+        if expected_target is None or stimulation.target_roi != expected_target:
+            raise ValueError(
+                "Optimizer-matched ROI provenance does not match stimulation: "
+                f"roi_preset={roi_preset!r}, target_roi={stimulation.target_roi!r}."
+            )
     return {
         "source_root": str(source_root),
         "source_files_expected": len(expected_relative_paths),
@@ -349,6 +367,7 @@ def _validate_workflow_inputs(config: dict[str, Any]) -> dict[str, Any]:
         "atlases_expected": len(subjects),
         "atlases_ready": len(subjects),
         "stimulation": stimulation_summary(stimulation),
+        "roi_definition": roi_definition,
     }
 
 
@@ -365,35 +384,52 @@ def _workflow_scope(
     fixed_tasks = _simulation_task_count(fixed)
     roi = str(paired.get("analysis", {}).get("roi_preset", ""))
     source_root = str(paired.get("source_root", ""))
-    return {
+    artifacts = artifacts_for_stimulation(paired.get("stimulation", {}))
+    total_tasks = remesh_tasks + fixed_tasks
+    scope = {
         "dataset": source_root,
         "roi": roi,
+        "roi_definition": str(
+            paired.get("analysis", {}).get("roi_definition", "anatomical-parcel")
+        ),
         "subjects": subjects,
         "subject_count": len(subjects),
         "repeats_per_condition": _condition_repeat_count(remesh, "remesh"),
         "remesh_tasks": remesh_tasks,
         "fixed_mesh_tasks": fixed_tasks,
-        "total_simulation_tasks": remesh_tasks + fixed_tasks,
+        "total_simulation_tasks": total_tasks,
         "remesh_array": f"0-{remesh_tasks - 1}%{max_concurrent}",
         "fixed_mesh_array": f"0-{fixed_tasks - 1}%{max_concurrent}",
         "analysis_array": f"0-{len(subjects) - 1}%{analysis_max_concurrent}",
-        "expected_ti_msh": remesh_tasks + fixed_tasks,
+        "stimulation_mode": artifacts.mode,
+        "field_mesh_filename": artifacts.mesh_filename,
+        "field_display_name": artifacts.display_name,
+        "expected_field_msh": total_tasks,
+        "expected_fem_solves": total_tasks * artifacts.fem_solves_per_simulation,
         "input_validation": input_validation,
         "execution_scope": "full requested experiment; not a smoke or subset",
     }
+    if artifacts.mode == "ti":
+        scope["expected_ti_msh"] = total_tasks
+    return scope
 
 
 def _print_workflow_scope(scope: dict[str, Any]) -> None:
     print("Scope:")
     print(f"  dataset: {scope['dataset']}")
     print(f"  ROI: {scope['roi']}")
+    print(f"  ROI definition: {scope['roi_definition']}")
     print(f"  subjects: {scope['subject_count']}")
     print(f"  repeats per condition: {scope['repeats_per_condition']}")
     print(f"  remesh tasks: {scope['remesh_tasks']} ({scope['remesh_array']})")
     print(f"  fixed-mesh tasks: {scope['fixed_mesh_tasks']} ({scope['fixed_mesh_array']})")
     print(f"  total simulation tasks: {scope['total_simulation_tasks']}")
     print(f"  analysis array: {scope['analysis_array']}")
-    print(f"  expected TI.msh outputs: {scope['expected_ti_msh']}")
+    print(
+        f"  expected {scope['field_mesh_filename']} outputs: "
+        f"{scope['expected_field_msh']}"
+    )
+    print(f"  expected FEM solves: {scope['expected_fem_solves']}")
     input_validation = scope["input_validation"]
     print(
         "  staged inputs: "
@@ -414,10 +450,15 @@ def _print_workflow_scope(scope: dict[str, Any]) -> None:
         "  stimulation: "
         f"{stimulation['montage_preset']} ({stimulation['target_roi']})"
     )
-    print(f"  targets.csv: {stimulation['targets_csv']}")
-    print(f"  targets.csv SHA-256: {stimulation['targets_csv_sha256']}")
-    print(f"  pair 1: {stimulation['pair1']}")
-    print(f"  pair 2: {stimulation['pair2']}")
+    if stimulation["mode"] == "tdcs":
+        print(f"  review status: {stimulation['review_status']}")
+        print(f"  pair: {stimulation['pair']}")
+        print(f"  electrode: {stimulation['electrode']}")
+    else:
+        print(f"  targets.csv: {stimulation['targets_csv']}")
+        print(f"  targets.csv SHA-256: {stimulation['targets_csv_sha256']}")
+        print(f"  pair 1: {stimulation['pair1']}")
+        print(f"  pair 2: {stimulation['pair2']}")
     print(f"  execution: {scope['execution_scope']}")
 
 
@@ -637,9 +678,10 @@ def _simulation_sbatch_command(
 ) -> list[str]:
     task_count = _simulation_task_count(config)
     array_spec = f"0-{task_count - 1}%{max_concurrent}"
+    mode = artifacts_for_stimulation(config.get("stimulation", {})).mode
     return [
         os.environ.get("SBATCH_BIN", "sbatch"),
-        f"--job-name=ti_repeat_{stage}",
+        f"--job-name={mode}_repeat_{stage}",
         "--cpus-per-task=8",
         "--mem=32G",
         "--time=08:00:00",
@@ -663,9 +705,10 @@ def _report_sbatch_command(
     stage: str,
 ) -> list[str]:
     array_spec = f"0-{_subject_count(config) - 1}%{max_concurrent}"
+    mode = artifacts_for_stimulation(config.get("stimulation", {})).mode
     return [
         os.environ.get("SBATCH_BIN", "sbatch"),
-        f"--job-name=ti_repeat_{stage}",
+        f"--job-name={mode}_repeat_{stage}",
         "--cpus-per-task=8",
         "--mem=32G",
         "--time=08:00:00",
@@ -685,15 +728,59 @@ def command_init(args: argparse.Namespace) -> int:
     experiment_root = args.experiment_root.expanduser().resolve()
     subjects = _subjects_from_arg(args.subjects)
     atlas_dir = _validate_atlas_dir(args.atlas_dir, subjects)
-    stimulation = resolve_confirmed_stimulation(
-        args.montage_preset,
-        targets_csv=args.targets_csv,
-    )
-    if stimulation.montage_preset != args.roi_preset:
-        raise ValueError(
-            "Analysis ROI and stimulation montage must match for this repeatability "
-            f"workflow: {args.roi_preset!r} != {stimulation.montage_preset!r}."
+    if args.stimulation_mode == "tdcs":
+        required_tdcs = {
+            "--montage-preset": args.montage_preset,
+            "--tdcs-anode": args.tdcs_anode,
+            "--tdcs-cathode": args.tdcs_cathode,
+            "--tdcs-current-ma": args.tdcs_current_ma,
+            "--tdcs-target-roi": args.tdcs_target_roi,
+            "--electrode-radius-mm": args.electrode_radius_mm,
+            "--electrode-thickness-mm": args.electrode_thickness_mm,
+            "--electrode-shape": args.electrode_shape,
+            "--electrode-conductivity": args.electrode_conductivity,
+        }
+        missing = [name for name, value in required_tdcs.items() if value is None]
+        if missing:
+            raise ValueError(
+                "tDCS initialization is blocked until every stimulation parameter "
+                "is supplied explicitly: " + ", ".join(missing)
+            )
+        stimulation = resolve_provisional_tdcs_stimulation(
+            anode=args.tdcs_anode,
+            cathode=args.tdcs_cathode,
+            current_ma=args.tdcs_current_ma,
+            montage_preset=args.montage_preset,
+            target_roi=args.tdcs_target_roi,
+            electrode_radius_mm=args.electrode_radius_mm,
+            electrode_thickness_mm=args.electrode_thickness_mm,
+            electrode_shape=args.electrode_shape,
+            electrode_conductivity=args.electrode_conductivity,
         )
+        expected_tdcs_target = {
+            "left-m1": "Left_M1",
+            "right-m1": "Right_M1",
+            "left-hippocampus": "Left_Hippocampus",
+        }.get(args.roi_preset)
+        if expected_tdcs_target is None or stimulation.target_roi != expected_tdcs_target:
+            raise ValueError(
+                "The tDCS analysis ROI and stimulation target must match: "
+                f"roi_preset={args.roi_preset!r}, "
+                f"target_roi={stimulation.target_roi!r}, "
+                f"expected_target={expected_tdcs_target!r}."
+            )
+    else:
+        if not args.montage_preset:
+            raise ValueError("--montage-preset is required for TI stimulation.")
+        stimulation = resolve_confirmed_stimulation(
+            args.montage_preset,
+            targets_csv=args.targets_csv,
+        )
+        if stimulation.montage_preset != args.roi_preset:
+            raise ValueError(
+                "Analysis ROI and stimulation montage must match for this repeatability "
+                f"workflow: {args.roi_preset!r} != {stimulation.montage_preset!r}."
+            )
     base = _base_config(
         source_root=source_root,
         experiment_root=experiment_root,
@@ -703,6 +790,7 @@ def command_init(args: argparse.Namespace) -> int:
         atlas_dir=atlas_dir,
         compare_metric=args.compare_metric,
         stimulation=stimulation,
+        roi_definition=args.roi_definition,
     )
     configs = {
         REMESH_CONFIG: _config_with_conditions(base, {"remesh"}),
@@ -726,6 +814,7 @@ def command_init(args: argparse.Namespace) -> int:
             "repeat_count": args.repeat_count,
             "roi_preset": args.roi_preset,
             "compare_metric": args.compare_metric,
+            "roi_definition": args.roi_definition,
             "atlas_dir": str(atlas_dir),
             "stimulation": stimulation.to_dict(),
             "configs": {name: str(_config_path(experiment_root, name)) for name in configs},
@@ -739,6 +828,7 @@ def command_init(args: argparse.Namespace) -> int:
         subjects=subjects,
         repeat_count=args.repeat_count,
         atlas_dir=str(atlas_dir),
+        roi_definition=args.roi_definition,
         stimulation=stimulation.to_dict(),
     )
     provenance.write_stage_status(experiment_root, collect_status(experiment_root))
@@ -755,13 +845,14 @@ def _submit_simulation_stage_result(
     experiment_root = args.experiment_root.expanduser().resolve()
     config_path = _config_path(experiment_root, config_name)
     config = _load_pipeline_config(experiment_root, config_name)
+    artifacts = artifacts_for_stimulation(config.get("stimulation", {}))
     log_dir = _pipeline_root(experiment_root) / "logs" / stage
     env = {
         "PIPELINE_DIR": str(PIPELINE_DIR),
         "EXPERIMENT_CONFIG": str(config_path),
         "LOG_DIR": str(log_dir),
         "MAX_CONCURRENT_TASKS": str(args.max_concurrent),
-        "JOB_NAME": f"ti_repeat_{stage}",
+        "JOB_NAME": f"{artifacts.mode}_repeat_{stage}",
         "OVERWRITE_OUTPUT": "0",
         "FORCE_MESH": "0",
     }
@@ -783,7 +874,10 @@ def _submit_simulation_stage_result(
         stderr=result.stderr,
         returncode=result.returncode,
         job_id=job_id,
-        expected_outputs={"ti_msh": _simulation_task_count(config)},
+        expected_outputs={
+            "field_mesh": _simulation_task_count(config),
+            "field_mesh_filename": artifacts.mesh_filename,
+        },
     )
     if result.stdout:
         print(result.stdout, end="")
@@ -810,13 +904,14 @@ def _submit_report_stage_result(
     experiment_root = args.experiment_root.expanduser().resolve()
     config_path = _config_path(experiment_root, config_name)
     config = _load_pipeline_config(experiment_root, config_name)
+    artifacts = artifacts_for_stimulation(config.get("stimulation", {}))
     log_dir = _pipeline_root(experiment_root) / "logs" / stage
     env = {
         "PIPELINE_DIR": str(PIPELINE_DIR),
         "EXPERIMENT_CONFIG": str(config_path),
         "LOG_DIR": str(log_dir),
         "MAX_CONCURRENT_TASKS": str(args.max_concurrent),
-        "JOB_NAME": f"ti_repeat_{stage}",
+        "JOB_NAME": f"{artifacts.mode}_repeat_{stage}",
         "CONDITIONS": conditions,
     }
     result = _run_submitter(PIPELINE_DIR / "hpc_scripts" / "submit_repeatability_report_array.sh", env)
@@ -1146,9 +1241,13 @@ def command_advance_workflow(args: argparse.Namespace) -> int:
     experiment_root = args.experiment_root.expanduser().resolve()
     _, _, paired = _workflow_configs(experiment_root)
     status = collect_status(experiment_root)
+    artifacts = artifacts_for_stimulation(paired.get("stimulation", {}))
 
     if args.step == "after-remesh":
-        _require_complete("remesh TI.msh outputs", status["remesh_ti_msh"])
+        _require_complete(
+            f"remesh {artifacts.mesh_filename} outputs",
+            status["remesh_field_msh"],
+        )
         report_job, controller_job = _submit_next_report(
             experiment_root=experiment_root,
             stage="analyze-remesh",
@@ -1162,7 +1261,12 @@ def command_advance_workflow(args: argparse.Namespace) -> int:
             experiment_root,
             step=args.step,
             payload={
-                "remesh_ti_msh": status["remesh_ti_msh"],
+                "remesh_field_msh": status["remesh_field_msh"],
+                **(
+                    {"remesh_ti_msh": status["remesh_ti_msh"]}
+                    if artifacts.mode == "ti"
+                    else {}
+                ),
                 "report_job_id": report_job,
                 "next_controller_job_id": controller_job,
             },
@@ -1232,7 +1336,10 @@ def command_advance_workflow(args: argparse.Namespace) -> int:
         return 0
 
     if args.step == "after-fixed":
-        _require_complete("fixed-mesh TI.msh outputs", status["fixed_mesh_ti_msh"])
+        _require_complete(
+            f"fixed-mesh {artifacts.mesh_filename} outputs",
+            status["fixed_mesh_field_msh"],
+        )
         report_job, controller_job = _submit_next_report(
             experiment_root=experiment_root,
             stage="analyze-paired",
@@ -1246,7 +1353,12 @@ def command_advance_workflow(args: argparse.Namespace) -> int:
             experiment_root,
             step=args.step,
             payload={
-                "fixed_mesh_ti_msh": status["fixed_mesh_ti_msh"],
+                "fixed_mesh_field_msh": status["fixed_mesh_field_msh"],
+                **(
+                    {"fixed_mesh_ti_msh": status["fixed_mesh_ti_msh"]}
+                    if artifacts.mode == "ti"
+                    else {}
+                ),
                 "report_job_id": report_job,
                 "next_controller_job_id": controller_job,
             },
@@ -1292,11 +1404,12 @@ def _exists_nonempty(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
-def _count_ti_msh(config: dict[str, Any], condition_name: str) -> tuple[int, int]:
+def _count_field_msh(config: dict[str, Any], condition_name: str) -> tuple[int, int]:
     repeat_count = _condition_repeat_count(config, condition_name)
     expected = _subject_count(config) * repeat_count
     observed = 0
     root = Path(config["experiment_root"])
+    artifacts = artifacts_for_stimulation(config.get("stimulation", {}))
     for subject in config["subjects"]:
         for index in range(1, repeat_count + 1):
             path = (
@@ -1310,11 +1423,18 @@ def _count_ti_msh(config: dict[str, Any], condition_name: str) -> tuple[int, int
                 / "SimNIBS"
                 / "Output"
                 / subject
-                / "TI.msh"
+                / artifacts.mesh_filename
             )
             if _exists_nonempty(path):
                 observed += 1
     return expected, observed
+
+
+def _count_ti_msh(config: dict[str, Any], condition_name: str) -> tuple[int, int]:
+    """Backward-compatible TI counter used by older callers and tests."""
+    if artifacts_for_stimulation(config.get("stimulation", {})).mode != "ti":
+        raise ValueError("_count_ti_msh only applies to TI stimulation configs.")
+    return _count_field_msh(config, condition_name)
 
 
 def _count_summaries(config: dict[str, Any], condition_name: str) -> tuple[int, int]:
@@ -1483,15 +1603,21 @@ def collect_status(experiment_root: Path) -> dict[str, Any]:
     }
     for condition_name in ("remesh", "fixed_mesh"):
         try:
-            expected, observed = _count_ti_msh(config, condition_name)
-            status[f"{condition_name}_ti_msh"] = {"expected": expected, "observed": observed}
+            expected, observed = _count_field_msh(config, condition_name)
+            field_status = {"expected": expected, "observed": observed}
+            status[f"{condition_name}_field_msh"] = field_status
+            if artifacts_for_stimulation(config.get("stimulation", {})).mode == "ti":
+                status[f"{condition_name}_ti_msh"] = field_status
             expected_summary, observed_summary = _count_summaries(config, condition_name)
             status[f"{condition_name}_summaries"] = {
                 "expected": expected_summary,
                 "observed": observed_summary,
             }
         except KeyError:
-            status[f"{condition_name}_ti_msh"] = {"expected": 0, "observed": 0}
+            field_status = {"expected": 0, "observed": 0}
+            status[f"{condition_name}_field_msh"] = field_status
+            if artifacts_for_stimulation(config.get("stimulation", {})).mode == "ti":
+                status[f"{condition_name}_ti_msh"] = field_status
             status[f"{condition_name}_summaries"] = {"expected": 0, "observed": 0}
     status["selected_medians"] = _count_selected_medians(experiment_root, config)
     status["fixed_seed"] = _count_seed_rows(experiment_root, config)
@@ -1533,10 +1659,24 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--repeat-count", type=int, required=True)
     init.add_argument("--roi-preset", default="left-hippocampus")
     init.add_argument(
-        "--montage-preset",
-        required=True,
-        help="Confirmed targets.csv montage preset used for all simulations.",
+        "--stimulation-mode",
+        choices=("ti", "tdcs"),
+        default="ti",
+        help="Use the existing two-pair TI workflow or the opt-in one-pair tDCS branch.",
     )
+    init.add_argument(
+        "--montage-preset",
+        default=None,
+        help="Confirmed TI preset, or a provenance name for a tDCS candidate.",
+    )
+    init.add_argument("--tdcs-anode", default=None)
+    init.add_argument("--tdcs-cathode", default=None)
+    init.add_argument("--tdcs-current-ma", type=float, default=None)
+    init.add_argument("--tdcs-target-roi", default=None)
+    init.add_argument("--electrode-radius-mm", type=float, default=None)
+    init.add_argument("--electrode-thickness-mm", type=float, default=None)
+    init.add_argument("--electrode-shape", default=None)
+    init.add_argument("--electrode-conductivity", type=float, default=None)
     init.add_argument(
         "--targets-csv",
         type=Path,
@@ -1547,6 +1687,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     init.add_argument("--atlas-dir", type=Path, required=True)
+    init.add_argument(
+        "--roi-definition",
+        choices=("anatomical-parcel", "optimizer-matched-spherical"),
+        default="anatomical-parcel",
+        help="ROI construction used for repeat metrics and median-repeat selection.",
+    )
     init.add_argument(
         "--compare-metric",
         default="median_roi",

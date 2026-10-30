@@ -38,7 +38,13 @@ from experiment_config import (  # noqa: E402
     template_config_dict,
     write_template_config,
 )
-from stimulation_config import StimulationConfig, stimulation_summary  # noqa: E402
+from field_artifacts import artifacts_for_stimulation  # noqa: E402
+from stimulation_config import (  # noqa: E402
+    AnyStimulationConfig,
+    StimulationConfig,
+    TDCSStimulationConfig,
+    stimulation_summary,
+)
 
 
 def _find_camcan_root() -> Path:
@@ -126,6 +132,30 @@ def _ti_montage_parameters(
             stimulation.pair2.current_a,
             stimulation.pair2.cathode,
             -stimulation.pair2.current_a,
+        ),
+    }
+
+
+def _tdcs_montage_parameters(
+    stimulation: TDCSStimulationConfig,
+) -> dict[str, object]:
+    electrode_conductivity = stimulation.electrode_conductivity
+    return {
+        "electrode_size": [
+            stimulation.electrode_radius_mm,
+            stimulation.electrode_thickness_mm,
+        ],
+        "electrode_shape": stimulation.electrode_shape,
+        "electrode_conductivity": electrode_conductivity,
+        "custom_conductivities": {
+            **CAMCAN_TISSUE_CONDUCTIVITIES,
+            "Saline": electrode_conductivity,
+        },
+        "montage_pair": (
+            stimulation.pair.anode,
+            stimulation.pair.current_a,
+            stimulation.pair.cathode,
+            -stimulation.pair.current_a,
         ),
     }
 
@@ -394,28 +424,37 @@ def _mesh_ready_marker(workspace: WorkspacePaths) -> Path:
     return workspace.anat_dir / ".mesh_ready.json"
 
 
-def _find_generated_volume(parent: Path) -> Path | None:
+def _find_generated_volume(parent: Path, prefix: str) -> Path | None:
     if not parent.is_dir():
         return None
-    candidates = sorted(parent.glob("TI_Volumetric_*"))
+    candidates = sorted(parent.glob(f"{prefix}*"))
     return candidates[0] if candidates else None
 
 
-def _repeat_done_marker(workspace: WorkspacePaths) -> Path:
-    return workspace.output_root / "ti_brain_only.nii.gz"
+def _repeat_done_marker(
+    workspace: WorkspacePaths,
+    stimulation: AnyStimulationConfig,
+) -> Path:
+    artifacts = artifacts_for_stimulation(stimulation)
+    return workspace.output_root / artifacts.brain_nifti_filename
 
 
-def _repeat_outputs_complete(workspace: WorkspacePaths, subject: str) -> bool:
+def _repeat_outputs_complete(
+    workspace: WorkspacePaths,
+    subject: str,
+    stimulation: AnyStimulationConfig,
+) -> bool:
+    artifacts = artifacts_for_stimulation(stimulation)
     output_root = workspace.output_root / "Output" / subject
     if not workspace.mesh_path.is_file():
         return False
-    if not _repeat_done_marker(workspace).is_file():
+    if not _repeat_done_marker(workspace, stimulation).is_file():
         return False
-    if not (output_root / "TI.msh").is_file():
+    if not (output_root / artifacts.mesh_filename).is_file():
         return False
-    if _find_generated_volume(output_root / "Volume_Labels") is None:
+    if _find_generated_volume(output_root / "Volume_Labels", artifacts.volume_prefix) is None:
         return False
-    if _find_generated_volume(output_root / "Volume_Base") is None:
+    if _find_generated_volume(output_root / "Volume_Base", artifacts.volume_prefix) is None:
         return False
     return True
 
@@ -569,6 +608,122 @@ def _mesh_workspace(
         return workspace.mesh_path
 
 
+def _write_field_volumes_and_brain_mask(
+    *,
+    subject: str,
+    subject_dir: Path,
+    output_root: Path,
+    pathfem: Path,
+    field_mesh_path: Path,
+    stimulation: AnyStimulationConfig,
+    condition_name: str,
+    repeat_tag_value: str,
+) -> Path:
+    artifacts = artifacts_for_stimulation(stimulation)
+    nib = NIB_MODULE
+    np = NP_MODULE
+    resample_from_to = RESAMPLE_FROM_TO
+    volume_masks_path = pathfem / "Volume_Maks"
+    volume_base_path = pathfem / "Volume_Base"
+    volume_labels_path = pathfem / "Volume_Labels"
+    volume_masks_path.mkdir(exist_ok=True)
+    volume_base_path.mkdir(exist_ok=True)
+    volume_labels_path.mkdir(exist_ok=True)
+
+    stem = artifacts.volume_prefix.rstrip("_")
+    labels_path = volume_labels_path / f"{stem}_Labels"
+    masks_path = volume_masks_path / f"{stem}_Masks"
+    field_volume_path = volume_base_path / f"{stem}_Base"
+    t1_path = subject_dir / f"{subject}_T1w.nii"
+
+    if SIM_LABEL_EXPORTER is None:
+        run_cmd(
+            [
+                "msh2nii",
+                str(field_mesh_path),
+                str(t1_path),
+                str(labels_path),
+                "--create_label",
+            ],
+            label="msh2nii_labels",
+        )
+    else:
+        SIM_LABEL_EXPORTER(field_mesh_path, t1_path, labels_path)
+    run_cmd(
+        [
+            "msh2nii",
+            str(field_mesh_path),
+            str(t1_path),
+            str(masks_path),
+            "--create_masks",
+        ],
+        label="msh2nii_masks",
+    )
+    run_cmd(
+        ["msh2nii", str(field_mesh_path), str(t1_path), str(field_volume_path)],
+        label="msh2nii_volume",
+    )
+
+    label_candidates = sorted(
+        [
+            name
+            for name in os.listdir(volume_labels_path)
+            if name.startswith(artifacts.volume_prefix)
+        ]
+        or os.listdir(volume_labels_path)
+    )
+    volume_candidates = sorted(
+        [
+            name
+            for name in os.listdir(volume_base_path)
+            if name.startswith(artifacts.volume_prefix)
+        ]
+        or os.listdir(volume_base_path)
+    )
+    if not label_candidates or not volume_candidates:
+        raise FileNotFoundError(
+            f"msh2nii did not create required {artifacts.display_name} volumes in {pathfem}."
+        )
+    label_file_path = label_candidates[0]
+    field_volume_file = volume_candidates[0]
+    log_event(
+        "volume_selection",
+        subject=subject,
+        condition=condition_name,
+        repeat_tag=repeat_tag_value,
+        stimulation_mode=artifacts.mode,
+        label_file=label_file_path,
+        field_volume_file=field_volume_file,
+    )
+
+    label_img = nib.load(str(volume_labels_path / label_file_path))
+    field_img = nib.load(str(volume_base_path / field_volume_file))
+    same_shape = field_img.shape == label_img.shape
+    same_affine = np.allclose(field_img.affine, label_img.affine, atol=1e-3)
+    log_event(
+        "grid_check",
+        subject=subject,
+        condition=condition_name,
+        repeat_tag=repeat_tag_value,
+        same_shape=same_shape,
+        same_affine=same_affine,
+        field_shape=field_img.shape,
+        label_shape=label_img.shape,
+    )
+    if not (same_shape and same_affine):
+        label_img = resample_from_to(label_img, field_img, order=0)
+
+    labels = np.asarray(label_img.dataobj).astype(np.int32, copy=False)
+    brain_mask = np.isin(labels, [1, 2])
+    field_data = field_img.get_fdata(dtype=np.float32)
+    masked = np.where(brain_mask, field_data, np.nan).astype(np.float32)
+    masked_img = nib.Nifti1Image(masked, field_img.affine, field_img.header)
+    masked_img.header.set_data_dtype(np.float32)
+    brain_only_path = output_root / artifacts.brain_nifti_filename
+    nib.save(masked_img, str(brain_only_path))
+    return brain_only_path
+
+
 def _run_ti_pipeline(
     *,
     subject: str,
@@ -580,9 +735,7 @@ def _run_ti_pipeline(
     stimulation: StimulationConfig,
 ) -> float:
     _ensure_simnibs_imports()
-    nib = NIB_MODULE
     np = NP_MODULE
-    resample_from_to = RESAMPLE_FROM_TO
     subject_start = time.time()
     log_event(
         "simulation_start",
@@ -655,91 +808,16 @@ def _run_ti_pipeline(
     out_path = os.path.join(S.pathfem, "TI.msh")
     SIM_MESH_IO.write_msh(mout, out_path)
 
-    volume_masks_path = Path(S.pathfem) / "Volume_Maks"
-    volume_base_path = Path(S.pathfem) / "Volume_Base"
-    volume_labels_path = Path(S.pathfem) / "Volume_Labels"
-    volume_masks_path.mkdir(exist_ok=True)
-    volume_base_path.mkdir(exist_ok=True)
-    volume_labels_path.mkdir(exist_ok=True)
-
-    labels_path = volume_labels_path / "TI_Volumetric_Labels"
-    masks_path = volume_masks_path / "TI_Volumetric_Masks"
-    ti_volume_path = volume_base_path / "TI_Volumetric_Base"
-    t1_path = subject_dir / f"{subject}_T1w.nii"
-
-    if SIM_LABEL_EXPORTER is None:
-        run_cmd(
-            [
-                "msh2nii",
-                os.path.join(S.pathfem, "TI.msh"),
-                str(t1_path),
-                str(labels_path),
-                "--create_label",
-            ],
-            label="msh2nii_labels",
-        )
-    else:
-        SIM_LABEL_EXPORTER(
-            Path(S.pathfem) / "TI.msh",
-            t1_path,
-            labels_path,
-        )
-    run_cmd(
-        ["msh2nii", os.path.join(S.pathfem, "TI.msh"), str(t1_path), str(masks_path), "--create_masks"],
-        label="msh2nii_masks",
-    )
-    run_cmd(
-        ["msh2nii", os.path.join(S.pathfem, "TI.msh"), str(t1_path), str(ti_volume_path)],
-        label="msh2nii_volume",
-    )
-
-    label_candidates = sorted(
-        [f for f in os.listdir(volume_labels_path) if f.startswith("TI_Volumetric_")]
-        or os.listdir(volume_labels_path)
-    )
-    volume_candidates = sorted(
-        [f for f in os.listdir(volume_base_path) if f.startswith("TI_Volumetric_")]
-        or os.listdir(volume_base_path)
-    )
-    label_file_path = label_candidates[0]
-    ti_volume_file = volume_candidates[0]
-    log_event(
-        "volume_selection",
+    ti_brain_only_path = _write_field_volumes_and_brain_mask(
         subject=subject,
-        condition=condition_name,
-        repeat_tag=repeat_tag_value,
-        label_file=label_file_path,
-        ti_volume_file=ti_volume_file,
+        subject_dir=subject_dir,
+        output_root=output_root,
+        pathfem=Path(S.pathfem),
+        field_mesh_path=Path(out_path),
+        stimulation=stimulation,
+        condition_name=condition_name,
+        repeat_tag_value=repeat_tag_value,
     )
-
-    label_img = nib.load(str(volume_labels_path / label_file_path))
-    ti_img = nib.load(str(volume_base_path / ti_volume_file))
-
-    same_shape = ti_img.shape == label_img.shape
-    same_affine = np.allclose(ti_img.affine, label_img.affine, atol=1e-3)
-    log_event(
-        "grid_check",
-        subject=subject,
-        condition=condition_name,
-        repeat_tag=repeat_tag_value,
-        same_shape=same_shape,
-        same_affine=same_affine,
-        ti_shape=ti_img.shape,
-        label_shape=label_img.shape,
-    )
-    if not (same_shape and same_affine):
-        label_img = resample_from_to(label_img, ti_img, order=0)
-
-    labels = np.asarray(label_img.dataobj).astype(np.int32, copy=False)
-    brain_mask = np.isin(labels, [1, 2])
-
-    ti_data = ti_img.get_fdata(dtype=np.float32)
-    masked = np.where(brain_mask, ti_data, np.nan).astype(np.float32)
-
-    masked_img = nib.Nifti1Image(masked, ti_img.affine, ti_img.header)
-    masked_img.header.set_data_dtype(np.float32)
-    ti_brain_only_path = output_root / "ti_brain_only.nii.gz"
-    nib.save(masked_img, str(ti_brain_only_path))
 
     elapsed = time.time() - subject_start
     log_event(
@@ -750,6 +828,100 @@ def _run_ti_pipeline(
         elapsed_sec=elapsed,
         ti_mesh=str(out_path),
         ti_brain_only=str(ti_brain_only_path),
+    )
+    return elapsed
+
+
+def _run_tdcs_pipeline(
+    *,
+    subject: str,
+    subject_dir: Path,
+    output_root: Path,
+    fnamehead: Path,
+    repeat_tag_value: str,
+    condition_name: str,
+    stimulation: TDCSStimulationConfig,
+) -> float:
+    """Run one FEM solve and store scalar electric-field magnitude artifacts."""
+    _ensure_simnibs_imports()
+    np = NP_MODULE
+    subject_start = time.time()
+    log_event(
+        "simulation_start",
+        subject=subject,
+        condition=condition_name,
+        repeat_tag=repeat_tag_value,
+        mesh_path=str(fnamehead),
+        stimulation=stimulation_summary(stimulation),
+    )
+    _reset_dir_contents(output_root)
+
+    params = _tdcs_montage_parameters(stimulation)
+    electrode_size = params["electrode_size"]
+    montage_pair = params["montage_pair"]
+    S = SIM_STRUCT.SESSION()
+    S.fnamehead = str(fnamehead)
+    S.pathfem = str(output_root / "Output" / subject)
+    Path(S.pathfem).mkdir(parents=True, exist_ok=True)
+    S.element_size = 0.1
+    S.map_to_vol = True
+    S.open_in_gmsh = False
+
+    tdcs = S.add_tdcslist()
+    for conductivity in tdcs.cond:
+        if conductivity.name in params["custom_conductivities"]:
+            conductivity.value = float(
+                params["custom_conductivities"][conductivity.name]
+            )
+    tdcs.currents = [montage_pair[1], montage_pair[3]]
+    for channel, centre in ((1, montage_pair[0]), (2, montage_pair[2])):
+        electrode = tdcs.add_electrode()
+        electrode.channelnr = channel
+        electrode.centre = centre
+        electrode.shape = params["electrode_shape"]
+        electrode.dimensions = [electrode_size[0] * 2, electrode_size[0] * 2]
+        electrode.thickness = electrode_size[1]
+        electrode.mesh_element_size = 0.1
+
+    SIM_MODULE.run_simnibs(S)
+    field_mesh = SIM_MESH_IO.read_msh(
+        os.path.join(S.pathfem, f"{subject}_TDCS_1_scalar.msh")
+    )
+    tags_keep = np.hstack((np.arange(0, 499), np.arange(1000, 1499)))
+    field_mesh = field_mesh.crop_mesh(tags=tags_keep)
+    e_values = np.asarray(field_mesh.field["E"].value)
+    e_magnitude = (
+        np.abs(e_values)
+        if e_values.ndim == 1
+        else np.linalg.norm(e_values, axis=1)
+    )
+    output_mesh = deepcopy(field_mesh)
+    output_mesh.elmdata = []
+    artifacts = artifacts_for_stimulation(stimulation)
+    output_mesh.add_element_field(e_magnitude, artifacts.element_field_name)
+    out_path = Path(S.pathfem) / artifacts.mesh_filename
+    SIM_MESH_IO.write_msh(output_mesh, str(out_path))
+
+    brain_only_path = _write_field_volumes_and_brain_mask(
+        subject=subject,
+        subject_dir=subject_dir,
+        output_root=output_root,
+        pathfem=Path(S.pathfem),
+        field_mesh_path=out_path,
+        stimulation=stimulation,
+        condition_name=condition_name,
+        repeat_tag_value=repeat_tag_value,
+    )
+    elapsed = time.time() - subject_start
+    log_event(
+        "simulation_done",
+        subject=subject,
+        condition=condition_name,
+        repeat_tag=repeat_tag_value,
+        elapsed_sec=elapsed,
+        stimulation_mode=artifacts.mode,
+        field_mesh=str(out_path),
+        brain_only=str(brain_only_path),
     )
     return elapsed
 
@@ -826,7 +998,7 @@ def _validate_existing_task_manifest(
         ) from exc
     if not isinstance(payload, dict) or payload.get("stimulation") != config.stimulation.to_dict():
         raise SimulationInputError(
-            "Existing outputs do not have the exact confirmed stimulation "
+            "Existing outputs do not have the exact recorded stimulation "
             f"configuration; refusing reuse without an explicit overwrite: {manifest_path}"
         )
 
@@ -871,9 +1043,18 @@ def execute_task(
         "shared_mesh_path": str(shared_mesh_path) if shared_mesh_path is not None else None,
         "status": "planned" if dry_run else "completed",
         "skipped_existing": False,
+        "stimulation_mode": config.stimulation.mode,
     }
 
-    if _repeat_outputs_complete(repeat_workspace, task.subject) and not overwrite and not dry_run:
+    if (
+        _repeat_outputs_complete(
+            repeat_workspace,
+            task.subject,
+            config.stimulation,
+        )
+        and not overwrite
+        and not dry_run
+    ):
         _validate_existing_task_manifest(repeat_workspace, config=config)
         log_event(
             "task_skip",
@@ -881,7 +1062,7 @@ def execute_task(
             condition=task.condition_name,
             repeat_tag=task.repeat_tag,
             reason="required_outputs_exist",
-            done_marker=str(_repeat_done_marker(repeat_workspace)),
+            done_marker=str(_repeat_done_marker(repeat_workspace, config.stimulation)),
         )
         result["status"] = "skipped"
         result["skipped_existing"] = True
@@ -946,7 +1127,12 @@ def execute_task(
         )
         return result
 
-    result["runtime_sec"] = _run_ti_pipeline(
+    runner = (
+        _run_tdcs_pipeline
+        if isinstance(config.stimulation, TDCSStimulationConfig)
+        else _run_ti_pipeline
+    )
+    result["runtime_sec"] = runner(
         subject=task.subject,
         subject_dir=repeat_workspace.anat_dir,
         output_root=repeat_workspace.output_root,

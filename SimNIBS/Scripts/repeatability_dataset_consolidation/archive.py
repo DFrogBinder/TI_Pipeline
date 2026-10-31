@@ -458,3 +458,65 @@ def archive_verify(
             "changes": changes,
         }
     return {**verification, "changes": changes}
+
+
+def validate_archive_completion(config: DatasetConfig) -> dict[str, object]:
+    """Read-only live validation of the immutable Shared archive receipt."""
+    items, plan_hash = _plan(config)
+    if not config.shared_archive_root.is_dir():
+        raise ArchiveError("The owned Shared archive root is missing")
+    _ensure_owner(config, items, plan_hash)
+    path = _completion_path(config)
+    if not path.is_file() or path.is_symlink():
+        raise ArchiveError("The archive completion receipt is missing or unsafe")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ArchiveError("The archive completion receipt is unreadable") from exc
+    if (
+        payload.get("status") != "complete"
+        or payload.get("workflow")
+        != "repeatability_dataset_consolidation_archive"
+        or payload.get("archive_root") != str(config.shared_archive_root.resolve())
+        or payload.get("plan_sha256") != plan_hash
+    ):
+        raise ArchiveError("The archive completion receipt does not match current scope")
+    mappings = payload.get("mappings")
+    if not isinstance(mappings, list) or len(mappings) != len(items):
+        raise ArchiveError("The archive completion receipt has incomplete mappings")
+    by_key = {
+        str(mapping.get("key")): mapping
+        for mapping in mappings
+        if isinstance(mapping, dict)
+    }
+    if set(by_key) != {item.key for item in items}:
+        raise ArchiveError("The archive completion receipt has unexpected mappings")
+    for item in items:
+        _validate_identity(item)
+        mapping = by_key[item.key]
+        command, changes = _compare(item, checksum=True)
+        source_inventory = _archive_inventory(item.source)
+        destination_inventory = _archive_inventory(item.destination)
+        if (
+            changes
+            or mapping.get("status") != "matched"
+            or mapping.get("source") != str(item.source)
+            or mapping.get("destination") != str(item.destination)
+            or mapping.get("source_inventory_sha256")
+            != source_inventory["inventory_sha256"]
+            or mapping.get("destination_inventory_sha256")
+            != destination_inventory["inventory_sha256"]
+            or source_inventory["inventory_sha256"]
+            != destination_inventory["inventory_sha256"]
+        ):
+            raise ArchiveError(
+                f"Archived root no longer matches its completion receipt: {item.key}"
+            )
+        _validate_identity(item)
+    return {
+        "status": "complete",
+        "path": str(path),
+        "sha256": _sha256_file(path),
+        "plan_sha256": plan_hash,
+        "source_count": len(items),
+    }

@@ -33,7 +33,7 @@ class ScopeValidation:
         }
 
 
-def _validate_identity(item: CopyItem) -> None:
+def validate_item_identity(item: CopyItem) -> None:
     source = item.source
     if not source.exists() and not source.is_symlink():
         if item.required:
@@ -99,7 +99,7 @@ def _validate_repeats(item: CopyItem, repeat_count: int) -> int:
 def validate_scientific_scope(plan: ConsolidationPlan) -> ScopeValidation:
     """Validate exact cohort cells, repeats, receipts, and supporting bundles."""
     for item in plan.items:
-        _validate_identity(item)
+        validate_item_identity(item)
 
     scientific = [item for item in plan.items if item.role == "scientific_condition"]
     for item in scientific:

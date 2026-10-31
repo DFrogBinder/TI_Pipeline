@@ -129,6 +129,11 @@ def _validate_links(source: Path, approved_roots: tuple[Path, ...]) -> None:
             raise PlanningError(
                 f"Symlink target is outside approved sources: {candidate} -> {target}"
             )
+        parent = candidate.parent.resolve(strict=True)
+        if target.is_dir() and (target == parent or target in parent.parents):
+            raise PlanningError(
+                f"Symlink materialization cycle is not allowed: {candidate} -> {target}"
+            )
 
 
 def _safe_destination(destination: Path) -> Path:

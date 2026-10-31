@@ -88,6 +88,18 @@ def test_plan_rejects_broken_and_escaping_symlinks(miniature_config) -> None:
         build_copy_plan(miniature_config)
 
 
+def test_plan_rejects_materialization_cycle(miniature_config) -> None:
+    source = (
+        miniature_config.sources.v3_left
+        / "sub-CC110174_repeatability"
+        / "remesh"
+    )
+    (source / "cycle").symlink_to(".", target_is_directory=True)
+
+    with pytest.raises(PlanningError, match="cycle"):
+        build_copy_plan(miniature_config)
+
+
 def test_plan_rejects_traversal_in_generated_destination(
     miniature_config, monkeypatch
 ) -> None:

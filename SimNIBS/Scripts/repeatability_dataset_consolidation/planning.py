@@ -31,6 +31,9 @@ class CopyItem:
     source_device: int = 0
     source_inode: int = 0
     source_type: str = ""
+    source_size: int = 0
+    source_mtime_ns: int = 0
+    source_ctime_ns: int = 0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -47,6 +50,9 @@ class CopyItem:
             "source_device": self.source_device,
             "source_inode": self.source_inode,
             "source_type": self.source_type,
+            "source_size": self.source_size,
+            "source_mtime_ns": self.source_mtime_ns,
+            "source_ctime_ns": self.source_ctime_ns,
         }
 
 
@@ -179,6 +185,9 @@ def _copy_item(
         source_device=int(info.st_dev),
         source_inode=int(info.st_ino),
         source_type=_source_type(info.st_mode),
+        source_size=int(info.st_size),
+        source_mtime_ns=int(info.st_mtime_ns),
+        source_ctime_ns=int(info.st_ctime_ns),
     )
 
 

@@ -57,12 +57,21 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
             / condition
         )
         condition_root.mkdir(parents=True, exist_ok=True)
-        (condition_root / "payload.txt").write_text(
-            f"{experiment_root.name}:{condition}\n", encoding="utf-8"
-        )
-        pipeline = experiment_root / "_pipeline"
-        pipeline.mkdir(exist_ok=True)
-        (pipeline / "complete.json").write_text(
+        for repeat_index in range(1, 3):
+            ti_mesh = (
+                condition_root
+                / "repeats"
+                / f"repeat_{repeat_index:03d}"
+                / subjects[0]
+                / "anat/SimNIBS/Output"
+                / subjects[0]
+                / "TI.msh"
+            )
+            ti_mesh.parent.mkdir(parents=True)
+            ti_mesh.write_text(f"field {repeat_index}\n", encoding="utf-8")
+        workflow = experiment_root / "_pipeline/workflow"
+        workflow.mkdir(parents=True, exist_ok=True)
+        (workflow / "complete.json").write_text(
             json.dumps({"status": "complete"}), encoding="utf-8"
         )
 
@@ -76,12 +85,21 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
                     / condition
                 )
                 condition_root.mkdir(parents=True, exist_ok=True)
-                (condition_root / "payload.txt").write_text(
-                    f"{version}:{target}:{condition}\n", encoding="utf-8"
-                )
-            pipeline = experiment_root / "_pipeline"
-            pipeline.mkdir(exist_ok=True)
-            (pipeline / "complete.json").write_text(
+                for repeat_index in range(1, 3):
+                    ti_mesh = (
+                        condition_root
+                        / "repeats"
+                        / f"repeat_{repeat_index:03d}"
+                        / replacement
+                        / "anat/SimNIBS/Output"
+                        / replacement
+                        / "TI.msh"
+                    )
+                    ti_mesh.parent.mkdir(parents=True)
+                    ti_mesh.write_text(f"field {repeat_index}\n", encoding="utf-8")
+            workflow = experiment_root / "_pipeline/workflow"
+            workflow.mkdir(parents=True, exist_ok=True)
+            (workflow / "complete.json").write_text(
                 json.dumps({"status": "complete"}), encoding="utf-8"
             )
 

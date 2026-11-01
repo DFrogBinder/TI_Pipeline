@@ -66,7 +66,6 @@ def compare_item(
     changes = tuple(line for line in completed.stdout.splitlines() if line.strip())
     return RsyncResult(tuple(command), changes)
 
-
 def copy_item(source: Path, destination: Path) -> RsyncResult:
     """Physically copy one item without deleting anything from the destination."""
     if source.is_dir() and not source.is_symlink():

@@ -68,7 +68,6 @@ def test_cli_dispatches_all_nonretirement_modes(
     output = capsys.readouterr().out
     assert "jobs submitted: 0" in output
 
-
 def test_cli_requires_exact_copy_confirmations(miniature_config, monkeypatch) -> None:
     monkeypatch.setattr(cli, "copy_dataset", lambda config: {"status": "unexpected"})
     monkeypatch.setattr(cli, "archive_copy", lambda config: {"status": "unexpected"})

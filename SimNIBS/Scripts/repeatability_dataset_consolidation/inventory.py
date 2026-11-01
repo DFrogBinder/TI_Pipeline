@@ -131,4 +131,3 @@ def build_materialized_inventory(root: Path) -> FileInventory:
 
     visit(root.resolve(strict=True), Path(), frozenset())
     return _finish(logical_root, records)
-

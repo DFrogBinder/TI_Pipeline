@@ -195,4 +195,3 @@ def main(
         return 2
     print(json.dumps(result, indent=2, sort_keys=True, default=str, allow_nan=False))
     return 0
-

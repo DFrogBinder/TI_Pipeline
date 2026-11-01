@@ -105,4 +105,3 @@ def test_copy_refuses_symlinked_destination_component(miniature_config) -> None:
 
     with pytest.raises(WorkflowError, match="symlinked destination component"):
         copy_dataset(miniature_config)
-

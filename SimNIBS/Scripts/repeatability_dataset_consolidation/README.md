@@ -83,19 +83,16 @@ The external archive completion receipt is:
 
 ## 4. Plan retirement without deleting
 
-The default is an exhaustive dry-run plan for the code-owned allowlist:
+The default is an exhaustive dry-run plan for the complete code-owned
+allowlist:
 
 ```bash
 bash "$DATASET" retire-plan
 ```
 
-Select a subset only by repeated allowlist keys, never by arbitrary paths:
-
-```bash
-bash "$DATASET" retire-plan \
-    --retire-key=paper_analysis \
-    --retire-key=nested_analysis
-```
+Retirement is intentionally all-at-once. Partial allowlist requests are
+rejected because deleting one source subset would make later live source
+revalidation ambiguous.
 
 The global `CamCan_Corrected_v4_Scaffolds` root and all primary MRI, atlas,
 CHARM, corrected-label, MNI, and `ti_dataset` roots are not retirement targets.
@@ -116,6 +113,11 @@ bash "$DATASET" retire-submit \
     --archive-receipt-sha256="$ARCHIVE_RECEIPT_SHA256" \
     --confirm-retirement
 ```
+
+If launcher submission is interrupted after only some deletion jobs are
+recorded, run the identical `retire-submit` command again. It resumes only the
+missing jobs from the immutable external request receipt; already recorded
+jobs are never submitted twice.
 
 Deletion submission is not deletion completion. Check until every external
 worker receipt is terminal and every target is independently absent:

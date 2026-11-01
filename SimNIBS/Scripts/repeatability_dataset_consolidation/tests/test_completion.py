@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from repeatability_dataset_consolidation.inventory import build_file_inventory
+from repeatability_dataset_consolidation.inventory import (
+    build_file_inventory,
+    sha256_file,
+)
+from repeatability_dataset_consolidation.planning import build_copy_plan
 from repeatability_dataset_consolidation.workflow import (
     WorkflowError,
     complete_dataset,
@@ -45,6 +49,48 @@ def test_completion_binds_checksum_inventory_and_exact_scope(miniature_config) -
     assert paths == sorted(paths)
     assert receipt["inventory"]["sha256"] == inventory["inventory_sha256"]
     assert receipt["verification"]["mode"] == "checksum"
+    source_mapping = miniature_config.output_root / "provenance/source_mapping.tsv"
+    mapping_rows = source_mapping.read_text(encoding="utf-8").splitlines()
+    assert len(mapping_rows) == len(build_copy_plan(miniature_config).items) + 1
+    assert all(row.endswith("\tchecksum_matched") for row in mapping_rows[1:])
+    assert receipt["source_mapping"]["sha256"] == sha256_file(source_mapping)
+    assert len(receipt["source_mapping"]["sha256"]) == 64
+    assert len(receipt["dataset_manifest"]["sha256"]) == 64
+
+    historical = (
+        miniature_config.output_root
+        / "provenance/configs/historical/v3_left/paired_analysis.json"
+    )
+    source_config = (
+        miniature_config.sources.v3_left
+        / "_pipeline/configs/paired_analysis.json"
+    )
+    assert historical.read_bytes() == source_config.read_bytes()
+    canonical = (
+        miniature_config.output_root
+        / "provenance/configs/canonical/v3_left/paired_analysis.json"
+    )
+    canonical_payload = json.loads(canonical.read_text(encoding="utf-8"))
+    assert canonical_payload["experiment_root"] == str(
+        miniature_config.output_root / "data/simnibs326/left_hippocampus"
+    )
+    assert canonical_payload["unchanged_parameter"] == "median_roi"
+    canonical_manifest = json.loads(
+        (
+            miniature_config.output_root
+            / "provenance/configs/canonical/manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert canonical_manifest["configs"][0]["source"] == str(source_config)
+    assert len(canonical_manifest["configs"][0]["source_sha256"]) == 64
+    canonical_manifest_path = (
+        miniature_config.output_root
+        / "provenance/configs/canonical/manifest.json"
+    )
+    assert receipt["canonical_configs"]["sha256"] == sha256_file(
+        canonical_manifest_path
+    )
+    assert len(canonical_manifest["configs_sha256"]) == 64
     assert not any(path.is_symlink() for path in miniature_config.output_root.rglob("*"))
 
 

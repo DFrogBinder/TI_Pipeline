@@ -345,8 +345,12 @@ These may be deleted after the consolidated dataset completion receipt passes:
 The four legacy-v3 roots listed in the Shared archive section additionally
 require the Shared archive completion receipt to pass.
 
-The allowlist is code-owned and exact. CLI arguments may select a subset of
-the allowlist but cannot add paths. Default retirement behavior is a dry run.
+The allowlist is code-owned and exact. Retirement uses the complete allowlist
+as one immutable request; partial selections and caller-provided paths are
+rejected. This preserves live-source validation before any root is removed.
+Default retirement behavior is a dry run. A partially submitted request is
+resumable from its external receipt without rebuilding a plan from roots that
+an already-submitted job may since have removed.
 Submission requires all of:
 
 - the exact dataset root confirmation;

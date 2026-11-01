@@ -7,7 +7,6 @@ import hashlib
 import json
 from pathlib import Path
 import stat
-from typing import Iterable
 
 from .settings import CONDITIONS, TARGETS, DatasetConfig
 
@@ -111,29 +110,46 @@ def _approved_roots(config: DatasetConfig) -> tuple[Path, ...]:
 
 
 def _validate_links(source: Path, approved_roots: tuple[Path, ...]) -> None:
-    candidates: Iterable[Path]
-    if source.is_symlink():
-        candidates = (source,)
-    elif source.is_dir():
-        candidates = source.rglob("*")
-    else:
-        candidates = ()
-    for candidate in candidates:
-        if not candidate.is_symlink():
-            continue
+    active_directories: set[tuple[int, int]] = set()
+    validated_directories: set[tuple[int, int]] = set()
+
+    def visit(candidate: Path) -> None:
+        target = candidate
+        if candidate.is_symlink():
+            try:
+                target = candidate.resolve(strict=True)
+            except (FileNotFoundError, RuntimeError) as exc:
+                raise PlanningError(
+                    f"Broken symlink in planned source: {candidate}"
+                ) from exc
+            if not any(_inside(target, root) for root in approved_roots):
+                raise PlanningError(
+                    f"Symlink target is outside approved sources: {candidate} -> {target}"
+                )
         try:
-            target = candidate.resolve(strict=True)
-        except (FileNotFoundError, RuntimeError) as exc:
-            raise PlanningError(f"Broken symlink in planned source: {candidate}") from exc
-        if not any(_inside(target, root) for root in approved_roots):
-            raise PlanningError(
-                f"Symlink target is outside approved sources: {candidate} -> {target}"
-            )
-        parent = candidate.parent.resolve(strict=True)
-        if target.is_dir() and (target == parent or target in parent.parents):
+            info = target.stat()
+        except OSError as exc:
+            raise PlanningError(f"Cannot inspect planned source: {target}") from exc
+        if not stat.S_ISDIR(info.st_mode):
+            return
+        identity = (int(info.st_dev), int(info.st_ino))
+        if identity in active_directories:
             raise PlanningError(
                 f"Symlink materialization cycle is not allowed: {candidate} -> {target}"
             )
+        if identity in validated_directories:
+            return
+        active_directories.add(identity)
+        try:
+            for child in sorted(target.iterdir(), key=lambda path: path.name):
+                visit(child)
+        except OSError as exc:
+            raise PlanningError(f"Cannot inspect planned source directory: {target}") from exc
+        finally:
+            active_directories.remove(identity)
+        validated_directories.add(identity)
+
+    visit(source)
 
 
 def _safe_destination(destination: Path) -> Path:
@@ -291,6 +307,32 @@ def _append_source_metadata(
         )
 
 
+def _append_historical_configs(
+    items: list[CopyItem],
+    config: DatasetConfig,
+    approved_roots: tuple[Path, ...],
+) -> None:
+    for source_key, root in _metadata_roots(config).items():
+        config_root = root / "_pipeline/configs"
+        if not config_root.is_dir() or config_root.is_symlink():
+            continue
+        for source in sorted(config_root.rglob("*"), key=lambda path: path.as_posix()):
+            if not source.is_file() and not source.is_symlink():
+                continue
+            relative = source.relative_to(config_root)
+            items.append(
+                _copy_item(
+                    key=f"historical_config:{source_key}:{relative.as_posix()}",
+                    source=source,
+                    destination=Path("provenance/configs/historical")
+                    / source_key
+                    / relative,
+                    role="historical_config",
+                    approved_roots=approved_roots,
+                )
+            )
+
+
 def _append_v3_headmodels(
     items: list[CopyItem],
     config: DatasetConfig,
@@ -368,6 +410,24 @@ def _append_v3_headmodels(
                     approved_roots=approved_roots,
                 )
             )
+    replacement_analysis = (
+        config.sources.replacement_subject
+        / "simnibs326/headmodels/_pipeline/analysis/"
+        "repeatability_optimizer_roi_paired_external1_v2"
+    )
+    items.append(
+        _copy_item(
+            key="analysis:replacement_v3_final",
+            source=replacement_analysis,
+            destination=Path(
+                "analyses/replacement_subject/simnibs326_repeatability_analysis"
+            ),
+            role="replacement_v3_analysis",
+            approved_roots=approved_roots,
+            subject=config.replacement_subject,
+            version="simnibs326",
+        )
+    )
 
 
 def _append_v4_scaffolds(
@@ -446,6 +506,7 @@ def build_copy_plan(config: DatasetConfig) -> ConsolidationPlan:
                         )
                     )
     _append_source_metadata(items, config, approved_roots)
+    _append_historical_configs(items, config, approved_roots)
     _append_v3_headmodels(items, config, approved_roots)
     _append_v4_scaffolds(items, config, approved_roots)
     items.extend(

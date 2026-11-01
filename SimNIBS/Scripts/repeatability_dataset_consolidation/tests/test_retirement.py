@@ -13,6 +13,7 @@ from repeatability_dataset_consolidation.retirement import (
     RetirementConfirmations,
     RetirementError,
     plan_retirement,
+    resume_retirement,
     retirement_status,
     submit_retirement,
 )
@@ -58,11 +59,8 @@ def test_retirement_plan_is_dry_run_exact_and_receipt_bound(retirement_ready) ->
         target.key for target in plan.targets if target.requires_archive_receipt
     } == set(config.archive_sources)
 
-    subset = plan_retirement(config, selected=("paper_analysis", "legacy_v3_left"))
-    assert [target.key for target in subset.targets] == [
-        "paper_analysis",
-        "legacy_v3_left",
-    ]
+    with pytest.raises(RetirementError, match="complete retirement allowlist"):
+        plan_retirement(config, selected=("paper_analysis", "legacy_v3_left"))
     with pytest.raises(RetirementError, match="unknown retirement key"):
         plan_retirement(config, selected=("arbitrary_path",))
     with pytest.raises(RetirementError, match="At least one retirement key"):
@@ -77,7 +75,7 @@ def test_retirement_plan_rejects_tampering_and_active_jobs(
     original = completion.read_bytes()
     completion.write_text('{"status":"forged"}\n', encoding="utf-8")
     with pytest.raises(RetirementError, match="dataset completion receipt"):
-        plan_retirement(config, selected=("paper_analysis",))
+        plan_retirement(config)
     completion.write_bytes(original)
 
     target = config.sources.paper_analysis.resolve()
@@ -86,7 +84,7 @@ def test_retirement_plan_rejects_tampering_and_active_jobs(
         lambda: f"123|job|{target}|python worker.py {target}\n",
     )
     with pytest.raises(RetirementError, match="active Slurm job"):
-        plan_retirement(config, selected=("paper_analysis",))
+        plan_retirement(config)
 
 
 def _confirmations(plan, *, archive: bool = True) -> RetirementConfirmations:
@@ -102,7 +100,7 @@ def test_submission_requires_exact_confirmations_and_delegates_one_job_each(
     retirement_ready, monkeypatch
 ) -> None:
     config = retirement_ready
-    plan = plan_retirement(config, selected=("paper_analysis", "legacy_v3_left"))
+    plan = plan_retirement(config)
     wrong = RetirementConfirmations(
         dataset_root=str(config.output_root) + "-wrong",
         dataset_receipt_sha256=plan.dataset_receipt_sha256,
@@ -130,7 +128,7 @@ def test_submission_requires_exact_confirmations_and_delegates_one_job_each(
 
     assert result["status"] == "submitted"
     assert result["complete"] is False
-    assert len(commands) == 2
+    assert len(commands) == len(plan.targets)
     for command, target in zip(commands, plan.targets):
         assert command[:2] == ["bash", str(plan.deletion_launcher)]
         assert command[command.index("--target") + 1] == str(target.path)
@@ -147,9 +145,63 @@ def test_submission_requires_exact_confirmations_and_delegates_one_job_each(
         (config.deletion_log_root / "retirement_request.json").read_text()
     )
     assert request["status"] == "submitted"
-    assert [job["job_id"] for job in request["jobs"]] == ["7001", "7002"]
-    with pytest.raises(RetirementError, match="request already exists"):
+    assert [job["job_id"] for job in request["jobs"]] == [
+        str(7000 + index) for index in range(1, len(plan.targets) + 1)
+    ]
+    repeated = submit_retirement(plan, _confirmations(plan))
+    assert repeated["jobs"] == result["jobs"]
+
+
+def test_partial_submission_resumes_without_replanning_deleted_sources(
+    retirement_ready, monkeypatch
+) -> None:
+    config = retirement_ready
+    plan = plan_retirement(config)
+    calls: list[str] = []
+
+    def fail_second(command, **kwargs):
+        target = command[command.index("--target") + 1]
+        calls.append(target)
+        if len(calls) == 2:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {8100 + len(calls)}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher", fail_second
+    )
+    with pytest.raises(RetirementError, match="launcher failed"):
         submit_retirement(plan, _confirmations(plan))
+
+    request_path = config.deletion_log_root / "retirement_request.json"
+    request = json.loads(request_path.read_text())
+    assert len(request["jobs"]) == 1
+    first_target = plan.targets[0]
+    shutil.rmtree(first_target.path)
+
+    resumed_calls: list[str] = []
+
+    def succeed(command, **kwargs):
+        target = command[command.index("--target") + 1]
+        resumed_calls.append(target)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {8200 + len(resumed_calls)}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher", succeed
+    )
+    resumed = resume_retirement(config, _confirmations(plan))
+
+    assert str(first_target.path) not in resumed_calls
+    assert len(resumed["jobs"]) == len(plan.targets)
 
 
 def _write_terminal_receipt(path: Path, *, job_id: str, target, status: str) -> None:
@@ -186,11 +238,18 @@ def test_status_requires_terminal_receipts_and_independent_absence(
     retirement_ready, monkeypatch
 ) -> None:
     config = retirement_ready
-    plan = plan_retirement(config, selected=("paper_analysis",))
+    plan = plan_retirement(config)
+
+    submitted = 0
 
     def fake_run(command, **kwargs):
+        nonlocal submitted
+        submitted += 1
         return subprocess.CompletedProcess(
-            command, 0, stdout="[INFO] Submitted deletion job: 8001\n", stderr=""
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {8000 + submitted}\n",
+            stderr="",
         )
 
     monkeypatch.setattr(
@@ -207,7 +266,17 @@ def test_status_requires_terminal_receipts_and_independent_absence(
     assert present["status"] == "incomplete"
     assert present["targets"][0]["target_absent"] is False
 
-    shutil.rmtree(plan.targets[0].path)
+    for index, target in enumerate(plan.targets, start=1):
+        target_receipt = (
+            config.deletion_log_root / f"delete-directory-{8000 + index}.receipt.tsv"
+        )
+        _write_terminal_receipt(
+            target_receipt,
+            job_id=str(8000 + index),
+            target=target,
+            status="complete",
+        )
+        shutil.rmtree(target.path)
     completed = retirement_status(config)
     assert completed["status"] == "complete"
     assert completed["complete"] is True
@@ -218,11 +287,18 @@ def test_status_keeps_failed_or_missing_receipts_incomplete(
     retirement_ready, monkeypatch
 ) -> None:
     config = retirement_ready
-    plan = plan_retirement(config, selected=("nested_analysis",))
+    plan = plan_retirement(config)
+
+    submitted = 0
 
     def fake_run(command, **kwargs):
+        nonlocal submitted
+        submitted += 1
         return subprocess.CompletedProcess(
-            command, 0, stdout="[INFO] Submitted deletion job: 8002\n", stderr=""
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {9000 + submitted}\n",
+            stderr="",
         )
 
     monkeypatch.setattr(
@@ -231,19 +307,36 @@ def test_status_keeps_failed_or_missing_receipts_incomplete(
     submit_retirement(plan, _confirmations(plan))
     request_path = config.deletion_log_root / "retirement_request.json"
     request = json.loads(request_path.read_text())
-    request["targets"][0]["path"] = str(config.output_root.parent / "forged")
+    nested_index = next(
+        index
+        for index, target in enumerate(request["targets"])
+        if target["key"] == "nested_analysis"
+    )
+    request["targets"][nested_index]["path"] = str(
+        config.output_root.parent / "forged"
+    )
     request_path.write_text(json.dumps(request), encoding="utf-8")
     with pytest.raises(RetirementError, match="target binding"):
         retirement_status(config)
-    request["targets"][0]["path"] = str(plan.targets[0].path)
+    nested_target = next(
+        target for target in plan.targets if target.key == "nested_analysis"
+    )
+    request["targets"][nested_index]["path"] = str(nested_target.path)
     request_path.write_text(json.dumps(request), encoding="utf-8")
 
-    receipt = config.deletion_log_root / "delete-directory-8002.receipt.tsv"
+    nested_job = next(job for job in request["jobs"] if job["key"] == "nested_analysis")
+    receipt = config.deletion_log_root / f"delete-directory-{nested_job['job_id']}.receipt.tsv"
     _write_terminal_receipt(
-        receipt, job_id="8002", target=plan.targets[0], status="failed"
+        receipt,
+        job_id=str(nested_job["job_id"]),
+        target=nested_target,
+        status="failed",
     )
-    shutil.rmtree(plan.targets[0].path)
+    shutil.rmtree(nested_target.path)
 
     result = retirement_status(config)
     assert result["status"] == "incomplete"
-    assert result["targets"][0]["receipt_status"] == "failed"
+    nested_result = next(
+        target for target in result["targets"] if target["key"] == "nested_analysis"
+    )
+    assert nested_result["receipt_status"] == "failed"

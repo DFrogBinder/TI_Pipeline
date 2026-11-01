@@ -16,6 +16,7 @@ from .retirement import (
     RetirementError,
     RetirementPlan,
     plan_retirement,
+    resume_retirement,
     retirement_status,
     submit_retirement,
 )
@@ -59,7 +60,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("mode", choices=MODES)
     parser.add_argument("--confirm-output-root")
     parser.add_argument("--confirm-archive-root")
-    parser.add_argument("--retire-key", action="append", default=[])
     parser.add_argument("--dataset-receipt-sha256")
     parser.add_argument("--archive-receipt-sha256")
     parser.add_argument("--confirm-retirement", action="store_true")
@@ -116,7 +116,6 @@ def main(
     args = _parser().parse_args(argv)
     current = config if config is not None else production_config()
     _print_scope(current)
-    selected = tuple(args.retire_key) if args.retire_key else None
     try:
         if args.mode == "preflight":
             result = preflight(current)
@@ -154,14 +153,17 @@ def main(
         elif args.mode == "archive-checksum":
             result = archive_verify(current, checksum=True)
         elif args.mode == "retire-plan":
-            result = _plan_dict(plan_retirement(current, selected=selected))
+            result = _plan_dict(plan_retirement(current))
         elif args.mode == "retire-submit":
-            plan = plan_retirement(current, selected=selected)
             _exact(
                 args.confirm_output_root,
                 current.output_root,
                 "--confirm-output-root",
             )
+            request_exists = (
+                current.deletion_log_root / "retirement_request.json"
+            ).is_file()
+            plan = None if request_exists else plan_retirement(current)
             confirmations = RetirementConfirmations(
                 dataset_root=args.confirm_output_root,
                 dataset_receipt_sha256=_sha(
@@ -173,14 +175,19 @@ def main(
                         args.archive_receipt_sha256,
                         "--archive-receipt-sha256",
                     )
-                    if plan.archive_receipt_sha256 is not None
+                    if request_exists
+                    or (plan is not None and plan.archive_receipt_sha256 is not None)
                     else None
                 ),
                 confirm_retirement=args.confirm_retirement,
             )
             if not args.confirm_retirement:
                 raise CliError("retire-submit requires --confirm-retirement")
-            result = submit_retirement(plan, confirmations)
+            result = (
+                resume_retirement(current, confirmations)
+                if request_exists
+                else submit_retirement(plan, confirmations)
+            )
         else:
             result = retirement_status(current)
     except (ArchiveError, CliError, RetirementError, WorkflowError, ValueError) as exc:

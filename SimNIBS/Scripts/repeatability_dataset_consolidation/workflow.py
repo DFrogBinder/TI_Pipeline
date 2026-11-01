@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 from datetime import datetime, timezone
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -47,6 +50,13 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    os.replace(temporary, path)
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -251,6 +261,136 @@ def _item_destination(config: DatasetConfig, item: CopyItem) -> Path:
     return destination
 
 
+def _canonical_path_replacements(config: DatasetConfig) -> tuple[tuple[str, str], ...]:
+    sources = config.sources
+    root = config.output_root.resolve(strict=False)
+    replacements = {
+        sources.v4_left_remesh: root / "data/simnibs4/left_hippocampus",
+        sources.v4_left_fixed: root / "data/simnibs4/left_hippocampus",
+        sources.v4_right_remesh: root / "data/simnibs4/right_m1",
+        sources.v4_right_fixed: root / "data/simnibs4/right_m1",
+        sources.v3_left: root / "data/simnibs326/left_hippocampus",
+        sources.v3_right: root / "data/simnibs326/right_m1",
+        sources.replacement_subject / "simnibs4/left_hippocampus": root
+        / "data/simnibs4/left_hippocampus",
+        sources.replacement_subject / "simnibs4/right_m1": root
+        / "data/simnibs4/right_m1",
+        sources.replacement_subject / "simnibs326/left_hippocampus": root
+        / "data/simnibs326/left_hippocampus",
+        sources.replacement_subject / "simnibs326/right_m1": root
+        / "data/simnibs326/right_m1",
+        sources.paper_analysis: root / "analyses/repeatability_paper_update_v1",
+        sources.nested_analysis: root / "supplemental/nested_40x40_v1",
+    }
+    return tuple(
+        sorted(
+            (
+                (str(source.resolve(strict=False)), str(destination))
+                for source, destination in replacements.items()
+            ),
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+    )
+
+
+def _rewrite_config_paths(
+    value: object,
+    replacements: tuple[tuple[str, str], ...],
+) -> tuple[object, int]:
+    if isinstance(value, dict):
+        rewritten: dict[str, object] = {}
+        total = 0
+        for key, child in value.items():
+            next_value, count = _rewrite_config_paths(child, replacements)
+            rewritten[str(key)] = next_value
+            total += count
+        return rewritten, total
+    if isinstance(value, list):
+        rewritten_items: list[object] = []
+        total = 0
+        for child in value:
+            next_value, count = _rewrite_config_paths(child, replacements)
+            rewritten_items.append(next_value)
+            total += count
+        return rewritten_items, total
+    if isinstance(value, str):
+        for source, destination in replacements:
+            if value == source:
+                return destination, 1
+            prefix = source + os.sep
+            if value.startswith(prefix):
+                return destination + os.sep + value[len(prefix) :], 1
+    return value, 0
+
+
+def _canonical_config_records(
+    config: DatasetConfig,
+    plan: ConsolidationPlan,
+    *,
+    write: bool,
+) -> tuple[list[dict[str, object]], Path]:
+    historical_root = Path("provenance/configs/historical")
+    canonical_root = config.output_root / "provenance/configs/canonical"
+    replacements = _canonical_path_replacements(config)
+    records: list[dict[str, object]] = []
+    for item in plan.items:
+        if item.role != "historical_config" or item.destination.suffix != ".json":
+            continue
+        historical = _item_destination(config, item)
+        try:
+            payload = json.loads(historical.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise WorkflowError(f"Historical JSON config is unreadable: {historical}") from exc
+        rewritten, replacement_count = _rewrite_config_paths(payload, replacements)
+        relative = item.destination.relative_to(historical_root)
+        canonical = canonical_root / relative
+        encoded = json.dumps(
+            rewritten, indent=2, sort_keys=True, allow_nan=False
+        ) + "\n"
+        if write:
+            _write_text(canonical, encoded)
+        elif not canonical.is_file() or canonical.is_symlink() or canonical.read_text(
+            encoding="utf-8"
+        ) != encoded:
+            raise WorkflowError(f"Canonical config is missing or stale: {canonical}")
+        records.append(
+            {
+                "key": item.key,
+                "source": str(item.source),
+                "source_sha256": sha256_file(item.source),
+                "historical": str(historical.relative_to(config.output_root)),
+                "historical_sha256": sha256_file(historical),
+                "canonical": str(canonical.relative_to(config.output_root)),
+                "canonical_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+                "path_replacements": replacement_count,
+            }
+        )
+    records.sort(key=lambda record: str(record["key"]))
+    configs_sha = hashlib.sha256(
+        json.dumps(
+            records, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()
+    manifest_path = canonical_root / "manifest.json"
+    manifest = {
+        "schema_version": 1,
+        "status": "complete",
+        "configs_sha256": configs_sha,
+        "configs": records,
+    }
+    if write:
+        _write_json(manifest_path, manifest)
+    else:
+        try:
+            observed = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise WorkflowError("Canonical config manifest is missing or unreadable") from exc
+        if manifest_path.is_symlink() or observed != manifest:
+            raise WorkflowError("Canonical config manifest is stale")
+    return records, manifest_path
+
+
 def copy_dataset(config: DatasetConfig) -> dict[str, object]:
     """Resume physical per-item copies while preserving every source."""
     plan, plan_hash, _ = _owned_context(config)
@@ -287,6 +427,9 @@ def copy_dataset(config: DatasetConfig) -> dict[str, object]:
                 "source_outputs_modified": False,
             },
         )
+    canonical_configs, canonical_manifest = _canonical_config_records(
+        config, plan, write=True
+    )
     return {
         "status": "copied",
         "workflow": "repeatability_dataset_consolidation",
@@ -294,6 +437,8 @@ def copy_dataset(config: DatasetConfig) -> dict[str, object]:
         "planned_items": len(plan.items),
         "copied_items": copied,
         "reused_items": reused,
+        "canonical_configs": len(canonical_configs),
+        "canonical_config_manifest": str(canonical_manifest),
         "source_outputs_modified": False,
     }
 
@@ -499,7 +644,14 @@ def _validate_copy_receipts(
 
 
 def _is_control_file(relative: Path) -> bool:
-    if relative.as_posix() in {"README.md", "subjects.txt", "dataset_manifest.json"}:
+    if relative.as_posix() in {
+        "README.md",
+        "subjects.txt",
+        "dataset_manifest.json",
+        "provenance/source_mapping.tsv",
+    }:
+        return True
+    if relative.parts[:3] == ("provenance", "configs", "canonical"):
         return True
     parts = relative.parts
     if parts[:1] != ("_consolidation",):
@@ -631,6 +783,41 @@ def _validate_destination_scope(
     }
 
 
+def _write_source_mapping(
+    config: DatasetConfig,
+    plan: ConsolidationPlan,
+) -> Path:
+    path = config.output_root / "provenance/source_mapping.tsv"
+    stream = io.StringIO(newline="")
+    fields = (
+        "source",
+        "destination",
+        "role",
+        "subject",
+        "version",
+        "target",
+        "condition",
+        "verification_status",
+    )
+    writer = csv.DictWriter(stream, fieldnames=fields, delimiter="\t", lineterminator="\n")
+    writer.writeheader()
+    for item in plan.items:
+        writer.writerow(
+            {
+                "source": str(item.source),
+                "destination": str(_item_destination(config, item)),
+                "role": item.role,
+                "subject": item.subject or "",
+                "version": item.version or "",
+                "target": item.target or "",
+                "condition": item.condition or "",
+                "verification_status": "checksum_matched",
+            }
+        )
+    _write_text(path, stream.getvalue())
+    return path
+
+
 def complete_dataset(config: DatasetConfig) -> dict[str, object]:
     """Write an immutable completion receipt after every live checksum gate passes."""
     plan, plan_hash, _ = _owned_context(config)
@@ -650,10 +837,12 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
             raise WorkflowError("Refusing to replace a nonmatching existing completion receipt")
 
     _validate_copy_receipts(config, plan, plan_hash)
-    _validate_destination_coverage(config, plan)
     verification, verification_path = _load_checksum_verification(
         config, plan, plan_hash
     )
+    _, canonical_manifest = _canonical_config_records(config, plan, write=False)
+    source_mapping = _write_source_mapping(config, plan)
+    _validate_destination_coverage(config, plan)
     scope = _validate_destination_scope(config, plan)
     try:
         inventory = build_file_inventory(config.output_root, exclude=exclusions)
@@ -680,6 +869,19 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
             "sha256": inventory.inventory_sha256,
             "file_count": len(inventory.entries),
             "total_bytes": inventory.total_bytes,
+        },
+        "dataset_manifest": {
+            "path": "dataset_manifest.json",
+            "sha256": sha256_file(config.output_root / "dataset_manifest.json"),
+        },
+        "source_mapping": {
+            "path": str(source_mapping.relative_to(config.output_root)),
+            "sha256": sha256_file(source_mapping),
+            "rows": len(plan.items),
+        },
+        "canonical_configs": {
+            "path": str(canonical_manifest.relative_to(config.output_root)),
+            "sha256": sha256_file(canonical_manifest),
         },
         "source_outputs_modified": False,
     }

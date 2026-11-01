@@ -75,6 +75,20 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
             json.dumps({"status": "complete"}), encoding="utf-8"
         )
 
+    historical_config = sources.v3_left / "_pipeline/configs/paired_analysis.json"
+    historical_config.parent.mkdir(parents=True, exist_ok=True)
+    historical_config.write_text(
+        json.dumps(
+            {
+                "experiment_root": str(sources.v3_left),
+                "unchanged_parameter": "median_roi",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     for version in ("simnibs326", "simnibs4"):
         for target in ("left_hippocampus", "right_m1"):
             experiment_root = sources.replacement_subject / version / target
@@ -133,6 +147,21 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
     replacement_headmodels = sources.replacement_subject / "simnibs326" / "headmodels"
     replacement_headmodels.mkdir(parents=True)
     seed_v3_headmodel(replacement_headmodels, replacement, "external1")
+    replacement_analysis = (
+        replacement_headmodels
+        / "_pipeline/analysis/repeatability_optimizer_roi_paired_external1_v2"
+    )
+    (replacement_analysis / "results").mkdir(parents=True)
+    (replacement_analysis / "results/analysis_manifest.json").write_text(
+        json.dumps({"status": "complete", "rows": 160}), encoding="utf-8"
+    )
+    (replacement_analysis / "simnibs326h_repeatability_analysis.tar.gz").write_bytes(
+        b"verified archive"
+    )
+    (
+        replacement_analysis
+        / "simnibs326h_repeatability_analysis.tar.gz.sha256"
+    ).write_text("0" * 64 + "  simnibs326h_repeatability_analysis.tar.gz\n", encoding="utf-8")
 
     for subject in subjects:
         scaffold = sources.v4_scaffolds / "subjects" / subject / "anat"

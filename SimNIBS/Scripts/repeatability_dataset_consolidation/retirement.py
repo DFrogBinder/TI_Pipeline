@@ -210,6 +210,10 @@ def plan_retirement(
     unknown = [key for key in keys if key not in allowlist]
     if unknown:
         raise RetirementError(f"unknown retirement key: {unknown[0]}")
+    if keys != tuple(allowlist):
+        raise RetirementError(
+            "Retirement must use the complete retirement allowlist in canonical order"
+        )
     allowed_root = config.output_root.parent.resolve()
     archive_keys = set(config.archive_sources)
     targets: list[RetirementTarget] = []
@@ -283,12 +287,17 @@ def _validate_confirmations(
         raise RetirementError("The archive receipt confirmation is not exact")
 
 
-def _request_payload(plan: RetirementPlan, jobs: list[dict[str, object]]) -> dict[str, object]:
+def _request_payload(
+    plan: RetirementPlan,
+    jobs: list[dict[str, object]],
+    *,
+    created_utc: str | None = None,
+) -> dict[str, object]:
     return {
         "schema_version": 1,
         "status": "submitted" if len(jobs) == len(plan.targets) else "submitting",
         "workflow": "repeatability_dataset_consolidation_retirement",
-        "created_utc": _utc_now(),
+        "created_utc": created_utc or _utc_now(),
         "retirement_plan_sha256": plan.plan_sha256,
         "dataset_root": str(plan.config.output_root.resolve()),
         "dataset_receipt": str(plan.dataset_receipt),
@@ -301,29 +310,126 @@ def _request_payload(plan: RetirementPlan, jobs: list[dict[str, object]]) -> dic
     }
 
 
-def submit_retirement(
-    plan: RetirementPlan,
-    confirmations: RetirementConfirmations,
-) -> dict[str, object]:
-    """Revalidate the plan and delegate one guarded deletion job per target."""
-    _validate_confirmations(plan, confirmations)
-    fresh = plan_retirement(
-        plan.config, selected=tuple(target.key for target in plan.targets)
-    )
-    if fresh.plan_sha256 != plan.plan_sha256:
-        raise RetirementError("The retirement plan changed during confirmation")
-    config = plan.config
-    config.deletion_log_root.mkdir(parents=True, exist_ok=True)
+def _request_plan(
+    config: DatasetConfig,
+) -> tuple[RetirementPlan, list[dict[str, object]], Path, str]:
     request_path = config.deletion_log_root / "retirement_request.json"
-    if request_path.exists() or request_path.is_symlink():
-        raise RetirementError(
-            f"A retirement request already exists; inspect status before any retry: {request_path}"
+    if not request_path.is_file() or request_path.is_symlink():
+        raise RetirementError("No safe retirement request exists to resume")
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RetirementError("The retirement request receipt is unreadable") from exc
+    if (
+        request.get("workflow") != "repeatability_dataset_consolidation_retirement"
+        or request.get("dataset_root") != str(config.output_root.resolve())
+        or request.get("allowed_root") != str(config.output_root.parent.resolve())
+    ):
+        raise RetirementError("The retirement request receipt binding is invalid")
+
+    dataset_receipt = config.output_root / "_consolidation/complete.json"
+    if (
+        request.get("dataset_receipt") != str(dataset_receipt)
+        or not dataset_receipt.is_file()
+        or dataset_receipt.is_symlink()
+        or sha256_file(dataset_receipt) != request.get("dataset_receipt_sha256")
+    ):
+        raise RetirementError("The bound dataset completion receipt changed")
+    archive_receipt = (
+        config.shared_receipt_root / "legacy_v3_archive_v1.complete.json"
+    )
+    if (
+        request.get("archive_receipt") != str(archive_receipt)
+        or not archive_receipt.is_file()
+        or archive_receipt.is_symlink()
+        or sha256_file(archive_receipt) != request.get("archive_receipt_sha256")
+    ):
+        raise RetirementError("The bound archive completion receipt changed")
+
+    records = request.get("targets")
+    jobs = request.get("jobs")
+    allowlist = retirement_allowlist(config)
+    archive_keys = set(config.archive_sources)
+    if not isinstance(records, list) or not isinstance(jobs, list):
+        raise RetirementError("The retirement request scope is invalid")
+    if [record.get("key") for record in records if isinstance(record, dict)] != list(
+        allowlist
+    ) or len(records) != len(allowlist):
+        raise RetirementError("The retirement request target scope is invalid")
+    targets: list[RetirementTarget] = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise RetirementError("The retirement request target binding is invalid")
+        key = str(record.get("key", ""))
+        expected_path = allowlist[key].resolve(strict=False)
+        if (
+            Path(str(record.get("path", ""))) != expected_path
+            or bool(record.get("requires_archive_receipt")) != (key in archive_keys)
+        ):
+            raise RetirementError("The retirement request target binding is invalid")
+        targets.append(
+            RetirementTarget(
+                key=key,
+                path=expected_path,
+                requires_archive_receipt=key in archive_keys,
+                source_device=int(record.get("source_device", -1)),
+                source_inode=int(record.get("source_inode", -1)),
+            )
         )
-    jobs: list[dict[str, object]] = []
-    _write_json(request_path, _request_payload(plan, jobs))
+    target_tuple = tuple(targets)
+    expected_hash = _retirement_hash(
+        target_tuple,
+        str(request.get("dataset_receipt_sha256", "")),
+        str(request.get("archive_receipt_sha256", "")),
+    )
+    if expected_hash != request.get("retirement_plan_sha256"):
+        raise RetirementError("The retirement request plan binding is invalid")
+    job_keys = [str(job.get("key", "")) for job in jobs if isinstance(job, dict)]
+    if (
+        len(job_keys) != len(jobs)
+        or len(job_keys) != len(set(job_keys))
+        or not set(job_keys).issubset(allowlist)
+    ):
+        raise RetirementError("The retirement request job scope is invalid")
+    launcher = (
+        Path(__file__).resolve().parents[1]
+        / "CamCan_Experiment/HPC_scripts/submit_delete_directory.sh"
+    )
+    created = str(request.get("created_utc", ""))
+    if not created:
+        raise RetirementError("The retirement request creation time is missing")
+    return (
+        RetirementPlan(
+            config=config,
+            targets=target_tuple,
+            dry_run=True,
+            plan_sha256=expected_hash,
+            dataset_receipt=dataset_receipt,
+            dataset_receipt_sha256=str(request["dataset_receipt_sha256"]),
+            archive_receipt=archive_receipt,
+            archive_receipt_sha256=str(request["archive_receipt_sha256"]),
+            scheduler_snapshot_sha256="resume-from-immutable-request",
+            deletion_launcher=launcher,
+        ),
+        [dict(job) for job in jobs],
+        request_path,
+        created,
+    )
+
+
+def _submit_missing_jobs(
+    plan: RetirementPlan,
+    jobs: list[dict[str, object]],
+    request_path: Path,
+    *,
+    created_utc: str,
+) -> dict[str, object]:
+    submitted_keys = {str(job["key"]) for job in jobs}
     for target in plan.targets:
+        if target.key in submitted_keys:
+            continue
         current_device, current_inode = _validate_target(
-            target.path, config.output_root.parent.resolve()
+            target.path, plan.config.output_root.parent.resolve()
         )
         if (current_device, current_inode) != (
             target.source_device,
@@ -340,22 +446,26 @@ def submit_retirement(
             "--confirm",
             str(target.path),
             "--allowed-root",
-            str(config.output_root.parent.resolve()),
+            str(plan.config.output_root.parent.resolve()),
             "--log-dir",
-            str(config.deletion_log_root.resolve()),
+            str(plan.config.deletion_log_root.resolve()),
         ]
         completed = _run_launcher(command)
         if completed.returncode != 0:
-            _write_json(request_path, _request_payload(plan, jobs))
+            _write_json(
+                request_path,
+                _request_payload(plan, jobs, created_utc=created_utc),
+            )
             raise RetirementError(
                 f"Deletion launcher failed for {target.key}: {completed.stderr.strip()}"
             )
         match = re.search(r"Submitted deletion job: ([0-9]+)", completed.stdout)
         if match is None:
-            _write_json(request_path, _request_payload(plan, jobs))
-            raise RetirementError(
-                f"Could not parse deletion job ID for {target.key}"
+            _write_json(
+                request_path,
+                _request_payload(plan, jobs, created_utc=created_utc),
             )
+            raise RetirementError(f"Could not parse deletion job ID for {target.key}")
         job_id = match.group(1)
         jobs.append(
             {
@@ -363,16 +473,20 @@ def submit_retirement(
                 "target": str(target.path),
                 "job_id": job_id,
                 "request_receipt": str(
-                    config.deletion_log_root
+                    plan.config.deletion_log_root
                     / f"delete-directory-{job_id}.request.tsv"
                 ),
                 "terminal_receipt": str(
-                    config.deletion_log_root
+                    plan.config.deletion_log_root
                     / f"delete-directory-{job_id}.receipt.tsv"
                 ),
             }
         )
-        _write_json(request_path, _request_payload(plan, jobs))
+        submitted_keys.add(target.key)
+        _write_json(
+            request_path,
+            _request_payload(plan, jobs, created_utc=created_utc),
+        )
     return {
         "status": "submitted",
         "complete": False,
@@ -380,6 +494,46 @@ def submit_retirement(
         "retirement_plan_sha256": plan.plan_sha256,
         "jobs": jobs,
     }
+
+
+def submit_retirement(
+    plan: RetirementPlan,
+    confirmations: RetirementConfirmations,
+) -> dict[str, object]:
+    """Revalidate the plan and delegate one guarded deletion job per target."""
+    request_path = plan.config.deletion_log_root / "retirement_request.json"
+    if request_path.exists() or request_path.is_symlink():
+        stored, jobs, request_path, created = _request_plan(plan.config)
+        if stored.plan_sha256 != plan.plan_sha256:
+            raise RetirementError("The existing retirement request has another scope")
+        _validate_confirmations(stored, confirmations)
+        return _submit_missing_jobs(
+            stored, jobs, request_path, created_utc=created
+        )
+    _validate_confirmations(plan, confirmations)
+    fresh = plan_retirement(
+        plan.config, selected=tuple(target.key for target in plan.targets)
+    )
+    if fresh.plan_sha256 != plan.plan_sha256:
+        raise RetirementError("The retirement plan changed during confirmation")
+    config = plan.config
+    config.deletion_log_root.mkdir(parents=True, exist_ok=True)
+    jobs: list[dict[str, object]] = []
+    created = _utc_now()
+    _write_json(
+        request_path, _request_payload(plan, jobs, created_utc=created)
+    )
+    return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
+
+
+def resume_retirement(
+    config: DatasetConfig,
+    confirmations: RetirementConfirmations,
+) -> dict[str, object]:
+    """Resume only jobs absent from an immutable partial retirement request."""
+    plan, jobs, request_path, created = _request_plan(config)
+    _validate_confirmations(plan, confirmations)
+    return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
 
 
 def _read_terminal_receipt(path: Path) -> dict[str, str] | None:

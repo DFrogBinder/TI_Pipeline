@@ -138,6 +138,41 @@ def test_cli_retirement_defaults_to_plan_and_requires_all_submit_gates(
     assert "retirement default: plan only" in output
 
 
+def test_cli_resumes_an_existing_retirement_request_without_replanning(
+    miniature_config, monkeypatch
+) -> None:
+    request = miniature_config.deletion_log_root / "retirement_request.json"
+    request.parent.mkdir(parents=True)
+    request.write_text("{}\n", encoding="utf-8")
+    calls: list[object] = []
+    monkeypatch.setattr(
+        cli,
+        "plan_retirement",
+        lambda *args, **kwargs: pytest.fail("resume must not rebuild the live plan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "resume_retirement",
+        lambda config, confirmations: calls.append(confirmations)
+        or {"status": "submitted"},
+    )
+
+    assert (
+        cli.main(
+            [
+                "retire-submit",
+                f"--confirm-output-root={miniature_config.output_root}",
+                f"--dataset-receipt-sha256={'a' * 64}",
+                f"--archive-receipt-sha256={'b' * 64}",
+                "--confirm-retirement",
+            ],
+            config=miniature_config,
+        )
+        == 0
+    )
+    assert len(calls) == 1
+
+
 def test_production_scope_block_reports_full_dataset(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "preflight", lambda config: {"status": "ready"})
     config = cli.production_config()

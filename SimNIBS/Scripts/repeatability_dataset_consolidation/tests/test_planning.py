@@ -32,10 +32,27 @@ def test_plan_maps_every_cell_and_supporting_bundle_once(miniature_config) -> No
     assert {item.role for item in plan.items} >= {
         "paper_analysis",
         "nested_dataset",
+        "replacement_v3_analysis",
+        "historical_config",
         "source_metadata",
         "replacement_metadata",
         "v3_headmodel_cohort_metadata",
     }
+    replacement_analysis = next(
+        item for item in plan.items if item.role == "replacement_v3_analysis"
+    )
+    assert replacement_analysis.destination == Path(
+        "analyses/replacement_subject/simnibs326_repeatability_analysis"
+    )
+    assert (
+        replacement_analysis.source
+        / "simnibs326h_repeatability_analysis.tar.gz"
+    ).is_file()
+    historical = [item for item in plan.items if item.role == "historical_config"]
+    assert len(historical) == 1
+    assert historical[0].destination == Path(
+        "provenance/configs/historical/v3_left/paired_analysis.json"
+    )
     assert plan.expected_cells == 16
     assert plan.expected_simulations == 32
     assert len(plan_sha256(plan)) == 64
@@ -97,6 +114,27 @@ def test_plan_rejects_materialization_cycle(miniature_config) -> None:
     (source / "cycle").symlink_to(".", target_is_directory=True)
 
     with pytest.raises(PlanningError, match="cycle"):
+        build_copy_plan(miniature_config)
+
+
+def test_plan_rejects_indirect_symlink_escape_reached_through_directory_link(
+    miniature_config,
+) -> None:
+    source = (
+        miniature_config.sources.v3_left
+        / "sub-CC110174_repeatability"
+        / "remesh"
+    )
+    approved_target = (
+        miniature_config.sources.v4_scaffolds / "unplanned/linked-directory"
+    )
+    approved_target.mkdir(parents=True)
+    outside = miniature_config.output_root.parent.parent / "outside-indirect.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    (approved_target / "inner-escape").symlink_to(outside)
+    (source / "outer-link").symlink_to(approved_target, target_is_directory=True)
+
+    with pytest.raises(PlanningError, match="outside approved sources"):
         build_copy_plan(miniature_config)
 
 

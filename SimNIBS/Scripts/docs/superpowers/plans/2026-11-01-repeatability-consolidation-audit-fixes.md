@@ -57,10 +57,10 @@
 **Interfaces:**
 - Produces: a physical Shared archive with no symlinks and materialized inventories equivalent to source link semantics.
 
-- [ ] Write failing tests showing absolute internal links currently break after retirement and external links must be rejected.
-- [ ] Run the tests and verify the expected failures.
-- [ ] Validate all link targets against the four archive roots, copy with `--copy-links`, and compare materialized source inventories to regular destination inventories.
-- [ ] Run archive and package tests.
+- [x] Write failing tests showing absolute internal links currently break after retirement and external links must be rejected.
+- [x] Run the tests and verify the expected failures.
+- [x] Validate all link targets against the four archive roots, copy with `--copy-links`, and compare materialized source inventories to regular destination inventories.
+- [x] Run archive and retirement tests.
 
 ### Task 3: Honest completion and source-receipt bindings
 

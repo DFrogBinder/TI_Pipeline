@@ -9,10 +9,10 @@ import json
 import os
 from pathlib import Path
 import shutil
-import stat
 import subprocess
 import tempfile
 
+from .inventory import build_file_inventory, build_materialized_inventory
 from .settings import DatasetConfig
 
 
@@ -105,6 +105,21 @@ def _plan(config: DatasetConfig) -> tuple[tuple[ArchiveItem, ...], str]:
             )
         )
     ordered = tuple(sorted(items, key=lambda item: item.key))
+    approved_roots = tuple(item.source for item in ordered)
+    for item in ordered:
+        for path in item.source.rglob("*"):
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except (FileNotFoundError, RuntimeError) as exc:
+                raise ArchiveError(f"Broken archive-source symlink: {path}") from exc
+            if not any(
+                target == root or root in target.parents for root in approved_roots
+            ):
+                raise ArchiveError(
+                    f"Symlink target is outside archive sources: {path} -> {target}"
+                )
     encoded = json.dumps(
         [item.as_dict() for item in ordered],
         sort_keys=True,
@@ -243,6 +258,7 @@ def _rsync_command(
         "--no-perms",
         "--no-owner",
         "--no-group",
+        "--copy-links",
         "--protect-args",
         "--itemize-changes",
         "--out-format=%i|%n%L",
@@ -313,50 +329,6 @@ def archive_copy(config: DatasetConfig) -> dict[str, object]:
     }
 
 
-def _archive_inventory(root: Path) -> dict[str, object]:
-    if not root.is_dir() or root.is_symlink():
-        raise ArchiveError(f"Archive inventory root is missing or unsafe: {root}")
-    raw: list[dict[str, object]] = []
-    hardlinks: dict[tuple[int, int], list[str]] = {}
-    for path in sorted(root.rglob("*"), key=lambda value: value.as_posix()):
-        relative = path.relative_to(root).as_posix()
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            raw.append({"path": relative, "type": "symlink", "target": os.readlink(path)})
-        elif stat.S_ISDIR(info.st_mode):
-            raw.append({"path": relative, "type": "directory"})
-        elif stat.S_ISREG(info.st_mode):
-            identity = (int(info.st_dev), int(info.st_ino))
-            hardlinks.setdefault(identity, []).append(relative)
-            raw.append(
-                {
-                    "path": relative,
-                    "type": "file",
-                    "size_bytes": int(info.st_size),
-                    "sha256": _sha256_file(path),
-                }
-            )
-        else:
-            raise ArchiveError(f"Archive contains unsupported special file: {path}")
-    groups = {
-        path: hashlib.sha256("\0".join(sorted(paths)).encode("utf-8")).hexdigest()
-        for paths in hardlinks.values()
-        if len(paths) > 1
-        for path in paths
-    }
-    for entry in raw:
-        if entry["type"] == "file":
-            entry["hardlink_group"] = groups.get(str(entry["path"]))
-    encoded = json.dumps(
-        raw, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    return {
-        "entries": raw,
-        "entry_count": len(raw),
-        "inventory_sha256": hashlib.sha256(encoded).hexdigest(),
-    }
-
-
 def _completion_path(config: DatasetConfig) -> Path:
     return config.shared_receipt_root / "legacy_v3_archive_v1.complete.json"
 
@@ -416,8 +388,11 @@ def archive_verify(
             "changes": list(differences),
         }
         if checksum:
-            source_inventory = _archive_inventory(item.source)
-            destination_inventory = _archive_inventory(item.destination)
+            try:
+                source_inventory = build_materialized_inventory(item.source).as_dict()
+                destination_inventory = build_file_inventory(item.destination).as_dict()
+            except ValueError as exc:
+                raise ArchiveError(str(exc)) from exc
             record["source_inventory_sha256"] = source_inventory["inventory_sha256"]
             record["destination_inventory_sha256"] = destination_inventory[
                 "inventory_sha256"
@@ -495,8 +470,11 @@ def validate_archive_completion(config: DatasetConfig) -> dict[str, object]:
         _validate_identity(item)
         mapping = by_key[item.key]
         command, changes = _compare(item, checksum=True)
-        source_inventory = _archive_inventory(item.source)
-        destination_inventory = _archive_inventory(item.destination)
+        try:
+            source_inventory = build_materialized_inventory(item.source).as_dict()
+            destination_inventory = build_file_inventory(item.destination).as_dict()
+        except ValueError as exc:
+            raise ArchiveError(str(exc)) from exc
         if (
             changes
             or mapping.get("status") != "matched"

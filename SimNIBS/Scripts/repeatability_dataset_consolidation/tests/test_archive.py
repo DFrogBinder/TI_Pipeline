@@ -46,7 +46,7 @@ def test_archive_preflight_is_exact_and_read_only(miniature_config) -> None:
     assert not miniature_config.shared_receipt_root.exists()
 
 
-def test_archive_copy_resumes_and_preserves_links(miniature_config) -> None:
+def test_archive_copy_resumes_and_materializes_links(miniature_config) -> None:
     before = _seed_archive_sources(miniature_config)
 
     first = archive_copy(miniature_config)
@@ -60,8 +60,9 @@ def test_archive_copy_resumes_and_preserves_links(miniature_config) -> None:
         regular = destination / "nested/data.bin"
         hard = destination / "nested/data-hard.bin"
         link = destination / "data-link.bin"
-        assert link.is_symlink()
-        assert os.readlink(link) == "nested/data.bin"
+        assert link.is_file()
+        assert not link.is_symlink()
+        assert link.read_bytes() == regular.read_bytes()
         assert regular.stat().st_ino == hard.stat().st_ino
         assert (regular.read_bytes(), regular.stat().st_mtime_ns) == before[key]
         source_data = source / "nested/data.bin"
@@ -71,9 +72,38 @@ def test_archive_copy_resumes_and_preserves_links(miniature_config) -> None:
         json.loads(path.read_text())
         for path in (miniature_config.shared_archive_root / "_archive/copy_items").glob("*.json")
     ]
-    assert all("--copy-links" not in payload["command"] for payload in payloads)
+    assert all("--copy-links" in payload["command"] for payload in payloads)
     assert all("--no-owner" in payload["command"] for payload in payloads)
     assert all("--delete" not in payload["command"] for payload in payloads if payload["action"] == "copied")
+
+
+def test_archive_materializes_absolute_links_between_archived_roots(
+    miniature_config,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    roots = list(miniature_config.archive_sources.values())
+    target = roots[1] / "nested/data.bin"
+    link = roots[0] / "cross-root-absolute-link.bin"
+    link.symlink_to(target.resolve())
+
+    archive_copy(miniature_config)
+    assert archive_verify(miniature_config, checksum=True)["status"] == "complete"
+
+    archived = miniature_config.shared_archive_root / roots[0].name / link.name
+    assert archived.is_file()
+    assert not archived.is_symlink()
+    assert archived.read_bytes() == target.read_bytes()
+
+
+def test_archive_rejects_links_outside_archive_sources(miniature_config) -> None:
+    _seed_archive_sources(miniature_config)
+    outside = miniature_config.shared_archive_root.parent / "not-an-archive-source.bin"
+    outside.write_bytes(b"outside\n")
+    root = next(iter(miniature_config.archive_sources.values()))
+    (root / "external-link.bin").symlink_to(outside.resolve())
+
+    with pytest.raises(ArchiveError, match="outside archive sources"):
+        archive_preflight(miniature_config)
 
 
 def test_archive_checksum_writes_external_immutable_receipt(miniature_config) -> None:

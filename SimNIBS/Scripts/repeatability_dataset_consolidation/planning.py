@@ -346,30 +346,31 @@ def _append_v3_headmodels(
             else config.sources.v3_headmodels
         )
         prefix = Path("headmodels/simnibs326") / subject
+        provenance_prefix = Path("provenance/headmodels/simnibs326") / subject
         records = (
-            ("subject", root / subject, prefix / "subject_tree", "v3_headmodel_subject"),
+            ("subject", root / subject, prefix, "v3_headmodel_subject"),
             (
                 "label",
                 root / "harmonized_labels" / f"{subject}_v3_harmonized_t1fs_grid.nii.gz",
-                prefix / "harmonized_label.nii.gz",
+                provenance_prefix / "harmonized_label.nii.gz",
                 "v3_headmodel_label",
             ),
             (
                 "qc",
                 root / "harmonized_labels/qc" / f"{subject}.json",
-                prefix / "harmonization_qc.json",
+                provenance_prefix / "harmonization_qc.json",
                 "v3_headmodel_qc",
             ),
             (
                 "figure",
                 root / "harmonized_labels/figures" / f"{subject}.png",
-                prefix / "harmonization_qc.png",
+                provenance_prefix / "harmonization_qc.png",
                 "v3_headmodel_qc",
             ),
             (
                 "receipts",
                 root / "_pipeline/subjects" / subject,
-                prefix / "receipts",
+                provenance_prefix / "receipts",
                 "v3_headmodel_receipts",
             ),
         )

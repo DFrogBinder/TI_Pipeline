@@ -198,6 +198,18 @@ def test_partial_submission_resumes_without_replanning_deleted_sources(
     monkeypatch.setattr(
         "repeatability_dataset_consolidation.retirement._run_launcher", succeed
     )
+    active_target = plan.targets[1]
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._scheduler_snapshot",
+        lambda: f"123|active|/work|python worker.py {active_target.path}\n",
+    )
+    with pytest.raises(RetirementError, match="active Slurm job"):
+        resume_retirement(config, _confirmations(plan))
+    assert resumed_calls == []
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._scheduler_snapshot",
+        lambda: "",
+    )
     resumed = resume_retirement(config, _confirmations(plan))
 
     assert str(first_target.path) not in resumed_calls
@@ -340,3 +352,60 @@ def test_status_keeps_failed_or_missing_receipts_incomplete(
         target for target in result["targets"] if target["key"] == "nested_analysis"
     )
     assert nested_result["receipt_status"] == "failed"
+
+
+def test_resume_retries_only_a_valid_terminal_failed_job(
+    retirement_ready, monkeypatch
+) -> None:
+    config = retirement_ready
+    plan = plan_retirement(config)
+    submitted = 0
+
+    def initial_submit(command, **kwargs):
+        nonlocal submitted
+        submitted += 1
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {9500 + submitted}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher",
+        initial_submit,
+    )
+    submit_retirement(plan, _confirmations(plan))
+    failed_target = plan.targets[0]
+    failed_receipt = config.deletion_log_root / "delete-directory-9501.receipt.tsv"
+    _write_terminal_receipt(
+        failed_receipt,
+        job_id="9501",
+        target=failed_target,
+        status="failed",
+    )
+
+    retry_commands: list[list[str]] = []
+
+    def retry_submit(command, **kwargs):
+        retry_commands.append(list(command))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="[INFO] Submitted deletion job: 9901\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher",
+        retry_submit,
+    )
+    result = resume_retirement(config, _confirmations(plan))
+
+    assert len(retry_commands) == 1
+    assert retry_commands[0][retry_commands[0].index("--target") + 1] == str(
+        failed_target.path
+    )
+    retried = next(job for job in result["jobs"] if job["key"] == failed_target.key)
+    assert retried["job_id"] == "9901"
+    assert [attempt["job_id"] for attempt in retried["retry_history"]] == ["9501"]

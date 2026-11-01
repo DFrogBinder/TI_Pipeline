@@ -424,7 +424,42 @@ def _submit_missing_jobs(
     *,
     created_utc: str,
 ) -> dict[str, object]:
-    submitted_keys = {str(job["key"]) for job in jobs}
+    target_by_key = {target.key: target for target in plan.targets}
+    retryable: dict[str, dict[str, object]] = {}
+    for job in jobs:
+        key = str(job["key"])
+        target = target_by_key[key]
+        job_id = str(job.get("job_id", ""))
+        expected_terminal = (
+            plan.config.deletion_log_root
+            / f"delete-directory-{job_id}.receipt.tsv"
+        )
+        if job.get("terminal_receipt") != str(expected_terminal):
+            raise RetirementError("The retirement request terminal receipt path is invalid")
+        receipt = _read_terminal_receipt(expected_terminal)
+        valid = bool(
+            receipt
+            and receipt.get("job_id") == job_id
+            and receipt.get("target") == str(target.path)
+            and receipt.get("target_id")
+            == f"{target.source_device}:{target.source_inode}"
+            and receipt.get("allowed_root")
+            == str(plan.config.output_root.parent.resolve())
+        )
+        if valid and receipt and receipt.get("status") == "failed":
+            retryable[key] = job
+    submitted_keys = {
+        str(job["key"]) for job in jobs if str(job["key"]) not in retryable
+    }
+    missing_targets = [
+        target for target in plan.targets if target.key not in submitted_keys
+    ]
+    scheduler = _scheduler_snapshot()
+    for target in missing_targets:
+        if str(target.path) in scheduler or target.path.name in scheduler:
+            raise RetirementError(
+                f"Selected source is referenced by an active Slurm job: {target.path}"
+            )
     for target in plan.targets:
         if target.key in submitted_keys:
             continue
@@ -467,21 +502,36 @@ def _submit_missing_jobs(
             )
             raise RetirementError(f"Could not parse deletion job ID for {target.key}")
         job_id = match.group(1)
-        jobs.append(
-            {
-                "key": target.key,
-                "target": str(target.path),
-                "job_id": job_id,
-                "request_receipt": str(
-                    plan.config.deletion_log_root
-                    / f"delete-directory-{job_id}.request.tsv"
-                ),
-                "terminal_receipt": str(
-                    plan.config.deletion_log_root
-                    / f"delete-directory-{job_id}.receipt.tsv"
-                ),
+        new_job: dict[str, object] = {
+            "key": target.key,
+            "target": str(target.path),
+            "job_id": job_id,
+            "request_receipt": str(
+                plan.config.deletion_log_root
+                / f"delete-directory-{job_id}.request.tsv"
+            ),
+            "terminal_receipt": str(
+                plan.config.deletion_log_root
+                / f"delete-directory-{job_id}.receipt.tsv"
+            ),
+        }
+        previous = retryable.get(target.key)
+        if previous is None:
+            jobs.append(new_job)
+        else:
+            history = list(previous.get("retry_history", []))
+            prior_attempt = {
+                key: value
+                for key, value in previous.items()
+                if key != "retry_history"
             }
-        )
+            new_job["retry_history"] = history + [prior_attempt]
+            index = next(
+                index
+                for index, job in enumerate(jobs)
+                if str(job["key"]) == target.key
+            )
+            jobs[index] = new_job
         submitted_keys.add(target.key)
         _write_json(
             request_path,

@@ -105,3 +105,27 @@ def test_scope_rejects_changed_headmodel_and_excluded_subject_item(
     poisoned = replace(plan, items=plan.items + (excluded,))
     with pytest.raises(ScopeValidationError, match="excluded subject"):
         validate_scientific_scope(poisoned)
+
+
+def test_scope_requires_complete_verified_replacement_analysis(
+    miniature_config,
+) -> None:
+    plan = build_copy_plan(miniature_config)
+    analysis = next(
+        item for item in plan.items if item.role == "replacement_v3_analysis"
+    ).source
+    manifest = analysis / "results/analysis_manifest.json"
+    manifest.write_text(json.dumps({"status": "failed"}), encoding="utf-8")
+    with pytest.raises(ScopeValidationError, match="analysis manifest is not complete"):
+        validate_scientific_scope(plan)
+
+    manifest.write_text(
+        json.dumps({"status": "complete", "rows": 160}), encoding="utf-8"
+    )
+    checksum = analysis / "simnibs326h_repeatability_analysis.tar.gz.sha256"
+    checksum.write_text(
+        "0" * 64 + "  simnibs326h_repeatability_analysis.tar.gz\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ScopeValidationError, match="archive checksum does not match"):
+        validate_scientific_scope(plan)

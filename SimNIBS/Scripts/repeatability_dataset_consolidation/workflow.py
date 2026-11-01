@@ -20,7 +20,7 @@ from .inventory import (
 )
 from .planning import ConsolidationPlan, CopyItem, build_copy_plan, plan_sha256
 from .rsync import compare_item, copy_item
-from .settings import DatasetConfig
+from .settings import DatasetConfig, retirement_allowlist
 from .validation import validate_item_identity, validate_scientific_scope
 
 
@@ -281,6 +281,16 @@ def _canonical_path_replacements(config: DatasetConfig) -> tuple[tuple[str, str]
         / "data/simnibs326/right_m1",
         sources.paper_analysis: root / "analyses/repeatability_paper_update_v1",
         sources.nested_analysis: root / "supplemental/nested_40x40_v1",
+        sources.v3_headmodels: root / "headmodels/simnibs326",
+        sources.replacement_subject / "simnibs326/headmodels": root
+        / "headmodels/simnibs326",
+        sources.v3_headmodels / "_pipeline/headmodels/base9": root
+        / "provenance/source_roots/v3_headmodels_base9/headmodels",
+        sources.replacement_subject
+        / "simnibs326/headmodels/_pipeline/headmodels/external1": root
+        / "provenance/source_roots/v3_headmodels_replacement/headmodels",
+        sources.replacement_subject: root
+        / "provenance/source_roots/replacement_subject_root",
     }
     return tuple(
         sorted(
@@ -297,31 +307,42 @@ def _canonical_path_replacements(config: DatasetConfig) -> tuple[tuple[str, str]
 def _rewrite_config_paths(
     value: object,
     replacements: tuple[tuple[str, str], ...],
-) -> tuple[object, int]:
+) -> tuple[object, tuple[str, ...]]:
     if isinstance(value, dict):
         rewritten: dict[str, object] = {}
-        total = 0
+        rewritten_paths: list[str] = []
         for key, child in value.items():
             next_value, count = _rewrite_config_paths(child, replacements)
             rewritten[str(key)] = next_value
-            total += count
-        return rewritten, total
+            rewritten_paths.extend(count)
+        return rewritten, tuple(rewritten_paths)
     if isinstance(value, list):
         rewritten_items: list[object] = []
-        total = 0
+        rewritten_paths: list[str] = []
         for child in value:
             next_value, count = _rewrite_config_paths(child, replacements)
             rewritten_items.append(next_value)
-            total += count
-        return rewritten_items, total
+            rewritten_paths.extend(count)
+        return rewritten_items, tuple(rewritten_paths)
     if isinstance(value, str):
         for source, destination in replacements:
             if value == source:
-                return destination, 1
+                return destination, (destination,)
             prefix = source + os.sep
             if value.startswith(prefix):
-                return destination + os.sep + value[len(prefix) :], 1
-    return value, 0
+                rewritten = destination + os.sep + value[len(prefix) :]
+                return rewritten, (rewritten,)
+    return value, ()
+
+
+def _config_strings(value: object) -> tuple[str, ...]:
+    if isinstance(value, dict):
+        return tuple(
+            text for child in value.values() for text in _config_strings(child)
+        )
+    if isinstance(value, list):
+        return tuple(text for child in value for text in _config_strings(child))
+    return (value,) if isinstance(value, str) else ()
 
 
 def _canonical_config_records(
@@ -342,7 +363,24 @@ def _canonical_config_records(
             payload = json.loads(historical.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise WorkflowError(f"Historical JSON config is unreadable: {historical}") from exc
-        rewritten, replacement_count = _rewrite_config_paths(payload, replacements)
+        rewritten, rewritten_paths = _rewrite_config_paths(payload, replacements)
+        retired_roots = tuple(
+            str(path.resolve(strict=False))
+            for path in retirement_allowlist(config).values()
+        )
+        for value in _config_strings(rewritten):
+            if any(
+                value == retired or value.startswith(retired + os.sep)
+                for retired in retired_roots
+            ):
+                raise WorkflowError(
+                    f"Canonical config retains a retirement-root path: {historical}: {value}"
+                )
+        missing = [path for path in rewritten_paths if not Path(path).exists()]
+        if missing:
+            raise WorkflowError(
+                f"Canonical config path does not exist in the dataset: {missing[0]}"
+            )
         relative = item.destination.relative_to(historical_root)
         canonical = canonical_root / relative
         encoded = json.dumps(
@@ -363,7 +401,7 @@ def _canonical_config_records(
                 "historical_sha256": sha256_file(historical),
                 "canonical": str(canonical.relative_to(config.output_root)),
                 "canonical_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
-                "path_replacements": replacement_count,
+                "path_replacements": len(rewritten_paths),
             }
         )
     records.sort(key=lambda record: str(record["key"]))

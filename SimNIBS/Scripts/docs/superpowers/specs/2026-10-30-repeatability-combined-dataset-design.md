@@ -350,7 +350,9 @@ as one immutable request; partial selections and caller-provided paths are
 rejected. This preserves live-source validation before any root is removed.
 Default retirement behavior is a dry run. A partially submitted request is
 resumable from its external receipt without rebuilding a plan from roots that
-an already-submitted job may since have removed.
+an already-submitted job may since have removed. Every resume rechecks active
+Slurm jobs for the still-unsubmitted roots. A safely bound terminal failed job
+may be retried while retaining its earlier attempt in the request history.
 Submission requires all of:
 
 - the exact dataset root confirmation;

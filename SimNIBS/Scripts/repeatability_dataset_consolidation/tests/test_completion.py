@@ -11,6 +11,7 @@ from repeatability_dataset_consolidation.inventory import (
     sha256_file,
 )
 from repeatability_dataset_consolidation.planning import build_copy_plan
+from repeatability_dataset_consolidation.settings import retirement_allowlist
 from repeatability_dataset_consolidation.workflow import (
     WorkflowError,
     complete_dataset,
@@ -75,6 +76,24 @@ def test_completion_binds_checksum_inventory_and_exact_scope(miniature_config) -
         miniature_config.output_root / "data/simnibs326/left_hippocampus"
     )
     assert canonical_payload["unchanged_parameter"] == "median_roi"
+    assert canonical_payload["headmodel_root"] == str(
+        miniature_config.output_root / "headmodels/simnibs326"
+    )
+    assert canonical_payload["headmodel_promotion_path"] == str(
+        miniature_config.output_root
+        / "provenance/source_roots/v3_headmodels_replacement/headmodels/promoted.json"
+    )
+    assert canonical_payload["source_root"] == str(
+        miniature_config.output_root
+        / "provenance/source_roots/replacement_subject_root/inputs/corrected_v4"
+    )
+    for key in (
+        "experiment_root",
+        "headmodel_root",
+        "headmodel_promotion_path",
+        "source_root",
+    ):
+        assert Path(canonical_payload[key]).exists()
     canonical_manifest = json.loads(
         (
             miniature_config.output_root
@@ -91,6 +110,17 @@ def test_completion_binds_checksum_inventory_and_exact_scope(miniature_config) -
         canonical_manifest_path
     )
     assert len(canonical_manifest["configs_sha256"]) == 64
+    retired_roots = {
+        str(path.resolve())
+        for path in retirement_allowlist(miniature_config).values()
+    }
+    assert not any(
+        canonical_payload[key] == root
+        or canonical_payload[key].startswith(root + "/")
+        for key in canonical_payload
+        if isinstance(canonical_payload[key], str)
+        for root in retired_roots
+    )
     assert not any(path.is_symlink() for path in miniature_config.output_root.rglob("*"))
 
 

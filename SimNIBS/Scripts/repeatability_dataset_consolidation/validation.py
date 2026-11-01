@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+from .inventory import sha256_file
 from .planning import ConsolidationPlan, CopyItem
 from .settings import CONDITIONS, TARGETS, VERSIONS
 
@@ -96,6 +97,59 @@ def _validate_repeats(item: CopyItem, repeat_count: int) -> int:
     return len(expected)
 
 
+def _validate_replacement_analysis(plan: ConsolidationPlan) -> None:
+    analyses = [
+        item for item in plan.items if item.role == "replacement_v3_analysis"
+    ]
+    if len(analyses) != 1:
+        raise ScopeValidationError(
+            "Replacement v3 analysis scope must contain exactly one item"
+        )
+    root = analyses[0].source
+    manifest = root / "results/analysis_manifest.json"
+    archive = root / "simnibs326h_repeatability_analysis.tar.gz"
+    checksum = root / "simnibs326h_repeatability_analysis.tar.gz.sha256"
+    for path in (manifest, archive, checksum):
+        if not path.is_file() or path.is_symlink():
+            raise ScopeValidationError(
+                f"Replacement v3 analysis artifact is missing or unsafe: {path}"
+            )
+    try:
+        manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ScopeValidationError(
+            f"Replacement v3 analysis manifest is unreadable: {manifest}"
+        ) from exc
+    if manifest_payload.get("status") != "complete":
+        raise ScopeValidationError("Replacement v3 analysis manifest is not complete")
+    try:
+        fields = checksum.read_text(encoding="utf-8").strip().split(maxsplit=1)
+    except OSError as exc:
+        raise ScopeValidationError(
+            f"Replacement v3 analysis checksum is unreadable: {checksum}"
+        ) from exc
+    recorded_name = fields[1].lstrip("*") if len(fields) == 2 else ""
+    recorded_path = Path(recorded_name)
+    recorded_archive = (
+        recorded_path
+        if recorded_path.is_absolute()
+        else checksum.parent / recorded_path
+    ).resolve(strict=False)
+    if (
+        len(fields) != 2
+        or len(fields[0]) != 64
+        or any(character not in "0123456789abcdef" for character in fields[0])
+        or recorded_archive != archive.resolve()
+    ):
+        raise ScopeValidationError(
+            "Replacement v3 analysis checksum receipt is invalid"
+        )
+    if sha256_file(archive) != fields[0]:
+        raise ScopeValidationError(
+            "Replacement v3 analysis archive checksum does not match"
+        )
+
+
 def validate_scientific_scope(plan: ConsolidationPlan) -> ScopeValidation:
     """Validate exact cohort cells, repeats, receipts, and supporting bundles."""
     for item in plan.items:
@@ -147,6 +201,7 @@ def validate_scientific_scope(plan: ConsolidationPlan) -> ScopeValidation:
         raise ScopeValidationError("Selected v3 head-model bundle scope is incomplete")
     if v4_subjects != expected_subjects:
         raise ScopeValidationError("Selected v4 scaffold bundle scope is incomplete")
+    _validate_replacement_analysis(plan)
 
     return ScopeValidation(
         subject_count=len(plan.subjects),

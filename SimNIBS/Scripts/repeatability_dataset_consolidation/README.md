@@ -117,7 +117,9 @@ bash "$DATASET" retire-submit \
 If launcher submission is interrupted after only some deletion jobs are
 recorded, run the identical `retire-submit` command again. It resumes only the
 missing jobs from the immutable external request receipt; already recorded
-jobs are never submitted twice.
+jobs are never submitted twice. Resume rechecks the live Slurm queue. A job
+with a valid terminal `failed` receipt is submitted as a new attempt and the
+failed attempt remains recorded in that job's retry history.
 
 Deletion submission is not deletion completion. Check until every external
 worker receipt is terminal and every target is independently absent:

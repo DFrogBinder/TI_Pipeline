@@ -243,6 +243,14 @@ receipts.
 
 ## Workflow interface
 
+Implementation note: the login-node entry point is
+`repeatability_dataset_consolidation/hpc/submit.sh`. Its `checksum` mode runs
+full-content verification and writes dataset completion only after all live
+scope and inventory gates pass. `archive-checksum` independently completes the
+four-root Shared archive. Neither completion action automatically invokes
+retirement; only `retire-submit`, with exact receipt hashes and explicit
+confirmation, delegates guarded deletion jobs.
+
 Add `repeatability_dataset_consolidation/` with a dependency-free Python core,
 a thin login-node shell entry point, tests, and a runbook.
 

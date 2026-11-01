@@ -687,3 +687,52 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
         return receipt | {"action": "reused"}
     _write_json(completion_path, receipt)
     return receipt | {"action": "created"}
+
+
+def dataset_status(config: DatasetConfig) -> dict[str, object]:
+    """Report receipt state without validating sources or changing any file."""
+    root = config.output_root
+    if not root.exists() or root.is_symlink():
+        return {
+            "status": "absent",
+            "prepared": False,
+            "copied_items": 0,
+            "quick_verification": None,
+            "checksum_verification": None,
+            "complete": False,
+        }
+
+    def load_status(path: Path) -> str | None:
+        if not path.is_file() or path.is_symlink():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "unreadable"
+        value = payload.get("status")
+        return str(value) if value is not None else "unknown"
+
+    owner = root / "_consolidation/owner.json"
+    copy_root = root / "_consolidation/copy_items"
+    completion = root / "_consolidation/complete.json"
+    complete_status = load_status(completion)
+    return {
+        "status": "complete" if complete_status == "complete" else "in_progress",
+        "prepared": owner.is_file() and not owner.is_symlink(),
+        "copied_items": (
+            len(list(copy_root.glob("*.json")))
+            if copy_root.is_dir() and not copy_root.is_symlink()
+            else 0
+        ),
+        "quick_verification": load_status(
+            root / "_consolidation/verification/size_mtime/verification.json"
+        ),
+        "checksum_verification": load_status(
+            root / "_consolidation/verification/checksum/verification.json"
+        ),
+        "complete": complete_status == "complete",
+        "completion_receipt": str(completion) if completion.is_file() else None,
+        "completion_receipt_sha256": (
+            sha256_file(completion) if completion.is_file() and not completion.is_symlink() else None
+        ),
+    }

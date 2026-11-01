@@ -1,0 +1,128 @@
+# Final-132 combined repeatability dataset workflow
+
+This login-node workflow creates the analysis-ready physical dataset at:
+
+```text
+/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1
+```
+
+It consolidates ten subjects (`sub-CC510415` replaces `sub-CC520083`), two
+SimNIBS versions, two targets, two conditions, and 40 repeats: 80 scientific
+cells and 3,200 simulations. It also preserves the ten selected v3 harmonized
+head models, ten selected v4 corrected scaffolds, the paper-analysis tree, and
+the nested repeatability dataset.
+
+The workflow does not launch simulations. Copy, verification, and Shared
+archival run on the login node. Retirement is a separate, receipt-gated Slurm
+maintenance operation and is never triggered automatically by copying.
+
+## Start in tmux
+
+The physical copy and checksum pass may run for a long time. On the Stanage
+login node:
+
+```bash
+cd ~/Repos/TI_Pipeline/SimNIBS/Scripts
+tmux new -s repeatability-dataset
+
+DATASET=repeatability_dataset_consolidation/hpc/submit.sh
+OUTPUT_ROOT=/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1
+ARCHIVE_ROOT=/shared/boyan/Shared/retired_repeatability_v3_sources_v1
+```
+
+Detach with `Ctrl-b d`; reattach with
+`tmux attach -t repeatability-dataset`.
+
+## 1. Audit, prepare, and copy
+
+`preflight` is completely read-only. `prepare` creates only the owned skeleton
+and immutable plan. `copy` requires the exact destination and never deletes a
+source or an extra destination file.
+
+```bash
+bash "$DATASET" preflight
+bash "$DATASET" prepare
+bash "$DATASET" copy --confirm-output-root="$OUTPUT_ROOT"
+bash "$DATASET" status
+```
+
+Interrupted copies are resumable by running the same `copy` command again.
+
+## 2. Verify and complete the dataset
+
+The quick comparison uses size and modification time. The checksum command
+performs full-content comparison, builds the sorted per-file SHA-256 inventory,
+and writes `_consolidation/complete.json` only when every gate passes.
+
+```bash
+bash "$DATASET" verify
+bash "$DATASET" checksum
+bash "$DATASET" status
+```
+
+Do not proceed to retirement unless `status` reports `complete: true`.
+
+## 3. Archive obsolete v3 references to Shared
+
+Shared is login-node-only and must never replace parscratch in a worker-job
+configuration. This is an unchanged whole-tree archive; unlike the analysis
+dataset, it preserves symlinks and hard links.
+
+```bash
+bash "$DATASET" archive-preflight
+bash "$DATASET" archive-copy --confirm-archive-root="$ARCHIVE_ROOT"
+bash "$DATASET" archive-verify
+bash "$DATASET" archive-checksum
+```
+
+The external archive completion receipt is:
+
+```text
+/shared/boyan/Shared/.repeatability_retirement_receipts/legacy_v3_archive_v1.complete.json
+```
+
+## 4. Plan retirement without deleting
+
+The default is an exhaustive dry-run plan for the code-owned allowlist:
+
+```bash
+bash "$DATASET" retire-plan
+```
+
+Select a subset only by repeated allowlist keys, never by arbitrary paths:
+
+```bash
+bash "$DATASET" retire-plan \
+    --retire-key=paper_analysis \
+    --retire-key=nested_analysis
+```
+
+The global `CamCan_Corrected_v4_Scaffolds` root and all primary MRI, atlas,
+CHARM, corrected-label, MNI, and `ti_dataset` roots are not retirement targets.
+
+## 5. Explicitly submit guarded deletion
+
+Copy the exact receipt hashes printed by `retire-plan`. Submission requires all
+confirmations and still re-runs every gate. The example deliberately uses
+placeholders:
+
+```bash
+DATASET_RECEIPT_SHA256=<64-lowercase-hex-from-retire-plan>
+ARCHIVE_RECEIPT_SHA256=<64-lowercase-hex-from-retire-plan>
+
+bash "$DATASET" retire-submit \
+    --confirm-output-root="$OUTPUT_ROOT" \
+    --dataset-receipt-sha256="$DATASET_RECEIPT_SHA256" \
+    --archive-receipt-sha256="$ARCHIVE_RECEIPT_SHA256" \
+    --confirm-retirement
+```
+
+Deletion submission is not deletion completion. Check until every external
+worker receipt is terminal and every target is independently absent:
+
+```bash
+bash "$DATASET" retire-status
+```
+
+Only `retire-submit` can initiate deletion. No copy, verify, checksum, archive,
+status, or plan mode calls `rm` or submits simulation work.

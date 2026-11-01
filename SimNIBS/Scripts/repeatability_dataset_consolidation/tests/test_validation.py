@@ -80,6 +80,37 @@ def test_scope_rejects_missing_field_mesh_and_incomplete_receipt(
         validate_scientific_scope(plan)
 
 
+def test_scope_rejects_scope_less_terminal_receipt(miniature_config) -> None:
+    plan = build_copy_plan(miniature_config)
+    cell = _first_cell(plan)
+    receipt = cell.source.parents[1] / "_pipeline/workflow/complete.json"
+    receipt.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+
+    with pytest.raises(ScopeValidationError, match="scope"):
+        validate_scientific_scope(plan)
+
+
+def test_scope_rejects_receipt_with_wrong_target_or_task_count(
+    miniature_config,
+) -> None:
+    plan = build_copy_plan(miniature_config)
+    cell = _first_cell(plan)
+    receipt = cell.source.parents[1] / "_pipeline/workflow/complete.json"
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    payload["scope"]["target"] = "right-m1"
+    payload["scope"]["roi"] = "right-m1"
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ScopeValidationError, match="target"):
+        validate_scientific_scope(plan)
+
+    payload["scope"]["target"] = cell.target.replace("_", "-")
+    payload["scope"]["roi"] = cell.target.replace("_", "-")
+    payload["scope"]["expected_ti_msh"] = 999
+    receipt.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ScopeValidationError, match="task count"):
+        validate_scientific_scope(plan)
+
+
 def test_scope_rejects_changed_headmodel_and_excluded_subject_item(
     miniature_config,
 ) -> None:

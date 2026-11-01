@@ -60,7 +60,32 @@ def _experiment_root(item: CopyItem) -> Path:
         raise ScopeValidationError(f"Scientific source has no experiment root: {item.source}") from exc
 
 
-def _terminal_receipt(experiment_root: Path) -> Path:
+def _normalized_target(value: object) -> str:
+    return str(value).strip().lower().replace("_", "-")
+
+
+def _receipt_integer(value: object, label: str, receipt: Path) -> int:
+    if isinstance(value, bool):
+        raise ScopeValidationError(f"Terminal source receipt has invalid {label}: {receipt}")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ScopeValidationError(
+            f"Terminal source receipt has invalid {label}: {receipt}"
+        ) from exc
+    if result < 0:
+        raise ScopeValidationError(f"Terminal source receipt has invalid {label}: {receipt}")
+    return result
+
+
+def _terminal_receipt(
+    experiment_root: Path,
+    *,
+    target: str,
+    subjects: set[str],
+    conditions: set[str],
+    repeat_count: int,
+) -> Path:
     receipt = experiment_root / "_pipeline/workflow/complete.json"
     if not receipt.is_file() or receipt.is_symlink():
         raise ScopeValidationError(f"Terminal source receipt is missing: {receipt}")
@@ -70,6 +95,104 @@ def _terminal_receipt(experiment_root: Path) -> Path:
         raise ScopeValidationError(f"Terminal source receipt is unreadable: {receipt}") from exc
     if payload.get("status") != "complete":
         raise ScopeValidationError(f"Terminal source receipt is not terminal: {receipt}")
+    scope = payload.get("scope")
+    if not isinstance(scope, dict):
+        raise ScopeValidationError(f"Terminal source receipt has no scope: {receipt}")
+    for stage in (payload.get("stage"), scope.get("stage")):
+        if stage is not None and str(stage) != "final":
+            raise ScopeValidationError(
+                f"Terminal source receipt is not final: {receipt}"
+            )
+
+    observed_target = scope.get("target", scope.get("roi"))
+    if _normalized_target(observed_target) != _normalized_target(target):
+        raise ScopeValidationError(
+            f"Terminal source receipt target differs from planned data: {receipt}"
+        )
+    subject_count = _receipt_integer(
+        scope.get("subject_count"), "subject count", receipt
+    )
+    if subject_count < len(subjects):
+        raise ScopeValidationError(
+            f"Terminal source receipt subject scope is incomplete: {receipt}"
+        )
+    receipt_subjects = scope.get("subjects")
+    if receipt_subjects is not None:
+        if (
+            not isinstance(receipt_subjects, list)
+            or len(receipt_subjects) != subject_count
+            or len(set(map(str, receipt_subjects))) != subject_count
+            or not subjects.issubset(set(map(str, receipt_subjects)))
+        ):
+            raise ScopeValidationError(
+                f"Terminal source receipt subject scope is incomplete: {receipt}"
+            )
+    observed_repeats = _receipt_integer(
+        scope.get("repeats_per_condition"), "repeat count", receipt
+    )
+    if observed_repeats != repeat_count:
+        raise ScopeValidationError(
+            f"Terminal source receipt repeat count differs from planned data: {receipt}"
+        )
+
+    declared_conditions = scope.get("conditions")
+    if declared_conditions is not None and not isinstance(declared_conditions, dict):
+        raise ScopeValidationError(
+            f"Terminal source receipt has invalid condition scope: {receipt}"
+        )
+    task_counts: dict[str, int] = {}
+    condition_names = set(declared_conditions or {})
+    condition_names.update(
+        condition
+        for condition in CONDITIONS
+        if f"{condition}_tasks" in scope
+    )
+    if not conditions.issubset(condition_names):
+        raise ScopeValidationError(
+            f"Terminal source receipt condition scope is incomplete: {receipt}"
+        )
+    expected_per_condition = subject_count * repeat_count
+    for condition in condition_names:
+        task_key = f"{condition}_tasks"
+        if task_key in scope:
+            count = _receipt_integer(scope[task_key], task_key, receipt)
+            if count != expected_per_condition:
+                raise ScopeValidationError(
+                    f"Terminal source receipt condition task count differs: {receipt}"
+                )
+            task_counts[condition] = count
+            continue
+        count = _receipt_integer(
+            declared_conditions[condition], f"{condition} count", receipt
+        )
+        if count == repeat_count:
+            task_counts[condition] = expected_per_condition
+        elif count == expected_per_condition:
+            task_counts[condition] = count
+        else:
+            raise ScopeValidationError(
+                f"Terminal source receipt condition task count differs: {receipt}"
+            )
+
+    expected_total = sum(task_counts.values())
+    total_fields = (
+        "expected_ti_msh",
+        "expected_ti_nifti",
+        "total_simulation_tasks",
+    )
+    observed_totals = [
+        _receipt_integer(scope[field], field, receipt)
+        for field in total_fields
+        if field in scope
+    ]
+    if not observed_totals:
+        raise ScopeValidationError(
+            f"Terminal source receipt has no scientific task count: {receipt}"
+        )
+    if any(total != expected_total for total in observed_totals):
+        raise ScopeValidationError(
+            f"Terminal source receipt task count differs from its scope: {receipt}"
+        )
     return receipt.resolve()
 
 
@@ -182,7 +305,27 @@ def validate_scientific_scope(plan: ConsolidationPlan) -> ScopeValidation:
     if len(expected_cells) != plan.expected_cells:
         raise ScopeValidationError("Plan expected-cell count is inconsistent")
 
-    receipts = sorted({_terminal_receipt(_experiment_root(item)) for item in scientific})
+    receipt_groups: dict[Path, list[CopyItem]] = {}
+    for item in scientific:
+        receipt_groups.setdefault(_experiment_root(item), []).append(item)
+    receipts: list[Path] = []
+    for experiment_root, items in sorted(
+        receipt_groups.items(), key=lambda pair: str(pair[0])
+    ):
+        targets = {item.target for item in items}
+        if len(targets) != 1 or None in targets:
+            raise ScopeValidationError(
+                f"Scientific source root mixes targets: {experiment_root}"
+            )
+        receipts.append(
+            _terminal_receipt(
+                experiment_root,
+                target=str(next(iter(targets))),
+                subjects={str(item.subject) for item in items},
+                conditions={str(item.condition) for item in items},
+                repeat_count=plan.repeat_count,
+            )
+        )
     simulations = sum(_validate_repeats(item, plan.repeat_count) for item in scientific)
     if simulations != plan.expected_simulations:
         raise ScopeValidationError(
@@ -209,5 +352,5 @@ def validate_scientific_scope(plan: ConsolidationPlan) -> ScopeValidation:
         simulation_count=simulations,
         v3_headmodel_count=len(v3_subjects),
         v4_scaffold_count=len(v4_subjects),
-        terminal_receipts=tuple(str(path) for path in receipts),
+        terminal_receipts=tuple(str(path) for path in sorted(set(receipts))),
     )

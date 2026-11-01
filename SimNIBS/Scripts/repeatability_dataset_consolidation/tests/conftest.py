@@ -41,6 +41,38 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
     subjects = ("sub-CC110174", "sub-CC510415")
     replacement = subjects[-1]
 
+    def completion_payload(
+        target: str,
+        receipt_subjects: tuple[str, ...],
+        conditions: tuple[str, ...],
+    ) -> dict[str, object]:
+        subject_count = len(receipt_subjects)
+        repeats = 2
+        condition_tasks = subject_count * repeats
+        total_tasks = condition_tasks * len(conditions)
+        scope: dict[str, object] = {
+            "status": "complete",
+            "target": target.replace("_", "-"),
+            "roi": target.replace("_", "-"),
+            "stage": "final",
+            "subjects": list(receipt_subjects),
+            "subject_count": subject_count,
+            "repeats_per_condition": repeats,
+            "conditions": {
+                condition: condition_tasks for condition in conditions
+            },
+            "expected_ti_msh": total_tasks,
+            "expected_ti_nifti": total_tasks,
+        }
+        for condition in conditions:
+            scope[f"{condition}_tasks"] = condition_tasks
+        return {
+            "schema_version": 1,
+            "status": "complete",
+            "stage": "final",
+            "scope": scope,
+        }
+
     base_sources = {
         ("simnibs4", "left_hippocampus", "remesh"): sources.v4_left_remesh,
         ("simnibs4", "left_hippocampus", "fixed_mesh"): sources.v4_left_fixed,
@@ -51,7 +83,8 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
         ("simnibs326", "right_m1", "remesh"): sources.v3_right,
         ("simnibs326", "right_m1", "fixed_mesh"): sources.v3_right,
     }
-    for (_, _, condition), experiment_root in base_sources.items():
+    base_receipts: dict[Path, tuple[str, set[str]]] = {}
+    for (_, target, condition), experiment_root in base_sources.items():
         condition_root = (
             experiment_root
             / f"{subjects[0]}_repeatability"
@@ -70,10 +103,20 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
             )
             ti_mesh.parent.mkdir(parents=True)
             ti_mesh.write_text(f"field {repeat_index}\n", encoding="utf-8")
+        receipt_target, receipt_conditions = base_receipts.setdefault(
+            experiment_root, (target, set())
+        )
+        assert receipt_target == target
+        receipt_conditions.add(condition)
+
+    for experiment_root, (target, conditions) in base_receipts.items():
         workflow = experiment_root / "_pipeline/workflow"
         workflow.mkdir(parents=True, exist_ok=True)
         (workflow / "complete.json").write_text(
-            json.dumps({"status": "complete"}), encoding="utf-8"
+            json.dumps(
+                completion_payload(target, (subjects[0],), tuple(sorted(conditions)))
+            ),
+            encoding="utf-8",
         )
 
     historical_config = sources.v3_left / "_pipeline/configs/paired_analysis.json"
@@ -104,7 +147,12 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
             workflow = experiment_root / "_pipeline/workflow"
             workflow.mkdir(parents=True, exist_ok=True)
             (workflow / "complete.json").write_text(
-                json.dumps({"status": "complete"}), encoding="utf-8"
+                json.dumps(
+                    completion_payload(
+                        target, (replacement,), ("remesh", "fixed_mesh")
+                    )
+                ),
+                encoding="utf-8",
             )
 
     def seed_v3_headmodel(head_root: Path, subject: str, cohort: str) -> None:

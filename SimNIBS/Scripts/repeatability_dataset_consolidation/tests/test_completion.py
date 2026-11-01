@@ -16,6 +16,7 @@ from repeatability_dataset_consolidation.workflow import (
     WorkflowError,
     complete_dataset,
     copy_dataset,
+    dataset_status,
     prepare,
     verify_dataset,
 )
@@ -57,6 +58,11 @@ def test_completion_binds_checksum_inventory_and_exact_scope(miniature_config) -
     assert receipt["source_mapping"]["sha256"] == sha256_file(source_mapping)
     assert len(receipt["source_mapping"]["sha256"]) == 64
     assert len(receipt["dataset_manifest"]["sha256"]) == 64
+    dataset_manifest = json.loads(
+        (miniature_config.output_root / "dataset_manifest.json").read_text()
+    )
+    assert dataset_manifest["status"] == "complete"
+    assert dataset_manifest["completed_utc"]
 
     historical = (
         miniature_config.output_root
@@ -232,6 +238,26 @@ def test_completion_rejects_excluded_subject_and_inventory_mismatch(
     data_file.write_text("tampered\n", encoding="utf-8")
     with pytest.raises(WorkflowError, match="existing completion receipt"):
         complete_dataset(miniature_config)
+
+
+def test_dataset_status_live_validation_rejects_tampered_content(
+    miniature_config,
+) -> None:
+    _ready(miniature_config)
+    complete_dataset(miniature_config)
+    assert dataset_status(miniature_config)["status"] == "complete"
+
+    data_file = next(
+        path
+        for path in miniature_config.output_root.rglob("TI.msh")
+        if path.is_file()
+    )
+    data_file.write_text("tampered after completion\n", encoding="utf-8")
+
+    status = dataset_status(miniature_config)
+    assert status["status"] == "invalid"
+    assert status["complete"] is False
+    assert "stale" in status["validation_error"].lower()
 
 
 def test_file_inventory_is_sorted_and_rejects_symlinks(tmp_path: Path) -> None:

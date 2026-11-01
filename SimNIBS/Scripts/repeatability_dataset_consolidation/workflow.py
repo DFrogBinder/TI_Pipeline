@@ -867,14 +867,16 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
     )
     exclusions = (completion_path, inventory_path)
     if completion_path.exists():
-        existing = json.loads(completion_path.read_text(encoding="utf-8"))
-        current = build_file_inventory(config.output_root, exclude=exclusions)
-        if (
-            existing.get("plan_sha256") != plan_hash
-            or existing.get("inventory", {}).get("sha256")
-            != current.inventory_sha256
-        ):
+        try:
+            existing = validate_dataset_completion(config)
+        except WorkflowError as exc:
+            raise WorkflowError(
+                "Refusing to replace a nonmatching existing completion receipt: "
+                f"{exc}"
+            ) from exc
+        if existing.get("plan_sha256") != plan_hash:
             raise WorkflowError("Refusing to replace a nonmatching existing completion receipt")
+        return existing | {"action": "reused"}
 
     _validate_copy_receipts(config, plan, plan_hash)
     verification, verification_path = _load_checksum_verification(
@@ -887,6 +889,21 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
     retirement_disposition = build_retirement_disposition(config, plan)
     retirement_disposition_path = disposition_path(config)
     _write_json(retirement_disposition_path, retirement_disposition)
+    completed_utc = _utc_now()
+    manifest_path = config.output_root / "dataset_manifest.json"
+    try:
+        dataset_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowError("The dataset manifest is unreadable") from exc
+    if (
+        dataset_manifest.get("workflow") != "repeatability_dataset_consolidation"
+        or dataset_manifest.get("output_root") != str(config.output_root.resolve())
+        or dataset_manifest.get("plan_sha256") != plan_hash
+    ):
+        raise WorkflowError("The dataset manifest does not match the owned dataset")
+    dataset_manifest["status"] = "complete"
+    dataset_manifest["completed_utc"] = completed_utc
+    _write_json(manifest_path, dataset_manifest)
     try:
         inventory = build_file_inventory(config.output_root, exclude=exclusions)
     except ValueError as exc:
@@ -896,7 +913,7 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
         "schema_version": 1,
         "status": "complete",
         "workflow": "repeatability_dataset_consolidation",
-        "created_utc": _utc_now(),
+        "created_utc": completed_utc,
         "git_commit": _git_commit(),
         "output_root": str(config.output_root.resolve()),
         "plan_sha256": plan_hash,
@@ -915,7 +932,7 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
         },
         "dataset_manifest": {
             "path": "dataset_manifest.json",
-            "sha256": sha256_file(config.output_root / "dataset_manifest.json"),
+            "sha256": sha256_file(manifest_path),
         },
         "source_mapping": {
             "path": str(source_mapping.relative_to(config.output_root)),
@@ -934,14 +951,135 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
         },
         "source_outputs_modified": False,
     }
-    if completion_path.exists():
-        return receipt | {"action": "reused"}
     _write_json(completion_path, receipt)
     return receipt | {"action": "created"}
 
 
+def _bound_dataset_path(
+    config: DatasetConfig,
+    record: object,
+    label: str,
+) -> Path:
+    if not isinstance(record, dict):
+        raise WorkflowError(f"The completion receipt {label} binding is missing")
+    raw_path = record.get("path")
+    if not isinstance(raw_path, str):
+        raise WorkflowError(f"The completion receipt {label} path is invalid")
+    relative = Path(raw_path)
+    if relative.is_absolute() or not relative.parts or any(
+        part in {"", ".", ".."} for part in relative.parts
+    ):
+        raise WorkflowError(f"The completion receipt {label} path is unsafe")
+    path = config.output_root / relative
+    resolved_root = config.output_root.resolve()
+    resolved_path = path.resolve(strict=False)
+    if resolved_root not in resolved_path.parents:
+        raise WorkflowError(f"The completion receipt {label} path escapes the dataset")
+    if not path.is_file() or path.is_symlink():
+        raise WorkflowError(f"The completion receipt {label} artifact is missing")
+    recorded_sha = record.get("sha256")
+    if not isinstance(recorded_sha, str) or sha256_file(path) != recorded_sha:
+        raise WorkflowError(f"The completion receipt {label} checksum is stale")
+    return path
+
+
+def validate_dataset_completion(config: DatasetConfig) -> dict[str, object]:
+    """Validate a completed dataset against immutable destination-side evidence.
+
+    Source roots are deliberately not required here because they may have been
+    retired after the independently gated retirement workflow completed.
+    """
+    root = config.output_root
+    completion = root / "_consolidation/complete.json"
+    inventory_path = root / "_consolidation/verification/file_inventory.json"
+    owner_path = root / "_consolidation/owner.json"
+    planned_path = root / "_consolidation/planned_items.json"
+    for path, label in (
+        (completion, "completion receipt"),
+        (inventory_path, "file inventory"),
+        (owner_path, "owner receipt"),
+        (planned_path, "planned-items receipt"),
+    ):
+        if not path.is_file() or path.is_symlink():
+            raise WorkflowError(f"The dataset {label} is missing or unsafe")
+    try:
+        payload = json.loads(completion.read_text(encoding="utf-8"))
+        owner = json.loads(owner_path.read_text(encoding="utf-8"))
+        planned = json.loads(planned_path.read_text(encoding="utf-8"))
+        saved_inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowError("A dataset completion record is unreadable") from exc
+
+    planned_payload = planned.get("plan")
+    if not isinstance(planned_payload, dict):
+        raise WorkflowError("The planned-items receipt has no plan")
+    calculated_plan_sha = hashlib.sha256(
+        json.dumps(
+            planned_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    expected_root = str(root.resolve())
+    if (
+        payload.get("status") != "complete"
+        or payload.get("workflow") != "repeatability_dataset_consolidation"
+        or payload.get("output_root") != expected_root
+        or owner.get("workflow") != "repeatability_dataset_consolidation"
+        or owner.get("output_root") != expected_root
+        or planned.get("plan_sha256") != calculated_plan_sha
+        or owner.get("plan_sha256") != calculated_plan_sha
+        or payload.get("plan_sha256") != calculated_plan_sha
+    ):
+        raise WorkflowError("The dataset completion records do not match")
+
+    manifest_path = _bound_dataset_path(
+        config, payload.get("dataset_manifest"), "dataset manifest"
+    )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowError("The dataset manifest is unreadable") from exc
+    if (
+        manifest.get("status") != "complete"
+        or manifest.get("workflow") != "repeatability_dataset_consolidation"
+        or manifest.get("output_root") != expected_root
+        or manifest.get("plan_sha256") != calculated_plan_sha
+        or manifest.get("scope") != payload.get("scope")
+    ):
+        raise WorkflowError("The dataset manifest completion binding is invalid")
+
+    for key, label in (
+        ("verification", "checksum verification"),
+        ("source_mapping", "source mapping"),
+        ("retirement_disposition", "retirement disposition"),
+        ("canonical_configs", "canonical config manifest"),
+    ):
+        _bound_dataset_path(config, payload.get(key), label)
+
+    try:
+        current_inventory = build_file_inventory(
+            root, exclude=(completion, inventory_path)
+        )
+    except ValueError as exc:
+        raise WorkflowError(f"The dataset inventory is stale: {exc}") from exc
+    inventory_record = payload.get("inventory")
+    if (
+        not isinstance(inventory_record, dict)
+        or inventory_record.get("path")
+        != str(inventory_path.relative_to(root))
+        or inventory_record.get("sha256") != current_inventory.inventory_sha256
+        or inventory_record.get("file_count") != len(current_inventory.entries)
+        or inventory_record.get("total_bytes") != current_inventory.total_bytes
+        or saved_inventory != current_inventory.as_dict()
+    ):
+        raise WorkflowError("The dataset completion receipt inventory is stale")
+    return payload
+
+
 def dataset_status(config: DatasetConfig) -> dict[str, object]:
-    """Report receipt state without validating sources or changing any file."""
+    """Report destination state using live immutable completion validation."""
     root = config.output_root
     if not root.exists() or root.is_symlink():
         return {
@@ -967,8 +1105,8 @@ def dataset_status(config: DatasetConfig) -> dict[str, object]:
     copy_root = root / "_consolidation/copy_items"
     completion = root / "_consolidation/complete.json"
     complete_status = load_status(completion)
-    return {
-        "status": "complete" if complete_status == "complete" else "in_progress",
+    result = {
+        "status": "in_progress",
         "prepared": owner.is_file() and not owner.is_symlink(),
         "copied_items": (
             len(list(copy_root.glob("*.json")))
@@ -981,9 +1119,22 @@ def dataset_status(config: DatasetConfig) -> dict[str, object]:
         "checksum_verification": load_status(
             root / "_consolidation/verification/checksum/verification.json"
         ),
-        "complete": complete_status == "complete",
+        "complete": False,
         "completion_receipt": str(completion) if completion.is_file() else None,
         "completion_receipt_sha256": (
             sha256_file(completion) if completion.is_file() and not completion.is_symlink() else None
         ),
     }
+    if complete_status == "complete":
+        try:
+            validate_dataset_completion(config)
+        except WorkflowError as exc:
+            result["status"] = "invalid"
+            result["validation_error"] = str(exc)
+        else:
+            result["status"] = "complete"
+            result["complete"] = True
+    elif complete_status in {"unreadable", "unknown"}:
+        result["status"] = "invalid"
+        result["validation_error"] = "The completion receipt is unreadable or invalid"
+    return result

@@ -19,7 +19,7 @@ from .disposition import (
     build_retirement_disposition,
     disposition_path,
 )
-from .inventory import build_file_inventory, sha256_file
+from .inventory import sha256_file
 from .planning import ConsolidationPlan, build_copy_plan, plan_sha256
 from .settings import DatasetConfig, retirement_allowlist
 from .validation import validate_scientific_scope
@@ -30,6 +30,7 @@ from .workflow import (
     _validate_destination_coverage,
     _validate_destination_scope,
     _validate_owned_root,
+    validate_dataset_completion,
 )
 
 
@@ -126,45 +127,22 @@ def _load_dataset_completion(
         )
     except Exception as exc:
         raise RetirementError(f"Dataset completion receipt preflight failed: {exc}") from exc
-    completion = config.output_root / "_consolidation/complete.json"
-    inventory_path = (
-        config.output_root / "_consolidation/verification/file_inventory.json"
-    )
-    if not completion.is_file() or completion.is_symlink():
-        raise RetirementError("The dataset completion receipt is missing or unsafe")
     try:
-        payload = json.loads(completion.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RetirementError("The dataset completion receipt is unreadable") from exc
-    if (
-        payload.get("status") != "complete"
-        or payload.get("workflow") != "repeatability_dataset_consolidation"
-        or payload.get("output_root") != str(config.output_root.resolve())
-        or payload.get("plan_sha256") != current_plan_hash
-    ):
-        raise RetirementError("The dataset completion receipt does not match current scope")
+        payload = validate_dataset_completion(config)
+    except WorkflowError as exc:
+        raise RetirementError(
+            f"dataset completion receipt live validation failed: {exc}"
+        ) from exc
+    completion = config.output_root / "_consolidation/complete.json"
     try:
         _validate_copy_receipts(config, plan, current_plan_hash)
         _validate_destination_coverage(config, plan)
         _load_checksum_verification(config, plan, current_plan_hash)
         scope = _validate_destination_scope(config, plan)
-        current_inventory = build_file_inventory(
-            config.output_root, exclude=(completion, inventory_path)
-        )
     except (WorkflowError, ValueError) as exc:
         raise RetirementError(f"Dataset completion receipt live validation failed: {exc}") from exc
-    if payload.get("scope") != scope or payload.get("inventory", {}).get(
-        "sha256"
-    ) != current_inventory.inventory_sha256:
-        raise RetirementError("The dataset completion receipt inventory is stale")
-    if not inventory_path.is_file() or inventory_path.is_symlink():
-        raise RetirementError("The dataset file inventory is missing or unsafe")
-    try:
-        saved_inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RetirementError("The dataset file inventory is unreadable") from exc
-    if saved_inventory != current_inventory.as_dict():
-        raise RetirementError("The dataset file inventory differs from live content")
+    if payload.get("scope") != scope:
+        raise RetirementError("The dataset completion receipt scope is stale")
     disposition_record = payload.get("retirement_disposition")
     if not isinstance(disposition_record, dict):
         raise RetirementError("The dataset retirement disposition binding is missing")
@@ -227,14 +205,6 @@ def _validate_target(path: Path, allowed_root: Path) -> tuple[int, int]:
         raise RetirementError(f"Retirement target is outside the allowed root: {resolved}")
     info = path.lstat()
     return int(info.st_dev), int(info.st_ino)
-
-
-def _source_is_covered(plan: ConsolidationPlan, root: Path) -> bool:
-    resolved = root.resolve()
-    return any(
-        item.source == resolved or resolved in item.source.parents
-        for item in plan.items
-    )
 
 
 def plan_retirement(

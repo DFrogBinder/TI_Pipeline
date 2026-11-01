@@ -73,11 +73,11 @@
 **Interfaces:**
 - Produces: scope-bound source receipt validation, a final `dataset_manifest.json`, and a live-validating status result.
 
-- [ ] Write failing tests for a scope-less receipt, tampered completed data, and the stale `prepared` top-level manifest.
-- [ ] Run them and confirm the expected failures.
-- [ ] Bind source receipts to the grouped experiment scope and factor one read-only live completion validator shared by status and retirement.
-- [ ] Promote the top-level manifest before final inventory creation and report invalid live state explicitly.
-- [ ] Run focused and package tests.
+- [x] Write failing tests for a scope-less receipt, tampered completed data, and the stale `prepared` top-level manifest.
+- [x] Run them and confirm the expected failures.
+- [x] Bind source receipts to the grouped experiment scope and factor one read-only live completion validator shared by status and retirement.
+- [x] Promote the top-level manifest before final inventory creation and report invalid live state explicitly.
+- [x] Run focused and package tests.
 
 ### Task 4: Storage-capacity preflight and documentation
 

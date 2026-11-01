@@ -124,6 +124,36 @@ def test_completion_binds_checksum_inventory_and_exact_scope(miniature_config) -
     assert not any(path.is_symlink() for path in miniature_config.output_root.rglob("*"))
 
 
+def test_completion_records_every_retirement_source_file_disposition(
+    miniature_config,
+) -> None:
+    extra = (
+        miniature_config.sources.v3_headmodels
+        / "sub-UNSELECTED/anat/only_in_source.msh"
+    )
+    extra.parent.mkdir(parents=True)
+    extra.write_text("intentionally retired\n", encoding="utf-8")
+
+    _ready(miniature_config)
+    receipt = complete_dataset(miniature_config)
+
+    disposition_record = receipt["retirement_disposition"]
+    disposition_path = miniature_config.output_root / disposition_record["path"]
+    disposition = json.loads(disposition_path.read_text(encoding="utf-8"))
+    record = next(
+        entry
+        for entry in disposition["entries"]
+        if entry["root_key"] == "v3_headmodels"
+        and entry["relative_path"]
+        == "sub-UNSELECTED/anat/only_in_source.msh"
+    )
+    assert record["disposition"] == "intentional_retirement"
+    assert record["destinations"] == []
+    assert len(record["sha256"]) == 64
+    assert disposition_record["sha256"] == sha256_file(disposition_path)
+    assert disposition["summary"]["v3_headmodels"]["intentional_retirement_files"] >= 1
+
+
 def test_completion_requires_untampered_checksum_receipts(miniature_config) -> None:
     prepare(miniature_config)
     copy_dataset(miniature_config)

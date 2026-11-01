@@ -42,11 +42,11 @@
 - Produces: a deterministic per-file disposition manifest classifying each retirement-root entry as `dataset_copy`, `shared_archive`, or `intentional_retirement`.
 - Consumes: the immutable consolidation plan and exact retirement/archive allowlists.
 
-- [ ] Write failing tests proving an unplanned file is represented in the disposition and that retirement requires its exact disposition hash.
-- [ ] Run the focused tests and verify they fail for missing behavior.
-- [ ] Implement deterministic source inventories, bind them into dataset completion, and revalidate them live during retirement planning.
-- [ ] Add the exact `--retirement-disposition-sha256` confirmation gate and expose per-root summaries in `retire-plan`.
-- [ ] Run the focused and package suites.
+- [x] Write failing tests proving an unplanned file is represented in the disposition and that retirement requires its exact disposition hash.
+- [x] Run the focused tests and verify they fail for missing behavior.
+- [x] Implement deterministic source inventories, bind them into dataset completion, and revalidate them live during retirement planning.
+- [x] Add the exact `--retirement-disposition-sha256` confirmation gate and expose per-root summaries in `retire-plan`.
+- [x] Run the focused and task suites.
 
 ### Task 2: Self-contained Shared archive
 

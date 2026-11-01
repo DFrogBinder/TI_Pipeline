@@ -95,6 +95,9 @@ def test_cli_retirement_defaults_to_plan_and_requires_all_submit_gates(
         dataset_receipt_sha256="b" * 64,
         archive_receipt=None,
         archive_receipt_sha256=None,
+        retirement_disposition=miniature_config.output_root / "disposition.json",
+        retirement_disposition_sha256="d" * 64,
+        retirement_disposition_summary={},
         scheduler_snapshot_sha256="c" * 64,
         deletion_launcher=miniature_config.output_root / "delete.sh",
     )
@@ -115,6 +118,7 @@ def test_cli_retirement_defaults_to_plan_and_requires_all_submit_gates(
                 "retire-submit",
                 f"--confirm-output-root={miniature_config.output_root}",
                 f"--dataset-receipt-sha256={'b' * 64}",
+                f"--retirement-disposition-sha256={'d' * 64}",
             ],
             config=miniature_config,
         )
@@ -127,6 +131,7 @@ def test_cli_retirement_defaults_to_plan_and_requires_all_submit_gates(
                 "retire-submit",
                 f"--confirm-output-root={miniature_config.output_root}",
                 f"--dataset-receipt-sha256={'b' * 64}",
+                f"--retirement-disposition-sha256={'d' * 64}",
                 "--confirm-retirement",
             ],
             config=miniature_config,
@@ -164,6 +169,7 @@ def test_cli_resumes_an_existing_retirement_request_without_replanning(
                 f"--confirm-output-root={miniature_config.output_root}",
                 f"--dataset-receipt-sha256={'a' * 64}",
                 f"--archive-receipt-sha256={'b' * 64}",
+                f"--retirement-disposition-sha256={'d' * 64}",
                 "--confirm-retirement",
             ],
             config=miniature_config,

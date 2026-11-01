@@ -62,6 +62,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--confirm-archive-root")
     parser.add_argument("--dataset-receipt-sha256")
     parser.add_argument("--archive-receipt-sha256")
+    parser.add_argument("--retirement-disposition-sha256")
     parser.add_argument("--confirm-retirement", action="store_true")
     return parser
 
@@ -92,6 +93,9 @@ def _plan_dict(plan: RetirementPlan) -> dict[str, object]:
         "dataset_receipt_sha256": plan.dataset_receipt_sha256,
         "archive_receipt": str(plan.archive_receipt) if plan.archive_receipt else None,
         "archive_receipt_sha256": plan.archive_receipt_sha256,
+        "retirement_disposition": str(plan.retirement_disposition),
+        "retirement_disposition_sha256": plan.retirement_disposition_sha256,
+        "retirement_disposition_summary": plan.retirement_disposition_summary,
         "targets": [target.as_dict() for target in plan.targets],
         "jobs_submitted": 0,
     }
@@ -178,6 +182,10 @@ def main(
                     if request_exists
                     or (plan is not None and plan.archive_receipt_sha256 is not None)
                     else None
+                ),
+                retirement_disposition_sha256=_sha(
+                    args.retirement_disposition_sha256,
+                    "--retirement-disposition-sha256",
                 ),
                 confirm_retirement=args.confirm_retirement,
             )

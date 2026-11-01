@@ -18,6 +18,7 @@ from .inventory import (
     build_materialized_inventory,
     sha256_file,
 )
+from .disposition import build_retirement_disposition, disposition_path
 from .planning import ConsolidationPlan, CopyItem, build_copy_plan, plan_sha256
 from .rsync import compare_item, copy_item
 from .settings import DatasetConfig, retirement_allowlist
@@ -687,6 +688,7 @@ def _is_control_file(relative: Path) -> bool:
         "subjects.txt",
         "dataset_manifest.json",
         "provenance/source_mapping.tsv",
+        "provenance/retirement/source_disposition.json",
     }:
         return True
     if relative.parts[:3] == ("provenance", "configs", "canonical"):
@@ -882,6 +884,9 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
     source_mapping = _write_source_mapping(config, plan)
     _validate_destination_coverage(config, plan)
     scope = _validate_destination_scope(config, plan)
+    retirement_disposition = build_retirement_disposition(config, plan)
+    retirement_disposition_path = disposition_path(config)
+    _write_json(retirement_disposition_path, retirement_disposition)
     try:
         inventory = build_file_inventory(config.output_root, exclude=exclusions)
     except ValueError as exc:
@@ -916,6 +921,12 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
             "path": str(source_mapping.relative_to(config.output_root)),
             "sha256": sha256_file(source_mapping),
             "rows": len(plan.items),
+        },
+        "retirement_disposition": {
+            "path": str(retirement_disposition_path.relative_to(config.output_root)),
+            "sha256": sha256_file(retirement_disposition_path),
+            "entries_sha256": retirement_disposition["entries_sha256"],
+            "summary": retirement_disposition["summary"],
         },
         "canonical_configs": {
             "path": str(canonical_manifest.relative_to(config.output_root)),

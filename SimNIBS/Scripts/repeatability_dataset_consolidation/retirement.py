@@ -14,6 +14,11 @@ import subprocess
 from typing import Sequence
 
 from .archive import ArchiveError, validate_archive_completion
+from .disposition import (
+    DispositionError,
+    build_retirement_disposition,
+    disposition_path,
+)
 from .inventory import build_file_inventory, sha256_file
 from .planning import ConsolidationPlan, build_copy_plan, plan_sha256
 from .settings import DatasetConfig, retirement_allowlist
@@ -60,6 +65,9 @@ class RetirementPlan:
     dataset_receipt_sha256: str
     archive_receipt: Path | None
     archive_receipt_sha256: str | None
+    retirement_disposition: Path
+    retirement_disposition_sha256: str
+    retirement_disposition_summary: dict[str, object]
     scheduler_snapshot_sha256: str
     deletion_launcher: Path
 
@@ -69,6 +77,7 @@ class RetirementConfirmations:
     dataset_root: str
     dataset_receipt_sha256: str
     archive_receipt_sha256: str | None
+    retirement_disposition_sha256: str
     confirm_retirement: bool
 
 
@@ -107,7 +116,7 @@ def _run_launcher(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def _load_dataset_completion(
     config: DatasetConfig,
-) -> tuple[ConsolidationPlan, Path, str]:
+) -> tuple[ConsolidationPlan, Path, str, Path, str, dict[str, object]]:
     try:
         plan = build_copy_plan(config)
         validation = validate_scientific_scope(plan)
@@ -156,19 +165,52 @@ def _load_dataset_completion(
         raise RetirementError("The dataset file inventory is unreadable") from exc
     if saved_inventory != current_inventory.as_dict():
         raise RetirementError("The dataset file inventory differs from live content")
-    return plan, completion, sha256_file(completion)
+    disposition_record = payload.get("retirement_disposition")
+    if not isinstance(disposition_record, dict):
+        raise RetirementError("The dataset retirement disposition binding is missing")
+    saved_disposition_path = disposition_path(config)
+    if (
+        disposition_record.get("path")
+        != str(saved_disposition_path.relative_to(config.output_root))
+        or not saved_disposition_path.is_file()
+        or saved_disposition_path.is_symlink()
+        or sha256_file(saved_disposition_path) != disposition_record.get("sha256")
+    ):
+        raise RetirementError("The dataset retirement disposition binding is invalid")
+    try:
+        saved_disposition = json.loads(
+            saved_disposition_path.read_text(encoding="utf-8")
+        )
+        live_disposition = build_retirement_disposition(config, plan)
+    except (OSError, json.JSONDecodeError, DispositionError) as exc:
+        raise RetirementError("The retirement disposition is unreadable or unsafe") from exc
+    if saved_disposition != live_disposition:
+        raise RetirementError("Retirement source content changed after dataset completion")
+    summary = saved_disposition.get("summary")
+    if not isinstance(summary, dict) or summary != disposition_record.get("summary"):
+        raise RetirementError("The retirement disposition summary binding is invalid")
+    return (
+        plan,
+        completion,
+        sha256_file(completion),
+        saved_disposition_path,
+        sha256_file(saved_disposition_path),
+        summary,
+    )
 
 
 def _retirement_hash(
     targets: Sequence[RetirementTarget],
     dataset_receipt_sha256: str,
     archive_receipt_sha256: str | None,
+    retirement_disposition_sha256: str,
 ) -> str:
     encoded = json.dumps(
         {
             "targets": [target.as_dict() for target in targets],
             "dataset_receipt_sha256": dataset_receipt_sha256,
             "archive_receipt_sha256": archive_receipt_sha256,
+            "retirement_disposition_sha256": retirement_disposition_sha256,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -200,7 +242,14 @@ def plan_retirement(
     selected: Sequence[str] | None = None,
 ) -> RetirementPlan:
     """Build a read-only exact deletion plan; never submit or delete."""
-    dataset_plan, dataset_receipt, dataset_sha = _load_dataset_completion(config)
+    (
+        dataset_plan,
+        dataset_receipt,
+        dataset_sha,
+        retirement_disposition,
+        retirement_disposition_sha,
+        retirement_disposition_summary,
+    ) = _load_dataset_completion(config)
     allowlist = retirement_allowlist(config)
     keys = tuple(allowlist) if selected is None else tuple(selected)
     if not keys:
@@ -222,10 +271,6 @@ def plan_retirement(
         device, inode = _validate_target(configured_path, allowed_root)
         path = configured_path.resolve()
         requires_archive = key in archive_keys
-        if not requires_archive and not _source_is_covered(dataset_plan, path):
-            raise RetirementError(
-                f"Dataset completion receipt does not cover retirement source: {key}"
-            )
         targets.append(
             RetirementTarget(key, path, requires_archive, device, inode)
         )
@@ -261,11 +306,19 @@ def plan_retirement(
         config=config,
         targets=target_tuple,
         dry_run=True,
-        plan_sha256=_retirement_hash(target_tuple, dataset_sha, archive_sha),
+        plan_sha256=_retirement_hash(
+            target_tuple,
+            dataset_sha,
+            archive_sha,
+            retirement_disposition_sha,
+        ),
         dataset_receipt=dataset_receipt,
         dataset_receipt_sha256=dataset_sha,
         archive_receipt=archive_receipt,
         archive_receipt_sha256=archive_sha,
+        retirement_disposition=retirement_disposition,
+        retirement_disposition_sha256=retirement_disposition_sha,
+        retirement_disposition_summary=retirement_disposition_summary,
         scheduler_snapshot_sha256=hashlib.sha256(scheduler.encode("utf-8")).hexdigest(),
         deletion_launcher=launcher,
     )
@@ -285,6 +338,11 @@ def _validate_confirmations(
         confirmations.archive_receipt_sha256 != plan.archive_receipt_sha256
     ):
         raise RetirementError("The archive receipt confirmation is not exact")
+    if (
+        confirmations.retirement_disposition_sha256
+        != plan.retirement_disposition_sha256
+    ):
+        raise RetirementError("The retirement disposition confirmation is not exact")
 
 
 def _request_payload(
@@ -304,6 +362,9 @@ def _request_payload(
         "dataset_receipt_sha256": plan.dataset_receipt_sha256,
         "archive_receipt": str(plan.archive_receipt) if plan.archive_receipt else None,
         "archive_receipt_sha256": plan.archive_receipt_sha256,
+        "retirement_disposition": str(plan.retirement_disposition),
+        "retirement_disposition_sha256": plan.retirement_disposition_sha256,
+        "retirement_disposition_summary": plan.retirement_disposition_summary,
         "allowed_root": str(plan.config.output_root.parent.resolve()),
         "targets": [target.as_dict() for target in plan.targets],
         "jobs": jobs,
@@ -345,6 +406,18 @@ def _request_plan(
         or sha256_file(archive_receipt) != request.get("archive_receipt_sha256")
     ):
         raise RetirementError("The bound archive completion receipt changed")
+    saved_disposition = disposition_path(config)
+    if (
+        request.get("retirement_disposition") != str(saved_disposition)
+        or not saved_disposition.is_file()
+        or saved_disposition.is_symlink()
+        or sha256_file(saved_disposition)
+        != request.get("retirement_disposition_sha256")
+    ):
+        raise RetirementError("The bound retirement disposition changed")
+    disposition_summary = request.get("retirement_disposition_summary")
+    if not isinstance(disposition_summary, dict):
+        raise RetirementError("The retirement disposition summary is invalid")
 
     records = request.get("targets")
     jobs = request.get("jobs")
@@ -381,6 +454,7 @@ def _request_plan(
         target_tuple,
         str(request.get("dataset_receipt_sha256", "")),
         str(request.get("archive_receipt_sha256", "")),
+        str(request.get("retirement_disposition_sha256", "")),
     )
     if expected_hash != request.get("retirement_plan_sha256"):
         raise RetirementError("The retirement request plan binding is invalid")
@@ -408,6 +482,13 @@ def _request_plan(
             dataset_receipt_sha256=str(request["dataset_receipt_sha256"]),
             archive_receipt=archive_receipt,
             archive_receipt_sha256=str(request["archive_receipt_sha256"]),
+            retirement_disposition=saved_disposition,
+            retirement_disposition_sha256=str(
+                request["retirement_disposition_sha256"]
+            ),
+            retirement_disposition_summary={
+                str(key): value for key, value in disposition_summary.items()
+            },
             scheduler_snapshot_sha256="resume-from-immutable-request",
             deletion_launcher=launcher,
         ),
@@ -624,6 +705,16 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
         or sha256_file(dataset_receipt) != request.get("dataset_receipt_sha256")
     ):
         raise RetirementError("The bound dataset completion receipt changed")
+    bound_disposition = Path(str(request.get("retirement_disposition", "")))
+    if (
+        bound_disposition != disposition_path(config)
+        or not bound_disposition.is_file()
+        or bound_disposition.is_symlink()
+        or sha256_file(bound_disposition)
+        != request.get("retirement_disposition_sha256")
+        or not isinstance(request.get("retirement_disposition_summary"), dict)
+    ):
+        raise RetirementError("The bound retirement disposition changed")
     archive_value = request.get("archive_receipt")
     if archive_value:
         archive_receipt = Path(str(archive_value))
@@ -680,6 +771,7 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
             if request.get("archive_receipt_sha256")
             else None
         ),
+        str(request.get("retirement_disposition_sha256", "")),
     )
     if expected_hash != request.get("retirement_plan_sha256"):
         raise RetirementError("The retirement request plan binding is invalid")

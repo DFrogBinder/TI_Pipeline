@@ -92,6 +92,7 @@ def _confirmations(plan, *, archive: bool = True) -> RetirementConfirmations:
         dataset_root=str(plan.config.output_root.resolve()),
         dataset_receipt_sha256=plan.dataset_receipt_sha256,
         archive_receipt_sha256=(plan.archive_receipt_sha256 if archive else None),
+        retirement_disposition_sha256=plan.retirement_disposition_sha256,
         confirm_retirement=True,
     )
 
@@ -105,12 +106,22 @@ def test_submission_requires_exact_confirmations_and_delegates_one_job_each(
         dataset_root=str(config.output_root) + "-wrong",
         dataset_receipt_sha256=plan.dataset_receipt_sha256,
         archive_receipt_sha256=plan.archive_receipt_sha256,
+        retirement_disposition_sha256=plan.retirement_disposition_sha256,
         confirm_retirement=True,
     )
     with pytest.raises(RetirementError, match="dataset root confirmation"):
         submit_retirement(plan, wrong)
     with pytest.raises(RetirementError, match="archive receipt confirmation"):
         submit_retirement(plan, _confirmations(plan, archive=False))
+    wrong_disposition = RetirementConfirmations(
+        dataset_root=str(config.output_root.resolve()),
+        dataset_receipt_sha256=plan.dataset_receipt_sha256,
+        archive_receipt_sha256=plan.archive_receipt_sha256,
+        retirement_disposition_sha256="0" * 64,
+        confirm_retirement=True,
+    )
+    with pytest.raises(RetirementError, match="disposition confirmation"):
+        submit_retirement(plan, wrong_disposition)
 
     commands: list[list[str]] = []
 

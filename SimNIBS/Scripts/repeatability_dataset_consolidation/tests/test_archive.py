@@ -42,6 +42,27 @@ def test_archive_preflight_is_exact_and_read_only(miniature_config) -> None:
     assert {
         Path(mapping["destination"]).name for mapping in result["mappings"]
     } == {path.name for path in miniature_config.archive_sources.values()}
+    assert result["required_bytes"] > 0
+    assert result["capacity_sufficient"] is True
+    assert result["capacity_gate_enforced"] is True
+    assert not miniature_config.shared_archive_root.exists()
+    assert not miniature_config.shared_receipt_root.exists()
+
+
+def test_archive_capacity_fails_before_initial_root_creation(
+    miniature_config, monkeypatch
+) -> None:
+    _seed_archive_sources(miniature_config)
+    usage_type = type(shutil.disk_usage(miniature_config.shared_archive_root.parent))
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.archive.shutil.disk_usage",
+        lambda _path: usage_type(total=100, used=99, free=1),
+    )
+
+    with pytest.raises(ArchiveError, match="Insufficient capacity"):
+        archive_preflight(miniature_config)
+    with pytest.raises(ArchiveError, match="Insufficient capacity"):
+        archive_copy(miniature_config)
     assert not miniature_config.shared_archive_root.exists()
     assert not miniature_config.shared_receipt_root.exists()
 

@@ -94,9 +94,8 @@
 **Interfaces:**
 - Produces: exact materialized byte estimates and an explicit sufficient/insufficient capacity gate before new roots are created.
 
-- [ ] Write failing dataset and archive capacity tests.
-- [ ] Run them and verify expected failure.
-- [ ] Add link-aware byte estimation and fail only before initial root creation when required bytes exceed free bytes.
-- [ ] Update the runbook and design with the disposition confirmation and self-contained archive semantics.
-- [ ] Run all package tests, affected integration tests, compile checks, shell syntax, and diff hygiene.
-
+- [x] Write failing dataset and archive capacity tests.
+- [x] Run them and verify expected failure.
+- [x] Add link-aware byte estimation and fail only before initial root creation when required bytes exceed free bytes.
+- [x] Update the runbook and design with the disposition confirmation and self-contained archive semantics.
+- [x] Run all package tests, affected integration tests, compile checks, shell syntax, and diff hygiene.

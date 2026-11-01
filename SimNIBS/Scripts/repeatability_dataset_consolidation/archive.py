@@ -12,7 +12,11 @@ import shutil
 import subprocess
 import tempfile
 
-from .inventory import build_file_inventory, build_materialized_inventory
+from .inventory import (
+    build_file_inventory,
+    build_materialized_inventory,
+    estimate_materialized_bytes,
+)
 from .settings import DatasetConfig
 
 
@@ -151,10 +155,37 @@ def _validate_identity(item: ArchiveItem) -> None:
         raise ArchiveError(f"Archive source identity changed: {item.source}")
 
 
+def _archive_capacity(
+    config: DatasetConfig,
+    items: tuple[ArchiveItem, ...],
+) -> dict[str, object]:
+    try:
+        required = sum(estimate_materialized_bytes(item.source) for item in items)
+    except (OSError, ValueError) as exc:
+        raise ArchiveError(f"Cannot estimate materialized archive bytes: {exc}") from exc
+    usage = shutil.disk_usage(config.shared_archive_root.parent)
+    enforced = (
+        not config.shared_archive_root.exists()
+        and not config.shared_archive_root.is_symlink()
+    )
+    sufficient = required <= usage.free
+    if enforced and not sufficient:
+        raise ArchiveError(
+            "Insufficient capacity for initial Shared archive creation: "
+            f"required {required} bytes, free {usage.free} bytes"
+        )
+    return {
+        "required_bytes": required,
+        "free_bytes": usage.free,
+        "capacity_sufficient": sufficient,
+        "capacity_gate_enforced": enforced,
+    }
+
+
 def archive_preflight(config: DatasetConfig) -> dict[str, object]:
     """Audit exact archive scope without creating either Shared destination."""
     items, plan_hash = _plan(config)
-    usage = shutil.disk_usage(config.shared_archive_root.parent)
+    capacity = _archive_capacity(config, items)
     return {
         "status": "ready",
         "workflow": "repeatability_dataset_consolidation_archive",
@@ -162,7 +193,7 @@ def archive_preflight(config: DatasetConfig) -> dict[str, object]:
         "receipt_root": str(config.shared_receipt_root),
         "plan_sha256": plan_hash,
         "source_count": len(items),
-        "free_bytes": usage.free,
+        **capacity,
         "mappings": [item.as_dict() for item in items],
         "source_outputs_modified": False,
     }
@@ -289,6 +320,7 @@ def _copy(item: ArchiveItem) -> tuple[tuple[str, ...], tuple[str, ...]]:
 def archive_copy(config: DatasetConfig) -> dict[str, object]:
     """Resume exact whole-tree archive copies without deleting any source."""
     items, plan_hash = _plan(config)
+    capacity = _archive_capacity(config, items)
     _ensure_owner(config, items, plan_hash)
     copied = 0
     reused = 0
@@ -325,6 +357,7 @@ def archive_copy(config: DatasetConfig) -> dict[str, object]:
         "planned_roots": len(items),
         "copied_roots": copied,
         "reused_roots": reused,
+        **capacity,
         "source_outputs_modified": False,
     }
 

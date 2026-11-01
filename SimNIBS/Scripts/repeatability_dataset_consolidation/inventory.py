@@ -50,6 +50,46 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def estimate_materialized_bytes(root: Path) -> int:
+    """Count logical file bytes after link materialization without hashing data."""
+    try:
+        target = root.resolve(strict=True) if root.is_symlink() else root
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise ValueError(f"Materialized byte source has a broken link: {root}") from exc
+    if target.is_file():
+        return int(target.stat().st_size)
+    if not target.is_dir():
+        raise ValueError(f"Materialized byte source is missing: {root}")
+
+    total = 0
+
+    def visit(directory: Path, ancestors: frozenset[tuple[int, int]]) -> None:
+        nonlocal total
+        info = directory.stat()
+        identity = (int(info.st_dev), int(info.st_ino))
+        if identity in ancestors:
+            raise ValueError(f"Source link materialization cycle: {directory}")
+        next_ancestors = ancestors | {identity}
+        for child in sorted(directory.iterdir(), key=lambda path: path.name):
+            try:
+                materialized = child.resolve(strict=True) if child.is_symlink() else child
+            except (FileNotFoundError, RuntimeError) as exc:
+                raise ValueError(
+                    f"Materialized byte source has a broken link: {child}"
+                ) from exc
+            if materialized.is_dir():
+                visit(materialized, next_ancestors)
+            elif materialized.is_file():
+                total += int(materialized.stat().st_size)
+            else:
+                raise ValueError(
+                    f"Source contains unsupported special file: {child}"
+                )
+
+    visit(target, frozenset())
+    return total
+
+
 def _finish(root: Path, records: Iterable[tuple[str, Path]]) -> FileInventory:
     entries = tuple(
         InventoryEntry(path=relative, size_bytes=path.stat().st_size, sha256=sha256_file(path))

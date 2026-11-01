@@ -16,6 +16,7 @@ import tempfile
 from .inventory import (
     build_file_inventory,
     build_materialized_inventory,
+    estimate_materialized_bytes,
     sha256_file,
 )
 from .disposition import build_retirement_disposition, disposition_path
@@ -61,11 +62,39 @@ def _write_text(path: Path, text: str) -> None:
     os.replace(temporary, path)
 
 
+def _dataset_capacity(
+    config: DatasetConfig,
+    plan: ConsolidationPlan,
+) -> dict[str, object]:
+    try:
+        required = sum(
+            estimate_materialized_bytes(item.source)
+            for item in plan.items
+            if item.required
+        )
+    except (OSError, ValueError) as exc:
+        raise WorkflowError(f"Cannot estimate materialized dataset bytes: {exc}") from exc
+    usage = shutil.disk_usage(config.output_root.parent)
+    enforced = not config.output_root.exists() and not config.output_root.is_symlink()
+    sufficient = required <= usage.free
+    if enforced and not sufficient:
+        raise WorkflowError(
+            "Insufficient capacity for initial dataset creation: "
+            f"required {required} bytes, free {usage.free} bytes"
+        )
+    return {
+        "required_bytes": required,
+        "free_bytes": usage.free,
+        "capacity_sufficient": sufficient,
+        "capacity_gate_enforced": enforced,
+    }
+
+
 def preflight(config: DatasetConfig) -> dict[str, object]:
     """Run the complete source audit without writing the destination."""
     plan = build_copy_plan(config)
     validation = validate_scientific_scope(plan)
-    usage = shutil.disk_usage(config.output_root.parent)
+    capacity = _dataset_capacity(config, plan)
     return {
         "status": "ready",
         "workflow": "repeatability_dataset_consolidation",
@@ -73,7 +102,7 @@ def preflight(config: DatasetConfig) -> dict[str, object]:
         "plan_sha256": plan_sha256(plan),
         "planned_items": len(plan.items),
         "terminal_receipts": list(validation.terminal_receipts),
-        "free_bytes": usage.free,
+        **capacity,
         "source_outputs_modified": False,
     }
 
@@ -169,6 +198,7 @@ def prepare(config: DatasetConfig) -> dict[str, object]:
         return _validate_owned_root(config, plan_payload, plan_hash, scope)
     if not root.parent.is_dir() or root.parent.is_symlink():
         raise WorkflowError(f"Dataset parent is missing or unsafe: {root.parent}")
+    _dataset_capacity(config, plan)
 
     temporary = Path(
         tempfile.mkdtemp(prefix=f".{root.name}.prepare-", dir=root.parent)

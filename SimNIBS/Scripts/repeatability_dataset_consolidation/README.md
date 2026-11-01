@@ -37,7 +37,10 @@ Detach with `Ctrl-b d`; reattach with
 
 `preflight` is completely read-only. `prepare` creates only the owned skeleton
 and immutable plan. `copy` requires the exact destination and never deletes a
-source or an extra destination file.
+source or an extra destination file. Both `preflight` and the first `prepare`
+measure the logical bytes that will be materialized and fail before creating
+the dataset root when parscratch free space is insufficient. A resume reports
+capacity but does not apply the initial whole-copy gate again.
 
 ```bash
 bash "$DATASET" preflight
@@ -52,7 +55,10 @@ Interrupted copies are resumable by running the same `copy` command again.
 
 The quick comparison uses size and modification time. The checksum command
 performs full-content comparison, builds the sorted per-file SHA-256 inventory,
-and writes `_consolidation/complete.json` only when every gate passes.
+promotes `dataset_manifest.json` to `complete`, and writes
+`_consolidation/complete.json` only when every gate passes. `status` then
+revalidates the live destination against those bindings; altered content is
+reported as `invalid`, not `complete`.
 
 ```bash
 bash "$DATASET" verify
@@ -65,8 +71,11 @@ Do not proceed to retirement unless `status` reports `complete: true`.
 ## 3. Archive obsolete v3 references to Shared
 
 Shared is login-node-only and must never replace parscratch in a worker-job
-configuration. This is an unchanged whole-tree archive; unlike the analysis
-dataset, it preserves symlinks and hard links.
+configuration. This is a self-contained whole-tree logical archive. Hard links
+are preserved, while every symlink whose target stays within the exact four
+archive roots is materialized as a regular file; broken or external links fail
+preflight. `archive-preflight` and the first `archive-copy` also fail before
+creating the Shared root when free space is below the materialized byte total.
 
 ```bash
 bash "$DATASET" archive-preflight
@@ -106,13 +115,20 @@ placeholders:
 ```bash
 DATASET_RECEIPT_SHA256=<64-lowercase-hex-from-retire-plan>
 ARCHIVE_RECEIPT_SHA256=<64-lowercase-hex-from-retire-plan>
+RETIREMENT_DISPOSITION_SHA256=<64-lowercase-hex-from-retire-plan>
 
 bash "$DATASET" retire-submit \
     --confirm-output-root="$OUTPUT_ROOT" \
     --dataset-receipt-sha256="$DATASET_RECEIPT_SHA256" \
     --archive-receipt-sha256="$ARCHIVE_RECEIPT_SHA256" \
+    --retirement-disposition-sha256="$RETIREMENT_DISPOSITION_SHA256" \
     --confirm-retirement
 ```
+
+The disposition is an exhaustive per-file record for every allowlisted source
+root. Each entry is bound as a canonical dataset copy, a Shared archive copy,
+or an explicitly intentional retirement. Any source-file addition, removal,
+or content change after dataset completion invalidates retirement planning.
 
 If launcher submission is interrupted after only some deletion jobs are
 recorded, run the identical `retire-submit` command again. It resumes only the

@@ -83,6 +83,9 @@ leaving the only usable copy split across historical experiment layouts.
   subject root explicitly listed by this design.
 - Dataset and archive completion receipts are immutable inputs to retirement;
   retirement records their SHA-256 values.
+- Before an initial dataset or Shared archive root is created, preflight sums
+  the logical file bytes after symlink materialization, compares them with live
+  filesystem free space, and fails closed when capacity is insufficient.
 
 ## Cohort and scientific scope
 
@@ -237,6 +240,10 @@ reusable input; it is neither copied wholesale nor retired.
 
 The live preflight must resolve and inventory these paths. Missing required
 scientific conditions, terminal receipts, or analysis roots block copying.
+Each terminal source receipt must bind the relevant target, include every
+selected subject sourced from that root, bind the repeat count and planned
+condition(s), report internally consistent simulation totals, and represent a
+final stage when a stage is present.
 Optional diagnostic logs may be absent only when the planned item labels them
 optional; optionality never applies to simulation records or completion
 receipts.
@@ -256,7 +263,8 @@ a thin login-node shell entry point, tests, and a runbook.
 
 The shell interface exposes these modes:
 
-- `preflight`: read-only source, cohort, receipt, collision, and count audit;
+- `preflight`: read-only source, cohort, receipt, collision, count, materialized
+  byte, and destination-capacity audit;
 - `prepare`: create an owned empty dataset root and immutable copy plan;
 - `copy`: resumably copy every planned item;
 - `verify`: read-only size/mtime comparison for every item;
@@ -303,12 +311,17 @@ when:
   present;
 - a per-file destination inventory records relative path, byte size, and
   SHA-256 for every regular file;
-- the manifest, source mapping, and dataset inventory hashes are recorded.
+- the top-level manifest is promoted from `prepared` to `complete` before the
+  final inventory is created;
+- the manifest, source mapping, exhaustive retirement disposition, and dataset
+  inventory hashes are recorded;
+- subsequent `status` calls revalidate destination content against the saved
+  inventory and report a changed completed dataset as `invalid`.
 
 ## Legacy-v3 Shared archive
 
-The following obsolete/reference roots are archived as complete, unchanged
-trees before they can be retired from parscratch:
+The following obsolete/reference roots are archived as complete,
+self-contained logical trees before they can be retired from parscratch:
 
 - `final_132_repeatability_balanced_10_simnibs326_left_hippocampus_v1`
 - `final_132_repeatability_balanced_10_simnibs326_right_m1_v1`
@@ -320,8 +333,10 @@ The destination is
 Archive copying is resumable and full-checksum verified. Its completion receipt
 lives outside every deletion target under
 `/shared/boyan/Shared/.repeatability_retirement_receipts/` and records all four
-source/destination mappings and hashes. Because Shared is login-node-only,
-these modes never submit Slurm work.
+source/destination mappings and hashes. All symlink targets must resolve within
+the four-root archive set; links are materialized as regular destination files,
+so deleting parscratch cannot leave broken archive links. Because Shared is
+login-node-only, these modes never submit Slurm work.
 
 ## Retirement policy
 
@@ -359,6 +374,9 @@ Submission requires all of:
 - the exact dataset completion-receipt SHA-256;
 - the exact Shared archive completion-receipt SHA-256 when archived roots are
   selected;
+- the exact SHA-256 of an exhaustive per-file retirement disposition that
+  classifies every current allowlisted-root file as `dataset_copy`,
+  `shared_archive`, or `intentional_retirement`;
 - an explicit `--confirm-retirement` flag;
 - zero active Slurm jobs whose command, working directory, or job name is bound
   to a selected source, insofar as scheduler inspection can determine;
@@ -379,6 +397,8 @@ label roots, `ti_dataset`, `ZIPs`, and `MNI152_SimNIBS401_inputs`.
 
 - Missing, incomplete, ambiguous, or multiply mapped source conditions fail
   preflight before destination creation.
+- Insufficient parscratch or Shared capacity fails before the corresponding
+  initial owned root is created.
 - An unowned or differently planned destination fails closed.
 - Interrupted copies remain resumable but cannot produce completion receipts.
 - Any content difference blocks completion and retirement.
@@ -420,9 +440,11 @@ would not be a full physical copy.
 - The consolidated canonical tree contains 3,200 validated simulation records,
   includes `sub-CC510415`, and excludes `sub-CC520083`.
 - The Shared archive checksum receipt covers all four obsolete v3 roots.
+- The Shared archive contains no symlinks and remains usable after source
+  retirement.
 - Retirement dry-run prints only the exact allowlisted paths.
 - Retirement refuses missing/stale receipts, arbitrary paths, source changes,
-  wrong confirmations, and active-job conflicts.
+  unbound per-file dispositions, wrong confirmations, and active-job conflicts.
 - Real retirement submission creates one guarded job and external receipt per
   approved target; status requires terminal receipts plus independent absence.
 - Existing HPC migration, deletion, SimNIBS 3.2.6, and replacement tests remain

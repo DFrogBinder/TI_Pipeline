@@ -1,5 +1,6 @@
 from dataclasses import replace
 import json
+import shutil
 
 import pytest
 
@@ -8,7 +9,7 @@ from repeatability_dataset_consolidation.validation import (
     ScopeValidationError,
     validate_scientific_scope,
 )
-from repeatability_dataset_consolidation.workflow import preflight
+from repeatability_dataset_consolidation.workflow import WorkflowError, preflight, prepare
 
 
 def _first_cell(plan):
@@ -29,7 +30,26 @@ def test_preflight_validates_all_cells_repeats_receipts_and_headmodels(
         "v4_scaffolds": 2,
     }
     assert result["source_outputs_modified"] is False
+    assert result["required_bytes"] > 0
+    assert result["capacity_sufficient"] is True
+    assert result["capacity_gate_enforced"] is True
     assert result["free_bytes"] > 0
+    assert not miniature_config.output_root.exists()
+
+
+def test_dataset_capacity_fails_before_initial_root_creation(
+    miniature_config, monkeypatch
+) -> None:
+    usage_type = type(shutil.disk_usage(miniature_config.output_root.parent))
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.workflow.shutil.disk_usage",
+        lambda _path: usage_type(total=100, used=99, free=1),
+    )
+
+    with pytest.raises(WorkflowError, match="Insufficient capacity"):
+        preflight(miniature_config)
+    with pytest.raises(WorkflowError, match="Insufficient capacity"):
+        prepare(miniature_config)
     assert not miniature_config.output_root.exists()
 
 

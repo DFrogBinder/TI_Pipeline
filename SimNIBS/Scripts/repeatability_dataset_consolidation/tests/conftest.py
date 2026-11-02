@@ -161,10 +161,8 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
         (subject_tree / f"{subject}.msh").write_text("mesh\n", encoding="utf-8")
         labels = head_root / "harmonized_labels"
         (labels / "qc").mkdir(parents=True, exist_ok=True)
-        (labels / "figures").mkdir(parents=True, exist_ok=True)
         (labels / f"{subject}_v3_harmonized_t1fs_grid.nii.gz").write_bytes(b"label")
         (labels / "qc" / f"{subject}.json").write_text("{}\n", encoding="utf-8")
-        (labels / "figures" / f"{subject}.png").write_bytes(b"png")
         receipts = head_root / "_pipeline" / "subjects" / subject
         receipts.mkdir(parents=True, exist_ok=True)
         (receipts / "headmodel_complete.json").write_text(
@@ -172,6 +170,8 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
         )
         cohort_root = head_root / "_pipeline" / "headmodels" / cohort
         cohort_root.mkdir(parents=True, exist_ok=True)
+        (cohort_root / "qc_panels").mkdir()
+        (cohort_root / "qc_panels" / f"{subject}.png").write_bytes(b"png")
         (cohort_root / "manifest.json").write_text(
             json.dumps({"status": "complete"}), encoding="utf-8"
         )

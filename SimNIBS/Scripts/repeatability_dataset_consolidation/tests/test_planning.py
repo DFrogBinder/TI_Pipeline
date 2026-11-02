@@ -28,6 +28,30 @@ def test_plan_maps_every_cell_and_supporting_bundle_once(miniature_config) -> No
         for subject in miniature_config.subjects
     }
     assert len([item for item in plan.items if item.role == "v3_headmodel_subject"]) == 2
+    v3_panels = {
+        item.subject: item
+        for item in plan.items
+        if item.key.endswith(":figure")
+    }
+    assert v3_panels["sub-CC110174"].source == (
+        miniature_config.sources.v3_headmodels
+        / "_pipeline/headmodels/base9/qc_panels/sub-CC110174.png"
+    )
+    assert v3_panels["sub-CC510415"].source == (
+        miniature_config.sources.replacement_subject
+        / "simnibs326/headmodels/_pipeline/headmodels/external1/"
+        "qc_panels/sub-CC510415.png"
+    )
+    assert {item.destination for item in v3_panels.values()} == {
+        Path(
+            "provenance/headmodels/simnibs326/sub-CC110174/"
+            "harmonization_qc.png"
+        ),
+        Path(
+            "provenance/headmodels/simnibs326/sub-CC510415/"
+            "harmonization_qc.png"
+        ),
+    }
     assert len([item for item in plan.items if item.role == "v4_scaffold_subject"]) == 2
     assert len([item for item in plan.items if item.role == "v4_scaffold_provenance"]) == 2
     assert {item.role for item in plan.items} >= {

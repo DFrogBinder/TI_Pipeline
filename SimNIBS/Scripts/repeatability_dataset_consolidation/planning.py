@@ -349,6 +349,7 @@ def _append_v3_headmodels(
 ) -> None:
     for subject in config.subjects:
         replacement = subject == config.replacement_subject
+        cohort = "external1" if replacement else "base9"
         root = (
             config.sources.replacement_subject / "simnibs326/headmodels"
             if replacement
@@ -372,7 +373,11 @@ def _append_v3_headmodels(
             ),
             (
                 "figure",
-                root / "harmonized_labels/figures" / f"{subject}.png",
+                root
+                / "_pipeline/headmodels"
+                / cohort
+                / "qc_panels"
+                / f"{subject}.png",
                 provenance_prefix / "harmonization_qc.png",
                 "v3_headmodel_qc",
             ),

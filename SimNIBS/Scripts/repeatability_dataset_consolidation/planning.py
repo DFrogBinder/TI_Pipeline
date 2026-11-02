@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import stat
 
-from .settings import CONDITIONS, TARGETS, DatasetConfig
+from .settings import CONDITIONS, TARGETS, DatasetConfig, retirement_allowlist
 
 
 class PlanningError(RuntimeError):
@@ -65,6 +65,7 @@ class ConsolidationPlan:
     repeat_count: int
     expected_cells: int
     expected_simulations: int
+    protected_materialization_roots: tuple[Path, ...]
     items: tuple[CopyItem, ...]
 
     def as_dict(self) -> dict[str, object]:
@@ -77,6 +78,9 @@ class ConsolidationPlan:
             "repeat_count": self.repeat_count,
             "expected_cells": self.expected_cells,
             "expected_simulations": self.expected_simulations,
+            "protected_materialization_roots": [
+                str(path) for path in self.protected_materialization_roots
+            ],
             "items": [item.as_dict() for item in self.items],
         }
 
@@ -102,11 +106,16 @@ def _source_type(mode: int) -> str:
 
 
 def _approved_roots(config: DatasetConfig) -> tuple[Path, ...]:
-    return tuple(
+    source_roots = tuple(
         value.resolve(strict=False)
         for value in vars(config.sources).values()
         if isinstance(value, Path)
     )
+    protected_roots = tuple(
+        value.resolve(strict=False)
+        for value in config.protected_materialization_roots
+    )
+    return source_roots + protected_roots
 
 
 def _validate_links(source: Path, approved_roots: tuple[Path, ...]) -> None:
@@ -474,6 +483,15 @@ def _validate_destinations(items: list[CopyItem]) -> None:
 
 def build_copy_plan(config: DatasetConfig) -> ConsolidationPlan:
     """Resolve the complete approved source-to-destination mapping."""
+    retirement_roots = tuple(retirement_allowlist(config).values())
+    for protected_root in config.protected_materialization_roots:
+        for retirement_root in retirement_roots:
+            if _overlap(protected_root, retirement_root):
+                raise PlanningError(
+                    "Protected materialization root overlaps retirement target: "
+                    f"{protected_root.resolve(strict=False)} and "
+                    f"{retirement_root.resolve(strict=False)}"
+                )
     approved_roots = _approved_roots(config)
     output = config.output_root.resolve(strict=False)
     for source in approved_roots:
@@ -530,8 +548,12 @@ def build_copy_plan(config: DatasetConfig) -> ConsolidationPlan:
     )
     _validate_destinations(items)
     ordered = tuple(sorted(items, key=lambda item: item.key))
+    protected_materialization_roots = tuple(
+        path.resolve(strict=False)
+        for path in config.protected_materialization_roots
+    )
     return ConsolidationPlan(
-        schema_version=1,
+        schema_version=2,
         output_root=output,
         subjects=config.subjects,
         excluded_subject=config.excluded_subject,
@@ -539,6 +561,7 @@ def build_copy_plan(config: DatasetConfig) -> ConsolidationPlan:
         repeat_count=config.repeat_count,
         expected_cells=config.expected_cells,
         expected_simulations=config.expected_simulations,
+        protected_materialization_roots=protected_materialization_roots,
         items=ordered,
     )
 

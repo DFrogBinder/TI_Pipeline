@@ -35,6 +35,13 @@ def test_copy_is_resumable_physical_and_never_deletes(miniature_config) -> None:
     link_target = source / "link-target.txt"
     link_target.write_text("physical bytes\n", encoding="utf-8")
     (source / "materialized-link.txt").symlink_to(link_target.name)
+    protected_target = (
+        miniature_config.protected_materialization_roots[0]
+        / "sub-CC110174/anat/sub-CC110174_T1w.nii"
+    )
+    protected_target.parent.mkdir(parents=True)
+    protected_target.write_bytes(b"protected corrected T1")
+    (source / "protected-T1-link.nii").symlink_to(protected_target)
     source_probe = source / "repeats/repeat_001/sub-CC110174/anat/SimNIBS/Output/sub-CC110174/TI.msh"
     before = (source_probe.read_bytes(), source_probe.stat().st_mtime_ns)
     prepare(miniature_config)
@@ -52,6 +59,9 @@ def test_copy_is_resumable_physical_and_never_deletes(miniature_config) -> None:
     copied_link = _destination_cell(miniature_config) / "materialized-link.txt"
     assert copied_link.is_file() and not copied_link.is_symlink()
     assert copied_link.read_bytes() == b"physical bytes\n"
+    copied_protected = _destination_cell(miniature_config) / "protected-T1-link.nii"
+    assert copied_protected.is_file() and not copied_protected.is_symlink()
+    assert copied_protected.read_bytes() == b"protected corrected T1"
     assert (source_probe.read_bytes(), source_probe.stat().st_mtime_ns) == before
 
     payloads = [json.loads(path.read_text()) for path in receipts.glob("*.json")]

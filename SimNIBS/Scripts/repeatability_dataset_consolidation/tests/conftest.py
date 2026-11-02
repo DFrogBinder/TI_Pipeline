@@ -244,12 +244,15 @@ def miniature_config(tmp_path: Path) -> DatasetConfig:
         json.dumps({"status": "prepared"}), encoding="utf-8"
     )
 
+    protected_materialization_root = root("corrected-inputs-protected")
+
     return DatasetConfig(
         output_root=parscratch / "combined-dataset",
         shared_archive_root=shared / "archive",
         shared_receipt_root=shared / "receipts",
         deletion_log_root=parscratch / "deletion-logs",
         sources=sources,
+        protected_materialization_roots=(protected_materialization_root,),
         subjects=subjects,
         replacement_subject=replacement,
         excluded_subject="sub-CC520083",

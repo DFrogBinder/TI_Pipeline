@@ -47,6 +47,15 @@ def test_production_roots_keep_shared_archive_and_v4_scaffolds_separate() -> Non
         "/mnt/parscratch/users/cop23bi/CamCan_Corrected_v4_Scaffolds"
     )
     assert config.sources.v4_scaffolds not in retirement_allowlist(config).values()
+    assert config.protected_materialization_roots == (
+        Path(
+            "/mnt/parscratch/users/cop23bi/"
+            "ti_dataset_final_132_balanced_10_corrected"
+        ),
+    )
+    assert not set(config.protected_materialization_roots) & set(
+        retirement_allowlist(config).values()
+    )
 
 
 def test_archive_and_retirement_scopes_are_exact() -> None:

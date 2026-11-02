@@ -55,6 +55,7 @@ class DatasetConfig:
     shared_receipt_root: Path
     deletion_log_root: Path
     sources: SourceRoots
+    protected_materialization_roots: tuple[Path, ...] = ()
     subjects: tuple[str, ...] = SUBJECTS
     replacement_subject: str = REPLACEMENT_SUBJECT
     excluded_subject: str = EXCLUDED_SUBJECT
@@ -142,6 +143,9 @@ def production_config() -> DatasetConfig:
             parscratch, "deletion_job_logs/repeatability_dataset_v1"
         ),
         sources=sources,
+        protected_materialization_roots=(
+            _under(parscratch, "ti_dataset_final_132_balanced_10_corrected"),
+        ),
     )
 
 

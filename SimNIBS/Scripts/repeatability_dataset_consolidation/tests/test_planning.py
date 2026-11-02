@@ -8,6 +8,7 @@ from repeatability_dataset_consolidation.planning import (
     build_copy_plan,
     plan_sha256,
 )
+from repeatability_dataset_consolidation.settings import retirement_allowlist
 
 
 def test_plan_maps_every_cell_and_supporting_bundle_once(miniature_config) -> None:
@@ -103,6 +104,42 @@ def test_plan_rejects_broken_and_escaping_symlinks(miniature_config) -> None:
     escaping.symlink_to(outside)
     with pytest.raises(PlanningError, match="outside approved sources"):
         build_copy_plan(miniature_config)
+
+
+def test_plan_allows_only_explicit_protected_materialization_roots(
+    miniature_config,
+) -> None:
+    protected_root = miniature_config.protected_materialization_roots[0]
+    protected_t1 = protected_root / "sub-CC110174/anat/sub-CC110174_T1w.nii"
+    protected_t1.parent.mkdir(parents=True)
+    protected_t1.write_bytes(b"protected corrected T1")
+    scientific_source = (
+        miniature_config.sources.v3_left
+        / "sub-CC110174_repeatability"
+        / "remesh"
+    )
+    (scientific_source / "linked_T1w.nii").symlink_to(protected_t1)
+
+    plan = build_copy_plan(miniature_config)
+
+    assert plan.protected_materialization_roots == (protected_root.resolve(),)
+    assert plan.as_dict()["protected_materialization_roots"] == [
+        str(protected_root.resolve())
+    ]
+    assert all(item.source != protected_root.resolve() for item in plan.items)
+    assert protected_root not in retirement_allowlist(miniature_config).values()
+
+
+def test_plan_rejects_protected_materialization_root_that_is_retired(
+    miniature_config,
+) -> None:
+    conflicting = replace(
+        miniature_config,
+        protected_materialization_roots=(miniature_config.sources.v3_left,),
+    )
+
+    with pytest.raises(PlanningError, match="overlaps retirement target"):
+        build_copy_plan(conflicting)
 
 
 def test_plan_rejects_materialization_cycle(miniature_config) -> None:

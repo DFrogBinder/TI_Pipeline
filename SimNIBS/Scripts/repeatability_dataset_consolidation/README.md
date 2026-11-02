@@ -12,6 +12,12 @@ cells and 3,200 simulations. It also preserves the ten selected v3 harmonized
 head models, ten selected v4 corrected scaffolds, the paper-analysis tree, and
 the nested repeatability dataset.
 
+Some campaign trees contain symlinks to common corrected T1, T2, and label
+inputs under `ti_dataset_final_132_balanced_10_corrected`. That protected root
+is an explicit, plan-bound symlink-materialization boundary: linked files are
+copied into the corresponding scientific cell as regular files. The root is
+not copied wholesale and is not present in the retirement allowlist.
+
 The workflow does not launch simulations. Copy, verification, and Shared
 archival run on the login node. Retirement is a separate, receipt-gated Slurm
 maintenance operation and is never triggered automatically by copying.

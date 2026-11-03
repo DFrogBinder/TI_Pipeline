@@ -158,10 +158,10 @@ bash "$PIPELINE" paired-metrics --cohort=base9
 
 This recovery mode reads the 1,440 completed NIfTI fields and submits two
 nine-element ROI-extraction arrays plus two collectors. It performs no meshing,
-FEM simulations, or base-nine final aggregation. Its isolated schema-v2 tables
-are written below each base-nine campaign's
-`_post_processing/repeatability_optimizer_roi_metrics_simnibs326h_paired_v2`
-directory.
+FEM simulations, or base-nine final aggregation. To avoid changing either
+campaign while the combined dataset is being copied, its isolated schema-v2
+tables are written beneath
+`/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_analysis_inputs_v1/simnibs326/base9`.
 
 The failed subject can be diagnosed independently at any time:
 

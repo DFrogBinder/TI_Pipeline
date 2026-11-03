@@ -48,7 +48,9 @@ bash "$V3" paired-metrics --cohort=base9
 
 That recovery submits 18 ROI-extraction array tasks and two collectors, reads
 1,440 existing NIfTI fields, and performs no meshing, FEM work, or final
-aggregation.
+aggregation. It writes only to the isolated
+`final_132_repeatability_combined_analysis_inputs_v1` root, not to the active
+campaigns or combined-dataset copy.
 
 ## Inspect and run
 

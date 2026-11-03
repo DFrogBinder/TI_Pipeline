@@ -145,6 +145,24 @@ setting_path() {
 HEADMODEL_ROOT="$(setting_path headmodel_root SIMNIBS326H_HEADMODEL_ROOT)"
 LEFT_ROOT="$(setting_path left_root SIMNIBS326H_LEFT_ROOT SIMNIBS326H_BASE9_LEFT_ROOT)"
 RIGHT_ROOT="$(setting_path right_root SIMNIBS326H_RIGHT_ROOT SIMNIBS326H_BASE9_RIGHT_ROOT)"
+BASE9_PAIRED_METRICS_ROOT="$(realpath -m -- "${SIMNIBS326H_BASE9_PAIRED_METRICS_ROOT:-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_analysis_inputs_v1/simnibs326/base9}")"
+ACTIVE_COMBINED_DATASET_ROOT="/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1"
+paths_overlap() {
+    local first="${1%/}/" second="${2%/}/"
+    [[ "$first" == "$second"* || "$second" == "$first"* ]]
+}
+if [ "$COHORT" = base9 ]; then
+    for protected in "$LEFT_ROOT" "$RIGHT_ROOT" "$HEADMODEL_ROOT" "$ACTIVE_COMBINED_DATASET_ROOT"; do
+        if paths_overlap "$BASE9_PAIRED_METRICS_ROOT" "$protected"; then
+            echo "[ERROR] Base-nine paired metric output overlaps protected root: $protected" >&2
+            exit 2
+        fi
+    done
+    [ ! -L "$BASE9_PAIRED_METRICS_ROOT" ] || {
+        echo "[ERROR] Base-nine paired metric output root must not be a symlink: $BASE9_PAIRED_METRICS_ROOT" >&2
+        exit 2
+    }
+fi
 PREFLIGHT_RECEIPT="$HEADMODEL_ROOT/_pipeline/module_preflight.json"
 REFERENCE_RECEIPT="$HEADMODEL_ROOT/_pipeline/reference_stage_collection.json"
 HEADMODEL_COLLECTION_ROOT="$HEADMODEL_ROOT/_pipeline/headmodels"
@@ -185,6 +203,14 @@ metrics_root() {
     printf '%s/_post_processing/repeatability_optimizer_roi_metrics_simnibs326h_v2\n' "$(target_root "$1")"
 }
 paired_metrics_root() {
+    if [ "$COHORT" = base9 ]; then
+        case "$1" in
+            left-hippocampus) printf '%s/left_hippocampus\n' "$BASE9_PAIRED_METRICS_ROOT" ;;
+            right-m1) printf '%s/right_m1\n' "$BASE9_PAIRED_METRICS_ROOT" ;;
+            *) echo "[ERROR] Unsupported target: $1" >&2; return 2 ;;
+        esac
+        return
+    fi
     printf '%s/_post_processing/repeatability_optimizer_roi_metrics_simnibs326h_paired_v2\n' "$(target_root "$1")"
 }
 parse_job_id() {
@@ -233,6 +259,7 @@ print_scope() {
         echo "  ROI extraction array tasks: 18 (2 x 0-8%9)"
         echo "  collection jobs: 2"
         echo "  expected paired metric rows: 1440"
+        echo "  isolated output root: $BASE9_PAIRED_METRICS_ROOT"
         echo "  new meshing tasks: 0"
         echo "  new FEM simulation tasks: 0"
         echo "  final aggregation jobs: 0"

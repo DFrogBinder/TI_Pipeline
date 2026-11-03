@@ -120,6 +120,11 @@ def production_config() -> AnalysisConfig:
     )
     v3_replacement_left = replacement / "simnibs326" / "left_hippocampus"
     v3_replacement_right = replacement / "simnibs326" / "right_m1"
+    v3_base9_metrics = _under(
+        parscratch,
+        "final_132_repeatability_combined_analysis_inputs_v1/"
+        "simnibs326/base9",
+    )
 
     v4_left = _under(parscratch, "final_132_repeatability_balanced_10")
     v4_right = _under(parscratch, "final_132_repeatability_balanced_10_right_m1")
@@ -136,8 +141,10 @@ def production_config() -> AnalysisConfig:
     v3_metrics = "repeatability_optimizer_roi_metrics_simnibs326h_paired_v2"
     v4_metrics = "repeatability_optimizer_roi_metrics_v1"
     sources = SourcePaths(
-        v3_base9_left_csv=_metrics(v3_left, v3_metrics),
-        v3_base9_right_csv=_metrics(v3_right, v3_metrics),
+        v3_base9_left_csv=v3_base9_metrics
+        / "left_hippocampus/optimizer_roi_metrics.csv",
+        v3_base9_right_csv=v3_base9_metrics
+        / "right_m1/optimizer_roi_metrics.csv",
         v3_replacement_left_csv=_metrics(v3_replacement_left, v3_metrics),
         v3_replacement_right_csv=_metrics(v3_replacement_right, v3_metrics),
         v4_historical_left_csv=_metrics(v4_left, v4_metrics),

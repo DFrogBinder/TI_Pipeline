@@ -63,10 +63,14 @@ def test_production_sources_name_ten_metric_tables_and_ten_receipts() -> None:
     assert len(sources.receipts) == 10
     assert sources.v3_base9_left_csv == Path(
         "/mnt/parscratch/users/cop23bi/"
-        "final_132_repeatability_balanced_10_simnibs326_harmonized_"
-        "base9_left_hippocampus_v2/_post_processing/"
-        "repeatability_optimizer_roi_metrics_simnibs326h_paired_v2/"
+        "final_132_repeatability_combined_analysis_inputs_v1/"
+        "simnibs326/base9/left_hippocampus/"
         "optimizer_roi_metrics.csv"
+    )
+    assert sources.v3_base9_right_csv == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_combined_analysis_inputs_v1/"
+        "simnibs326/base9/right_m1/optimizer_roi_metrics.csv"
     )
     assert sources.v4_corrected_fixed_right_csv == Path(
         "/mnt/parscratch/users/cop23bi/"

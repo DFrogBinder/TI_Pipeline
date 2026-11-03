@@ -51,7 +51,15 @@ def launcher_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     right = tmp_path / "right"
     base9_left = tmp_path / "base9-left"
     base9_right = tmp_path / "base9-right"
-    for root in (head, left, right, base9_left, base9_right):
+    base9_paired_metrics = tmp_path / "base9-paired-metrics"
+    for root in (
+        head,
+        left,
+        right,
+        base9_left,
+        base9_right,
+        base9_paired_metrics,
+    ):
         root.mkdir()
     env = os.environ.copy()
     env.update(
@@ -67,6 +75,7 @@ def launcher_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
             "SIMNIBS326H_RIGHT_ROOT": str(right),
             "SIMNIBS326H_BASE9_LEFT_ROOT": str(base9_left),
             "SIMNIBS326H_BASE9_RIGHT_ROOT": str(base9_right),
+            "SIMNIBS326H_BASE9_PAIRED_METRICS_ROOT": str(base9_paired_metrics),
             "SIMNIBS326H_RENDER_PYTHON": "/bin/true",
         }
     )
@@ -522,6 +531,11 @@ def test_base9_paired_metrics_submits_only_read_only_extraction_and_collection(
     assert all("--array=0-8%9" in line for line in roi_arrays)
     assert "base9-left/_pipeline/configs/paired_analysis.json" in roi_arrays[0]
     assert "base9-right/_pipeline/configs/paired_analysis.json" in roi_arrays[1]
+    isolated_root = env["SIMNIBS326H_BASE9_PAIRED_METRICS_ROOT"]
+    assert f"METRICS_ROOT={isolated_root}/left_hippocampus" in roi_arrays[0]
+    assert f"METRICS_ROOT={isolated_root}/right_m1" in roi_arrays[1]
+    assert "base9-left/_post_processing" not in "\n".join(submitted)
+    assert "base9-right/_post_processing" not in "\n".join(submitted)
     assert "--dependency=afterok:10001" in collectors[0]
     assert "--dependency=afterok:10003" in collectors[1]
     assert "simulation_array.slurm" not in "\n".join(submitted)
@@ -543,6 +557,21 @@ def test_base9_paired_metrics_requires_both_configs_before_submission(
 
     assert result.returncode == 2
     assert f"Required receipt/config is missing: {right_config}" in result.stderr
+    assert _calls(calls) == []
+
+
+def test_base9_paired_metrics_refuses_output_inside_active_campaign(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    env["SIMNIBS326H_BASE9_PAIRED_METRICS_ROOT"] = str(
+        Path(env["SIMNIBS326H_BASE9_LEFT_ROOT"]) / "_post_processing/paired"
+    )
+
+    result = _run(env, "paired-metrics", "--cohort=base9")
+
+    assert result.returncode == 2
+    assert "output overlaps protected root" in result.stderr
     assert _calls(calls) == []
 
 

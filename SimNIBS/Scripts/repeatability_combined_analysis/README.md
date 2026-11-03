@@ -62,8 +62,8 @@ bash "$ANALYSIS" status
 ROOT=/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_analysis_v1
 cat "$ROOT/_workflow/submission.json"
 cat "$ROOT/analysis_manifest.json"
-sha256sum -c "$ROOT/SHA256SUMS"
-sha256sum -c "$ROOT/${ROOT##*/}.tar.gz.sha256"
+(cd "$ROOT" && sha256sum -c SHA256SUMS)
+(cd "$ROOT" && sha256sum -c "${ROOT##*/}.tar.gz.sha256")
 ```
 
 `status` combines Slurm accounting, when a submission receipt exists, with an

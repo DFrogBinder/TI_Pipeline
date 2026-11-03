@@ -36,10 +36,10 @@ CODE_OWNED_ROOT=$("$ANALYSIS_PYTHON" -c \
 }
 
 PLAN_FILE="$OUTPUT_ROOT/_workflow/input_plan.json"
-[ -f "$PLAN_FILE" ] && [ ! -L "$PLAN_FILE" ] || {
+if [ ! -f "$PLAN_FILE" ] || [ -L "$PLAN_FILE" ]; then
     echo "[ERROR] Prepared input plan is missing or unsafe: $PLAN_FILE" >&2
     exit 2
-}
+fi
 OBSERVED_PLAN_SHA256=$(awk -F'"' '/"plan_sha256"/{print $4; exit}' "$PLAN_FILE")
 [ "$OBSERVED_PLAN_SHA256" = "$PREPARED_PLAN_SHA256" ] || {
     echo "[ERROR] Prepared plan hash differs from the submitted hash." >&2

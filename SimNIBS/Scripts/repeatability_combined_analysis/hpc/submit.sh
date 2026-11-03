@@ -6,7 +6,7 @@ SCRIPTS_ROOT="$(dirname "$PACKAGE_DIR")"
 export PYTHONPATH="$SCRIPTS_ROOT:${PYTHONPATH:-}"
 
 if [ -n "${PYTHON_BIN:-}" ]; then
-    PYTHON_BIN="$PYTHON_BIN"
+    : # Use the explicitly supplied executable.
 elif [ -x "$HOME/.conda/envs/ti-post/bin/python" ]; then
     PYTHON_BIN="$HOME/.conda/envs/ti-post/bin/python"
 else
@@ -39,10 +39,10 @@ esac
 
 OUTPUT_ROOT=$("$PYTHON_BIN" -c \
     'from repeatability_combined_analysis.settings import production_config; print(production_config().output_root)')
-[ -n "$OUTPUT_ROOT" ] && [[ "$OUTPUT_ROOT" = /* ]] || {
+if [ -z "$OUTPUT_ROOT" ] || [[ "$OUTPUT_ROOT" != /* ]]; then
     echo "[ERROR] Could not resolve the code-owned output root." >&2
     exit 2
-}
+fi
 if [ -n "$OUTPUT_OVERRIDE" ] && [ "$OUTPUT_OVERRIDE" != "$OUTPUT_ROOT" ]; then
     echo "[ERROR] Refusing output root other than the code-owned output root: $OUTPUT_ROOT" >&2
     exit 2

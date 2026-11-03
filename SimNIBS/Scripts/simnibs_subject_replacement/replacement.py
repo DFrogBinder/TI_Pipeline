@@ -382,3 +382,60 @@ def require_left_complete(
         "completion_path": str(completion_path),
         "completion_sha256": _sha256(completion_path),
     }
+
+
+def require_v4_complete(manifest: dict[str, object]) -> dict[str, object]:
+    """Require both singleton v4 targets to have exact terminal receipts."""
+
+    require_v3_promotion(manifest)
+    paths = _require_current_manifest(manifest)
+    subject = str(manifest["subject"])
+    targets: dict[str, dict[str, object]] = {}
+    for target, root_key in (
+        ("left-hippocampus", "v4_left_root"),
+        ("right-m1", "v4_right_root"),
+    ):
+        root = Path(paths[root_key])
+        completion_path = root / "_pipeline" / "workflow" / "complete.json"
+        completion = _load_json_object(
+            completion_path, f"v4 {target} terminal receipt"
+        )
+        if completion.get("status") != "complete":
+            raise RuntimeError(f"v4 {target} receipt is not complete")
+
+        config_path = root / "_pipeline" / "configs" / "paired_analysis.json"
+        config = _load_json_object(config_path, f"v4 {target} paired config")
+        if config.get("subjects") != [subject]:
+            raise RuntimeError(f"v4 {target} config has a different subject")
+        conditions = config.get("conditions")
+        if not isinstance(conditions, list) or [
+            (item.get("name"), item.get("repeat_count"))
+            for item in conditions
+            if isinstance(item, dict)
+        ] != [("remesh", 40), ("fixed_mesh", 40)]:
+            raise RuntimeError(
+                f"v4 {target} config does not prove 40 remesh and fixed repeats"
+            )
+
+        scope = completion.get("scope")
+        if (
+            not isinstance(scope, dict)
+            or scope.get("roi") != target
+            or scope.get("subjects") != [subject]
+            or scope.get("subject_count") != 1
+            or scope.get("repeats_per_condition") != 40
+            or scope.get("total_simulation_tasks") != 80
+        ):
+            raise RuntimeError(f"v4 {target} receipt has the wrong scope")
+        targets[target] = {
+            "completion_path": str(completion_path),
+            "completion_sha256": _sha256(completion_path),
+            "config_path": str(config_path),
+            "config_sha256": _sha256(config_path),
+        }
+    return {
+        "status": "ready",
+        "version": "v4",
+        "subject": subject,
+        "targets": targets,
+    }

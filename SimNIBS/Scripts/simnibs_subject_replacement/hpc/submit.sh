@@ -12,6 +12,8 @@ else
     PYTHON_BIN=python3
 fi
 V3_SUBMIT="${V3_SUBMIT:-$SCRIPTS_ROOT/simnibs_326_corrected_label_repeatability/hpc/submit.sh}"
+V4_METRIC_SUBMIT="${V4_METRIC_SUBMIT:-$SCRIPTS_ROOT/ti_current_repair/hpc_scripts/submit_repeatability_optimizer_roi_metric_refresh.sh}"
+COMBINED_ANALYSIS_INPUT_ROOT="${COMBINED_ANALYSIS_INPUT_ROOT:-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_analysis_inputs_v1}"
 
 MODE="${1:-preflight}"
 [ "$#" -eq 0 ] || shift
@@ -45,7 +47,7 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|prepare|v3-module-check|v3-stage-references|v3-headmodels|v3-collect-headmodels|v3-promote|v3-init|v3-left-remesh|v3-left-fixed|v3-right-remesh|v3-right-fixed|v3-analysis|v3-analysis-final|v3-status|v4-init-left|v4-preflight-left|v4-submit-left|v4-init-right|v4-preflight-right|v4-submit-right|status) ;;
+    preflight|prepare|v3-module-check|v3-stage-references|v3-headmodels|v3-collect-headmodels|v3-promote|v3-init|v3-left-remesh|v3-left-fixed|v3-right-remesh|v3-right-fixed|v3-analysis|v3-analysis-final|v3-status|v4-init-left|v4-preflight-left|v4-submit-left|v4-init-right|v4-preflight-right|v4-submit-right|v4-paired-metrics-preflight|v4-paired-metrics|status) ;;
     *) echo "[ERROR] Unsupported mode: $MODE" >&2; exit 2 ;;
 esac
 
@@ -118,6 +120,19 @@ run_v3() {
     "$V3_SUBMIT" "$@" --cohort=external1
 }
 
+run_v4_metrics() {
+    [ -x "$V4_METRIC_SUBMIT" ] || {
+        echo "[ERROR] V4 metric submitter is not executable: $V4_METRIC_SUBMIT" >&2
+        exit 2
+    }
+    SUBJECT_COUNT=1 \
+    LEFT_ROOT="$V4_LEFT_ROOT" \
+    RIGHT_ROOT="$V4_RIGHT_ROOT" \
+    LEFT_OUTPUT_ROOT="$COMBINED_ANALYSIS_INPUT_ROOT/simnibs4/replacement/left_hippocampus" \
+    RIGHT_OUTPUT_ROOT="$COMBINED_ANALYSIS_INPUT_ROOT/simnibs4/replacement/right_m1" \
+        "$V4_METRIC_SUBMIT" all "$@"
+}
+
 dependency_args=()
 [ -z "$DEPENDENCY" ] || dependency_args+=("--dependency=$DEPENDENCY")
 
@@ -173,5 +188,13 @@ case "$MODE" in
     v4-init-right) run_cli v4-init --target=right-m1 ;;
     v4-preflight-right) run_cli v4-run --target=right-m1 --dry-run ;;
     v4-submit-right) run_cli v4-run --target=right-m1 ;;
+    v4-paired-metrics-preflight)
+        run_cli require-v4-complete >/dev/null
+        run_v4_metrics --preflight
+        ;;
+    v4-paired-metrics)
+        run_cli require-v4-complete >/dev/null
+        run_v4_metrics
+        ;;
     status) run_cli status ;;
 esac

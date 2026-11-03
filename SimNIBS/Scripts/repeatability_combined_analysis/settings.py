@@ -125,6 +125,11 @@ def production_config() -> AnalysisConfig:
         "final_132_repeatability_combined_analysis_inputs_v1/"
         "simnibs326/base9",
     )
+    v4_replacement_metrics = _under(
+        parscratch,
+        "final_132_repeatability_combined_analysis_inputs_v1/"
+        "simnibs4/replacement",
+    )
 
     v4_left = _under(parscratch, "final_132_repeatability_balanced_10")
     v4_right = _under(parscratch, "final_132_repeatability_balanced_10_right_m1")
@@ -155,8 +160,10 @@ def production_config() -> AnalysisConfig:
         v4_corrected_fixed_right_csv=_metrics(
             v4_fixed_right, "optimizer_roi_metrics_v1"
         ),
-        v4_replacement_left_csv=_metrics(v4_replacement_left, v4_metrics),
-        v4_replacement_right_csv=_metrics(v4_replacement_right, v4_metrics),
+        v4_replacement_left_csv=v4_replacement_metrics
+        / "left_hippocampus/optimizer_roi_metrics.csv",
+        v4_replacement_right_csv=v4_replacement_metrics
+        / "right_m1/optimizer_roi_metrics.csv",
         receipts=(
             _receipt(v3_left),
             _receipt(v3_right),

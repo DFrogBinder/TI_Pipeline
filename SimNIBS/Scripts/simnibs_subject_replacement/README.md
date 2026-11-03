@@ -181,6 +181,21 @@ bash "$REPLACEMENT" v4-submit-right "${COMMON[@]}"
 bash "$REPLACEMENT" status "${COMMON[@]}"
 ```
 
+After both v4 terminal receipts are complete, recover the schema-v2
+optimizer-ROI metrics required by the final 9+1 analysis. Preflight submits
+nothing; the execution command submits two one-element extraction arrays and
+two dependent collectors. It reads 160 completed NIfTI fields, submits no
+meshing or FEM work, and writes only beneath
+`final_132_repeatability_combined_analysis_inputs_v1`:
+
+```bash
+bash "$REPLACEMENT" v4-paired-metrics-preflight "${COMMON[@]}"
+bash "$REPLACEMENT" v4-paired-metrics "${COMMON[@]}"
+```
+
+The recovery is manifest-bound to the replacement subject and fails unless
+both v4 target receipts prove 40 remesh and 40 fixed-mesh simulations.
+
 If a candidate fails during v3 head meshing, preserve its diagnostic evidence,
 select another eligible final-132 subject, change only `SUBJECT`, and restart at
 read-only preflight. A new subject automatically receives a separate root.

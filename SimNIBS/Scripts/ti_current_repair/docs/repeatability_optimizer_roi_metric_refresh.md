@@ -18,7 +18,9 @@ the established CamCAN analysis. The output records the finite and non-finite
 ROI voxel counts and their fraction for every run. A run is rejected only when
 the entire ROI contains no finite field values. Outputs are written to
 `_post_processing/repeatability_optimizer_roi_metrics_v1` under each completed
-experiment.
+experiment by default. Controlled callers may instead set `LEFT_OUTPUT_ROOT`
+and `RIGHT_OUTPUT_ROOT` to isolated destinations. `SUBJECT_COUNT` controls the
+validated array bound and defaults to 10, preserving the full-cohort command.
 
 ## Stanage commands
 

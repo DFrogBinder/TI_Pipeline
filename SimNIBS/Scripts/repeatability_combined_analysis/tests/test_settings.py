@@ -78,9 +78,14 @@ def test_production_sources_name_ten_metric_tables_and_ten_receipts() -> None:
         "_post_processing/optimizer_roi_metrics_v1/optimizer_roi_metrics.csv"
     )
     assert sources.v4_replacement_left_csv == Path(
-        "/mnt/parscratch/users/cop23bi/simnibs_subject_replacements/"
-        "sub-CC510415/simnibs4/left_hippocampus/_post_processing/"
-        "repeatability_optimizer_roi_metrics_v1/optimizer_roi_metrics.csv"
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_combined_analysis_inputs_v1/"
+        "simnibs4/replacement/left_hippocampus/optimizer_roi_metrics.csv"
+    )
+    assert sources.v4_replacement_right_csv == Path(
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_combined_analysis_inputs_v1/"
+        "simnibs4/replacement/right_m1/optimizer_roi_metrics.csv"
     )
     assert all(path.name == "complete.json" for path in sources.receipts)
 

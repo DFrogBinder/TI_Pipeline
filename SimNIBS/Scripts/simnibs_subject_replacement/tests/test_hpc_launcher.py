@@ -181,7 +181,8 @@ def test_wrapper_lists_full_v3_and_v4_command_surface() -> None:
         "v3-left-remesh", "v3-left-fixed", "v3-right-remesh",
         "v3-right-fixed", "v3-analysis", "v3-analysis-final", "v3-status", "v4-init-left",
         "v4-preflight-left", "v4-submit-left", "v4-init-right",
-        "v4-preflight-right", "v4-submit-right", "status",
+        "v4-preflight-right", "v4-submit-right", "v4-paired-metrics-preflight",
+        "v4-paired-metrics", "status",
     }
     assert all(mode in text for mode in expected)
     assert "sub-CC110056" not in text
@@ -213,3 +214,94 @@ def test_wrapper_delegates_external_final_analysis_recovery(
     assert calls.read_text(encoding="utf-8").strip() == (
         "analysis-final --cohort=external1"
     )
+
+
+def _write_v4_metric_gate_receipts(manifest: dict[str, object]) -> None:
+    from simnibs_subject_replacement.tests.test_replacement import (
+        _write_left_completion,
+        _write_v3_promotion,
+        _write_v4_right_completion,
+    )
+
+    _write_v3_promotion(manifest)
+    _write_left_completion(manifest, "v4")
+    _write_v4_right_completion(manifest)
+
+
+def test_v4_paired_metric_recovery_uses_isolated_one_subject_contract(
+    replacement_layout: dict[str, Path | str],
+) -> None:
+    config = _config(replacement_layout)
+    paths = replacement_paths(config)
+    manifest = prepare(config)
+    _write_v4_metric_gate_receipts(manifest)
+    calls = config.work_root.parent / "v4-metrics.calls"
+    env_dump = config.work_root.parent / "v4-metrics.env"
+    fake_submit = config.work_root.parent / "fake-v4-metrics-submit.sh"
+    fake_submit.write_text(
+        "#!/bin/bash\n"
+        f"printf '%s\\n' \"$*\" >> {calls}\n"
+        f"printf '%s\\n' \"$SUBJECT_COUNT|$LEFT_ROOT|$RIGHT_ROOT|$LEFT_OUTPUT_ROOT|$RIGHT_OUTPUT_ROOT\" > {env_dump}\n",
+        encoding="utf-8",
+    )
+    fake_submit.chmod(0o755)
+    isolated = config.work_root.parent / "analysis-inputs"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHON_BIN": sys.executable,
+            "V4_METRIC_SUBMIT": str(fake_submit),
+            "COMBINED_ANALYSIS_INPUT_ROOT": str(isolated),
+        }
+    )
+
+    preflight = _run(env, config, "v4-paired-metrics-preflight")
+    assert preflight.returncode == 0, preflight.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == ["all --preflight"]
+
+    submitted = _run(env, config, "v4-paired-metrics")
+    assert submitted.returncode == 0, submitted.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "all --preflight",
+        "all",
+    ]
+    assert env_dump.read_text(encoding="utf-8").strip() == "|".join(
+        [
+            "1",
+            str(paths.v4_left_root),
+            str(paths.v4_right_root),
+            str(isolated / "simnibs4/replacement/left_hippocampus"),
+            str(isolated / "simnibs4/replacement/right_m1"),
+        ]
+    )
+
+
+def test_v4_paired_metric_recovery_is_blocked_until_right_is_complete(
+    replacement_layout: dict[str, Path | str],
+) -> None:
+    from simnibs_subject_replacement.tests.test_replacement import (
+        _write_left_completion,
+        _write_v3_promotion,
+    )
+
+    config = _config(replacement_layout)
+    manifest = prepare(config)
+    _write_v3_promotion(manifest)
+    _write_left_completion(manifest, "v4")
+    calls = config.work_root.parent / "v4-metrics.calls"
+    fake_submit = config.work_root.parent / "fake-v4-metrics-submit.sh"
+    fake_submit.write_text(
+        f"#!/bin/bash\nprintf '%s\\n' \"$*\" >> {calls}\n",
+        encoding="utf-8",
+    )
+    fake_submit.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {"PYTHON_BIN": sys.executable, "V4_METRIC_SUBMIT": str(fake_submit)}
+    )
+
+    result = _run(env, config, "v4-paired-metrics-preflight")
+
+    assert result.returncode != 0
+    assert "right-m1" in result.stderr
+    assert not calls.exists()

@@ -36,7 +36,19 @@ arms.
 
 If either replacement SimNIBS 4 schema-v2 metric table is absent, preflight
 stops. It reports that a separate read-only refresh of 160 existing NIfTI
-metrics is required; this workflow does not silently perform extraction.
+metrics is required; this workflow does not silently perform extraction. Run
+the manifest-bound replacement recovery first:
+
+```bash
+REPLACEMENT=simnibs_subject_replacement/hpc/submit.sh
+bash "$REPLACEMENT" v4-paired-metrics-preflight "${COMMON[@]}"
+bash "$REPLACEMENT" v4-paired-metrics "${COMMON[@]}"
+```
+
+This submits two one-element extraction arrays and two collectors, with zero
+meshing and FEM jobs. The resulting 80-row target tables are written to
+`final_132_repeatability_combined_analysis_inputs_v1/simnibs4/replacement`,
+outside the completed replacement campaigns and active combined-dataset copy.
 
 If the base-nine SimNIBS 3.2.6 paired tables are absent, recover them from the
 completed fields before rerunning preflight:

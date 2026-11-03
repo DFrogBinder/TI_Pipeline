@@ -10,9 +10,12 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-16G}"
 TIME_LIMIT="${TIME_LIMIT:-02:00:00}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-10}"
+SUBJECT_COUNT="${SUBJECT_COUNT:-10}"
 
 LEFT_ROOT="${LEFT_ROOT:-/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10}"
 RIGHT_ROOT="${RIGHT_ROOT:-/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1}"
+LEFT_OUTPUT_ROOT="${LEFT_OUTPUT_ROOT:-$LEFT_ROOT/_post_processing/repeatability_optimizer_roi_metrics_v1}"
+RIGHT_OUTPUT_ROOT="${RIGHT_OUTPUT_ROOT:-$RIGHT_ROOT/_post_processing/repeatability_optimizer_roi_metrics_v1}"
 
 EXTRACTOR="$PIPELINE_DIR/post/extract_repeatability_optimizer_roi_metrics.py"
 ARRAY_SCRIPT="$PIPELINE_DIR/hpc_scripts/repeatability_optimizer_roi_metrics_array.slurm"
@@ -46,31 +49,49 @@ if ! [[ "$MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] MAX_CONCURRENT must be a positive integer." >&2
     exit 2
 fi
+if ! [[ "$SUBJECT_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[ERROR] SUBJECT_COUNT must be a positive integer." >&2
+    exit 2
+fi
+if [ "$MODE" = "all" ] && [ "$LEFT_OUTPUT_ROOT" = "$RIGHT_OUTPUT_ROOT" ]; then
+    echo "[ERROR] Left and right output roots must be different." >&2
+    exit 2
+fi
+
+ARRAY_MAX=$((SUBJECT_COUNT - 1))
+ARRAY_CONCURRENT="$MAX_CONCURRENT"
+if [ "$ARRAY_CONCURRENT" -gt "$SUBJECT_COUNT" ]; then
+    ARRAY_CONCURRENT="$SUBJECT_COUNT"
+fi
+FIELDS_PER_TARGET=$((SUBJECT_COUNT * 2 * 40))
 
 declare -a LABELS=()
 declare -a ROOTS=()
+declare -a OUTPUT_ROOTS=()
 if [ "$MODE" = "all" ] || [ "$MODE" = "left-hippocampus" ]; then
     LABELS+=("left_hippocampus")
     ROOTS+=("$LEFT_ROOT")
+    OUTPUT_ROOTS+=("$LEFT_OUTPUT_ROOT")
 fi
 if [ "$MODE" = "all" ] || [ "$MODE" = "right-m1" ]; then
     LABELS+=("right_m1")
     ROOTS+=("$RIGHT_ROOT")
+    OUTPUT_ROOTS+=("$RIGHT_OUTPUT_ROOT")
 fi
 
 echo "Scope:"
 echo "  mode: $MODE"
 echo "  datasets/targets: ${#ROOTS[@]}"
-echo "  subjects per target: 10"
+echo "  subjects per target: $SUBJECT_COUNT"
 echo "  conditions per subject: 2 (remesh, fixed_mesh)"
 echo "  runs per condition: 40"
-echo "  existing TI NIfTIs per target: 800"
-echo "  existing TI NIfTIs total: $((800 * ${#ROOTS[@]}))"
-echo "  extraction arrays: ${#ROOTS[@]} x 0-9%$MAX_CONCURRENT"
-echo "  subject extraction tasks: $((10 * ${#ROOTS[@]}))"
+echo "  existing TI NIfTIs per target: $FIELDS_PER_TARGET"
+echo "  existing TI NIfTIs total: $((FIELDS_PER_TARGET * ${#ROOTS[@]}))"
+echo "  extraction arrays: ${#ROOTS[@]} x 0-$ARRAY_MAX%$ARRAY_CONCURRENT"
+echo "  subject extraction tasks: $((SUBJECT_COUNT * ${#ROOTS[@]}))"
 echo "  collector jobs: ${#ROOTS[@]}"
-echo "  scheduler tasks total: $((11 * ${#ROOTS[@]}))"
-echo "  expected combined metric rows: $((800 * ${#ROOTS[@]}))"
+echo "  scheduler tasks total: $(((SUBJECT_COUNT + 1) * ${#ROOTS[@]}))"
+echo "  expected combined metric rows: $((FIELDS_PER_TARGET * ${#ROOTS[@]}))"
 echo "  target definitions: 200 mm3 left hippocampus, 100 mm3 right M1"
 echo "  meshing tasks: 0"
 echo "  FEM simulation tasks: 0"
@@ -87,7 +108,7 @@ for index in "${!ROOTS[@]}"; do
     label="${LABELS[$index]}"
     root="${ROOTS[$index]}"
     config="$root/_pipeline/configs/paired_analysis.json"
-    output_root="$root/_post_processing/repeatability_optimizer_roi_metrics_v1"
+    output_root="${OUTPUT_ROOTS[$index]}"
     echo "[INFO] Preflight: $label"
     "$PYTHON_BIN" "$EXTRACTOR" preflight \
         --config "$config" \
@@ -104,7 +125,7 @@ for index in "${!ROOTS[@]}"; do
     label="${LABELS[$index]}"
     root="${ROOTS[$index]}"
     config="$root/_pipeline/configs/paired_analysis.json"
-    output_root="$root/_post_processing/repeatability_optimizer_roi_metrics_v1"
+    output_root="${OUTPUT_ROOTS[$index]}"
     log_root="$output_root/logs"
     archive="$output_root/${label}_repeatability_optimizer_roi_metrics_v1.tar.gz"
     mkdir -p "$log_root"
@@ -118,7 +139,7 @@ for index in "${!ROOTS[@]}"; do
             --cpus-per-task="$CPUS_PER_TASK" \
             --mem="$MEMORY" \
             --time="$TIME_LIMIT" \
-            --array="0-9%$MAX_CONCURRENT" \
+            --array="0-$ARRAY_MAX%$ARRAY_CONCURRENT" \
             --output="$log_root/extract-%A_%a.out" \
             --error="$log_root/extract-%A_%a.err" \
             --export="$export_spec" \

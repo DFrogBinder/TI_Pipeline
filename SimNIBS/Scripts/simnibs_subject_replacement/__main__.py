@@ -11,6 +11,7 @@ from .replacement import (
     preflight,
     prepare,
     require_left_complete,
+    require_v4_complete,
     require_v3_promotion,
 )
 from .settings import (
@@ -70,7 +71,14 @@ def _manifest(config: ReplacementConfig) -> dict[str, object]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("preflight", "prepare", "bindings", "require-promotion", "status"):
+    for name in (
+        "preflight",
+        "prepare",
+        "bindings",
+        "require-promotion",
+        "require-v4-complete",
+        "status",
+    ):
         _add_common(commands.add_parser(name))
     left = commands.add_parser("require-left")
     _add_common(left)
@@ -125,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "require-promotion":
             payload = require_v3_promotion(manifest)
+        elif args.command == "require-v4-complete":
+            payload = require_v4_complete(manifest)
         elif args.command == "require-left":
             payload = require_left_complete(manifest, args.version)
         elif args.command == "v4-init":

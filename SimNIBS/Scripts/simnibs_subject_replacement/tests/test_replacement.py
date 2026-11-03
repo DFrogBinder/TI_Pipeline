@@ -11,6 +11,7 @@ from simnibs_subject_replacement.replacement import (
     preflight,
     prepare,
     require_left_complete,
+    require_v4_complete,
     require_v3_promotion,
 )
 from simnibs_subject_replacement.settings import ReplacementConfig, replacement_paths
@@ -208,6 +209,43 @@ def _write_left_completion(manifest: dict[str, object], version: str) -> None:
     completion.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_v4_right_completion(manifest: dict[str, object]) -> None:
+    paths = manifest["paths"]
+    subject = manifest["subject"]
+    root = Path(paths["v4_right_root"])
+    config = root / "_pipeline/configs/paired_analysis.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        json.dumps(
+            {
+                "subjects": [subject],
+                "conditions": [
+                    {"name": "remesh", "repeat_count": 40},
+                    {"name": "fixed_mesh", "repeat_count": 40},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    completion = root / "_pipeline/workflow/complete.json"
+    completion.parent.mkdir(parents=True, exist_ok=True)
+    completion.write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "scope": {
+                    "roi": "right-m1",
+                    "subjects": [subject],
+                    "subject_count": 1,
+                    "repeats_per_condition": 40,
+                    "total_simulation_tasks": 80,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_simulation_gate_requires_exact_reviewed_v3_promotion(
     replacement_layout: dict[str, Path | str],
 ) -> None:
@@ -249,3 +287,28 @@ def test_right_target_gate_requires_same_version_left_terminal_receipt(
     assert result["status"] == "ready"
     assert result["version"] == version
     assert result["subject"] == manifest["subject"]
+
+
+def test_v4_metric_gate_requires_both_exact_terminal_receipts(
+    replacement_layout: dict[str, Path | str],
+) -> None:
+    config = _config(replacement_layout)
+    paths = replacement_paths(config)
+    prepare(config)
+    manifest = load_prepared_manifest(paths.manifest)
+    _write_v3_promotion(manifest)
+    _write_left_completion(manifest, "v4")
+
+    with pytest.raises(RuntimeError, match="right-m1"):
+        require_v4_complete(manifest)
+
+    _write_v4_right_completion(manifest)
+    result = require_v4_complete(manifest)
+
+    assert result["status"] == "ready"
+    assert result["subject"] == manifest["subject"]
+    assert set(result["targets"]) == {"left-hippocampus", "right-m1"}
+    assert all(
+        len(target["completion_sha256"]) == 64
+        for target in result["targets"].values()
+    )

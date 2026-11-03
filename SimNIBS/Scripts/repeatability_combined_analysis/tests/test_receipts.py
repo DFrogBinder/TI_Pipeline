@@ -73,3 +73,46 @@ def test_v4_receipt_task_totals_must_match_subjects_times_repeats(
 
     with pytest.raises(ReceiptError, match="task count"):
         validate_terminal_receipts(analysis_config)
+
+
+def test_spherical_fixed_condition_values_may_be_total_tasks(
+    analysis_config,
+) -> None:
+    path = analysis_config.sources.receipts[6]
+    payload = json.loads(path.read_text())
+    scope = payload["scope"]
+    scope.pop("remesh_tasks")
+    scope.pop("fixed_mesh_tasks")
+    scope["conditions"] = {"fixed_mesh": 400}
+    scope["expected_ti_nifti"] = 400
+    scope["observed_complete_tasks"] = 400
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    receipts = validate_terminal_receipts(analysis_config)
+
+    assert receipts[6]["conditions"] == ["fixed_mesh"]
+    assert receipts[6]["repeats_per_condition"] == 40
+
+
+def test_spherical_fixed_condition_total_must_match_full_scope(
+    analysis_config,
+) -> None:
+    path = analysis_config.sources.receipts[6]
+    payload = json.loads(path.read_text())
+    payload["scope"]["conditions"] = {"fixed_mesh": 399}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ReceiptError, match="condition count"):
+        validate_terminal_receipts(analysis_config)
+
+
+def test_spherical_fixed_condition_total_rejects_fractional_values(
+    analysis_config,
+) -> None:
+    path = analysis_config.sources.receipts[6]
+    payload = json.loads(path.read_text())
+    payload["scope"]["conditions"] = {"fixed_mesh": 400.9}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ReceiptError, match="condition count"):
+        validate_terminal_receipts(analysis_config)

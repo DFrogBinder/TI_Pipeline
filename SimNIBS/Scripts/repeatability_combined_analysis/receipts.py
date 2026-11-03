@@ -127,16 +127,32 @@ def validate_terminal_receipts(
             raise ReceiptError(f"Terminal receipt subjects differ in {path}")
 
         condition_counts: dict[str, int] = {}
+        expected_tasks = repeats * subject_count
         conditions_payload = scope.get("conditions")
         if isinstance(conditions_payload, dict):
             for condition, value in conditions_payload.items():
-                condition_counts[str(condition)] = int(value)
+                try:
+                    if isinstance(value, bool):
+                        raise ValueError("boolean is not a count")
+                    observed_count = int(value)
+                    if isinstance(value, float) and not value.is_integer():
+                        raise ValueError("fractional value is not a count")
+                except (TypeError, ValueError) as exc:
+                    raise ReceiptError(
+                        f"Invalid {condition} condition count in {path}"
+                    ) from exc
+                if observed_count not in (repeats, expected_tasks):
+                    raise ReceiptError(
+                        f"Terminal receipt {condition} condition count differs: "
+                        f"expected {repeats} repeats or {expected_tasks} total tasks, "
+                        f"observed {observed_count} in {path}"
+                    )
+                condition_counts[str(condition)] = repeats
         for condition in ("remesh", "fixed_mesh"):
             task_key = f"{condition}_tasks"
             if task_key in scope:
                 task_count = int(scope[task_key])
                 if task_count > 0:
-                    expected_tasks = repeats * subject_count
                     if task_count != expected_tasks:
                         raise ReceiptError(
                             f"Terminal receipt {condition} task count differs: "

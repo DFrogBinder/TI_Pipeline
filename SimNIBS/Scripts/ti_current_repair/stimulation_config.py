@@ -9,7 +9,7 @@ import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 
 CURRENT_REPAIR_ROOT = Path(__file__).resolve().parent
@@ -122,7 +122,7 @@ class TDCSStimulationConfig:
         }
 
 
-AnyStimulationConfig = StimulationConfig | TDCSStimulationConfig
+AnyStimulationConfig = Union[StimulationConfig, TDCSStimulationConfig]
 
 
 def file_sha256(path: str | Path) -> str:

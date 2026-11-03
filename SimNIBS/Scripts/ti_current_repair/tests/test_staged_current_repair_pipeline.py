@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 from pathlib import Path
+from typing import Union, get_args, get_origin
 
 import numpy as np
 import pytest
@@ -29,6 +30,7 @@ from post import seed_fixed_from_median
 from post import select_median_remesh_repeats
 from simulation_runners import repeatability_experiment
 from stimulation_config import (
+    AnyStimulationConfig,
     CONFIRMED_TARGETS_SHA256,
     TARGETS_CSV_PATH,
     PROVISIONAL_TDCS_REVIEW_STATUS,
@@ -36,6 +38,16 @@ from stimulation_config import (
     resolve_provisional_tdcs_stimulation,
     validate_stimulation_config,
 )
+
+
+def test_stimulation_union_alias_is_python39_compatible() -> None:
+    from stimulation_config import StimulationConfig, TDCSStimulationConfig
+
+    assert get_origin(AnyStimulationConfig) is Union
+    assert get_args(AnyStimulationConfig) == (
+        StimulationConfig,
+        TDCSStimulationConfig,
+    )
 
 
 def _write_config(path: Path, *, experiment_root: Path, subjects: list[str], repeat_count: int = 3) -> None:

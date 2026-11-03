@@ -161,4 +161,3 @@ def test_materialization_rejects_a_source_changed_after_planning(
     with pytest.raises(AssemblyError, match="changed after planning"):
         materialize_inputs(plan, tmp_path / "canonical")
     assert not (tmp_path / "canonical" / "assembly_manifest.json").exists()
-

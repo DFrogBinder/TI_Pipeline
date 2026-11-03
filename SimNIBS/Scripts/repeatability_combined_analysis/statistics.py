@@ -402,4 +402,3 @@ def build_support_audit(
         ),
     }
     return audit, summary
-

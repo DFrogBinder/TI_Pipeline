@@ -97,4 +97,3 @@ that every mapped destination has the source hash snapshotted by this analysis.
 It writes nothing to either root. Source retirement remains a separate guarded
 workflow after both the dataset and this analysis have been independently
 validated.
-

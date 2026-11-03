@@ -105,4 +105,3 @@ def test_complete_synthetic_analysis_and_dataset_rebind_are_source_read_only(
 
     after = {path: _sha256(path) for path in source_paths}
     assert before == after
-

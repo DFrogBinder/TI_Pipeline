@@ -403,4 +403,3 @@ def materialize_inputs(plan: AssemblyPlan, destination: Path) -> dict[str, Path]
     }
     _write_json_atomic(destination / "assembly_manifest.json", payload)
     return outputs
-

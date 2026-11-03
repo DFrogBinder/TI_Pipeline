@@ -74,4 +74,3 @@ def test_status_and_rebind_cli_are_read_only(
     )
     capsys.readouterr()
     assert sorted(dataset.rglob("*")) == before
-

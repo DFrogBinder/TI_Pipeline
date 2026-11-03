@@ -265,4 +265,3 @@ def test_requires_all_four_named_assembled_inputs(tmp_path: Path) -> None:
     inputs.pop("simnibs4_right_m1")
     with pytest.raises(established.EstablishedAnalysisError, match="four canonical"):
         established.run_established(inputs, tmp_path / "established")
-

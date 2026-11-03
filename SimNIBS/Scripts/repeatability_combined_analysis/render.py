@@ -287,4 +287,3 @@ def render_comprehensive_outputs(
         "figures": figure_paths,
         "artifacts": artifacts,
     }
-

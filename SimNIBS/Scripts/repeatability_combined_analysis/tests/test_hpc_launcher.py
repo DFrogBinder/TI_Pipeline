@@ -203,4 +203,3 @@ def test_rebind_mode_requires_and_forwards_dataset_root(
         f"--dataset-root={dataset}" in calls
     )
     assert not Path(fake_hpc["sbatch_log"]).exists()
-

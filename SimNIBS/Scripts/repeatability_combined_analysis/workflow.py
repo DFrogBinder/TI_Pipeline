@@ -618,4 +618,3 @@ def rebind_preflight(
         "mapped_sources": bindings,
         "writes_performed": 0,
     }
-

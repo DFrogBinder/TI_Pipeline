@@ -172,4 +172,3 @@ def analysis_config(tmp_path: Path) -> AnalysisConfig:
             receipts=tuple(receipts),
         ),
     )
-

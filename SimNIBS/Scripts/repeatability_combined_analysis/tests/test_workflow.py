@@ -403,4 +403,3 @@ def test_rebind_requires_completed_dataset(analysis_config, tmp_path: Path) -> N
     dataset.mkdir()
     with pytest.raises(workflow.WorkflowError, match="completion receipt"):
         workflow.rebind_preflight(analysis_config, dataset)
-

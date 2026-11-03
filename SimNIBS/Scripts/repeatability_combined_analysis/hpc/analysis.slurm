@@ -65,4 +65,3 @@ MANIFEST="$OUTPUT_ROOT/analysis_manifest.json"
     exit 2
 }
 cat "$MANIFEST"
-

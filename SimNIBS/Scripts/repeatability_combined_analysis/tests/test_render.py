@@ -97,4 +97,3 @@ def test_render_manifest_records_interpretation_and_relative_paths(
     ]
     assert result["manifest"] == "comprehensive_manifest.json"
     assert all(not Path(path).is_absolute() for path in manifest["artifacts"])
-

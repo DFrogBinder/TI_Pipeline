@@ -3,4 +3,3 @@
 from .settings import AnalysisConfig, SourcePaths, production_config
 
 __all__ = ["AnalysisConfig", "SourcePaths", "production_config"]
-

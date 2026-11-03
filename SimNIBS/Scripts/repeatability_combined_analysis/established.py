@@ -246,4 +246,3 @@ def run_established(
         encoding="utf-8",
     )
     return manifest
-

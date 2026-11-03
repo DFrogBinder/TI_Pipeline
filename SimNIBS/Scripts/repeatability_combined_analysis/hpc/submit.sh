@@ -147,4 +147,3 @@ mv "$TEMP_SUBMISSION" "$SUBMISSION"
 
 echo "[INFO] Combined repeatability analysis job: $JOB_ID"
 echo "[INFO] Submission receipt: $SUBMISSION"
-

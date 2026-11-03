@@ -243,4 +243,3 @@ def test_support_audit_counts_incomplete_support_without_causal_claims() -> None
     wording = json.dumps(summary).lower()
     assert "does not establish causation" in wording
     assert "causes field" not in wording
-

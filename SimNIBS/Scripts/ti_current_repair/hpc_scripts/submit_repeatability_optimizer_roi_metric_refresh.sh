@@ -3,7 +3,7 @@ set -euo pipefail
 
 PIPELINE_DIR_DEFAULT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIPELINE_DIR="${PIPELINE_DIR:-$PIPELINE_DIR_DEFAULT}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 PARTITION="${PARTITION:-sheffield}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
@@ -45,6 +45,16 @@ for required in "$EXTRACTOR" "$ARRAY_SCRIPT" "$COLLECT_SCRIPT"; do
         exit 2
     fi
 done
+if [ -z "$PYTHON_BIN" ]; then
+    command -v module >/dev/null 2>&1 || {
+        echo "[ERROR] The environment-modules command is unavailable." >&2
+        exit 2
+    }
+    module purge
+    module use "$HOME/modules"
+    module load SimNIBS/4.0.1-foss-2023a
+    PYTHON_BIN=python
+fi
 if ! [[ "$MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]]; then
     echo "[ERROR] MAX_CONCURRENT must be a positive integer." >&2
     exit 2

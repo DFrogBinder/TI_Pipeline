@@ -158,3 +158,52 @@ def test_two_target_refresh_rejects_colliding_output_roots(tmp_path: Path) -> No
 
     assert result.returncode == 2
     assert "output roots must be different" in result.stderr
+
+
+def test_default_preflight_uses_the_declared_simnibs_module_python(
+    tmp_path: Path,
+) -> None:
+    module_log = tmp_path / "module.log"
+    python_log = tmp_path / "python.log"
+    fake_module = tmp_path / "module"
+    fake_module.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "$*" >> "$FAKE_MODULE_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_module.chmod(0o755)
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "$*" >> "$FAKE_PYTHON_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = os.environ.copy()
+    env.pop("PYTHON_BIN", None)
+    env.update(
+        {
+            "PATH": f"{tmp_path}:{env['PATH']}",
+            "PIPELINE_DIR": str(PIPELINE),
+            "FAKE_MODULE_LOG": str(module_log),
+            "FAKE_PYTHON_LOG": str(python_log),
+            "LEFT_ROOT": str(tmp_path / "left-source"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(SUBMITTER), "left-hippocampus", "--preflight"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert module_log.read_text(encoding="utf-8").splitlines() == [
+        "purge",
+        f"use {Path.home() / 'modules'}",
+        "load SimNIBS/4.0.1-foss-2023a",
+    ]
+    call = python_log.read_text(encoding="utf-8")
+    assert "extract_repeatability_optimizer_roi_metrics.py preflight" in call

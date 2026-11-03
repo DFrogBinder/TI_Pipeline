@@ -148,6 +148,21 @@ analyzer is pinned to the complete ten-subject cohort. A provenance-safe
 base-nine or eventual 9+1 aggregation will be implemented as a separate step,
 so a partial cohort cannot be mislabeled as the final analysis.
 
+After both base-nine targets have valid final completion receipts, extract the
+paired remesh and fixed-mesh optimizer-ROI metrics needed by the separate 9+1
+analysis:
+
+```bash
+bash "$PIPELINE" paired-metrics --cohort=base9
+```
+
+This recovery mode reads the 1,440 completed NIfTI fields and submits two
+nine-element ROI-extraction arrays plus two collectors. It performs no meshing,
+FEM simulations, or base-nine final aggregation. Its isolated schema-v2 tables
+are written below each base-nine campaign's
+`_post_processing/repeatability_optimizer_roi_metrics_simnibs326h_paired_v2`
+directory.
+
 The failed subject can be diagnosed independently at any time:
 
 ```bash

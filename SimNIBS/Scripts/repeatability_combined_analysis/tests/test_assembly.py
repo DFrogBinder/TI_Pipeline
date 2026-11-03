@@ -150,6 +150,19 @@ def test_missing_replacement_schema_table_reports_exact_refresh_scope(
     assert not analysis_config.output_root.exists()
 
 
+def test_missing_base9_paired_table_reports_exact_recovery_command(
+    analysis_config,
+) -> None:
+    analysis_config.sources.v3_base9_left_csv.unlink()
+
+    with pytest.raises(
+        AssemblyError,
+        match=r"paired-metrics --cohort=base9.*1440 existing NIfTI fields",
+    ):
+        build_assembly_plan(analysis_config)
+    assert not analysis_config.output_root.exists()
+
+
 def test_materialization_rejects_a_source_changed_after_planning(
     analysis_config,
     tmp_path: Path,

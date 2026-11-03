@@ -46,10 +46,10 @@ for argument in "$@"; do
 done
 
 case "$MODE" in
-    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-final|analysis-status|status) ;;
+    preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|paired-metrics|analysis|analysis-final|analysis-status|status) ;;
     *)
         echo "[ERROR] Unsupported mode: $MODE" >&2
-        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|analysis|analysis-final|analysis-status|status} [target|subject] [options]" >&2
+        echo "Usage: $0 {preflight|init|module-check|stage-references|headmodels|collect-headmodels|diagnose-headmodel|promote|remesh|target-remesh|post-remesh|resume-post-remesh|fixed|all-remesh|all-fixed|paired-metrics|analysis|analysis-final|analysis-status|status} [target|subject] [options]" >&2
         exit 2
         ;;
 esac
@@ -71,6 +71,10 @@ if [ "$COHORT" = external1 ]; then
 fi
 if [ "$COHORT" = base9 ] && { [ "$MODE" = analysis ] || [ "$MODE" = analysis-final ]; }; then
     echo "[ERROR] base9 analysis is intentionally blocked until a provenance-safe base9 or 9+1 aggregation is implemented." >&2
+    exit 2
+fi
+if [ "$MODE" = paired-metrics ] && [ "$COHORT" != base9 ]; then
+    echo "[ERROR] paired-metrics is restricted to cohort base9." >&2
     exit 2
 fi
 export SIMNIBS326H_COHORT="$COHORT"
@@ -218,6 +222,24 @@ record_submission() {
 }
 
 print_scope() {
+    if [ "$MODE" = paired-metrics ]; then
+        echo "Scope:"
+        echo "  study: corrected-label SimNIBS 3.2.6 base-nine paired-metric recovery"
+        echo "  cohort: base9"
+        echo "  subjects: 9"
+        echo "  targets: 2 (left hippocampus, right M1)"
+        echo "  conditions: 2 (remesh, fixed_mesh)"
+        echo "  existing completed NIfTI fields reused: 1440"
+        echo "  ROI extraction array tasks: 18 (2 x 0-8%9)"
+        echo "  collection jobs: 2"
+        echo "  expected paired metric rows: 1440"
+        echo "  new meshing tasks: 0"
+        echo "  new FEM simulation tasks: 0"
+        echo "  final aggregation jobs: 0"
+        echo "  resources: sheffield; 4 CPU; 16G; up to 02:00:00"
+        echo "  execution: read-only extraction from completed fields"
+        return
+    fi
     if [ "$MODE" = analysis-final ]; then
         echo "Scope:"
         echo "  study: corrected-label SimNIBS 3.2.6 final-analysis recovery"
@@ -547,6 +569,18 @@ case "$MODE" in
         right_chain="$(submit_fixed_chain right-m1 "$left_terminal")"
         record_submission "$MODE" both "$DEPENDENCY" "$left_chain\t$right_chain"
         echo "[INFO] Sequential fixed chains: left=$left_chain right=$right_chain"
+        ;;
+    paired-metrics)
+        require_file "$(target_root left-hippocampus)/_pipeline/configs/paired_analysis.json"
+        require_file "$(target_root right-m1)/_pipeline/configs/paired_analysis.json"
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-final \
+            --target left-hippocampus >/dev/null
+        "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-final \
+            --target right-m1 >/dev/null
+        left_jobs="$(submit_paired_roi left-hippocampus)"
+        right_jobs="$(submit_paired_roi right-m1)"
+        record_submission "$MODE" both none "$left_jobs\t$right_jobs"
+        echo "[INFO] Base-nine paired metric jobs: left=$left_jobs right=$right_jobs"
         ;;
     analysis)
         "$PYTHON_BIN" -m simnibs_326_corrected_label_repeatability validate-final \

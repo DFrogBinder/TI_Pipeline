@@ -151,6 +151,15 @@ def _missing_replacement_message(path: Path) -> str:
     )
 
 
+def _missing_base9_message(path: Path) -> str:
+    return (
+        f"Base-nine v3 paired optimizer metrics are unavailable at {path}. "
+        "Run simnibs_326_corrected_label_repeatability/hpc/submit.sh "
+        "paired-metrics --cohort=base9 to extract metrics read-only from "
+        "1440 existing NIfTI fields; no meshing or FEM work is required."
+    )
+
+
 def validate_metric_table(
     frame: pd.DataFrame,
     *,
@@ -265,6 +274,8 @@ def build_assembly_plan(config: AnalysisConfig) -> AssemblyPlan:
         if not spec.path.is_file() or spec.path.stat().st_size == 0:
             if spec.name.startswith("v4_replacement"):
                 raise AssemblyError(_missing_replacement_message(spec.path))
+            if spec.name.startswith("v3_base9"):
+                raise AssemblyError(_missing_base9_message(spec.path))
             raise AssemblyError(f"Required metric source is missing or empty: {spec.path}")
         frame = pd.read_csv(spec.path)
         if spec.name.startswith("v4_replacement") and not REQUIRED_COLUMNS.issubset(

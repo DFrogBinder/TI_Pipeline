@@ -499,6 +499,70 @@ def test_base9_analysis_is_rejected_until_provenance_safe_aggregation_exists(
     assert _calls(calls) == []
 
 
+def test_base9_paired_metrics_submits_only_read_only_extraction_and_collection(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _configs(env, cohort="base9")
+
+    result = _run(env, "paired-metrics", "--cohort=base9")
+
+    assert result.returncode == 0, result.stderr
+    assert "existing completed NIfTI fields reused: 1440" in result.stdout
+    assert "ROI extraction array tasks: 18" in result.stdout
+    assert "new FEM simulation tasks: 0" in result.stdout
+    submitted = _calls(calls)
+    assert len(submitted) == 4
+    roi_arrays = [line for line in submitted if "optimizer_roi_array.slurm" in line]
+    collectors = [
+        line for line in submitted if "optimizer_roi_collect.slurm" in line
+    ]
+    assert len(roi_arrays) == 2
+    assert len(collectors) == 2
+    assert all("--array=0-8%9" in line for line in roi_arrays)
+    assert "base9-left/_pipeline/configs/paired_analysis.json" in roi_arrays[0]
+    assert "base9-right/_pipeline/configs/paired_analysis.json" in roi_arrays[1]
+    assert "--dependency=afterok:10001" in collectors[0]
+    assert "--dependency=afterok:10003" in collectors[1]
+    assert "simulation_array.slurm" not in "\n".join(submitted)
+    assert "analyze_optimizer_roi.slurm" not in "\n".join(submitted)
+
+
+def test_base9_paired_metrics_requires_both_configs_before_submission(
+    launcher_env: tuple[dict[str, str], Path],
+) -> None:
+    env, calls = launcher_env
+    _configs(env, cohort="base9")
+    right_config = (
+        Path(env["SIMNIBS326H_BASE9_RIGHT_ROOT"])
+        / "_pipeline/configs/paired_analysis.json"
+    )
+    right_config.unlink()
+
+    result = _run(env, "paired-metrics", "--cohort=base9")
+
+    assert result.returncode == 2
+    assert f"Required receipt/config is missing: {right_config}" in result.stderr
+    assert _calls(calls) == []
+
+
+@pytest.mark.parametrize("cohort", ["full10", "external1"])
+def test_paired_metrics_recovery_is_restricted_to_base9(
+    launcher_env: tuple[dict[str, str], Path],
+    tmp_path: Path,
+    cohort: str,
+) -> None:
+    env, calls = launcher_env
+    if cohort == "external1":
+        _external_launcher_env(env, tmp_path)
+
+    result = _run(env, "paired-metrics", f"--cohort={cohort}")
+
+    assert result.returncode == 2
+    assert "paired-metrics is restricted to cohort base9" in result.stderr
+    assert _calls(calls) == []
+
+
 def test_external_final_analysis_recovery_submits_only_one_subject_aggregator(
     launcher_env: tuple[dict[str, str], Path],
     tmp_path: Path,

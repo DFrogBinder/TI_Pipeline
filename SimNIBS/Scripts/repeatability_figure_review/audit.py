@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +47,32 @@ REQUIRED_ANALYSIS_SOURCES = (
     "inputs/simnibs326_right_m1.csv",
     "inputs/simnibs4_left_hippocampus.csv",
     "inputs/simnibs4_right_m1.csv",
+    "established/within_simnibs4/pairwise_rank_reversal_probabilities.csv",
+    "established/within_simnibs4/rank_selection_draws.csv",
 )
+
+RANKING_TABLE_SPECS = {
+    "established/within_simnibs4/pairwise_rank_reversal_probabilities.csv": {
+        "columns": {
+            "target",
+            "higher_mean_subject",
+            "lower_mean_subject",
+            "higher_mean_v_per_m",
+            "lower_mean_v_per_m",
+            "mean_difference_v_per_m",
+            "single_run_reversal_probability",
+        },
+        "rows_per_target": 45,
+    },
+    "established/within_simnibs4/rank_selection_draws.csv": {
+        "columns": {
+            "target",
+            "kendall_rank_agreement",
+            "pairwise_reversals",
+        },
+        "rows_per_target": 20_000,
+    },
+}
 
 PAPER_EQUIVALENCE_SPECS = (
     (
@@ -128,6 +155,44 @@ def _require_nonempty(path: Path) -> None:
         raise SourceAuditError(f"Required source is missing or empty: {path}")
 
 
+def _validate_ranking_table(path: Path, spec: dict[str, object]) -> None:
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        columns = set(reader.fieldnames or ())
+        required = set(spec["columns"])
+        missing = required.difference(columns)
+        if missing:
+            raise SourceAuditError(
+                f"Ranking table is missing columns {sorted(missing)}: {path}"
+            )
+        rows = list(reader)
+
+    expected_per_target = int(spec["rows_per_target"])
+    counts = {target: 0 for target in TARGETS}
+    for row in rows:
+        target = row.get("target")
+        if target not in counts:
+            raise SourceAuditError(f"Ranking table has an unexpected target: {path}")
+        counts[target] += 1
+        for column in required.difference(
+            {"target", "higher_mean_subject", "lower_mean_subject"}
+        ):
+            try:
+                value = float(row[column])
+            except (TypeError, ValueError) as exc:
+                raise SourceAuditError(
+                    f"Ranking table has a non-numeric {column}: {path}"
+                ) from exc
+            if not math.isfinite(value):
+                raise SourceAuditError(
+                    f"Ranking table has a non-finite {column}: {path}"
+                )
+    if any(count != expected_per_target for count in counts.values()):
+        raise SourceAuditError(
+            f"Ranking table has incomplete target scope {counts}: {path}"
+        )
+
+
 def _parse_figure(relative_path: str) -> tuple[str, str, str, str]:
     parts = Path(relative_path).parts
     stem = Path(relative_path).stem
@@ -166,6 +231,8 @@ def audit_sources(source_root: Path, manuscript_root: Path) -> AuditBundle:
     manuscript_root = Path(manuscript_root).expanduser().resolve()
     for relative in REQUIRED_ANALYSIS_SOURCES:
         _require_nonempty(source_root / relative)
+    for relative, spec in RANKING_TABLE_SPECS.items():
+        _validate_ranking_table(source_root / relative, spec)
 
     records: list[FigureRecord] = []
     for relative in EXPECTED_ANALYSIS_FIGURES:

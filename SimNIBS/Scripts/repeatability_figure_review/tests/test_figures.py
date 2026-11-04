@@ -13,6 +13,7 @@ from repeatability_figure_review.audit import (
 )
 from repeatability_figure_review.figures import (
     bootstrap_subject_curve,
+    load_v4_ranking_tables,
     percentile_plot_bounds,
     prepare_sd_for_log_plot,
     render_revised_figures,
@@ -25,6 +26,18 @@ PAPER_FIGURES = (
     "figure_bootstrap_precision.png",
     "figure_mesh_element_count_variability.png",
     "figure_tissue_volume_deviations.png",
+)
+
+BANNED_READER_TERMS = (
+    "optimizer-ROI",
+    "Optimizer-ROI",
+    "|E|",
+    "within-cell",
+    "Within-cell",
+    "difference-in-differences",
+    "Subject IDs",
+    "Participant 40-run median",
+    "v3 − v4 participant contrast",
 )
 
 
@@ -78,6 +91,40 @@ def _make_complete_sources(tmp_path: Path) -> tuple[Path, Path]:
             path = source / "inputs" / f"{version}_{target}.csv"
             path.parent.mkdir(parents=True, exist_ok=True)
             _metric_table(version, target).to_csv(path, index=False)
+    ranking_root = source / "established" / "within_simnibs4"
+    pair_rows = []
+    draw_rows = []
+    subjects = [f"sub-CC{100000 + index}" for index in range(10)]
+    for target_index, target in enumerate(("left_hippocampus", "right_m1")):
+        for higher_index, higher in enumerate(subjects):
+            for lower_index, lower in enumerate(subjects[higher_index + 1 :], start=higher_index + 1):
+                pair_rows.append(
+                    {
+                        "target": target,
+                        "higher_mean_subject": higher,
+                        "lower_mean_subject": lower,
+                        "higher_mean_v_per_m": 0.30 - higher_index * 0.01,
+                        "lower_mean_v_per_m": 0.30 - lower_index * 0.01,
+                        "mean_difference_v_per_m": (lower_index - higher_index) * 0.01,
+                        "single_run_reversal_probability": min(
+                            0.55, 0.02 * (lower_index - higher_index + target_index)
+                        ),
+                    }
+                )
+        draw_rows.extend(
+            {
+                "target": target,
+                "kendall_rank_agreement": 1.0 - 2.0 * (draw % 8) / 45.0,
+                "pairwise_reversals": draw % 8,
+            }
+            for draw in range(20_000)
+        )
+    pd.DataFrame(pair_rows).to_csv(
+        ranking_root / "pairwise_rank_reversal_probabilities.csv", index=False
+    )
+    pd.DataFrame(draw_rows).to_csv(
+        ranking_root / "rank_selection_draws.csv", index=False
+    )
     for name in PAPER_FIGURES:
         _write_png(manuscript / "figures" / "combined" / name, (200, 120))
     (manuscript / "main.tex").write_text("paper\n", encoding="utf-8")
@@ -114,6 +161,18 @@ def test_bootstrap_curve_is_reproducible_and_covers_requested_counts() -> None:
     pd.testing.assert_frame_equal(first, second)
     assert first["n_repeats"].tolist() == [2, 3, 4, 5]
     assert (first[["ci_half_width_rel", "abs_error_quantile_rel"]].to_numpy() > 0).all()
+
+
+def test_v4_ranking_tables_are_loaded_with_complete_scope(tmp_path: Path) -> None:
+    source, manuscript = _make_complete_sources(tmp_path)
+    bundle = audit_sources(source, manuscript)
+
+    pairs, draws = load_v4_ranking_tables(bundle)
+
+    assert len(pairs) == 90
+    assert len(draws) == 40_000
+    assert set(pairs["target"]) == {"left_hippocampus", "right_m1"}
+    assert set(draws["target"]) == {"left_hippocampus", "right_m1"}
 
 
 def test_render_revised_figures_builds_current_and_legacy_outputs(tmp_path: Path) -> None:
@@ -167,3 +226,63 @@ def test_render_revised_figures_builds_current_and_legacy_outputs(tmp_path: Path
         original = manuscript / "figures" / "combined" / legacy
         copied = output / "legacy_paper_figures" / legacy
         assert sha256_file(original) == sha256_file(copied)
+
+
+def test_regenerated_figures_use_reader_facing_language_and_are_direct_renders(
+    tmp_path: Path,
+) -> None:
+    source, manuscript = _make_complete_sources(tmp_path)
+    bundle = audit_sources(source, manuscript)
+    output = tmp_path / "review"
+
+    artifacts = render_revised_figures(
+        bundle,
+        output,
+        bootstrap_iterations=100,
+        bootstrap_max_repeats=5,
+    )
+    regenerated = [
+        item for item in artifacts if item.relative_path.endswith(".png")
+        and item.category != "legacy_paper_figure"
+    ]
+    descriptions = {}
+    for artifact in regenerated:
+        with Image.open(output / artifact.relative_path) as image:
+            description = image.info.get("Description", "")
+        assert description, artifact.relative_path
+        descriptions[artifact.relative_path] = description
+
+    primary_text = descriptions[
+        "paper_equivalents/figure_target_field_repeatability.png"
+    ]
+    bootstrap_text = descriptions[
+        "paper_equivalents/figure_bootstrap_precision.png"
+    ]
+    all_text = "\n".join(descriptions.values())
+    assert "Median temporal-interference field in target region (V/m)" in primary_text
+    assert "Mean temporal-interference field in target region" in bootstrap_text
+    assert "New mesh each run" in primary_text
+    assert "Same mesh reused" in primary_text
+    assert not any(term in all_text for term in BANNED_READER_TERMS)
+
+    placeholders = [
+        source
+        / "established"
+        / "within_simnibs4"
+        / "figures"
+        / target
+        / source_name
+        for target in ("left_hippocampus", "right_m1")
+        for source_name in (
+            "01_primary_median_roi_repeat_distributions.png",
+            "02_single_repeat_subject_ranking_uncertainty.png",
+        )
+    ]
+    direct_outputs = [
+        output / "paper_equivalents" / "figure_target_field_repeatability.png",
+        output / "paper_equivalents" / "figure_single_run_ranking_uncertainty.png",
+    ]
+    assert all(
+        sha256_file(rendered) not in {sha256_file(source_path) for source_path in placeholders}
+        for rendered in direct_outputs
+    )

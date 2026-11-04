@@ -7,15 +7,15 @@ import math
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.text import Text
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from .audit import AuditBundle, sha256_file
 
@@ -27,10 +27,20 @@ TARGET_LABELS = {
 }
 VERSIONS = ("simnibs326", "simnibs4")
 CELL_SPECS = (
-    ("simnibs326", "remesh", "v3 remesh", "#4C78A8"),
-    ("simnibs326", "fixed_mesh", "v3 fixed", "#F58518"),
-    ("simnibs4", "remesh", "v4 remesh", "#54A24B"),
-    ("simnibs4", "fixed_mesh", "v4 fixed", "#E45756"),
+    (
+        "simnibs326",
+        "remesh",
+        "SimNIBS 3.2.6\nNew mesh each run",
+        "#4C78A8",
+    ),
+    (
+        "simnibs326",
+        "fixed_mesh",
+        "SimNIBS 3.2.6\nSame mesh reused",
+        "#F58518",
+    ),
+    ("simnibs4", "remesh", "SimNIBS 4\nNew mesh each run", "#4C78A8"),
+    ("simnibs4", "fixed_mesh", "SimNIBS 4\nSame mesh reused", "#F58518"),
 )
 TECHNICAL_SD_FLOOR = 1e-8
 
@@ -43,6 +53,19 @@ class Artifact:
     sha256: str
     width: int | None = None
     height: int | None = None
+
+
+def figure_text(figure: plt.Figure) -> tuple[str, ...]:
+    """Return the non-empty text actually attached to a Matplotlib figure."""
+
+    texts: list[str] = []
+    seen: set[str] = set()
+    for artist in figure.findobj(match=Text):
+        value = artist.get_text().strip()
+        if value and artist.get_visible() and value not in seen:
+            seen.add(value)
+            texts.append(value)
+    return tuple(texts)
 
 
 def percentile_plot_bounds(values: np.ndarray) -> tuple[float, float]:
@@ -134,7 +157,14 @@ def _save_figure(
 ) -> Artifact:
     path = output_root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=220, bbox_inches="tight", facecolor="white")
+    description = "\n".join(figure_text(figure))
+    figure.savefig(
+        path,
+        dpi=220,
+        bbox_inches="tight",
+        facecolor="white",
+        metadata={"Description": description},
+    )
     plt.close(figure)
     return _artifact(output_root, relative, category)
 
@@ -171,6 +201,44 @@ def _load_frame(bundle: AuditBundle) -> pd.DataFrame:
     if not np.isfinite(metric_values).all():
         raise ValueError("Canonical input tables contain non-finite field metrics")
     return combined
+
+
+def load_v4_ranking_tables(
+    bundle: AuditBundle,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load the audited SimNIBS 4 ranking tables and verify their full scope."""
+
+    root = bundle.source_root / "established" / "within_simnibs4"
+    pairs = pd.read_csv(root / "pairwise_rank_reversal_probabilities.csv")
+    draws = pd.read_csv(root / "rank_selection_draws.csv")
+    required_pairs = {
+        "target",
+        "higher_mean_subject",
+        "lower_mean_subject",
+        "higher_mean_v_per_m",
+        "lower_mean_v_per_m",
+        "mean_difference_v_per_m",
+        "single_run_reversal_probability",
+    }
+    required_draws = {
+        "target",
+        "kendall_rank_agreement",
+        "pairwise_reversals",
+    }
+    for frame, required, expected, label in (
+        (pairs, required_pairs, 45, "pairwise ranking"),
+        (draws, required_draws, 20_000, "ranking draws"),
+    ):
+        missing = required.difference(frame.columns)
+        if missing:
+            raise ValueError(f"{label} table is missing columns: {sorted(missing)}")
+        counts = frame.groupby("target").size().to_dict()
+        if counts != {target: expected for target in TARGETS}:
+            raise ValueError(f"{label} table has incomplete target scope: {counts}")
+        numeric = list(required.difference({"target", "higher_mean_subject", "lower_mean_subject"}))
+        if not np.isfinite(frame[numeric].to_numpy(float)).all():
+            raise ValueError(f"{label} table contains non-finite values")
+    return pairs, draws
 
 
 def _cell_summary(frame: pd.DataFrame) -> pd.DataFrame:
@@ -219,10 +287,13 @@ def _render_comprehensive(
                 linewidth=2.2,
             )
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
-        axis.set_ylabel("Participant 40-run median (V/m)")
+        axis.set_ylabel("Median temporal-interference field\nin target region (V/m)")
         _style(axis)
     axes[-1].set_xticks(range(4), [item[2] for item in CELL_SPECS])
-    figure.suptitle("Participant central field values across version and condition", y=0.995)
+    figure.suptitle(
+        "Typical target-region field for each participant across software versions and mesh conditions",
+        y=0.995,
+    )
     figure.tight_layout(rect=(0, 0, 1, 0.97))
     artifacts.append(
         _save_figure(
@@ -272,17 +343,17 @@ def _render_comprehensive(
         axis.set_yscale("log")
         axis.set_ylim(TECHNICAL_SD_FLOOR / 2.0, 1.5e-2)
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
-        axis.set_ylabel("Within-cell SD (V/m; log scale)")
+        axis.set_ylabel("Run-to-run variability (SD, V/m; log scale)")
         _style(axis)
     axes[-1].set_xticks(range(4), [item[2] for item in CELL_SPECS])
     figure.text(
         0.5,
         0.01,
-        "Open downward triangles mark SD ≤ 1×10⁻⁸ V/m, plotted at that explicit floor.",
+        "Open downward triangles mark variability ≤ 1×10⁻⁸ V/m, shown at that plotting floor.",
         ha="center",
         fontsize=9,
     )
-    figure.suptitle("Technical repeat variability across 40 runs", y=0.995)
+    figure.suptitle("Run-to-run variability across 40 simulations", y=0.995)
     figure.tight_layout(rect=(0, 0.035, 1, 0.97))
     artifacts.append(
         _save_figure(
@@ -318,7 +389,7 @@ def _render_comprehensive(
             color="#4C78A8",
             s=42,
             zorder=2,
-            label="Remesh",
+            label="New mesh each run",
         )
         axis.scatter(
             np.ones(len(subjects)),
@@ -326,15 +397,17 @@ def _render_comprehensive(
             color="#F58518",
             s=42,
             zorder=2,
-            label="Fixed mesh",
+            label="Same mesh reused",
         )
         axis.axhline(0, color="black", linewidth=1)
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
-        axis.set_ylabel("v3 − v4 participant contrast (V/m)")
+        axis.set_ylabel(
+            "SimNIBS 3.2.6 minus SimNIBS 4\nmedian target-region field (V/m)"
+        )
         _style(axis)
-    axes[-1].set_xticks([0, 1], ["Remesh", "Fixed mesh"])
+    axes[-1].set_xticks([0, 1], ["New mesh each run", "Same mesh reused"])
     axes[0].legend(frameon=False, ncol=2, loc="best")
-    figure.suptitle("Paired version contrasts by condition", y=0.995)
+    figure.suptitle("Field difference between software versions for each participant", y=0.995)
     figure.tight_layout(rect=(0, 0, 1, 0.97))
     artifacts.append(
         _save_figure(
@@ -360,10 +433,16 @@ def _render_comprehensive(
         axis.scatter(interaction.to_numpy(float), y, color="#3b66b0", s=45, zorder=3)
         axis.axvline(0, color="black", linewidth=1)
         axis.set_yticks(y, [_short_subject(value) for value in interaction.index])
-        axis.set_xlabel("(v3 − v4)fixed − (v3 − v4)remesh (V/m)")
+        axis.set_xlabel(
+            "Change in the SimNIBS 3.2.6 minus SimNIBS 4 difference\n"
+            "when one mesh is reused instead of creating a new mesh each run (V/m)"
+        )
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
         _style(axis, grid_axis="x")
-    figure.suptitle("Participant version–condition interaction", y=0.995)
+    figure.suptitle(
+        "Does reusing one mesh change the field difference between software versions?",
+        y=0.995,
+    )
     figure.tight_layout(rect=(0, 0, 1, 0.96))
     artifacts.append(
         _save_figure(
@@ -445,16 +524,26 @@ def _render_cross_version(frame: pd.DataFrame, output_root: Path) -> tuple[list[
             axis.vlines(position, row.v3_q1, row.v3_q3, color="#d1495b", linewidth=4.0)
             axis.scatter(position, row.v3_median, marker="D", s=38, color="#8f1d2c", edgecolor="white", linewidth=0.5, zorder=4)
         axis.set_xticks(positions, [_short_subject(value) for value in selected["subject"]], rotation=35, ha="right")
-        axis.set_ylabel("Optimizer-ROI median |E| (V/m)")
+        axis.set_ylabel("Median temporal-interference field\nin target region (V/m)")
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
         _style(axis)
-    axes[-1].set_xlabel("Participant (ordered by v4 median)")
+    axes[-1].set_xlabel("Participant (ordered by SimNIBS 4 median)")
     handles = [
-        plt.Line2D([0], [0], color="#315b7d", linewidth=8, alpha=0.7, label="v4: 40-run box plot"),
-        plt.Line2D([0], [0], marker="D", color="#d1495b", markerfacecolor="#8f1d2c", linewidth=2, label="v3: range, IQR and median"),
+        plt.Line2D(
+            [0], [0], color="#315b7d", linewidth=8, alpha=0.7,
+            label="SimNIBS 4: 40 runs with a new mesh each run",
+        ),
+        plt.Line2D(
+            [0], [0], marker="D", color="#d1495b",
+            markerfacecolor="#8f1d2c", linewidth=2,
+            label="SimNIBS 3.2.6: range, middle 50%, and median",
+        ),
     ]
     figure.legend(handles=handles, loc="lower center", ncol=2, frameon=False)
-    figure.suptitle("SimNIBS v3.2.6 location within matched v4 remesh distributions", y=0.995)
+    figure.suptitle(
+        "SimNIBS 3.2.6 fields compared with matched SimNIBS 4 fields",
+        y=0.995,
+    )
     figure.tight_layout(rect=(0, 0.06, 1, 0.97))
     artifacts.append(_save_figure(figure, output_root, "revised_figures/cross_version/remesh_distribution_overlay.png", "revised_cross_version"))
 
@@ -476,13 +565,15 @@ def _render_cross_version(frame: pd.DataFrame, output_root: Path) -> tuple[list[
         bounds_by_target[target] = [lower, upper]
         axis.set_xlim(lower, upper)
         axis.set_yticks(y, selected["subject"])
-        axis.set_xlabel("Percentile in matched v4 remesh distribution")
+        axis.set_xlabel(
+            "Percentile within matched SimNIBS 4 runs\n(new mesh each run)"
+        )
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
         if np.allclose(medians, 100.0):
             axis.text(
                 0.98,
                 0.03,
-                "All 40 v3 runs per participant\nare at the 100th percentile",
+                "All 40 SimNIBS 3.2.6 runs per participant\nare at the 100th percentile",
                 transform=axis.transAxes,
                 ha="right",
                 va="bottom",
@@ -490,7 +581,10 @@ def _render_cross_version(frame: pd.DataFrame, output_root: Path) -> tuple[list[
                 bbox={"facecolor": "white", "edgecolor": "#d8dee9", "alpha": 0.9},
             )
         _style(axis, grid_axis="x")
-    figure.suptitle("Empirical location of v3 remesh values within v4", y=0.995)
+    figure.suptitle(
+        "Where SimNIBS 3.2.6 fields fall within the SimNIBS 4 distribution",
+        y=0.995,
+    )
     figure.tight_layout(rect=(0, 0, 1, 0.96))
     artifacts.append(_save_figure(figure, output_root, "revised_figures/cross_version/v3_percentile_location.png", "revised_cross_version"))
     return artifacts, bounds_by_target
@@ -515,10 +609,15 @@ def _render_v3_determinism(frame: pd.DataFrame, output_root: Path) -> list[Artif
         axis.scatter(plotted[at_floor], y[at_floor], marker="<", facecolors="none", edgecolors="#4C78A8", s=45)
         axis.set_xscale("log")
         axis.set_yticks(y, [_short_subject(value) for value in selected["subject"]])
-        axis.set_xlabel("40-run max − min (V/m; log scale)")
+        axis.set_xlabel(
+            "Difference between largest and smallest field across 40 runs (V/m; log scale)"
+        )
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
         _style(axis, grid_axis="x")
-    figure.suptitle("SimNIBS 3.2.6 remesh outputs are effectively invariant", y=0.995)
+    figure.suptitle(
+        "SimNIBS 3.2.6 fields are effectively unchanged when a new mesh is created each run",
+        y=0.995,
+    )
     figure.tight_layout(rect=(0, 0, 1, 0.96))
     artifacts.append(_save_figure(figure, output_root, "revised_figures/within_simnibs326/deterministic_repeatability.png", "revised_within_v3"))
 
@@ -531,42 +630,187 @@ def _render_v3_determinism(frame: pd.DataFrame, output_root: Path) -> list[Artif
         axis.text(0.5, 0.22, "Kendall’s τ = 1.00", ha="center", fontsize=22, color="#8f1d2c")
         axis.text(0.5, 0.11, "in all 20,000 single-run selections", ha="center", fontsize=11)
         axis.text(0.02, 0.95, chr(65 + panel), transform=axis.transAxes, fontsize=16, fontweight="bold", va="top")
-    figure.suptitle("Deterministic v3 ranking result", y=0.98)
+    figure.suptitle("Stable participant ordering in SimNIBS 3.2.6", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.93))
     artifacts.append(_save_figure(figure, output_root, "revised_figures/within_simnibs326/deterministic_ranking_summary.png", "revised_within_v3"))
     return artifacts
 
 
-def _combine_vertical(paths: Iterable[Path], output: Path, *, panel_letters: bool) -> None:
-    images = [Image.open(path).convert("RGB") for path in paths]
-    width = max(image.width for image in images)
-    resized = []
-    for image in images:
-        if image.width != width:
-            height = round(image.height * width / image.width)
-            image = image.resize((width, height), Image.Resampling.LANCZOS)
-        resized.append(image)
-    separator = max(12, width // 180)
-    canvas = Image.new("RGB", (width, sum(image.height for image in resized) + separator), "white")
-    y = 0
-    positions = []
-    draw = ImageDraw.Draw(canvas)
-    for index, image in enumerate(resized):
-        positions.append(y)
-        canvas.paste(image, (0, y))
-        y += image.height
-        if index == 0:
-            draw.line((width * 0.04, y + separator / 2, width * 0.96, y + separator / 2), fill="#d0d0d0", width=max(2, width // 1400))
-            y += separator
-    if panel_letters:
-        try:
-            font = ImageFont.truetype("DejaVuSans-Bold.ttf", max(26, width // 80))
-        except OSError:
-            font = ImageFont.load_default()
-        for letter, position in zip(("A", "B"), positions):
-            draw.text((max(14, width // 180), position + max(10, width // 240)), letter, fill="black", font=font)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(output, dpi=(220, 220), optimize=True)
+def _render_v4_repeatability(
+    frame: pd.DataFrame, output_root: Path
+) -> Artifact:
+    selected = frame.loc[frame["version"] == "simnibs4"]
+    colors = {"remesh": "#4C78A8", "fixed_mesh": "#F58518"}
+    labels = {
+        "remesh": "New mesh each run",
+        "fixed_mesh": "Same mesh reused",
+    }
+    markers = {"remesh": "o", "fixed_mesh": "D"}
+    offsets = {"remesh": -0.13, "fixed_mesh": 0.13}
+    rng = np.random.default_rng(42)
+    figure, axes = plt.subplots(2, 1, figsize=(12.0, 9.5))
+    for panel, (axis, target) in enumerate(zip(axes, TARGETS)):
+        target_frame = selected.loc[selected["target"] == target]
+        ordering = (
+            target_frame.loc[target_frame["condition"] == "remesh"]
+            .groupby("subject")["roi_median_v_per_m"]
+            .mean()
+            .sort_values(ascending=False)
+            .index.tolist()
+        )
+        for position, participant in enumerate(ordering):
+            for condition in ("remesh", "fixed_mesh"):
+                values = target_frame.loc[
+                    (target_frame["subject"] == participant)
+                    & (target_frame["condition"] == condition),
+                    "roi_median_v_per_m",
+                ].to_numpy(float)
+                center = position + offsets[condition]
+                jitter = rng.uniform(-0.045, 0.045, len(values))
+                axis.scatter(
+                    center + jitter,
+                    values,
+                    s=18,
+                    alpha=0.35,
+                    color=colors[condition],
+                    edgecolors="none",
+                    label=labels[condition] if position == 0 else None,
+                    zorder=2,
+                )
+                axis.errorbar(
+                    center,
+                    values.mean(),
+                    yerr=values.std(ddof=1),
+                    fmt=markers[condition],
+                    color=colors[condition],
+                    markerfacecolor="white",
+                    markeredgewidth=1.8,
+                    markersize=7,
+                    capsize=3,
+                    linewidth=1.8,
+                    zorder=4,
+                )
+        axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
+        axis.set_ylabel("Median temporal-interference field in target region (V/m)")
+        axis.set_xticks(
+            range(len(ordering)),
+            [_short_subject(participant) for participant in ordering],
+            rotation=35,
+            ha="right",
+        )
+        _style(axis)
+    axes[-1].set_xlabel(
+        "Participant (ordered by mean field when a new mesh is created each run)"
+    )
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles,
+        legend_labels,
+        loc="lower center",
+        ncol=2,
+        frameon=False,
+        title="Mesh condition",
+    )
+    figure.suptitle("Run-to-run repeatability in SimNIBS 4", y=0.995)
+    figure.tight_layout(rect=(0, 0.075, 1, 0.97))
+    return _save_figure(
+        figure,
+        output_root,
+        "paper_equivalents/figure_target_field_repeatability.png",
+        "paper_equivalent_current",
+    )
+
+
+def _render_v4_ranking(
+    frame: pd.DataFrame,
+    pair_frame: pd.DataFrame,
+    draw_frame: pd.DataFrame,
+    output_root: Path,
+) -> Artifact:
+    remesh = frame.loc[
+        (frame["version"] == "simnibs4") & (frame["condition"] == "remesh")
+    ]
+    figure, axes = plt.subplots(
+        2,
+        2,
+        figsize=(14.0, 10.5),
+        gridspec_kw={"width_ratios": [1.1, 1.0]},
+    )
+    panel_index = 0
+    for row, target in enumerate(TARGETS):
+        target_frame = remesh.loc[remesh["target"] == target]
+        means = target_frame.groupby("subject")["roi_median_v_per_m"].mean()
+        participants = means.sort_values(ascending=False).index.tolist()
+        matrix = np.full((len(participants), len(participants)), np.nan)
+        target_pairs = pair_frame.loc[pair_frame["target"] == target]
+        for pair in target_pairs.itertuples():
+            higher_index = participants.index(pair.higher_mean_subject)
+            lower_index = participants.index(pair.lower_mean_subject)
+            matrix[higher_index, lower_index] = pair.single_run_reversal_probability
+
+        matrix_axis = axes[row, 0]
+        cmap = plt.get_cmap("Blues").copy()
+        cmap.set_bad("white")
+        image = matrix_axis.imshow(matrix, cmap=cmap, vmin=0, vmax=0.6)
+        participant_labels = [_short_subject(value) for value in participants]
+        matrix_axis.set_xticks(
+            range(len(participants)), participant_labels, rotation=42, ha="right"
+        )
+        matrix_axis.set_yticks(range(len(participants)), participant_labels)
+        matrix_axis.set_xlabel("Participant with lower 40-run mean field")
+        matrix_axis.set_ylabel("Participant with higher 40-run mean field")
+        matrix_axis.set_title(
+            f"{chr(65 + panel_index)}  {TARGET_LABELS[target]} — Pairwise reversal probability",
+            loc="left",
+        )
+        panel_index += 1
+        colorbar = figure.colorbar(image, ax=matrix_axis, fraction=0.047, pad=0.04)
+        colorbar.set_label("Probability that one selected run reverses the pair")
+
+        agreements = draw_frame.loc[
+            draw_frame["target"] == target, "kendall_rank_agreement"
+        ].to_numpy(float)
+        histogram_axis = axes[row, 1]
+        lower = max(-1.0, float(agreements.min()) - 0.04)
+        histogram_axis.hist(
+            agreements,
+            bins=np.linspace(lower, 1.005, 18),
+            weights=np.full(len(agreements), 100.0 / len(agreements)),
+            color="#4C78A8",
+            alpha=0.82,
+            edgecolor="white",
+        )
+        median = float(np.median(agreements))
+        histogram_axis.axvline(
+            median,
+            color="#244f73",
+            linewidth=2.2,
+            label=f"Median agreement = {median:.2f}",
+        )
+        histogram_axis.set_xlim(lower, 1.005)
+        histogram_axis.set_xlabel(
+            "Agreement with the 40-run participant ordering (Kendall's τ)"
+        )
+        histogram_axis.set_ylabel("Random one-run selections (%)")
+        histogram_axis.set_title(
+            f"{chr(65 + panel_index)}  {TARGET_LABELS[target]} — Whole-cohort ordering",
+            loc="left",
+        )
+        panel_index += 1
+        histogram_axis.legend(frameon=False)
+        _style(histogram_axis)
+
+    figure.suptitle(
+        "Uncertainty in participant ranking when only one new-mesh run is selected (SimNIBS 4)",
+        y=0.995,
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
+    return _save_figure(
+        figure,
+        output_root,
+        "paper_equivalents/figure_single_run_ranking_uncertainty.png",
+        "paper_equivalent_current",
+    )
 
 
 def _bootstrap_curves(
@@ -636,14 +880,17 @@ def _render_bootstrap(
                 subject_curve = selected.loc[selected["subject"] == subject]
                 axis.plot(subject_curve["n_repeats"], subject_curve[metric] * 100, color=color, linewidth=1.4, alpha=0.9, label=_short_subject(subject))
             axis.set_title(f"{TARGET_LABELS[target]} — {title}", fontsize=11)
-            axis.set_xlabel("Number of remesh runs averaged")
+            axis.set_xlabel("Number of runs averaged (new mesh each run)")
             axis.set_ylabel("Relative uncertainty (%)")
             axis.set_xlim(2, max_repeats)
             axis.set_ylim(bottom=0)
             _style(axis)
     handles, labels = axes[0, 0].get_legend_handles_labels()
     figure.legend(handles, labels, loc="lower center", ncol=5, frameon=False, title="Participant")
-    figure.suptitle("Bootstrap precision of the optimizer-ROI mean field", y=0.995)
+    figure.suptitle(
+        "Mean temporal-interference field in target region: bootstrap precision",
+        y=0.995,
+    )
     figure.tight_layout(rect=(0, 0.11, 1, 0.96))
     figure_relative = "paper_equivalents/figure_bootstrap_precision.png"
     artifacts = [
@@ -671,27 +918,16 @@ def render_revised_figures(
     cross_artifacts, bounds = _render_cross_version(frame, output_root)
     artifacts.extend(cross_artifacts)
     artifacts.extend(_render_v3_determinism(frame, output_root))
-
-    v4_root = bundle.source_root / "established" / "within_simnibs4" / "figures"
-    paper_specs = (
-        (
-            "01_primary_median_roi_repeat_distributions.png",
-            "paper_equivalents/figure_target_field_repeatability.png",
-            True,
-        ),
-        (
-            "02_single_repeat_subject_ranking_uncertainty.png",
-            "paper_equivalents/figure_single_run_ranking_uncertainty.png",
-            False,
-        ),
-    )
-    for source_name, relative, panel_letters in paper_specs:
-        _combine_vertical(
-            [v4_root / target / source_name for target in TARGETS],
-            output_root / relative,
-            panel_letters=panel_letters,
+    pair_frame, draw_frame = load_v4_ranking_tables(bundle)
+    artifacts.append(_render_v4_repeatability(frame, output_root))
+    artifacts.append(
+        _render_v4_ranking(
+            frame,
+            pair_frame,
+            draw_frame,
+            output_root,
         )
-        artifacts.append(_artifact(output_root, relative, "paper_equivalent_current"))
+    )
 
     artifacts.extend(
         _render_bootstrap(

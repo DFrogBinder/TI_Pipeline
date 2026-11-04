@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from PIL import Image
 
@@ -40,6 +41,38 @@ def _make_source_tree(tmp_path: Path) -> tuple[Path, Path]:
     ):
         (source / "inputs" / name).write_text("header\n", encoding="utf-8")
     (source / "analysis_manifest.json").write_text("{}\n", encoding="utf-8")
+    ranking_root = source / "established" / "within_simnibs4"
+    pair_rows = []
+    draw_rows = []
+    subjects = [f"sub-CC{100000 + index}" for index in range(10)]
+    for target in ("left_hippocampus", "right_m1"):
+        for higher_index, higher in enumerate(subjects):
+            for lower in subjects[higher_index + 1 :]:
+                pair_rows.append(
+                    {
+                        "target": target,
+                        "higher_mean_subject": higher,
+                        "lower_mean_subject": lower,
+                        "higher_mean_v_per_m": 0.2,
+                        "lower_mean_v_per_m": 0.1,
+                        "mean_difference_v_per_m": 0.1,
+                        "single_run_reversal_probability": 0.05,
+                    }
+                )
+        draw_rows.extend(
+            {
+                "target": target,
+                "kendall_rank_agreement": 0.8,
+                "pairwise_reversals": 2,
+            }
+            for _ in range(20_000)
+        )
+    pd.DataFrame(pair_rows).to_csv(
+        ranking_root / "pairwise_rank_reversal_probabilities.csv", index=False
+    )
+    pd.DataFrame(draw_rows).to_csv(
+        ranking_root / "rank_selection_draws.csv", index=False
+    )
     for name in PAPER_FIGURES:
         _write_png(manuscript / "figures" / "combined" / name, (40, 30))
     (manuscript / "main.tex").write_text("paper\n", encoding="utf-8")
@@ -96,6 +129,20 @@ def test_audit_fails_closed_when_required_input_table_is_empty(tmp_path: Path) -
     source, manuscript = _make_source_tree(tmp_path)
     table = source / "inputs" / "simnibs4_left_hippocampus.csv"
     table.write_text("", encoding="utf-8")
+
+    with pytest.raises(SourceAuditError, match="Required source is missing or empty"):
+        audit_sources(source, manuscript)
+
+
+def test_audit_fails_closed_when_v4_ranking_table_is_missing(tmp_path: Path) -> None:
+    source, manuscript = _make_source_tree(tmp_path)
+    table = (
+        source
+        / "established"
+        / "within_simnibs4"
+        / "pairwise_rank_reversal_probabilities.csv"
+    )
+    table.unlink()
 
     with pytest.raises(SourceAuditError, match="Required source is missing or empty"):
         audit_sources(source, manuscript)

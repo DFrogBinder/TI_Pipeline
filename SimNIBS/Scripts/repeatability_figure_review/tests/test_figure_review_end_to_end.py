@@ -63,6 +63,41 @@ def _sources(tmp_path: Path) -> tuple[Path, Path]:
             path = source / "inputs" / f"{version}_{target}.csv"
             path.parent.mkdir(parents=True, exist_ok=True)
             _table(version, target).to_csv(path, index=False)
+    ranking_root = source / "established" / "within_simnibs4"
+    participants = [f"sub-CC{110000 + index}" for index in range(10)]
+    pair_rows = []
+    draw_rows = []
+    for target in ("left_hippocampus", "right_m1"):
+        for higher_index, higher in enumerate(participants):
+            for lower_index, lower in enumerate(
+                participants[higher_index + 1 :], start=higher_index + 1
+            ):
+                pair_rows.append(
+                    {
+                        "target": target,
+                        "higher_mean_subject": higher,
+                        "lower_mean_subject": lower,
+                        "higher_mean_v_per_m": 0.30 - higher_index * 0.01,
+                        "lower_mean_v_per_m": 0.30 - lower_index * 0.01,
+                        "mean_difference_v_per_m": (lower_index - higher_index)
+                        * 0.01,
+                        "single_run_reversal_probability": 0.02,
+                    }
+                )
+        draw_rows.extend(
+            {
+                "target": target,
+                "kendall_rank_agreement": 1.0 - 2.0 * (draw % 5) / 45.0,
+                "pairwise_reversals": draw % 5,
+            }
+            for draw in range(20_000)
+        )
+    pd.DataFrame(pair_rows).to_csv(
+        ranking_root / "pairwise_rank_reversal_probabilities.csv", index=False
+    )
+    pd.DataFrame(draw_rows).to_csv(
+        ranking_root / "rank_selection_draws.csv", index=False
+    )
     for name in PAPER_FIGURES:
         _write_png(manuscript / "figures" / "combined" / name)
     (manuscript / "main.tex").write_text("paper\n", encoding="utf-8")

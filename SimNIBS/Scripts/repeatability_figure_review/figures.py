@@ -736,4 +736,3 @@ def render_revised_figures(
     (output_root / metadata_relative).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     artifacts.append(_artifact(output_root, metadata_relative, "metadata"))
     return tuple(artifacts)
-

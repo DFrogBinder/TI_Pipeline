@@ -75,4 +75,3 @@ companion package containing:
 - Render every PNG and every page of the PDF for visual inspection.
 - Verify the original downloaded analysis tree is unchanged by comparing a
   pre/post file manifest.
-

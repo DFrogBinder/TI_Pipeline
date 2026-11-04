@@ -113,5 +113,3 @@ def test_build_package_is_complete_and_does_not_modify_sources(tmp_path: Path) -
     _verify_sha256s(output)
     assert tree_manifest(source) == source_before
     assert tree_manifest(manuscript) == manuscript_before
-
-

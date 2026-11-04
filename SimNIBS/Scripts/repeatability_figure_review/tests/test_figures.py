@@ -167,4 +167,3 @@ def test_render_revised_figures_builds_current_and_legacy_outputs(tmp_path: Path
         original = manuscript / "figures" / "combined" / legacy
         copied = output / "legacy_paper_figures" / legacy
         assert sha256_file(original) == sha256_file(copied)
-

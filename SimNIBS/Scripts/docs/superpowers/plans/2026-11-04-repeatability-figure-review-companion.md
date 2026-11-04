@@ -85,4 +85,3 @@
 - [ ] Render the guide PDF to page images and visually inspect all revised figures and guide pages.
 - [ ] Verify checksums and compare source-tree manifests before and after the build.
 - [ ] Commit the documentation and package builder.
-

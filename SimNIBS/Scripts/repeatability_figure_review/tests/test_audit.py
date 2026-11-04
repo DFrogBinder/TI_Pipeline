@@ -110,4 +110,3 @@ def test_dispositions_flag_known_presentation_failures(tmp_path: Path) -> None:
     assert by_type[("cross_version_remesh", "v3_percentile_location")].disposition == "repair_boundary_clipping"
     assert by_type[("within_simnibs326", "single_repeat_subject_ranking_uncertainty")].disposition == "replace_deterministic_blank_panel"
     assert by_type[("comprehensive", "technical_sd")].disposition == "repair_dynamic_range"
-

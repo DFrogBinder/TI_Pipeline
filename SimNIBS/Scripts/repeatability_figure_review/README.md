@@ -12,4 +12,3 @@ python -m repeatability_figure_review \
 
 The production bootstrap uses 20,000 resamples at each run count from 2 to 40.
 The PDF renderer uses the system ReportLab installation through `/usr/bin/python3`.
-

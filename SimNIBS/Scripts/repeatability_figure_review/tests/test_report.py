@@ -52,4 +52,3 @@ def test_render_pdf_includes_every_original_figure_entry(tmp_path: Path) -> None
     )
     pages_line = next(line for line in result.stdout.splitlines() if line.startswith("Pages:"))
     assert int(pages_line.split(":", 1)[1]) >= 22
-

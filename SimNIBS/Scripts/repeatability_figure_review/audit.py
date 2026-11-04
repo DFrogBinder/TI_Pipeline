@@ -211,4 +211,3 @@ def audit_sources(source_root: Path, manuscript_root: Path) -> AuditBundle:
         figures=tuple(records),
         paper_equivalences=tuple(equivalences),
     )
-

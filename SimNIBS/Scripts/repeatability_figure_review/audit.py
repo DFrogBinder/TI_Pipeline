@@ -18,7 +18,7 @@ COMPREHENSIVE_TYPES = (
 )
 ESTABLISHED_TYPES = (
     "primary_median_roi_repeat_distributions",
-    "single_run_ranking_uncertainty",
+    "single_repeat_subject_ranking_uncertainty",
 )
 
 EXPECTED_ANALYSIS_FIGURES = tuple(
@@ -152,9 +152,9 @@ def _parse_figure(relative_path: str) -> tuple[str, str, str, str]:
         ("cross_version_remesh", "v3_percentile_location"): "repair_boundary_clipping",
         ("cross_version_remesh", "v4_distribution_with_v3_overlay"): "combine_and_reduce_overplotting",
         ("within_simnibs326", "primary_median_roi_repeat_distributions"): "retain_with_determinism_annotation",
-        ("within_simnibs326", "single_run_ranking_uncertainty"): "replace_deterministic_blank_panel",
+        ("within_simnibs326", "single_repeat_subject_ranking_uncertainty"): "replace_deterministic_blank_panel",
         ("within_simnibs4", "primary_median_roi_repeat_distributions"): "combine_as_paper_equivalent",
-        ("within_simnibs4", "single_run_ranking_uncertainty"): "combine_as_paper_equivalent",
+        ("within_simnibs4", "single_repeat_subject_ranking_uncertainty"): "combine_as_paper_equivalent",
     }
     return family, target, figure_type, dispositions[(family, figure_type)]
 

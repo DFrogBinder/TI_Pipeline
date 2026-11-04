@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
+import repeatability_figure_review.paper_figures as paper_figures
 from repeatability_figure_review.audit import sha256_file
 from repeatability_figure_review.build import tree_manifest
 from repeatability_figure_review.paper_figures import (
@@ -64,3 +66,53 @@ def test_build_clarity_directory_contains_only_the_approved_images(
     }
     assert tree_manifest(source) == source_before
     assert tree_manifest(manuscript) == manuscript_before
+
+
+def test_build_clarity_directory_rejects_an_existing_output_root(
+    tmp_path: Path,
+) -> None:
+    source, manuscript = _make_complete_sources(tmp_path)
+    output = tmp_path / "existing"
+    output.mkdir()
+    sentinel = output / "keep.txt"
+    sentinel.write_text("keep\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="Output root already exists"):
+        build_clarity_directory(source, manuscript, output)
+
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_failed_source_immutability_check_removes_only_the_new_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, manuscript = _make_complete_sources(tmp_path)
+    output = tmp_path / "paper_figures_v2"
+    real_tree_manifest = tree_manifest
+    source_calls = 0
+
+    def changed_source_manifest(root: Path):
+        nonlocal source_calls
+        manifest = real_tree_manifest(root)
+        if Path(root).resolve() == source.resolve():
+            source_calls += 1
+            if source_calls == 2:
+                manifest["concurrent-change.txt"] = {
+                    "size_bytes": 1,
+                    "sha256": "0" * 64,
+                }
+        return manifest
+
+    monkeypatch.setattr(paper_figures, "tree_manifest", changed_source_manifest)
+
+    with pytest.raises(RuntimeError, match="Downloaded analysis changed"):
+        build_clarity_directory(
+            source,
+            manuscript,
+            output,
+            bootstrap_iterations=100,
+            bootstrap_max_repeats=5,
+        )
+
+    assert not output.exists()

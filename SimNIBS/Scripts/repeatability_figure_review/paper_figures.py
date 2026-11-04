@@ -127,8 +127,10 @@ def build_clarity_directory(
             raise
 
     if tree_manifest(source_root) != source_before:
+        shutil.rmtree(output_root, ignore_errors=True)
         raise RuntimeError("Downloaded analysis changed while building paper figures")
     if tree_manifest(manuscript_root) != manuscript_before:
+        shutil.rmtree(output_root, ignore_errors=True)
         raise RuntimeError("Manuscript changed while building paper figures")
 
     return {

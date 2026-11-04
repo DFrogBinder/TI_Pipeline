@@ -263,6 +263,9 @@ def test_regenerated_figures_use_reader_facing_language_and_are_direct_renders(
     assert "Mean temporal-interference field in target region" in bootstrap_text
     assert "New mesh each run" in primary_text
     assert "Same mesh reused" in primary_text
+    assert "temporal-interference field in target region" in descriptions[
+        "revised_figures/within_simnibs326/deterministic_repeatability.png"
+    ]
     assert not any(term in all_text for term in BANNED_READER_TERMS)
 
     placeholders = [

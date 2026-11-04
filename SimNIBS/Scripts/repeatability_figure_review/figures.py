@@ -610,7 +610,8 @@ def _render_v3_determinism(frame: pd.DataFrame, output_root: Path) -> list[Artif
         axis.set_xscale("log")
         axis.set_yticks(y, [_short_subject(value) for value in selected["subject"]])
         axis.set_xlabel(
-            "Difference between largest and smallest field across 40 runs (V/m; log scale)"
+            "Largest minus smallest temporal-interference field in target region\n"
+            "across 40 runs (V/m; log scale)"
         )
         axis.set_title(f"{chr(65 + panel)}  {TARGET_LABELS[target]}", loc="left")
         _style(axis, grid_axis="x")

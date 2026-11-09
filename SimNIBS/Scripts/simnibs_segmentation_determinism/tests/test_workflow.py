@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import simnibs_segmentation_determinism.workflow as workflow
+from simnibs_segmentation_determinism.provenance import ProvenanceError
 from simnibs_segmentation_determinism.settings import scope_payload
 from simnibs_segmentation_determinism.workflow import (
     WorkflowError,
@@ -280,6 +281,43 @@ def test_source_drift_invalidates_stale_terminal(configured_experiment, monkeypa
     assert result["status"] == "incomplete"
     assert result["failures"][0]["arm"] == "workflow_provenance"
     assert not (config.output_root / "_pipeline/complete.json").exists()
+
+
+def test_status_rejects_workflow_evidence_changed_after_completion(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+    initialize(config)
+    _install_workflow_evidence(config)
+    _install_synthetic_receipts(config, monkeypatch)
+    assert collect(config)["status"] == "complete"
+
+    submission = config.output_root / "_pipeline/workflow/submission.json"
+    payload = json.loads(submission.read_text(encoding="utf-8"))
+    payload["jobs"]["collector"] = "999"
+    submission.write_text(json.dumps(payload), encoding="utf-8")
+
+    observed = status(config)
+    assert observed["state"] == "stale_complete"
+    assert observed["status"] == "error"
+
+
+def test_collect_never_recovers_inside_protected_source_root(configured_experiment):
+    config = replace(configured_experiment, output_root=configured_experiment.source_root)
+    pipeline = config.output_root / "_pipeline"
+    pipeline.mkdir(parents=True, exist_ok=True)
+    (pipeline / "config.json").write_text(
+        json.dumps({"workflow": "historical", "plan_sha256": "not-ours"}),
+        encoding="utf-8",
+    )
+    terminal = pipeline / "complete.json"
+    terminal.write_text('{"status":"complete"}\n', encoding="utf-8")
+
+    with pytest.raises(ProvenanceError, match="protected root"):
+        collect(config)
+
+    assert terminal.is_file()
+    assert not (config.output_root / "analysis/incomplete_audit.json").exists()
 
 
 def test_status_distinguishes_uninitialized_prepared_and_in_progress(

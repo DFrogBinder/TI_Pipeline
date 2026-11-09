@@ -30,7 +30,13 @@ from .provenance import (
     write_json_atomic,
     write_sha256_sidecar,
 )
-from .settings import ExperimentConfig, preflight, resolve_subject_inputs, scope_payload
+from .settings import (
+    ExperimentConfig,
+    preflight,
+    resolve_subject_inputs,
+    scope_payload,
+    validate_output_isolation,
+)
 
 
 class WorkflowError(RuntimeError):
@@ -302,12 +308,23 @@ def _invalidate_terminal(config: ExperimentConfig) -> None:
             path.unlink()
 
 
-def _validate_terminal(config: ExperimentConfig, terminal: Path) -> Dict[str, object]:
+def _validate_terminal(
+    config: ExperimentConfig,
+    terminal: Path,
+    current_workflow_evidence: Mapping[str, object],
+) -> Dict[str, object]:
     try:
         validate_sha256_sidecar(terminal)
     except RuntimeError as exc:
         raise WorkflowError("Terminal completion sidecar is invalid") from exc
     payload = _read_json(terminal)
+    stored = _read_json(config.output_root / "_pipeline/config.json")
+    if payload.get("plan_sha256") != stored.get("plan_sha256"):
+        raise WorkflowError("Terminal plan binding differs from initialized plan")
+    if payload.get("source") != stored.get("source"):
+        raise WorkflowError("Terminal source binding differs from initialized source")
+    if payload.get("workflow_evidence") != current_workflow_evidence:
+        raise WorkflowError("Terminal workflow evidence differs from current evidence")
     analysis_hashes = payload.get("analysis_artifacts")
     if payload.get("status") != "complete" or not isinstance(analysis_hashes, dict):
         raise WorkflowError("Terminal completion receipt is invalid")
@@ -514,6 +531,18 @@ def _git_commit() -> str:
 
 
 def collect(config: ExperimentConfig) -> Dict[str, object]:
+    validate_output_isolation(config)
+    config_path = config.output_root / "_pipeline/config.json"
+    if config_path.is_file():
+        ownership = _read_json(config_path)
+        stored_output = ownership.get("config", {}).get("output_root")
+        if (
+            ownership.get("workflow") != "simnibs_segmentation_determinism"
+            or stored_output != str(config.output_root)
+        ):
+            raise WorkflowError(
+                "Refusing recovery in an output root not owned by this exact workflow"
+            )
     try:
         stored = _ensure_initialized(config)
     except (WorkflowError, ProvenanceError, OSError, ValueError) as exc:
@@ -639,8 +668,8 @@ def status(config: ExperimentConfig) -> Dict[str, object]:
     if terminal.is_file():
         current_receipts, failures = _validate_receipts(config)
         try:
-            _validate_workflow_evidence(config)
-            terminal_payload = _validate_terminal(config, terminal)
+            current_evidence = _validate_workflow_evidence(config)
+            terminal_payload = _validate_terminal(config, terminal, current_evidence)
         except (WorkflowError, ProvenanceError, OSError, ValueError, KeyError, TypeError) as exc:
             failures.append({"arm": "workflow_evidence", "error": str(exc)})
         if failures or len(current_receipts) != 2 * config.repeats_per_arm:

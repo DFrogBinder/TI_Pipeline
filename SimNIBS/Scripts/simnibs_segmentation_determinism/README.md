@@ -74,6 +74,9 @@ identified in the scientific manifest. There is no unbounded retry loop.
 Incomplete publication from a failed attempt is quarantined inside that repeat
 before the one permitted retry. The submitter also uses an atomic lock and
 refuses a second campaign for an output root that is already submitted.
+If a submission command fails and leaves `submission.lock`, do not remove it
+or rerun automatically: audit `job_ids.tsv`, `submission.json`, `squeue` and
+`sacct` first so a partially submitted campaign is not duplicated.
 
 ## Safe operator sequence
 
@@ -148,7 +151,7 @@ Artifact classes are assigned from the pinned output contract, not merely the
 on-disk dtype. This matters because SPM posterior probabilities may be stored
 as scaled integers. The analysis records both raw stored-array hashes and
 decoded-array hashes, reads effective scaling from the NiBabel proxy, and uses
-decoded values for probability and intensity differences. CHARM has no
+decoded values for label, probability and intensity comparisons. CHARM has no
 retained probability-map output in this experiment, so its probability result
 is reported as not applicable rather than as vacuous success.
 

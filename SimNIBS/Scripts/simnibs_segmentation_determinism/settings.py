@@ -186,7 +186,7 @@ def _ordered_subjects(config: ExperimentConfig) -> list[str]:
     return subjects
 
 
-def _validate_output_isolation(config: ExperimentConfig) -> None:
+def validate_output_isolation(config: ExperimentConfig) -> None:
     for root in (config.source_root, *config.protected_roots):
         if path_is_within(config.output_root, root):
             raise ProvenanceError(
@@ -195,7 +195,7 @@ def _validate_output_isolation(config: ExperimentConfig) -> None:
 
 
 def preflight(config: ExperimentConfig) -> Dict[str, object]:
-    _validate_output_isolation(config)
+    validate_output_isolation(config)
     subjects = _ordered_subjects(config)
     require_sha256(
         config.selection_audit_file,

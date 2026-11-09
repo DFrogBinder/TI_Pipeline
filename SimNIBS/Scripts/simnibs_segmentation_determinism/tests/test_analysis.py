@@ -140,6 +140,30 @@ def test_scaled_integer_probability_uses_decoded_values_and_proxy_scaling(tmp_pa
     assert comparison.deterministic is False
 
 
+def test_discrete_scaling_change_fails_array_and_headline_determinism(tmp_path):
+    stored = np.ones((2, 2, 2), dtype=np.uint8)
+    paths = []
+    for index, slope in enumerate((1.0, 2.0), start=1):
+        image = nib.Nifti1Image(stored, np.eye(4))
+        image.header.set_slope_inter(slope, 0.0)
+        path = tmp_path / f"labels_{index}.nii"
+        nib.save(image, str(path))
+        paths.append(path)
+
+    comparison = compare_niftis(paths[0], paths[1], "discrete")
+    assert comparison.array_equal is False
+    assert comparison.header_equal is False
+    assert comparison.changed_voxels == stored.size
+    assert comparison.deterministic is False
+
+    repeats = {
+        index: {"tissue_labeling_upsampled.nii.gz": paths[0 if index < 10 else 1]}
+        for index in range(1, 11)
+    }
+    result = analyze_arm("simnibs401_charm", repeats)
+    assert result["discrete_segmentation_deterministic"] is False
+
+
 def test_semantic_artifact_classes_do_not_follow_storage_dtype(tmp_path):
     scaled_probability = _save(
         tmp_path / "c1T1fs_conform.nii", np.ones((2, 2, 2), dtype=np.uint8)

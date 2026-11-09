@@ -141,7 +141,7 @@ def inspect_nifti(path: Path) -> NiftiFingerprint:
     label_counts = None
     label_volumes = None
     if np.issubdtype(array.dtype, np.integer) or np.issubdtype(array.dtype, np.bool_):
-        labels, counts = np.unique(array, return_counts=True)
+        labels, counts = np.unique(decoded, return_counts=True)
         label_counts = {_label_key(label): int(count) for label, count in zip(labels, counts)}
         voxel_volume = float(np.prod(header.get_zooms()[: min(3, array.ndim)]))
         label_volumes = {
@@ -209,8 +209,8 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     candidate_array = _unscaled_array(candidate_image)
     reference_decoded = _decoded_array(reference_image)
     candidate_decoded = _decoded_array(candidate_image)
-    comparison_reference = reference_array if kind == "discrete" else reference_decoded
-    comparison_candidate = candidate_array if kind == "discrete" else candidate_decoded
+    comparison_reference = reference_decoded
+    comparison_candidate = candidate_decoded
     reference_fingerprint = inspect_nifti(reference)
     candidate_fingerprint = inspect_nifti(candidate)
 
@@ -257,9 +257,7 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     array_equal = bool(
         shape_equal
         and (
-            reference_fingerprint.array_sha256 == candidate_fingerprint.array_sha256
-            if kind == "discrete"
-            else reference_fingerprint.decoded_array_sha256
+            reference_fingerprint.decoded_array_sha256
             == candidate_fingerprint.decoded_array_sha256
         )
     )
@@ -270,7 +268,7 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     mean = None
     threshold_counts = None
     if shape_equal and kind == "discrete":
-        transitions, dice = _discrete_details(reference_array, candidate_array, changed)
+        transitions, dice = _discrete_details(reference_decoded, candidate_decoded, changed)
     elif shape_equal:
         finite_both = np.isfinite(reference_decoded) & np.isfinite(candidate_decoded)
         differences = np.abs(
@@ -398,7 +396,7 @@ def analyze_arm(
         "operational_deterministic": None,
         "geometric_deterministic": all(comparison.geometry_equal for _, comparison in all_comparisons),
         "discrete_segmentation_deterministic": all(
-            comparison.array_equal for comparison in discrete
+            comparison.array_equal and comparison.header_equal for comparison in discrete
         ),
         "probability_map_deterministic": (
             all(comparison.array_equal and comparison.header_equal for comparison in probability)

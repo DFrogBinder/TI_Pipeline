@@ -11,6 +11,7 @@ import numpy as np
 from simnibs_segmentation_determinism.analysis import (
     analyze_arm,
     compare_niftis,
+    infer_artifact_kind,
     inspect_nifti,
 )
 
@@ -115,3 +116,51 @@ def test_differing_reference_comparison_triggers_all_45_pairs(tmp_path):
     assert len(artifact["comparisons"]) == len(list(combinations(range(1, 11), 2))) == 45
     assert result["discrete_segmentation_deterministic"] is False
     assert result["geometric_deterministic"] is True
+
+
+def test_scaled_integer_probability_uses_decoded_values_and_proxy_scaling(tmp_path):
+    stored = np.ones((2, 2, 2), dtype=np.int16)
+    first_image = nib.Nifti1Image(stored, np.eye(4))
+    first_image.header.set_slope_inter(1.0, 0.0)
+    first = tmp_path / "first.nii"
+    nib.save(first_image, str(first))
+    second_image = nib.Nifti1Image(stored, np.eye(4))
+    second_image.header.set_slope_inter(2.0, 0.0)
+    second = tmp_path / "second.nii"
+    nib.save(second_image, str(second))
+
+    comparison = compare_niftis(first, second, "probability")
+
+    assert inspect_nifti(first).scaling_slope == 1.0
+    assert inspect_nifti(second).scaling_slope == 2.0
+    assert comparison.array_equal is False
+    assert comparison.header_equal is False
+    assert comparison.changed_voxels == stored.size
+    assert comparison.max_absolute_difference == 1.0
+    assert comparison.deterministic is False
+
+
+def test_semantic_artifact_classes_do_not_follow_storage_dtype(tmp_path):
+    scaled_probability = _save(
+        tmp_path / "c1T1fs_conform.nii", np.ones((2, 2, 2), dtype=np.uint8)
+    )
+    intensity = _save(
+        tmp_path / "T1fs_conform.nii.gz", np.ones((2, 2, 2), dtype=np.float32)
+    )
+
+    assert infer_artifact_kind("simnibs326_headreco", "segment/spm/c1T1fs_conform.nii", scaled_probability) == "probability"
+    assert infer_artifact_kind("simnibs326_headreco", "T1fs_conform.nii.gz", intensity) == "intensity"
+    assert infer_artifact_kind("simnibs326_headreco", "segment/spm/binarized/c1T1fs_conform_bin.nii.gz", scaled_probability) == "discrete"
+    assert infer_artifact_kind("simnibs401_charm", "tissue_labeling_upsampled.nii.gz", scaled_probability) == "discrete"
+
+    repeats = {
+        index: {"segment/spm/c1T1fs_conform.nii": scaled_probability}
+        for index in range(1, 11)
+    }
+    result = analyze_arm("simnibs326_headreco", repeats)
+    artifact = result["artifacts"]["segment/spm/c1T1fs_conform.nii"]
+    assert artifact["kind"] == "probability"
+    assert all(
+        fingerprint["label_counts"] is None
+        for fingerprint in artifact["fingerprints"].values()
+    )

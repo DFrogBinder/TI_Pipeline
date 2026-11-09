@@ -66,3 +66,15 @@ def test_output_may_not_collide_with_protected_roots(configured_experiment, coll
 
     with pytest.raises(ProvenanceError, match="protected root"):
         preflight(config)
+
+
+def test_effective_source_root_is_always_protected(configured_experiment):
+    config = configured_experiment
+    config = replace(
+        config,
+        protected_roots=tuple(config.protected_roots[1:]),
+        output_root=config.source_root / "forbidden-output",
+    )
+
+    with pytest.raises(ProvenanceError, match="source root|protected root"):
+        preflight(config)

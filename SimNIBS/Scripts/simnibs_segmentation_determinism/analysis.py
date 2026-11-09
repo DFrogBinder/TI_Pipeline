@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
@@ -41,6 +42,21 @@ def _unscaled_array(image) -> np.ndarray:
     return np.ascontiguousarray(data)
 
 
+def _decoded_array(image) -> np.ndarray:
+    return np.ascontiguousarray(np.asanyarray(image.dataobj))
+
+
+def _proxy_scaling(image) -> Tuple[float, float]:
+    slope = getattr(image.dataobj, "slope", None)
+    intercept = getattr(image.dataobj, "inter", None)
+    return (
+        1.0 if slope is None or not np.isfinite(float(slope)) else float(slope),
+        0.0
+        if intercept is None or not np.isfinite(float(intercept))
+        else float(intercept),
+    )
+
+
 def _canonical_array_sha256(array: np.ndarray) -> str:
     digest = hashlib.sha256()
     digest.update(array.dtype.str.encode("ascii"))
@@ -61,6 +77,7 @@ class NiftiFingerprint:
     path: str
     file_sha256: str
     array_sha256: str
+    decoded_array_sha256: str
     shape: Tuple[int, ...]
     voxel_sizes: Tuple[float, ...]
     dtype: str
@@ -115,10 +132,12 @@ def inspect_nifti(path: Path) -> NiftiFingerprint:
     path = Path(path)
     image = nib.load(str(path))
     array = _unscaled_array(image)
+    decoded = _decoded_array(image)
     header = image.header
+    scaling_slope, scaling_intercept = _proxy_scaling(image)
     qform, qform_code = image.get_qform(coded=True)
     sform, sform_code = image.get_sform(coded=True)
-    finite = np.isfinite(array) if np.issubdtype(array.dtype, np.number) else np.ones(array.shape, bool)
+    finite = np.isfinite(decoded) if np.issubdtype(decoded.dtype, np.number) else np.ones(decoded.shape, bool)
     label_counts = None
     label_volumes = None
     if np.issubdtype(array.dtype, np.integer) or np.issubdtype(array.dtype, np.bool_):
@@ -132,11 +151,12 @@ def inspect_nifti(path: Path) -> NiftiFingerprint:
         path=str(path.resolve()),
         file_sha256=sha256_file(path),
         array_sha256=_canonical_array_sha256(array),
+        decoded_array_sha256=_canonical_array_sha256(decoded),
         shape=tuple(int(value) for value in array.shape),
         voxel_sizes=tuple(float(value) for value in header.get_zooms()[: array.ndim]),
         dtype=array.dtype.str,
-        scaling_slope=_normalized_header_float(header["scl_slope"]),
-        scaling_intercept=_normalized_header_float(header["scl_inter"]),
+        scaling_slope=scaling_slope,
+        scaling_intercept=scaling_intercept,
         qform=_matrix_tuple(qform),
         qform_code=int(qform_code),
         sform=_matrix_tuple(sform),
@@ -179,7 +199,7 @@ def _discrete_details(reference: np.ndarray, candidate: np.ndarray, changed: np.
 
 
 def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparison:
-    if kind not in {"discrete", "probability"}:
+    if kind not in {"discrete", "probability", "intensity"}:
         raise ValueError(f"Unsupported NIfTI comparison kind: {kind}")
     reference = Path(reference)
     candidate = Path(candidate)
@@ -187,21 +207,25 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     candidate_image = nib.load(str(candidate))
     reference_array = _unscaled_array(reference_image)
     candidate_array = _unscaled_array(candidate_image)
+    reference_decoded = _decoded_array(reference_image)
+    candidate_decoded = _decoded_array(candidate_image)
+    comparison_reference = reference_array if kind == "discrete" else reference_decoded
+    comparison_candidate = candidate_array if kind == "discrete" else candidate_decoded
     reference_fingerprint = inspect_nifti(reference)
     candidate_fingerprint = inspect_nifti(candidate)
 
-    shape_equal = reference_array.shape == candidate_array.shape
+    shape_equal = comparison_reference.shape == comparison_candidate.shape
     if shape_equal:
-        equal_mask = _array_equal_mask(reference_array, candidate_array)
+        equal_mask = _array_equal_mask(comparison_reference, comparison_candidate)
         changed = ~equal_mask
         changed_voxels = int(np.count_nonzero(changed))
-        changed_fraction = float(changed_voxels / reference_array.size) if reference_array.size else 0.0
-        finite_reference = np.isfinite(reference_array)
-        finite_candidate = np.isfinite(candidate_array)
+        changed_fraction = float(changed_voxels / comparison_reference.size) if comparison_reference.size else 0.0
+        finite_reference = np.isfinite(comparison_reference)
+        finite_candidate = np.isfinite(comparison_candidate)
         nonfinite_pattern_equal = bool(np.array_equal(finite_reference, finite_candidate))
     else:
-        changed = np.ones(reference_array.shape, dtype=bool)
-        changed_voxels = max(reference_array.size, candidate_array.size)
+        changed = np.ones(comparison_reference.shape, dtype=bool)
+        changed_voxels = max(comparison_reference.size, comparison_candidate.size)
         changed_fraction = 1.0
         nonfinite_pattern_equal = False
 
@@ -232,7 +256,12 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     )
     array_equal = bool(
         shape_equal
-        and reference_fingerprint.array_sha256 == candidate_fingerprint.array_sha256
+        and (
+            reference_fingerprint.array_sha256 == candidate_fingerprint.array_sha256
+            if kind == "discrete"
+            else reference_fingerprint.decoded_array_sha256
+            == candidate_fingerprint.decoded_array_sha256
+        )
     )
 
     transitions = None
@@ -243,10 +272,10 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     if shape_equal and kind == "discrete":
         transitions, dice = _discrete_details(reference_array, candidate_array, changed)
     elif shape_equal:
-        finite_both = np.isfinite(reference_array) & np.isfinite(candidate_array)
+        finite_both = np.isfinite(reference_decoded) & np.isfinite(candidate_decoded)
         differences = np.abs(
-            reference_array[finite_both].astype(np.float64)
-            - candidate_array[finite_both].astype(np.float64)
+            reference_decoded[finite_both].astype(np.float64)
+            - candidate_decoded[finite_both].astype(np.float64)
         )
         maximum = float(differences.max()) if differences.size else 0.0
         mean = float(differences.mean()) if differences.size else 0.0
@@ -279,9 +308,22 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     )
 
 
-def _infer_kind(path: Path) -> str:
-    dtype = np.dtype(inspect_nifti(path).dtype)
-    return "discrete" if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_) else "probability"
+def infer_artifact_kind(arm: str, relative_path: str, path: Path) -> str:
+    del path
+    name = relative_path.replace("\\", "/")
+    if arm == "simnibs401_charm" and name == "tissue_labeling_upsampled.nii.gz":
+        return "discrete"
+    if arm == "simnibs326_headreco":
+        if "_bin.nii" in name:
+            return "discrete"
+        if re.fullmatch(
+            r"segment/(?:spm/c\d+|cat/mri/p\d+)T1fs_conform\.nii(?:\.gz)?",
+            name,
+        ):
+            return "probability"
+        if name in {"T1fs_conform.nii.gz", "T1fs_nu_conform.nii.gz", "T2_conform.nii.gz"}:
+            return "intensity"
+    raise AnalysisError(f"{arm}: no pinned semantic class for artifact {relative_path}")
 
 
 def analyze_arm(
@@ -310,7 +352,7 @@ def analyze_arm(
     all_comparisons = []
     for name in sorted(inventory):
         paths = {repeat: Path(repeat_artifacts[repeat][name]) for repeat in repeat_indices}
-        kind = (artifact_kinds or {}).get(name) or _infer_kind(paths[1])
+        kind = (artifact_kinds or {}).get(name) or infer_artifact_kind(arm, name, paths[1])
         reference_comparisons = [
             (1, repeat, compare_niftis(paths[1], paths[repeat], kind))
             for repeat in repeat_indices[1:]
@@ -329,31 +371,44 @@ def analyze_arm(
             for left, right, comparison in selected_pairs
         ]
         all_comparisons.extend((kind, comparison) for _, _, comparison in selected_pairs)
+        fingerprints = {}
+        for repeat, path in paths.items():
+            fingerprint = inspect_nifti(path).to_dict()
+            if kind != "discrete":
+                fingerprint["label_counts"] = None
+                fingerprint["label_volumes_mm3"] = None
+            fingerprints[str(repeat)] = fingerprint
         artifact_results[name] = {
             "kind": kind,
             "comparison_mode": "all_pairs" if differs else "repeat_001_reference",
-            "fingerprints": {
-                str(repeat): inspect_nifti(path).to_dict() for repeat, path in paths.items()
-            },
+            "fingerprints": fingerprints,
             "comparisons": serialized,
             "deterministic": all(comparison.deterministic for _, _, comparison in selected_pairs),
         }
 
     discrete = [comparison for kind, comparison in all_comparisons if kind == "discrete"]
     probability = [comparison for kind, comparison in all_comparisons if kind == "probability"]
+    intensity = [comparison for kind, comparison in all_comparisons if kind == "intensity"]
     return {
         "schema_version": 1,
         "status": "complete",
         "arm": arm,
         "repeat_count": len(repeat_indices),
         "artifact_count": len(inventory),
-        "operational_deterministic": True,
+        "operational_deterministic": None,
         "geometric_deterministic": all(comparison.geometry_equal for _, comparison in all_comparisons),
         "discrete_segmentation_deterministic": all(
             comparison.array_equal for comparison in discrete
         ),
-        "probability_map_deterministic": all(
-            comparison.array_equal for comparison in probability
+        "probability_map_deterministic": (
+            all(comparison.array_equal and comparison.header_equal for comparison in probability)
+            if probability
+            else None
+        ),
+        "intensity_image_deterministic": (
+            all(comparison.array_equal and comparison.header_equal for comparison in intensity)
+            if intensity
+            else None
         ),
         "artifacts": artifact_results,
     }

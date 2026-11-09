@@ -101,7 +101,6 @@ class ExperimentConfig:
             if name in os.environ
         }
         integer_fields = {
-            "SEGDET_REPEATS_PER_ARM": "repeats_per_arm",
             "SEGDET_MAX_CONCURRENT": "max_concurrent",
         }
         changes.update(
@@ -111,8 +110,10 @@ class ExperimentConfig:
                 if name in os.environ
             }
         )
-        if "SEGDET_SUBJECT" in os.environ:
-            changes["subject"] = os.environ["SEGDET_SUBJECT"]
+        if os.environ.get("SEGDET_SUBJECT", config.subject) != config.subject:
+            raise ProvenanceError("SEGDET_SUBJECT cannot change the pinned experiment subject")
+        if int(os.environ.get("SEGDET_REPEATS_PER_ARM", config.repeats_per_arm)) != config.repeats_per_arm:
+            raise ProvenanceError("SEGDET_REPEATS_PER_ARM cannot change the pinned ten-repeat scope")
         if "source_root" in changes:
             changes["protected_roots"] = (
                 changes["source_root"],
@@ -186,7 +187,7 @@ def _ordered_subjects(config: ExperimentConfig) -> list[str]:
 
 
 def _validate_output_isolation(config: ExperimentConfig) -> None:
-    for root in config.protected_roots:
+    for root in (config.source_root, *config.protected_roots):
         if path_is_within(config.output_root, root):
             raise ProvenanceError(
                 f"Output root collides with protected root: {config.output_root} within {root}"

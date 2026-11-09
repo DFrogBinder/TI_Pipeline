@@ -141,3 +141,69 @@ def test_validation_detects_map_tampering(configured_experiment, monkeypatch):
 
     with pytest.raises(RepeatRunError, match="SHA-256"):
         validate_charm_repeat(request)
+
+
+def test_validation_accepts_different_charm_path_but_rescans_log(
+    configured_experiment, monkeypatch
+):
+    request = _request(configured_experiment)
+    monkeypatch.setattr(charm_runner, "run_with_timeout", _successful_fake([]))
+    run_charm_repeat(request)
+
+    collector_request = replace(request, charm_bin="charm")
+    assert validate_charm_repeat(collector_request)["status"] == "complete"
+
+    log = request.repeat_root / "logs/attempt_001.log"
+    log.write_text("charm --mesh invoked\n", encoding="utf-8")
+    with pytest.raises(RepeatRunError, match="log|forbidden|SHA-256"):
+        validate_charm_repeat(collector_request)
+
+
+def test_retry_quarantines_incomplete_publication(configured_experiment, monkeypatch):
+    first = _request(configured_experiment, attempt=1)
+    monkeypatch.setattr(charm_runner, "run_with_timeout", _successful_fake([]))
+    original_write = charm_runner.write_json_atomic
+    calls = {"count": 0}
+
+    def fail_first_manifest(path, payload):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError("publication failure")
+        return original_write(path, payload)
+
+    monkeypatch.setattr(charm_runner, "write_json_atomic", fail_first_manifest)
+    with pytest.raises(OSError, match="publication failure"):
+        run_charm_repeat(first)
+
+    monkeypatch.setattr(charm_runner, "write_json_atomic", original_write)
+    second = _request(configured_experiment, attempt=2)
+    receipt = run_charm_repeat(second)
+    assert receipt["attempt"] == 2
+    assert (
+        second.repeat_root
+        / "_failed_publication_attempt_001/tissue_labeling_upsampled.nii.gz"
+    ).is_file()
+
+
+def test_retry_recovers_when_receipt_sidecar_publication_fails(
+    configured_experiment, monkeypatch
+):
+    first = _request(configured_experiment, attempt=1)
+    monkeypatch.setattr(charm_runner, "run_with_timeout", _successful_fake([]))
+    original_sidecar = charm_runner.write_sha256_sidecar
+    calls = {"count": 0}
+
+    def fail_receipt_sidecar(path):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("receipt sidecar failure")
+        return original_sidecar(path)
+
+    monkeypatch.setattr(charm_runner, "write_sha256_sidecar", fail_receipt_sidecar)
+    with pytest.raises(OSError, match="receipt sidecar failure"):
+        run_charm_repeat(first)
+
+    monkeypatch.setattr(charm_runner, "write_sha256_sidecar", original_sidecar)
+    second = _request(configured_experiment, attempt=2)
+    assert run_charm_repeat(second)["attempt"] == 2
+    assert (second.repeat_root / "_failed_publication_attempt_001/complete.json").is_file()

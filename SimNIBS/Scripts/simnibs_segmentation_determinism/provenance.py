@@ -77,3 +77,16 @@ def require_sha256(path: Path, expected: str, label: str) -> None:
         raise ProvenanceError(
             f"{label} SHA-256 mismatch: expected {expected}, observed {observed}: {path}"
         )
+
+
+def validate_sha256_sidecar(path: Path) -> str:
+    sidecar = path.with_name(path.name + ".sha256")
+    if not sidecar.is_file():
+        raise ProvenanceError(f"Missing SHA-256 sidecar: {sidecar}")
+    fields = sidecar.read_text(encoding="utf-8").strip().split()
+    if len(fields) != 2 or fields[1] != path.name:
+        raise ProvenanceError(f"Invalid SHA-256 sidecar: {sidecar}")
+    observed = sha256_file(path)
+    if fields[0] != observed:
+        raise ProvenanceError(f"SHA-256 sidecar mismatch for {path}")
+    return observed

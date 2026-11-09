@@ -42,6 +42,8 @@ def test_static_slurm_scope_resources_modules_and_stage_boundaries():
     assert "afterok:$preflight326" in submitter
     assert "afterok:$preflight401" in submitter
     assert "scheduler tasks: 23" in submitter
+    assert 'export SEGDET_OUTPUT_ROOT="$OUTPUT_ROOT"' in submitter
+    assert "submission.lock" in submitter
 
     forbidden_headreco = re.compile(
         r"headreco\s+(?:all|preparecat|cleanvols|surfacemesh|volumemesh)\b"
@@ -154,3 +156,40 @@ def test_failed_module_preflight_submission_never_submits_an_array(tmp_path):
     assert len(calls) == 1
     assert "module_preflight_326.slurm" in calls[0]
     assert not any("array.slurm" in call for call in calls)
+
+
+def test_second_run_is_rejected_before_duplicate_submission(tmp_path):
+    fake, log, state = _fake_scheduler(tmp_path)
+    output = tmp_path / "run-output"
+    first = _run_submitter("run", tmp_path, fake, log, state, output=output)
+    second = _run_submitter("run", tmp_path, fake, log, state, output=output)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode != 0
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 5
+
+
+def test_repeat_scope_override_is_rejected_before_submission(tmp_path):
+    fake, log, state = _fake_scheduler(tmp_path)
+    source = _source_tree(tmp_path)
+    env = {
+        **os.environ,
+        "SBATCH_BIN": str(fake),
+        "FAKE_SBATCH_LOG": str(log),
+        "FAKE_SBATCH_STATE": str(state),
+        "SEGDET_SOURCE_ROOT": str(source),
+        "SEGDET_OUTPUT_ROOT": str(tmp_path / "output"),
+        "SEGDET_REPEATS_PER_ARM": "7",
+        "PYTHON_BIN": "python3",
+    }
+    result = subprocess.run(
+        ["bash", str(SUBMITTER), "run"],
+        cwd=str(PACKAGE.parent),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not log.exists()

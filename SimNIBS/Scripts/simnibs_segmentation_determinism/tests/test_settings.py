@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
+from simnibs_segmentation_determinism.provenance import ProvenanceError
 from simnibs_segmentation_determinism.settings import ExperimentConfig, scope_payload
 
 
@@ -42,12 +45,18 @@ def test_seeded_selection_is_the_pinned_subject(configured_experiment):
     assert random.Random(configured_experiment.selection_seed).choice(subjects) == configured_experiment.subject
 
 
-def test_from_env_only_changes_explicit_overrides(monkeypatch, tmp_path):
+def test_from_env_only_changes_nonscientific_path_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("SEGDET_OUTPUT_ROOT", str(tmp_path / "custom"))
-    monkeypatch.setenv("SEGDET_REPEATS_PER_ARM", "7")
 
     config = ExperimentConfig.from_env()
 
     assert config.output_root == tmp_path / "custom"
-    assert config.repeats_per_arm == 7
+    assert config.repeats_per_arm == 10
     assert config.subject == "sub-CC110174"
+
+
+def test_from_env_rejects_scientific_scope_overrides(monkeypatch):
+    monkeypatch.setenv("SEGDET_REPEATS_PER_ARM", "7")
+
+    with pytest.raises(ProvenanceError, match="ten-repeat scope"):
+        ExperimentConfig.from_env()

@@ -22,7 +22,14 @@ from .headreco_runner import (
     run_headreco_repeat,
     validate_headreco_repeat,
 )
-from .provenance import canonical_json_bytes, sha256_file, write_json_atomic, write_sha256_sidecar
+from .provenance import (
+    ProvenanceError,
+    canonical_json_bytes,
+    sha256_file,
+    validate_sha256_sidecar,
+    write_json_atomic,
+    write_sha256_sidecar,
+)
 from .settings import ExperimentConfig, preflight, resolve_subject_inputs, scope_payload
 
 
@@ -31,6 +38,11 @@ class WorkflowError(RuntimeError):
 
 
 ARMS = ("simnibs326_headreco", "simnibs401_charm")
+PREFLIGHT_FILES = (
+    "simnibs326.json",
+    "simnibs326_cat12_probe.json",
+    "simnibs401.json",
+)
 
 
 def workflow_preflight(config: ExperimentConfig) -> Dict[str, object]:
@@ -208,7 +220,15 @@ def _validate_receipts(config: ExperimentConfig):
                         _charm_request(config, repeat_index, 1)
                     )
                 receipts[(arm, repeat_index)] = receipt
-            except (HeadrecoRunError, CharmRunError, OSError, ValueError) as exc:
+            except (
+                HeadrecoRunError,
+                CharmRunError,
+                ProvenanceError,
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+            ) as exc:
                 failures.append(
                     {
                         "arm": arm,
@@ -217,6 +237,92 @@ def _validate_receipts(config: ExperimentConfig):
                     }
                 )
     return receipts, failures
+
+
+def _validate_workflow_evidence(config: ExperimentConfig) -> Dict[str, object]:
+    ready = workflow_preflight(config)
+    root = config.output_root / "_pipeline/module_preflight"
+    receipts = {}
+    for name in PREFLIGHT_FILES:
+        path = root / name
+        if not path.is_file():
+            raise WorkflowError(f"Required module preflight receipt is missing: {path}")
+        payload = _read_json(path)
+        if payload.get("status") != "ready":
+            raise WorkflowError(f"Module preflight did not report ready: {path}")
+        receipts[name] = {"path": str(path), "sha256": sha256_file(path)}
+        if name != "simnibs326_cat12_probe.json":
+            if payload.get("selected_subject") != config.subject:
+                raise WorkflowError(f"Module preflight subject mismatch: {path}")
+            if payload.get("inputs") != ready["inputs"]:
+                raise WorkflowError(f"Module preflight input provenance mismatch: {path}")
+            if payload.get("modules") != ready["modules"]:
+                raise WorkflowError(f"Module preflight module-version mismatch: {path}")
+    probe = _read_json(root / "simnibs326_cat12_probe.json")
+    required_probe = {
+        "patch_id": "simnibs326-cat12-r2023b-post-init-xml-warning-v2",
+        "spm_jobman_initcfg_tested": True,
+        "post_init_reassertion_tested": True,
+        "mat_report_created": True,
+    }
+    for key, expected in required_probe.items():
+        if probe.get(key) != expected:
+            raise WorkflowError(f"CAT12 module preflight {key} mismatch")
+
+    submission_path = config.output_root / "_pipeline/workflow/submission.json"
+    if not submission_path.is_file():
+        raise WorkflowError(f"Required submission receipt is missing: {submission_path}")
+    submission = _read_json(submission_path)
+    required_jobs = {
+        "module_preflight_326",
+        "module_preflight_401",
+        "simnibs326_headreco_array",
+        "simnibs401_charm_array",
+        "collector",
+    }
+    jobs = submission.get("jobs")
+    if submission.get("status") != "submitted" or not isinstance(jobs, dict):
+        raise WorkflowError("Submission receipt is not valid")
+    if set(jobs) != required_jobs or not all(str(value).isdigit() for value in jobs.values()):
+        raise WorkflowError("Submission receipt job graph is incomplete or invalid")
+    return {
+        "module_preflights": receipts,
+        "submission": {
+            "path": str(submission_path),
+            "sha256": sha256_file(submission_path),
+            "jobs": jobs,
+        },
+    }
+
+
+def _invalidate_terminal(config: ExperimentConfig) -> None:
+    terminal = config.output_root / "_pipeline/complete.json"
+    for path in (terminal, terminal.with_name("complete.json.sha256")):
+        if path.exists():
+            path.unlink()
+
+
+def _validate_terminal(config: ExperimentConfig, terminal: Path) -> Dict[str, object]:
+    try:
+        validate_sha256_sidecar(terminal)
+    except RuntimeError as exc:
+        raise WorkflowError("Terminal completion sidecar is invalid") from exc
+    payload = _read_json(terminal)
+    analysis_hashes = payload.get("analysis_artifacts")
+    if payload.get("status") != "complete" or not isinstance(analysis_hashes, dict):
+        raise WorkflowError("Terminal completion receipt is invalid")
+    for name, expected in analysis_hashes.items():
+        path = config.output_root / "analysis" / str(name)
+        if not path.is_file() or sha256_file(path) != expected:
+            raise WorkflowError(f"Terminal analysis artifact mismatch: {path}")
+    repeat_receipts = payload.get("repeat_receipts")
+    if not isinstance(repeat_receipts, list) or len(repeat_receipts) != 2 * config.repeats_per_arm:
+        raise WorkflowError("Terminal repeat-receipt inventory is incomplete")
+    for record in repeat_receipts:
+        path = Path(str(record.get("path")))
+        if not path.is_file() or sha256_file(path) != record.get("sha256"):
+            raise WorkflowError(f"Terminal repeat receipt mismatch: {path}")
+    return payload
 
 
 def _artifact_maps(config: ExperimentConfig, receipts):
@@ -368,11 +474,14 @@ def _write_analysis_outputs(
                 f"## {arm}",
                 "",
                 f"- Geometric determinism: `{result['geometric_deterministic']}`",
+                f"- Operational determinism: `{result['operational_deterministic']}`",
                 f"- Discrete segmentation determinism: `{result['discrete_segmentation_deterministic']}`",
                 f"- Probability-map determinism: `{result['probability_map_deterministic']}`",
+                f"- Intensity-image determinism: `{result['intensity_image_deterministic']}`",
                 "",
             ]
         )
+    report.extend(["## Retries", "", json.dumps(retried, sort_keys=True), ""])
     report_path = analysis_root / "report.md"
     report_path.write_text("\n".join(report), encoding="utf-8")
     output_paths = [
@@ -405,8 +514,31 @@ def _git_commit() -> str:
 
 
 def collect(config: ExperimentConfig) -> Dict[str, object]:
-    stored = _ensure_initialized(config)
+    try:
+        stored = _ensure_initialized(config)
+    except (WorkflowError, ProvenanceError, OSError, ValueError) as exc:
+        if not (config.output_root / "_pipeline/config.json").is_file():
+            raise
+        _invalidate_terminal(config)
+        analysis_root = config.output_root / "analysis"
+        analysis_root.mkdir(parents=True, exist_ok=True)
+        audit = {
+            "schema_version": 1,
+            "status": "incomplete",
+            "expected_repeats": 2 * config.repeats_per_arm,
+            "validated_repeats": 0,
+            "failures": [{"arm": "workflow_provenance", "error": str(exc)}],
+            "retried_repeats": [],
+            "source_outputs_modified": False,
+        }
+        write_json_atomic(analysis_root / "incomplete_audit.json", audit)
+        return audit
     receipts, failures = _validate_receipts(config)
+    workflow_evidence = None
+    try:
+        workflow_evidence = _validate_workflow_evidence(config)
+    except (WorkflowError, ProvenanceError, OSError, ValueError, KeyError, TypeError) as exc:
+        failures.append({"arm": "workflow_evidence", "error": str(exc)})
     expected = 2 * config.repeats_per_arm
     analysis_root = config.output_root / "analysis"
     analysis_root.mkdir(parents=True, exist_ok=True)
@@ -416,6 +548,7 @@ def collect(config: ExperimentConfig) -> Dict[str, object]:
         if int(receipt.get("attempt", 1)) > 1
     ]
     if failures or len(receipts) != expected:
+        _invalidate_terminal(config)
         audit = {
             "schema_version": 1,
             "status": "incomplete",
@@ -433,7 +566,14 @@ def collect(config: ExperimentConfig) -> Dict[str, object]:
         from .analysis import analyze_arm
 
         arm_results = {arm: analyze_arm(arm, artifacts[arm]) for arm in ARMS}
+        for arm in ARMS:
+            arm_results[arm]["operational_deterministic"] = all(
+                int(receipt.get("attempt", 1)) == 1
+                for (receipt_arm, _), receipt in receipts.items()
+                if receipt_arm == arm
+            )
     except Exception as exc:
+        _invalidate_terminal(config)
         audit = {
             "schema_version": 1,
             "status": "incomplete",
@@ -458,6 +598,19 @@ def collect(config: ExperimentConfig) -> Dict[str, object]:
         "scope": scope_payload(config),
         "validated_repeats": len(receipts),
         "retried_repeats": retried,
+        "source": stored["source"],
+        "workflow_evidence": workflow_evidence,
+        "repeat_receipts": [
+            {
+                "arm": arm,
+                "repeat_index": repeat,
+                "path": str(config.output_root / arm / f"repeat_{repeat:03d}/complete.json"),
+                "sha256": sha256_file(
+                    config.output_root / arm / f"repeat_{repeat:03d}/complete.json"
+                ),
+            }
+            for arm, repeat in sorted(receipts)
+        ],
         "analysis_artifacts": hashes,
         "source_outputs_modified": False,
     }
@@ -475,19 +628,6 @@ def status(config: ExperimentConfig) -> Dict[str, object]:
     if not config_path.is_file():
         return {"status": "error", "state": "foreign_output_root", "validated_repeats": 0}
     terminal = pipeline / "complete.json"
-    if terminal.is_file():
-        return {
-            "status": "ok",
-            "state": "complete",
-            "validated_repeats": int(_read_json(terminal).get("validated_repeats", 0)),
-            "completion_receipt": str(terminal),
-        }
-    receipts = sum(
-        1
-        for arm in ARMS
-        for path in (config.output_root / arm).glob("repeat_*/complete.json")
-        if path.is_file()
-    )
     incomplete = config.output_root / "analysis/incomplete_audit.json"
     if incomplete.is_file():
         return {
@@ -496,6 +636,33 @@ def status(config: ExperimentConfig) -> Dict[str, object]:
             "validated_repeats": int(_read_json(incomplete).get("validated_repeats", 0)),
             "incomplete_audit": str(incomplete),
         }
+    if terminal.is_file():
+        current_receipts, failures = _validate_receipts(config)
+        try:
+            _validate_workflow_evidence(config)
+            terminal_payload = _validate_terminal(config, terminal)
+        except (WorkflowError, ProvenanceError, OSError, ValueError, KeyError, TypeError) as exc:
+            failures.append({"arm": "workflow_evidence", "error": str(exc)})
+        if failures or len(current_receipts) != 2 * config.repeats_per_arm:
+            return {
+                "status": "error",
+                "state": "stale_complete",
+                "validated_repeats": len(current_receipts),
+                "failures": failures,
+                "completion_receipt": str(terminal),
+            }
+        return {
+            "status": "ok",
+            "state": "complete",
+            "validated_repeats": int(terminal_payload.get("validated_repeats", 0)),
+            "completion_receipt": str(terminal),
+        }
+    receipts = sum(
+        1
+        for arm in ARMS
+        for path in (config.output_root / arm).glob("repeat_*/complete.json")
+        if path.is_file()
+    )
     return {
         "status": "ok",
         "state": "prepared" if receipts == 0 else "in_progress",

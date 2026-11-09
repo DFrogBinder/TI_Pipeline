@@ -18,6 +18,8 @@ TIME_LIMIT="${SEGDET_TIME_LIMIT:-08:00:00}"
 MAX_CONCURRENT="${SEGDET_MAX_CONCURRENT:-10}"
 MAX_RETRIES="${SEGDET_MAX_RETRIES:-1}"
 MODE="${1:-scope}"
+export SEGDET_OUTPUT_ROOT="$OUTPUT_ROOT"
+export SEGDET_SOURCE_ROOT="$SOURCE_ROOT"
 
 case "$MODE" in
     scope|preflight|init|run|status|analyze) ;;
@@ -98,6 +100,16 @@ workflow_root="$OUTPUT_ROOT/_pipeline/workflow"
 ledger="$OUTPUT_ROOT/_pipeline/job_ids.tsv"
 mkdir -p "$log_root/module_preflight" "$log_root/simnibs326_headreco" \
     "$log_root/simnibs401_charm" "$log_root/collector" "$workflow_root"
+submission_receipt="$workflow_root/submission.json"
+submission_lock="$workflow_root/submission.lock"
+if [[ -e "$submission_receipt" || -d "$submission_lock" ]]; then
+    echo "A submission receipt or lock already exists; refusing duplicate campaign submission." >&2
+    exit 2
+fi
+if ! mkdir "$submission_lock"; then
+    echo "Could not acquire the atomic submission lock: $submission_lock" >&2
+    exit 2
+fi
 if [[ ! -f "$ledger" ]]; then
     printf 'timestamp_utc\tstage\tjob_id\tdependency\n' > "$ledger"
 fi
@@ -186,6 +198,7 @@ payload = {
 write_json_atomic(output, payload)
 write_sha256_sidecar(output)
 PY
+rmdir "$submission_lock"
 
 printf '[INFO] Segmentation determinism jobs: v3-preflight=%s v4-preflight=%s v3-array=%s v4-array=%s collector=%s\n' \
     "$preflight326" "$preflight401" "$array326" "$array401" "$collector"

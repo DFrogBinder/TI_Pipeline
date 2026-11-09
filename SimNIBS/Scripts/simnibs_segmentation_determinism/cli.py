@@ -30,6 +30,10 @@ def load_config(args: argparse.Namespace) -> ExperimentConfig:
     changes = {}
     if args.source_root is not None:
         changes["source_root"] = args.source_root
+        changes["protected_roots"] = (
+            args.source_root,
+            *tuple(root for root in config.protected_roots if root != config.source_root),
+        )
     if args.output_root is not None:
         changes["output_root"] = args.output_root
     return replace(config, **changes)

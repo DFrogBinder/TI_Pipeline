@@ -71,6 +71,9 @@ candidate settings until the compute-node preflight receipts exist:
 One exact failed array element may be requeued once. A retry starts from a new
 attempt-specific work directory, preserves the first failure's logs and is
 identified in the scientific manifest. There is no unbounded retry loop.
+Incomplete publication from a failed attempt is quarantined inside that repeat
+before the one permitted retry. The submitter also uses an atomic lock and
+refuses a second campaign for an output root that is already submitted.
 
 ## Safe operator sequence
 
@@ -140,6 +143,14 @@ The report separates:
 - discrete determinism: exact hard-label/binary arrays; and
 - probability determinism: exact floating arrays plus descriptive absolute
   differences above `1e-7`, `1e-6` and `1e-5`.
+
+Artifact classes are assigned from the pinned output contract, not merely the
+on-disk dtype. This matters because SPM posterior probabilities may be stored
+as scaled integers. The analysis records both raw stored-array hashes and
+decoded-array hashes, reads effective scaling from the NiBabel proxy, and uses
+decoded values for probability and intensity differences. CHARM has no
+retained probability-map output in this experiment, so its probability result
+is reported as not applicable rather than as vacuous success.
 
 Different `.nii.gz` file SHA-256 values can be caused by gzip metadata and do
 not by themselves prove a voxel difference. Canonical uncompressed array hashes

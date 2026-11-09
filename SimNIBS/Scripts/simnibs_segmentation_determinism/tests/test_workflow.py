@@ -27,6 +27,43 @@ def _save_map(path: Path, value: int):
     )
 
 
+def _install_workflow_evidence(config):
+    ready = workflow.workflow_preflight(config)
+    receipt_root = config.output_root / "_pipeline/module_preflight"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    for name in ("simnibs326.json", "simnibs401.json"):
+        (receipt_root / name).write_text(json.dumps(ready), encoding="utf-8")
+    (receipt_root / "simnibs326_cat12_probe.json").write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "patch_id": "simnibs326-cat12-r2023b-post-init-xml-warning-v2",
+                "spm_jobman_initcfg_tested": True,
+                "post_init_reassertion_tested": True,
+                "mat_report_created": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    workflow_root = config.output_root / "_pipeline/workflow"
+    workflow_root.mkdir(parents=True, exist_ok=True)
+    (workflow_root / "submission.json").write_text(
+        json.dumps(
+            {
+                "status": "submitted",
+                "jobs": {
+                    "module_preflight_326": "1",
+                    "module_preflight_401": "2",
+                    "simnibs326_headreco_array": "3",
+                    "simnibs401_charm_array": "4",
+                    "collector": "5",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _install_synthetic_receipts(config, monkeypatch, missing=None, retry=None):
     receipts = {}
     for arm in ("simnibs326_headreco", "simnibs401_charm"):
@@ -37,7 +74,8 @@ def _install_synthetic_receipts(config, monkeypatch, missing=None, retry=None):
             root = config.output_root / arm / f"repeat_{repeat:03d}"
             attempt = 2 if key == retry else 1
             if arm == "simnibs326_headreco":
-                path = root / "artifacts/labels.nii.gz"
+                relative = "segment/spm/binarized/c1T1fs_conform_bin.nii.gz"
+                path = root / "artifacts" / relative
                 _save_map(path, 1)
                 receipt = {
                     "status": "complete",
@@ -45,7 +83,7 @@ def _install_synthetic_receipts(config, monkeypatch, missing=None, retry=None):
                     "repeat_index": repeat,
                     "attempt": attempt,
                     "artifacts": [
-                        {"relative_path": "labels.nii.gz", "sha256": "fixture", "size_bytes": path.stat().st_size}
+                        {"relative_path": relative, "sha256": "fixture", "size_bytes": path.stat().st_size}
                     ],
                 }
             else:
@@ -142,6 +180,7 @@ def test_collect_with_19_receipts_is_incomplete_and_has_no_terminal_receipt(
 ):
     config = configured_experiment
     initialize(config)
+    _install_workflow_evidence(config)
     _install_synthetic_receipts(
         config,
         monkeypatch,
@@ -163,6 +202,7 @@ def test_collect_20_receipts_writes_outputs_and_preserves_retry_metadata(
 ):
     config = configured_experiment
     initialize(config)
+    _install_workflow_evidence(config)
     _install_synthetic_receipts(
         config,
         monkeypatch,
@@ -189,6 +229,57 @@ def test_collect_20_receipts_writes_outputs_and_preserves_retry_metadata(
     terminal = config.output_root / "_pipeline/complete.json"
     assert terminal.is_file()
     assert status(config)["state"] == "complete"
+
+
+def test_collect_requires_module_preflight_and_submission_evidence(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+    initialize(config)
+    _install_synthetic_receipts(config, monkeypatch)
+
+    result = collect(config)
+
+    assert result["status"] == "incomplete"
+    assert any("module preflight" in item["error"].lower() for item in result["failures"])
+    assert not (config.output_root / "_pipeline/complete.json").exists()
+
+
+def test_incomplete_recollection_invalidates_stale_terminal(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+    initialize(config)
+    _install_workflow_evidence(config)
+    _install_synthetic_receipts(config, monkeypatch)
+    assert collect(config)["status"] == "complete"
+    terminal = config.output_root / "_pipeline/complete.json"
+    assert terminal.is_file()
+
+    _install_synthetic_receipts(
+        config, monkeypatch, missing=("simnibs401_charm", 10)
+    )
+    result = collect(config)
+
+    assert result["status"] == "incomplete"
+    assert not terminal.exists()
+    assert status(config)["state"] == "incomplete"
+
+
+def test_source_drift_invalidates_stale_terminal(configured_experiment, monkeypatch):
+    config = configured_experiment
+    initialize(config)
+    _install_workflow_evidence(config)
+    _install_synthetic_receipts(config, monkeypatch)
+    assert collect(config)["status"] == "complete"
+
+    source = config.source_root / config.subject / "anat" / f"{config.subject}_T1w.nii"
+    source.write_bytes(b"source drift")
+    result = collect(config)
+
+    assert result["status"] == "incomplete"
+    assert result["failures"][0]["arm"] == "workflow_provenance"
+    assert not (config.output_root / "_pipeline/complete.json").exists()
 
 
 def test_status_distinguishes_uninitialized_prepared_and_in_progress(

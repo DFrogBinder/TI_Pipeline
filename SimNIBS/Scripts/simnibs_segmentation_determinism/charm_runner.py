@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from .provenance import sha256_file, write_json_atomic, write_sha256_sidecar
+from .provenance import (
+    sha256_file,
+    validate_sha256_sidecar,
+    write_json_atomic,
+    write_sha256_sidecar,
+)
 from .settings import ExperimentConfig, SubjectInputs
 
 
@@ -121,6 +126,36 @@ def _assert_stage_boundary(request: CharmRepeatRequest, log_text: str) -> None:
         raise RepeatRunError("CHARM log contains forbidden surfaces or mesh invocation")
 
 
+def _assert_recorded_command(recorded: List[str], request: CharmRepeatRequest) -> None:
+    if len(recorded) != len(request.command):
+        raise RepeatRunError("Receipt CHARM command has an unexpected length")
+    if Path(str(recorded[0])).name != "charm":
+        raise RepeatRunError("Receipt command does not use the CHARM executable")
+    if recorded[1:] != request.command[1:]:
+        raise RepeatRunError("Receipt command differs from the approved CHARM contract")
+
+
+def _quarantine_incomplete_publication(request: CharmRepeatRequest) -> None:
+    candidates = [
+        request.repeat_root / MAP_BASENAME,
+        request.repeat_root / "artifact_manifest.json",
+        request.repeat_root / "artifact_manifest.json.sha256",
+        request.repeat_root / "complete.json",
+        request.repeat_root / "complete.json.sha256",
+    ]
+    existing = [path for path in candidates if path.exists()]
+    if not existing:
+        return
+    if request.attempt <= 1:
+        raise RepeatRunError("Refusing a non-fresh repeat attempt workspace")
+    quarantine = request.repeat_root / f"_failed_publication_attempt_{request.attempt - 1:03d}"
+    if quarantine.exists():
+        raise RepeatRunError(f"Failed-publication quarantine already exists: {quarantine}")
+    quarantine.mkdir()
+    for path in existing:
+        os.replace(str(path), str(quarantine / path.name))
+
+
 def _find_single_map(work_root: Path, subject: str) -> Path:
     matches = sorted(work_root.glob(f"m2m_*/label_prep/{MAP_BASENAME}"))
     if not matches:
@@ -158,10 +193,16 @@ def run_charm_repeat(request: CharmRepeatRequest) -> Dict[str, object]:
     repeat_root = request.repeat_root
     receipt_path = repeat_root / "complete.json"
     if receipt_path.exists():
-        raise RepeatRunError(f"Repeat already has a completion receipt: {receipt_path}")
+        try:
+            validate_sha256_sidecar(receipt_path)
+        except RuntimeError:
+            pass
+        else:
+            raise RepeatRunError(f"Repeat already has a valid completion receipt: {receipt_path}")
     repeat_root.mkdir(parents=True, exist_ok=True)
     work_root = repeat_root / f"_work_attempt_{request.attempt:03d}"
     destination = repeat_root / MAP_BASENAME
+    _quarantine_incomplete_publication(request)
     if work_root.exists() or destination.exists():
         raise RepeatRunError("Refusing a non-fresh repeat attempt workspace")
     work_root.mkdir()
@@ -232,8 +273,9 @@ def validate_charm_repeat(request: CharmRepeatRequest) -> Dict[str, object]:
     if not receipt_path.is_file():
         raise RepeatRunError(f"Missing completion receipt: {receipt_path}")
     try:
+        validate_sha256_sidecar(receipt_path)
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, RuntimeError) as exc:
         raise RepeatRunError(f"Invalid completion receipt: {receipt_path}") from exc
     expected_fields = {
         "status": "complete",
@@ -253,8 +295,10 @@ def validate_charm_repeat(request: CharmRepeatRequest) -> Dict[str, object]:
             )
     if receipt.get("attempt") not in range(1, request.config.max_retries + 2):
         raise RepeatRunError("Receipt attempt is outside the bounded retry scope")
-    if receipt.get("command") != request.command:
-        raise RepeatRunError("Receipt command differs from the approved CHARM command")
+    recorded_command = receipt.get("command")
+    if not isinstance(recorded_command, list):
+        raise RepeatRunError("Receipt CHARM command is missing")
+    _assert_recorded_command(recorded_command, request)
     _assert_stage_boundary(request, "")
     for modality, expected_path, expected_hash in (
         ("t1", request.inputs.t1, request.inputs.t1_sha256),
@@ -273,6 +317,24 @@ def validate_charm_repeat(request: CharmRepeatRequest) -> Dict[str, object]:
     if observed_hash != artifact.get("sha256"):
         raise RepeatRunError("Promoted CHARM map SHA-256 mismatch")
     manifest_path = request.repeat_root / "artifact_manifest.json"
+    try:
+        validate_sha256_sidecar(manifest_path)
+    except RuntimeError as exc:
+        raise RepeatRunError("Artifact manifest sidecar is invalid") from exc
     if sha256_file(manifest_path) != receipt.get("artifact_manifest_sha256"):
         raise RepeatRunError("Artifact manifest SHA-256 mismatch")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("artifact") != artifact:
+        raise RepeatRunError("Artifact manifest differs from receipt")
+    attempt = int(receipt["attempt"])
+    expected_log = request.repeat_root / f"logs/attempt_{attempt:03d}.log"
+    if receipt.get("log") != str(expected_log) or not expected_log.is_file():
+        raise RepeatRunError("Retained log path is missing or unexpected")
+    if sha256_file(expected_log) != receipt.get("log_sha256"):
+        raise RepeatRunError("Retained log SHA-256 mismatch")
+    _assert_stage_boundary(request, expected_log.read_text(encoding="utf-8", errors="replace"))
+    if receipt.get("temporary_charm_outputs_deleted") is not True:
+        raise RepeatRunError("Receipt does not prove CHARM temporary-output cleanup")
+    if (request.repeat_root / f"_work_attempt_{attempt:03d}").exists():
+        raise RepeatRunError("CHARM temporary-output directory still exists")
     return receipt

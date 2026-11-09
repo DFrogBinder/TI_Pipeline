@@ -10,7 +10,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Mapping, Tuple
 
-from .analysis import AnalysisError, analyze_arm
 from .charm_runner import (
     CharmRepeatRequest,
     RepeatRunError as CharmRunError,
@@ -431,8 +430,10 @@ def collect(config: ExperimentConfig) -> Dict[str, object]:
 
     artifacts = _artifact_maps(config, receipts)
     try:
+        from .analysis import analyze_arm
+
         arm_results = {arm: analyze_arm(arm, artifacts[arm]) for arm in ARMS}
-    except AnalysisError as exc:
+    except Exception as exc:
         audit = {
             "schema_version": 1,
             "status": "incomplete",

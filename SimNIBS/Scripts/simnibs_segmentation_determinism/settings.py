@@ -113,6 +113,11 @@ class ExperimentConfig:
         )
         if "SEGDET_SUBJECT" in os.environ:
             changes["subject"] = os.environ["SEGDET_SUBJECT"]
+        if "source_root" in changes:
+            changes["protected_roots"] = (
+                changes["source_root"],
+                *config.protected_roots[1:],
+            )
         return replace(config, **changes)
 
 

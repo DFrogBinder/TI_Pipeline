@@ -435,3 +435,6 @@ SimNIBS/sub-CC110087_charm/TI_brain_only
 SimNIBS/sub-CC110087_localMap/TI_brain_only
 SimNIBS/sub-CC110087_segMapFolder/TI_brain_only
 SimNIBS/Scripts/CamCan_Experiment/new_map.nii
+
+# Local isolated feature worktrees
+.worktrees/

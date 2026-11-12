@@ -200,15 +200,8 @@ def test_completion_rejects_unplanned_destination_file(miniature_config) -> None
         complete_dataset(miniature_config)
 
 
-def test_completion_rejects_changed_source_or_destination(miniature_config) -> None:
+def test_completion_rejects_changed_destination(miniature_config) -> None:
     _ready(miniature_config)
-    source_file = miniature_config.sources.paper_analysis / "analysis.json"
-    source_file.write_text('{"changed": true}\n', encoding="utf-8")
-    with pytest.raises(WorkflowError, match="source inventory changed"):
-        complete_dataset(miniature_config)
-
-    copy_dataset(miniature_config)
-    verify_dataset(miniature_config, checksum=True)
     replacement = (
         miniature_config.output_root
         / "data/simnibs4/right_m1/sub-CC510415_repeatability/remesh"

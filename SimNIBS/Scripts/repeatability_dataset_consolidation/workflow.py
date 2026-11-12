@@ -23,6 +23,11 @@ from .disposition import build_retirement_disposition, disposition_path
 from .planning import ConsolidationPlan, CopyItem, build_copy_plan, plan_sha256
 from .rsync import compare_item, copy_item
 from .settings import DatasetConfig, retirement_allowlist
+from .streaming_inventory import (
+    InventoryStreamSummary,
+    metadata_fingerprint,
+    validate_inventory_stream,
+)
 from .validation import validate_item_identity, validate_scientific_scope
 
 
@@ -726,6 +731,8 @@ def _is_control_file(relative: Path) -> bool:
     parts = relative.parts
     if parts[:1] != ("_consolidation",):
         return False
+    if parts[1:2] == ("finalization",):
+        return True
     if parts[1:] in {
         ("owner.json",),
         ("planned_items.json",),
@@ -888,7 +895,7 @@ def _write_source_mapping(
     return path
 
 
-def complete_dataset(config: DatasetConfig) -> dict[str, object]:
+def _legacy_complete_dataset(config: DatasetConfig) -> dict[str, object]:
     """Write an immutable completion receipt after every live checksum gate passes."""
     plan, plan_hash, _ = _owned_context(config)
     completion_path = config.output_root / "_consolidation/complete.json"
@@ -985,6 +992,13 @@ def complete_dataset(config: DatasetConfig) -> dict[str, object]:
     return receipt | {"action": "created"}
 
 
+def complete_dataset(config: DatasetConfig) -> dict[str, object]:
+    """Resume bounded-memory dataset finalization."""
+    from .finalization import finalize_dataset
+
+    return finalize_dataset(config)
+
+
 def _bound_dataset_path(
     config: DatasetConfig,
     record: object,
@@ -1014,11 +1028,7 @@ def _bound_dataset_path(
 
 
 def validate_dataset_completion(config: DatasetConfig) -> dict[str, object]:
-    """Validate a completed dataset against immutable destination-side evidence.
-
-    Source roots are deliberately not required here because they may have been
-    retired after the independently gated retirement workflow completed.
-    """
+    """Validate completion receipts and destination metadata without body rehashes."""
     root = config.output_root
     completion = root / "_consolidation/complete.json"
     inventory_path = root / "_consolidation/verification/file_inventory.json"
@@ -1036,7 +1046,6 @@ def validate_dataset_completion(config: DatasetConfig) -> dict[str, object]:
         payload = json.loads(completion.read_text(encoding="utf-8"))
         owner = json.loads(owner_path.read_text(encoding="utf-8"))
         planned = json.loads(planned_path.read_text(encoding="utf-8"))
-        saved_inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkflowError("A dataset completion record is unreadable") from exc
 
@@ -1080,31 +1089,135 @@ def validate_dataset_completion(config: DatasetConfig) -> dict[str, object]:
     ):
         raise WorkflowError("The dataset manifest completion binding is invalid")
 
+    verification_path = _bound_dataset_path(
+        config, payload.get("verification"), "checksum verification"
+    )
     for key, label in (
-        ("verification", "checksum verification"),
         ("source_mapping", "source mapping"),
         ("retirement_disposition", "retirement disposition"),
         ("canonical_configs", "canonical config manifest"),
     ):
         _bound_dataset_path(config, payload.get(key), label)
 
-    try:
-        current_inventory = build_file_inventory(
-            root, exclude=(completion, inventory_path)
-        )
-    except ValueError as exc:
-        raise WorkflowError(f"The dataset inventory is stale: {exc}") from exc
     inventory_record = payload.get("inventory")
     if (
         not isinstance(inventory_record, dict)
         or inventory_record.get("path")
         != str(inventory_path.relative_to(root))
-        or inventory_record.get("sha256") != current_inventory.inventory_sha256
-        or inventory_record.get("file_count") != len(current_inventory.entries)
-        or inventory_record.get("total_bytes") != current_inventory.total_bytes
-        or saved_inventory != current_inventory.as_dict()
+        or not isinstance(inventory_record.get("sha256"), str)
+        or len(str(inventory_record.get("sha256"))) != 64
+        or not isinstance(inventory_record.get("file_sha256"), str)
+        or sha256_file(inventory_path) != inventory_record.get("file_sha256")
+        or not isinstance(inventory_record.get("file_count"), int)
+        or not isinstance(inventory_record.get("total_bytes"), int)
     ):
         raise WorkflowError("The dataset completion receipt inventory is stale")
+
+    try:
+        verification = json.loads(verification_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowError("The checksum verification receipt is unreadable") from exc
+    verification_items = verification.get("items")
+    planned_items = planned_payload.get("items")
+    if (
+        verification.get("status") != "matched"
+        or verification.get("mode") != "checksum"
+        or verification.get("plan_sha256") != calculated_plan_sha
+        or not isinstance(verification_items, list)
+        or not isinstance(planned_items, list)
+        or len(verification_items) != len(planned_items)
+    ):
+        raise WorkflowError("The checksum verification scope is invalid")
+    upstream_by_key: dict[str, dict[str, object]] = {}
+    for record in verification_items:
+        if not isinstance(record, dict) or not isinstance(record.get("key"), str):
+            raise WorkflowError("A checksum item binding is invalid")
+        key = str(record["key"])
+        if key in upstream_by_key or record.get("status") != "matched":
+            raise WorkflowError("A checksum item binding is duplicate or unmatched")
+        upstream_by_key[key] = record
+
+    checkpoint_root = root / "_consolidation/finalization/items"
+    expected_receipts: set[str] = set()
+    expected_streams: set[str] = set()
+    for item in planned_items:
+        if not isinstance(item, dict):
+            raise WorkflowError("A planned item binding is invalid")
+        key = item.get("key")
+        destination_text = item.get("destination")
+        if not isinstance(key, str) or not isinstance(destination_text, str):
+            raise WorkflowError("A planned item binding is invalid")
+        destination_relative = Path(destination_text)
+        if (
+            destination_relative.is_absolute()
+            or not destination_relative.parts
+            or any(part in {"", ".", ".."} for part in destination_relative.parts)
+        ):
+            raise WorkflowError("A planned destination binding is unsafe")
+        destination = root / destination_relative
+        resolved_destination = destination.resolve(strict=False)
+        resolved_root = root.resolve()
+        if (
+            resolved_destination != resolved_root
+            and resolved_root not in resolved_destination.parents
+        ):
+            raise WorkflowError("A planned destination binding escapes the dataset")
+        receipt_name = f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}.json"
+        stream_name = f"{Path(receipt_name).stem}.jsonl"
+        expected_receipts.add(receipt_name)
+        expected_streams.add(stream_name)
+        checkpoint_path = checkpoint_root / receipt_name
+        stream_path = checkpoint_root / stream_name
+        if (
+            not checkpoint_path.is_file()
+            or checkpoint_path.is_symlink()
+            or not stream_path.is_file()
+            or stream_path.is_symlink()
+        ):
+            raise WorkflowError("A dataset finalization checkpoint is missing")
+        try:
+            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            summary = InventoryStreamSummary(
+                root=str(checkpoint["root"]),
+                entry_count=int(checkpoint["entry_count"]),
+                total_bytes=int(checkpoint["total_bytes"]),
+                inventory_sha256=str(checkpoint["inventory_sha256"]),
+                entries_sha256=str(checkpoint["entries_sha256"]),
+                metadata_sha256=str(checkpoint["metadata_sha256"]),
+            )
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise WorkflowError("A dataset finalization checkpoint is unreadable") from exc
+        upstream = upstream_by_key.get(key)
+        if (
+            upstream is None
+            or checkpoint.get("status") != "complete"
+            or checkpoint.get("plan_sha256") != calculated_plan_sha
+            or checkpoint.get("key") != key
+            or checkpoint.get("destination") != str(destination)
+            or checkpoint.get("upstream_receipt") != upstream.get("receipt")
+            or checkpoint.get("upstream_receipt_sha256")
+            != upstream.get("receipt_sha256")
+            or checkpoint.get("stream") != str(stream_path.relative_to(root))
+        ):
+            raise WorkflowError("A dataset finalization checkpoint binding is stale")
+        try:
+            validate_inventory_stream(stream_path, summary)
+        except ValueError as exc:
+            raise WorkflowError("A dataset finalization stream is stale") from exc
+        try:
+            observed_metadata = metadata_fingerprint(destination)
+        except ValueError as exc:
+            raise WorkflowError("A destination metadata fingerprint is invalid") from exc
+        if observed_metadata != summary.metadata_sha256:
+            raise WorkflowError("A destination metadata fingerprint is stale")
+    observed_receipts = {
+        path.name for path in checkpoint_root.glob("*.json") if path.is_file()
+    }
+    observed_streams = {
+        path.name for path in checkpoint_root.glob("*.jsonl") if path.is_file()
+    }
+    if observed_receipts != expected_receipts or observed_streams != expected_streams:
+        raise WorkflowError("The dataset finalization checkpoint scope is invalid")
     return payload
 
 

@@ -9,8 +9,9 @@ export PYTHONPATH="$PIPELINE_DIR:${PYTHONPATH:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 ANALYSIS_PYTHON="${ANALYSIS_PYTHON:-$PYTHON_BIN}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
-OUTPUT_ROOT="${SEGDET_OUTPUT_ROOT:-/mnt/parscratch/users/cop23bi/simnibs_segmentation_determinism_v1}"
-SOURCE_ROOT="${SEGDET_SOURCE_ROOT:-/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected}"
+DATASET_ROOT="${SEGDET_DATASET_ROOT:-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1}"
+SOURCE_ROOT="$DATASET_ROOT/data/simnibs4/left_hippocampus/sub-CC110174_repeatability/remesh/repeats/repeat_001"
+OUTPUT_ROOT="$DATASET_ROOT/extensions/segmentation_determinism_v1"
 PARTITION="${SEGDET_PARTITION:-sheffield}"
 CPUS="${SEGDET_CPUS:-8}"
 MEMORY="${SEGDET_MEMORY:-32G}"
@@ -20,6 +21,7 @@ MAX_RETRIES="${SEGDET_MAX_RETRIES:-1}"
 MODE="${1:-scope}"
 export SEGDET_OUTPUT_ROOT="$OUTPUT_ROOT"
 export SEGDET_SOURCE_ROOT="$SOURCE_ROOT"
+export SEGDET_DATASET_ROOT="$DATASET_ROOT"
 
 case "$MODE" in
     scope|preflight|init|run|status|analyze) ;;
@@ -61,6 +63,8 @@ done
 printf '%s\n' \
     'Scope:' \
     '  workflow: single-subject segmentation determinism' \
+    "  consolidated dataset: $DATASET_ROOT" \
+    "  staged experiment root: $OUTPUT_ROOT" \
     '  subject: sub-CC110174' \
     '  implementations: 2 (SimNIBS 3.2.6 headreco, SimNIBS 4.0.1 CHARM)' \
     '  repeats per implementation: 10' \
@@ -132,7 +136,7 @@ record_job() {
         "$(date --iso-8601=seconds --utc)" "$stage" "$job_id" "$dependency" >> "$ledger"
 }
 
-common_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SEGDET_OUTPUT_ROOT=$OUTPUT_ROOT,SEGDET_SOURCE_ROOT=$SOURCE_ROOT,SEGDET_MAX_RETRIES=$MAX_RETRIES"
+common_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SEGDET_DATASET_ROOT=$DATASET_ROOT,SEGDET_OUTPUT_ROOT=$OUTPUT_ROOT,SEGDET_SOURCE_ROOT=$SOURCE_ROOT,SEGDET_MAX_RETRIES=$MAX_RETRIES"
 
 raw="$($SBATCH_BIN --parsable --partition="$PARTITION" --open-mode=append \
     --output="$log_root/module_preflight/simnibs326-%j.out" \

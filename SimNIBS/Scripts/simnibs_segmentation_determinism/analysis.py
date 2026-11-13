@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 import nibabel as nib
 import numpy as np
@@ -205,8 +205,6 @@ def compare_niftis(reference: Path, candidate: Path, kind: str) -> NiftiComparis
     candidate = Path(candidate)
     reference_image = nib.load(str(reference))
     candidate_image = nib.load(str(candidate))
-    reference_array = _unscaled_array(reference_image)
-    candidate_array = _unscaled_array(candidate_image)
     reference_decoded = _decoded_array(reference_image)
     candidate_decoded = _decoded_array(candidate_image)
     comparison_reference = reference_decoded

@@ -19,7 +19,6 @@ from .inventory import (
     estimate_materialized_bytes,
     sha256_file,
 )
-from .disposition import build_retirement_disposition, disposition_path
 from .planning import ConsolidationPlan, CopyItem, build_copy_plan, plan_sha256
 from .rsync import compare_item, copy_item
 from .settings import DatasetConfig, retirement_allowlist
@@ -763,9 +762,15 @@ def _validate_destination_coverage(
     plan: ConsolidationPlan,
 ) -> None:
     root = config.output_root
-    destinations = tuple(
-        (root / item.destination, item.source_type == "directory")
+    directory_destinations = frozenset(
+        root / item.destination
         for item in plan.items
+        if item.source_type == "directory"
+    )
+    file_destinations = frozenset(
+        root / item.destination
+        for item in plan.items
+        if item.source_type != "directory"
     )
     for path in root.rglob("*"):
         if path.is_dir() and not path.is_symlink():
@@ -773,10 +778,8 @@ def _validate_destination_coverage(
         relative = path.relative_to(root)
         if _is_control_file(relative):
             continue
-        covered = any(
-            path == destination
-            or (is_directory and destination in path.parents)
-            for destination, is_directory in destinations
+        covered = path in file_destinations or any(
+            parent in directory_destinations for parent in path.parents
         )
         if not covered:
             raise WorkflowError(f"unplanned destination path: {path}")
@@ -893,103 +896,6 @@ def _write_source_mapping(
         )
     _write_text(path, stream.getvalue())
     return path
-
-
-def _legacy_complete_dataset(config: DatasetConfig) -> dict[str, object]:
-    """Write an immutable completion receipt after every live checksum gate passes."""
-    plan, plan_hash, _ = _owned_context(config)
-    completion_path = config.output_root / "_consolidation/complete.json"
-    inventory_path = (
-        config.output_root / "_consolidation/verification/file_inventory.json"
-    )
-    exclusions = (completion_path, inventory_path)
-    if completion_path.exists():
-        try:
-            existing = validate_dataset_completion(config)
-        except WorkflowError as exc:
-            raise WorkflowError(
-                "Refusing to replace a nonmatching existing completion receipt: "
-                f"{exc}"
-            ) from exc
-        if existing.get("plan_sha256") != plan_hash:
-            raise WorkflowError("Refusing to replace a nonmatching existing completion receipt")
-        return existing | {"action": "reused"}
-
-    _validate_copy_receipts(config, plan, plan_hash)
-    verification, verification_path = _load_checksum_verification(
-        config, plan, plan_hash
-    )
-    _, canonical_manifest = _canonical_config_records(config, plan, write=False)
-    source_mapping = _write_source_mapping(config, plan)
-    _validate_destination_coverage(config, plan)
-    scope = _validate_destination_scope(config, plan)
-    retirement_disposition = build_retirement_disposition(config, plan)
-    retirement_disposition_path = disposition_path(config)
-    _write_json(retirement_disposition_path, retirement_disposition)
-    completed_utc = _utc_now()
-    manifest_path = config.output_root / "dataset_manifest.json"
-    try:
-        dataset_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise WorkflowError("The dataset manifest is unreadable") from exc
-    if (
-        dataset_manifest.get("workflow") != "repeatability_dataset_consolidation"
-        or dataset_manifest.get("output_root") != str(config.output_root.resolve())
-        or dataset_manifest.get("plan_sha256") != plan_hash
-    ):
-        raise WorkflowError("The dataset manifest does not match the owned dataset")
-    dataset_manifest["status"] = "complete"
-    dataset_manifest["completed_utc"] = completed_utc
-    _write_json(manifest_path, dataset_manifest)
-    try:
-        inventory = build_file_inventory(config.output_root, exclude=exclusions)
-    except ValueError as exc:
-        raise WorkflowError(str(exc)) from exc
-    _write_json(inventory_path, inventory.as_dict())
-    receipt = {
-        "schema_version": 1,
-        "status": "complete",
-        "workflow": "repeatability_dataset_consolidation",
-        "created_utc": completed_utc,
-        "git_commit": _git_commit(),
-        "output_root": str(config.output_root.resolve()),
-        "plan_sha256": plan_hash,
-        "scope": scope,
-        "verification": {
-            "mode": "checksum",
-            "path": str(verification_path.relative_to(config.output_root)),
-            "sha256": sha256_file(verification_path),
-            "matched_items": verification["matched_items"],
-        },
-        "inventory": {
-            "path": str(inventory_path.relative_to(config.output_root)),
-            "sha256": inventory.inventory_sha256,
-            "file_count": len(inventory.entries),
-            "total_bytes": inventory.total_bytes,
-        },
-        "dataset_manifest": {
-            "path": "dataset_manifest.json",
-            "sha256": sha256_file(manifest_path),
-        },
-        "source_mapping": {
-            "path": str(source_mapping.relative_to(config.output_root)),
-            "sha256": sha256_file(source_mapping),
-            "rows": len(plan.items),
-        },
-        "retirement_disposition": {
-            "path": str(retirement_disposition_path.relative_to(config.output_root)),
-            "sha256": sha256_file(retirement_disposition_path),
-            "entries_sha256": retirement_disposition["entries_sha256"],
-            "summary": retirement_disposition["summary"],
-        },
-        "canonical_configs": {
-            "path": str(canonical_manifest.relative_to(config.output_root)),
-            "sha256": sha256_file(canonical_manifest),
-        },
-        "source_outputs_modified": False,
-    }
-    _write_json(completion_path, receipt)
-    return receipt | {"action": "created"}
 
 
 def complete_dataset(config: DatasetConfig) -> dict[str, object]:

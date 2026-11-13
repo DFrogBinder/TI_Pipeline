@@ -231,3 +231,9 @@ def test_readiness_status_is_read_only_for_absent_running_failed_and_ready(
     assert status["jobs_submitted"] == 0
     assert status["deletion_performed"] is False
     assert _tree_snapshot(config.deletion_log_root) == before
+
+    source = config.sources.paper_analysis / "analysis.json"
+    source.write_text('{"changed": true}\n', encoding="utf-8")
+    with pytest.raises(ReadinessError, match="metadata changed"):
+        prepare_retirement(config)
+    assert readiness_status(config)["status"] == "failed"

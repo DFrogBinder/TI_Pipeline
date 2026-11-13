@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-import json
-
 import pytest
 
 from repeatability_dataset_consolidation import cli

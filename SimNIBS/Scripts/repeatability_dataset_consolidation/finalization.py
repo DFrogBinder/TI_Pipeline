@@ -6,12 +6,14 @@ from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from .disposition import (
-    build_retirement_disposition,
+    DispositionError,
     disposition_path,
     retirement_root_metadata,
+    validate_retirement_disposition_stream,
+    write_retirement_disposition_stream,
 )
 from .inventory import InventoryEntry, sha256_file
 from .planning import ConsolidationPlan, CopyItem
@@ -232,31 +234,14 @@ def _load_or_create_disposition(
 ) -> tuple[dict[str, object], Path]:
     path = disposition_path(config)
     if path.is_file() and not path.is_symlink():
-        payload = _load_json(path, "Retirement disposition")
-        entries = payload.get("entries")
-        if payload.get("status") == "complete" and isinstance(entries, list):
-            encoded = json.dumps(
-                entries,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
-            if hashlib.sha256(encoded).hexdigest() == payload.get("entries_sha256"):
-                return payload, path
-    payload = build_retirement_disposition(config, plan)
-    _write_json(path, payload)
+        try:
+            return validate_retirement_disposition_stream(config, path), path
+        except DispositionError as exc:
+            raise WorkflowError(
+                "The existing retirement disposition is invalid"
+            ) from exc
+    payload = write_retirement_disposition_stream(config, plan, path)
     return payload, path
-
-
-def _covered_by_plan(relative: Path, plan: ConsolidationPlan) -> bool:
-    return any(
-        relative == item.destination
-        or (
-            item.source_type == "directory"
-            and item.destination in relative.parents
-        )
-        for item in plan.items
-    )
 
 
 def _control_entries(
@@ -268,11 +253,19 @@ def _control_entries(
     root = config.output_root
     manifest_path = root / "dataset_manifest.json"
     entries: list[InventoryEntry] = []
-    for path in sorted(root.rglob("*"), key=lambda candidate: candidate.as_posix()):
+    directory_destinations = frozenset(
+        item.destination for item in plan.items if item.source_type == "directory"
+    )
+    file_destinations = frozenset(
+        item.destination for item in plan.items if item.source_type != "directory"
+    )
+    for path in root.rglob("*"):
         if path.is_dir() and not path.is_symlink():
             continue
         relative = path.relative_to(root)
-        if _covered_by_plan(relative, plan):
+        if relative in file_destinations or any(
+            parent in directory_destinations for parent in relative.parents
+        ):
             continue
         if relative.parts[:2] == ("_consolidation", "finalization"):
             continue

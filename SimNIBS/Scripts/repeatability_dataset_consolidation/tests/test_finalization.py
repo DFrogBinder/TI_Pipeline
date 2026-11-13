@@ -89,6 +89,73 @@ def test_recovers_complete_manifest_without_completion_receipt(
     assert completed_manifest["completed_utc"] != "2026-11-12T03:18:38+00:00"
 
 
+def test_existing_disposition_is_validated_without_loading_its_entries_list(
+    miniature_config,
+    monkeypatch,
+) -> None:
+    _checksum_ready(miniature_config)
+    plan = build_copy_plan(miniature_config)
+    path = disposition_path(miniature_config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(build_retirement_disposition(miniature_config, plan)),
+        encoding="utf-8",
+    )
+    from repeatability_dataset_consolidation import finalization
+
+    real_loader = finalization._load_json
+
+    def reject_disposition_load(candidate, label):
+        if candidate == path:
+            raise AssertionError("the disposition entries were loaded into memory")
+        return real_loader(candidate, label)
+
+    monkeypatch.setattr(finalization, "_load_json", reject_disposition_load)
+
+    assert finalize_dataset(miniature_config)["status"] == "complete"
+
+
+def test_missing_disposition_is_generated_without_an_entries_list(
+    miniature_config,
+    monkeypatch,
+) -> None:
+    _checksum_ready(miniature_config)
+    from repeatability_dataset_consolidation import finalization
+
+    monkeypatch.setattr(
+        finalization,
+        "build_retirement_disposition",
+        lambda *args, **kwargs: pytest.fail(
+            "finalization must use the streaming disposition writer"
+        ),
+        raising=False,
+    )
+
+    result = finalize_dataset(miniature_config)
+
+    assert result["status"] == "complete"
+    assert disposition_path(miniature_config).is_file()
+
+
+def test_control_file_collection_does_not_sort_the_complete_dataset_tree(
+    miniature_config,
+    monkeypatch,
+) -> None:
+    _checksum_ready(miniature_config)
+    from repeatability_dataset_consolidation import finalization
+
+    monkeypatch.setattr(
+        finalization,
+        "sorted",
+        lambda *args, **kwargs: pytest.fail(
+            "finalization sorted the complete destination tree"
+        ),
+        raising=False,
+    )
+
+    assert finalize_dataset(miniature_config)["status"] == "complete"
+
+
 def test_finalization_resumes_completed_items_after_interruption(
     miniature_config,
     monkeypatch,

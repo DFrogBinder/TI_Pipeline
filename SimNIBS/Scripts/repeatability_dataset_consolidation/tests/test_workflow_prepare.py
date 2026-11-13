@@ -1,7 +1,5 @@
 from dataclasses import replace
 import json
-from pathlib import Path
-
 import pytest
 
 from repeatability_dataset_consolidation.workflow import WorkflowError, prepare

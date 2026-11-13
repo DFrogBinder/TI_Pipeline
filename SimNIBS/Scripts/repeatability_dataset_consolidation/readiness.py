@@ -288,6 +288,15 @@ def readiness_status(config: DatasetConfig) -> dict[str, object]:
             "deletion_performed": False,
         }
 
+    state = _read_json(_state_path(config), "readiness state")
+    if state is not None and state.get("status") == "failed":
+        return {
+            **state,
+            "status": "failed",
+            "jobs_submitted": 0,
+            "deletion_performed": False,
+        }
+
     ready = _read_json(_ready_path(config), "retirement readiness receipt")
     if ready is not None:
         if (
@@ -307,17 +316,9 @@ def readiness_status(config: DatasetConfig) -> dict[str, object]:
             "readiness_receipt": str(_ready_path(config)),
         }
 
-    state = _read_json(_state_path(config), "readiness state")
     if state is None:
         return {
             "status": "not_started",
-            "jobs_submitted": 0,
-            "deletion_performed": False,
-        }
-    if state.get("status") == "failed":
-        return {
-            **state,
-            "status": "failed",
             "jobs_submitted": 0,
             "deletion_performed": False,
         }

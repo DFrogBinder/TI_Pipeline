@@ -13,6 +13,7 @@ from repeatability_dataset_consolidation.archive import (
     archive_copy,
     archive_preflight,
     archive_verify,
+    validate_archive_completion,
 )
 
 
@@ -163,9 +164,8 @@ def test_archive_verify_detects_extra_and_changed_content(miniature_config) -> N
     original_mtime = data.stat().st_mtime_ns
     data.write_bytes(b"changed!\n")
     os.utime(data, ns=(original_mtime, original_mtime))
-    result = archive_verify(miniature_config, checksum=True)
-    assert result["status"] == "mismatch"
-    assert result["mismatched_roots"] == 1
+    with pytest.raises(ArchiveError, match="no longer matches"):
+        archive_verify(miniature_config, checksum=True)
 
 
 def test_archive_rejects_missing_unowned_and_different_roots(miniature_config) -> None:
@@ -207,3 +207,124 @@ def test_archive_refuses_symlinked_destination(miniature_config) -> None:
 
     with pytest.raises(ArchiveError, match="symbolic-link archive destination"):
         archive_copy(miniature_config)
+
+
+def test_archive_checksum_resumes_after_one_completed_root(
+    miniature_config,
+    monkeypatch,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    archive_copy(miniature_config)
+    from repeatability_dataset_consolidation import archive
+
+    real_writer = archive.write_inventory_stream
+    calls = 0
+
+    def interrupt_second_root(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("simulated archive interruption")
+        return real_writer(*args, **kwargs)
+
+    monkeypatch.setattr(archive, "write_inventory_stream", interrupt_second_root)
+    with pytest.raises(RuntimeError, match="simulated archive interruption"):
+        archive_verify(miniature_config, checksum=True)
+
+    checkpoint_root = (
+        miniature_config.shared_archive_root
+        / "_archive/verification/checksum/items"
+    )
+    receipts = list(checkpoint_root.glob("*/receipt.json"))
+    assert len(receipts) == 1
+    preserved_mtime = receipts[0].stat().st_mtime_ns
+    assert not (
+        miniature_config.shared_receipt_root
+        / "legacy_v3_archive_v1.complete.json"
+    ).exists()
+
+    resumed_calls = 0
+
+    def count_resumed(*args, **kwargs):
+        nonlocal resumed_calls
+        resumed_calls += 1
+        return real_writer(*args, **kwargs)
+
+    monkeypatch.setattr(archive, "write_inventory_stream", count_resumed)
+    result = archive_verify(miniature_config, checksum=True)
+
+    assert result["status"] == "complete"
+    assert result["reused_roots"] == 1
+    assert resumed_calls == 6
+    assert receipts[0].stat().st_mtime_ns == preserved_mtime
+
+
+def test_archive_completion_validation_uses_metadata_checkpoints(
+    miniature_config,
+    monkeypatch,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    archive_copy(miniature_config)
+    archive_verify(miniature_config, checksum=True)
+    from repeatability_dataset_consolidation import archive
+
+    def forbid_deep_rehash(*args, **kwargs):
+        raise AssertionError("normal archive validation performed a deep rehash")
+
+    monkeypatch.setattr(archive, "write_inventory_stream", forbid_deep_rehash)
+
+    assert validate_archive_completion(miniature_config)["status"] == "complete"
+
+
+def test_archive_stale_stream_is_recomputed_but_same_size_content_change_fails(
+    miniature_config,
+    monkeypatch,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    archive_copy(miniature_config)
+    archive_verify(miniature_config, checksum=True)
+    from repeatability_dataset_consolidation import archive
+
+    checkpoint_root = (
+        miniature_config.shared_archive_root
+        / "_archive/verification/checksum/items"
+    )
+    stream = next(checkpoint_root.glob("*/destination.jsonl"))
+    stream.write_text("tampered\n", encoding="utf-8")
+    real_writer = archive.write_inventory_stream
+    rehashed: list[Path] = []
+
+    def record_rehash(root, *args, **kwargs):
+        rehashed.append(root)
+        return real_writer(root, *args, **kwargs)
+
+    monkeypatch.setattr(archive, "write_inventory_stream", record_rehash)
+    assert archive_verify(miniature_config, checksum=True)["status"] == "complete"
+    assert len(rehashed) == 2
+
+    source = next(iter(miniature_config.archive_sources.values()))
+    source_file = source / "nested/data.bin"
+    original = source_file.stat()
+    data = source_file.read_bytes()
+    source_file.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+    os.utime(source_file, ns=(original.st_atime_ns, original.st_mtime_ns))
+
+    with pytest.raises(ArchiveError, match="no longer matches"):
+        archive_verify(miniature_config, checksum=True)
+
+
+def test_archive_completion_rejects_metadata_only_destination_change(
+    miniature_config,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    archive_copy(miniature_config)
+    archive_verify(miniature_config, checksum=True)
+    destination = miniature_config.shared_archive_root / next(
+        iter(miniature_config.archive_sources.values())
+    ).name
+    changed = destination / "nested/data.bin"
+    current = changed.stat()
+    os.utime(changed, ns=(current.st_atime_ns, current.st_mtime_ns + 1))
+
+    with pytest.raises(ArchiveError, match="metadata fingerprint"):
+        validate_archive_completion(miniature_config)

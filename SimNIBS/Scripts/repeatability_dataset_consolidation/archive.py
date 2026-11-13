@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -13,11 +13,15 @@ import subprocess
 import tempfile
 
 from .inventory import (
-    build_file_inventory,
-    build_materialized_inventory,
     estimate_materialized_bytes,
 )
 from .settings import DatasetConfig
+from .streaming_inventory import (
+    InventoryStreamSummary,
+    metadata_fingerprint,
+    validate_inventory_stream,
+    write_inventory_stream,
+)
 
 
 class ArchiveError(RuntimeError):
@@ -398,45 +402,179 @@ def _write_completion(
     return "created"
 
 
+def _checkpoint_paths(
+    config: DatasetConfig,
+    item: ArchiveItem,
+) -> tuple[Path, Path, Path]:
+    if not item.key or "/" in item.key or item.key in {".", ".."}:
+        raise ArchiveError(f"Unsafe archive item key: {item.key}")
+    root = (
+        config.shared_archive_root
+        / "_archive/verification/checksum/items"
+        / item.key
+    )
+    return root / "receipt.json", root / "source.jsonl", root / "destination.jsonl"
+
+
+def _stream_summary(payload: object, label: str) -> InventoryStreamSummary:
+    if not isinstance(payload, dict):
+        raise ArchiveError(f"Archive {label} stream summary is invalid")
+    try:
+        return InventoryStreamSummary(
+            root=str(payload["root"]),
+            entry_count=int(payload["entry_count"]),
+            total_bytes=int(payload["total_bytes"]),
+            inventory_sha256=str(payload["inventory_sha256"]),
+            entries_sha256=str(payload["entries_sha256"]),
+            metadata_sha256=str(payload["metadata_sha256"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ArchiveError(f"Archive {label} stream summary is invalid") from exc
+
+
+def _checkpoint_mapping(
+    config: DatasetConfig,
+    item: ArchiveItem,
+    receipt_path: Path,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    source_summary = _stream_summary(payload.get("source_summary"), "source")
+    destination_summary = _stream_summary(
+        payload.get("destination_summary"), "destination"
+    )
+    return {
+        "key": item.key,
+        "source": str(item.source),
+        "destination": str(item.destination),
+        "status": "matched",
+        "source_inventory_sha256": source_summary.inventory_sha256,
+        "destination_inventory_sha256": destination_summary.inventory_sha256,
+        "source_metadata_sha256": source_summary.metadata_sha256,
+        "destination_metadata_sha256": destination_summary.metadata_sha256,
+        "checkpoint_receipt": str(
+            receipt_path.relative_to(config.shared_archive_root)
+        ),
+        "checkpoint_receipt_sha256": _sha256_file(receipt_path),
+    }
+
+
+def _valid_archive_checkpoint(
+    config: DatasetConfig,
+    item: ArchiveItem,
+    plan_hash: str,
+) -> tuple[dict[str, object], dict[str, object]] | None:
+    receipt_path, source_stream, destination_stream = _checkpoint_paths(config, item)
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        return None
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        source_summary = _stream_summary(payload.get("source_summary"), "source")
+        destination_summary = _stream_summary(
+            payload.get("destination_summary"), "destination"
+        )
+        if (
+            payload.get("schema_version") != 1
+            or payload.get("status") != "matched"
+            or payload.get("plan_sha256") != plan_hash
+            or payload.get("key") != item.key
+            or payload.get("source") != str(item.source)
+            or payload.get("destination") != str(item.destination)
+            or payload.get("source_stream")
+            != str(source_stream.relative_to(config.shared_archive_root))
+            or payload.get("destination_stream")
+            != str(destination_stream.relative_to(config.shared_archive_root))
+            or source_summary.inventory_sha256
+            != destination_summary.inventory_sha256
+        ):
+            return None
+        validate_inventory_stream(source_stream, source_summary)
+        validate_inventory_stream(destination_stream, destination_summary)
+        if (
+            metadata_fingerprint(item.source, materialize_links=True)
+            != source_summary.metadata_sha256
+            or metadata_fingerprint(item.destination)
+            != destination_summary.metadata_sha256
+        ):
+            return None
+    except (OSError, json.JSONDecodeError, ValueError, ArchiveError):
+        return None
+    return payload, _checkpoint_mapping(config, item, receipt_path, payload)
+
+
+def _checksum_archive_item(
+    config: DatasetConfig,
+    item: ArchiveItem,
+    plan_hash: str,
+) -> tuple[dict[str, object], bool]:
+    existing = _valid_archive_checkpoint(config, item, plan_hash)
+    if existing is not None:
+        return existing[1], True
+    _validate_identity(item)
+    receipt_path, source_stream, destination_stream = _checkpoint_paths(config, item)
+    source_summary = write_inventory_stream(
+        item.source,
+        source_stream,
+        materialize_links=True,
+    )
+    destination_summary = write_inventory_stream(item.destination, destination_stream)
+    if source_summary.inventory_sha256 != destination_summary.inventory_sha256:
+        raise ArchiveError(
+            f"Archived root no longer matches source content: {item.key}"
+        )
+    _validate_identity(item)
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "status": "matched",
+        "plan_sha256": plan_hash,
+        "key": item.key,
+        "source": str(item.source),
+        "destination": str(item.destination),
+        "source_stream": str(source_stream.relative_to(config.shared_archive_root)),
+        "destination_stream": str(
+            destination_stream.relative_to(config.shared_archive_root)
+        ),
+        "source_summary": asdict(source_summary),
+        "destination_summary": asdict(destination_summary),
+        "source_outputs_modified": False,
+    }
+    _write_json(receipt_path, payload)
+    return _checkpoint_mapping(config, item, receipt_path, payload), False
+
+
 def archive_verify(
     config: DatasetConfig,
     *,
     checksum: bool,
 ) -> dict[str, object]:
-    """Compare all archived roots and complete only after full checksums match."""
+    """Compare archived roots, resuming per-root checksum checkpoints."""
     items, plan_hash = _plan(config)
     _ensure_owner(config, items, plan_hash)
     mode = "checksum" if checksum else "size_mtime"
     records: list[dict[str, object]] = []
     changes: list[str] = []
-    for item in items:
-        _validate_identity(item)
-        command, differences = _compare(item, checksum=checksum)
-        record: dict[str, object] = {
-            "key": item.key,
-            "source": str(item.source),
-            "destination": str(item.destination),
-            "status": "matched" if not differences else "mismatch",
-            "command": list(command),
-            "changes": list(differences),
-        }
-        if checksum:
-            try:
-                source_inventory = build_materialized_inventory(item.source).as_dict()
-                destination_inventory = build_file_inventory(item.destination).as_dict()
-            except ValueError as exc:
-                raise ArchiveError(str(exc)) from exc
-            record["source_inventory_sha256"] = source_inventory["inventory_sha256"]
-            record["destination_inventory_sha256"] = destination_inventory[
-                "inventory_sha256"
-            ]
-            if source_inventory["inventory_sha256"] != destination_inventory[
-                "inventory_sha256"
-            ]:
-                record["status"] = "mismatch"
-        _validate_identity(item)
-        records.append(record)
-        changes.extend(f"{item.key}: {change}" for change in differences)
+    reused_roots = 0
+    if checksum:
+        for item in items:
+            record, reused = _checksum_archive_item(config, item, plan_hash)
+            records.append(record)
+            reused_roots += int(reused)
+    else:
+        for item in items:
+            _validate_identity(item)
+            command, differences = _compare(item, checksum=False)
+            record = {
+                "key": item.key,
+                "source": str(item.source),
+                "destination": str(item.destination),
+                "status": "matched" if not differences else "mismatch",
+                "command": list(command),
+                "changes": list(differences),
+            }
+            _validate_identity(item)
+            records.append(record)
+            changes.extend(f"{item.key}: {change}" for change in differences)
     mismatches = sum(record["status"] != "matched" for record in records)
     verification = {
         "schema_version": 1,
@@ -446,6 +584,8 @@ def archive_verify(
         "plan_sha256": plan_hash,
         "matched_roots": len(items) - mismatches,
         "mismatched_roots": mismatches,
+        "reused_roots": reused_roots,
+        "checksummed_roots": len(items) - reused_roots if checksum else 0,
         "mappings": records,
         "source_outputs_modified": False,
     }
@@ -469,7 +609,7 @@ def archive_verify(
 
 
 def validate_archive_completion(config: DatasetConfig) -> dict[str, object]:
-    """Read-only live validation of the immutable Shared archive receipt."""
+    """Validate immutable receipts and metadata without re-hashing file bodies."""
     items, plan_hash = _plan(config)
     if not config.shared_archive_root.is_dir():
         raise ArchiveError("The owned Shared archive root is missing")
@@ -501,25 +641,13 @@ def validate_archive_completion(config: DatasetConfig) -> dict[str, object]:
         raise ArchiveError("The archive completion receipt has unexpected mappings")
     for item in items:
         _validate_identity(item)
-        mapping = by_key[item.key]
-        command, changes = _compare(item, checksum=True)
-        try:
-            source_inventory = build_materialized_inventory(item.source).as_dict()
-            destination_inventory = build_file_inventory(item.destination).as_dict()
-        except ValueError as exc:
-            raise ArchiveError(str(exc)) from exc
-        if (
-            changes
-            or mapping.get("status") != "matched"
-            or mapping.get("source") != str(item.source)
-            or mapping.get("destination") != str(item.destination)
-            or mapping.get("source_inventory_sha256")
-            != source_inventory["inventory_sha256"]
-            or mapping.get("destination_inventory_sha256")
-            != destination_inventory["inventory_sha256"]
-            or source_inventory["inventory_sha256"]
-            != destination_inventory["inventory_sha256"]
-        ):
+        checkpoint = _valid_archive_checkpoint(config, item, plan_hash)
+        if checkpoint is None:
+            raise ArchiveError(
+                f"Archived root metadata fingerprint or checkpoint is stale: {item.key}"
+            )
+        _, current_mapping = checkpoint
+        if by_key[item.key] != current_mapping:
             raise ArchiveError(
                 f"Archived root no longer matches its completion receipt: {item.key}"
             )

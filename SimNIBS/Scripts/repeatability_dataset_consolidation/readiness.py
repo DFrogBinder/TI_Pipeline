@@ -328,4 +328,3 @@ def readiness_status(config: DatasetConfig) -> dict[str, object]:
         "jobs_submitted": 0,
         "deletion_performed": False,
     }
-

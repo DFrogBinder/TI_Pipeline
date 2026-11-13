@@ -8,7 +8,11 @@ import json
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .disposition import build_retirement_disposition, disposition_path
+from .disposition import (
+    build_retirement_disposition,
+    disposition_path,
+    retirement_root_metadata,
+)
 from .inventory import InventoryEntry, sha256_file
 from .planning import ConsolidationPlan, CopyItem
 from .settings import DatasetConfig
@@ -356,6 +360,7 @@ def _finalize_dataset_impl(config: DatasetConfig) -> dict[str, object]:
     retirement_disposition, retirement_disposition_path = (
         _load_or_create_disposition(config, plan)
     )
+    retirement_metadata = retirement_root_metadata(config)
     completed_utc = _utc_now()
     completed_manifest = dict(manifest)
     completed_manifest["status"] = "complete"
@@ -413,6 +418,7 @@ def _finalize_dataset_impl(config: DatasetConfig) -> dict[str, object]:
             "sha256": sha256_file(retirement_disposition_path),
             "entries_sha256": retirement_disposition["entries_sha256"],
             "summary": retirement_disposition["summary"],
+            "root_metadata": retirement_metadata,
         },
         "canonical_configs": {
             "path": str(canonical_manifest.relative_to(config.output_root)),

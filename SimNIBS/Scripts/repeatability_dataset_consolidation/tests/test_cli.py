@@ -43,6 +43,8 @@ def test_cli_dispatches_all_nonretirement_modes(
         "archive_preflight",
         "archive_copy",
         "archive_verify",
+        "prepare_retirement",
+        "readiness_status",
         "retirement_status",
     ):
         monkeypatch.setattr(cli, name, operation(name))
@@ -59,6 +61,8 @@ def test_cli_dispatches_all_nonretirement_modes(
         (["archive-copy", f"--confirm-archive-root={archive}"], "archive_copy"),
         (["archive-verify"], "archive_verify"),
         (["archive-checksum"], "archive_verify"),
+        (["prepare-retirement"], "prepare_retirement"),
+        (["readiness-status"], "readiness_status"),
         (["retire-status"], "retirement_status"),
     )
     for arguments, expected in modes:
@@ -67,6 +71,26 @@ def test_cli_dispatches_all_nonretirement_modes(
         assert calls[-1][0] == expected
     output = capsys.readouterr().out
     assert "jobs submitted: 0" in output
+    assert "stops before deletion" in output
+
+
+def test_cli_prepare_retirement_requires_no_deletion_confirmation(
+    miniature_config, monkeypatch
+) -> None:
+    calls: list[object] = []
+    monkeypatch.setattr(
+        cli,
+        "prepare_retirement",
+        lambda config: calls.append(config)
+        or {
+            "status": "deletion_ready",
+            "jobs_submitted": 0,
+            "deletion_performed": False,
+        },
+    )
+
+    assert cli.main(["prepare-retirement"], config=miniature_config) == 0
+    assert calls == [miniature_config]
 
 
 def test_cli_requires_exact_copy_confirmations(miniature_config, monkeypatch) -> None:

@@ -53,6 +53,35 @@ def test_launcher_passes_modes_and_arguments_as_an_array(tmp_path: Path) -> None
     ]
 
 
+def test_launcher_exposes_readiness_modes_without_submitting_jobs(
+    tmp_path: Path,
+) -> None:
+    fake_python = tmp_path / "python"
+    arguments = tmp_path / "arguments.txt"
+    fake_python.write_text(
+        '#!/bin/bash\nprintf \'%s\\n\' "$@" > "$FAKE_ARGUMENTS"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = os.environ.copy()
+    env.update({"PYTHON_BIN": str(fake_python), "FAKE_ARGUMENTS": str(arguments)})
+
+    for mode in ("prepare-retirement", "readiness-status"):
+        completed = subprocess.run(
+            ["bash", str(LAUNCHER), mode],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert arguments.read_text().splitlines() == [
+            "-m",
+            "repeatability_dataset_consolidation",
+            mode,
+        ]
+
+
 def test_launcher_refuses_compute_node_and_unknown_mode(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["SLURM_JOB_ID"] = "123"

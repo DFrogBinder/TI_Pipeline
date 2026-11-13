@@ -16,8 +16,8 @@ from typing import Sequence
 from .archive import ArchiveError, validate_archive_completion
 from .disposition import (
     DispositionError,
-    build_retirement_disposition,
     disposition_path,
+    retirement_root_metadata,
 )
 from .inventory import sha256_file
 from .planning import ConsolidationPlan, build_copy_plan, plan_sha256
@@ -25,10 +25,6 @@ from .settings import DatasetConfig, retirement_allowlist
 from .validation import validate_scientific_scope
 from .workflow import (
     WorkflowError,
-    _load_checksum_verification,
-    _validate_copy_receipts,
-    _validate_destination_coverage,
-    _validate_destination_scope,
     _validate_owned_root,
     validate_dataset_completion,
 )
@@ -134,15 +130,6 @@ def _load_dataset_completion(
             f"dataset completion receipt live validation failed: {exc}"
         ) from exc
     completion = config.output_root / "_consolidation/complete.json"
-    try:
-        _validate_copy_receipts(config, plan, current_plan_hash)
-        _validate_destination_coverage(config, plan)
-        _load_checksum_verification(config, plan, current_plan_hash)
-        scope = _validate_destination_scope(config, plan)
-    except (WorkflowError, ValueError) as exc:
-        raise RetirementError(f"Dataset completion receipt live validation failed: {exc}") from exc
-    if payload.get("scope") != scope:
-        raise RetirementError("The dataset completion receipt scope is stale")
     disposition_record = payload.get("retirement_disposition")
     if not isinstance(disposition_record, dict):
         raise RetirementError("The dataset retirement disposition binding is missing")
@@ -155,17 +142,17 @@ def _load_dataset_completion(
         or sha256_file(saved_disposition_path) != disposition_record.get("sha256")
     ):
         raise RetirementError("The dataset retirement disposition binding is invalid")
+    saved_metadata = disposition_record.get("root_metadata")
+    if not isinstance(saved_metadata, dict):
+        raise RetirementError("The retirement source metadata binding is missing")
     try:
-        saved_disposition = json.loads(
-            saved_disposition_path.read_text(encoding="utf-8")
-        )
-        live_disposition = build_retirement_disposition(config, plan)
-    except (OSError, json.JSONDecodeError, DispositionError) as exc:
-        raise RetirementError("The retirement disposition is unreadable or unsafe") from exc
-    if saved_disposition != live_disposition:
-        raise RetirementError("Retirement source content changed after dataset completion")
-    summary = saved_disposition.get("summary")
-    if not isinstance(summary, dict) or summary != disposition_record.get("summary"):
+        live_metadata = retirement_root_metadata(config)
+    except DispositionError as exc:
+        raise RetirementError("Retirement source metadata is unreadable or unsafe") from exc
+    if saved_metadata != live_metadata:
+        raise RetirementError("Retirement source metadata changed after dataset completion")
+    summary = disposition_record.get("summary")
+    if not isinstance(summary, dict):
         raise RetirementError("The retirement disposition summary binding is invalid")
     return (
         plan,

@@ -8,6 +8,7 @@ import subprocess
 
 import pytest
 
+import repeatability_dataset_consolidation.retirement as retirement_module
 from repeatability_dataset_consolidation.archive import archive_copy, archive_verify
 from repeatability_dataset_consolidation.retirement import (
     RetirementConfirmations,
@@ -65,6 +66,47 @@ def test_retirement_plan_is_dry_run_exact_and_receipt_bound(retirement_ready) ->
         plan_retirement(config, selected=("arbitrary_path",))
     with pytest.raises(RetirementError, match="At least one retirement key"):
         plan_retirement(config, selected=())
+
+
+def test_retirement_plan_uses_bound_checkpoints_not_full_body_rehashes(
+    retirement_ready, monkeypatch
+) -> None:
+    config = retirement_ready
+    completion = json.loads(
+        (config.output_root / "_consolidation/complete.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    metadata = completion["retirement_disposition"]["root_metadata"]
+    assert set(metadata) == set(retirement_allowlist(config))
+    assert all(len(record["metadata_sha256"]) == 64 for record in metadata.values())
+
+    monkeypatch.setattr(
+        retirement_module,
+        "_load_checksum_verification",
+        lambda *args, **kwargs: pytest.fail("must not re-hash dataset bodies"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        retirement_module,
+        "build_retirement_disposition",
+        lambda *args, **kwargs: pytest.fail("must not rebuild the disposition"),
+        raising=False,
+    )
+
+    assert plan_retirement(config).dry_run is True
+
+
+def test_retirement_plan_fails_when_source_metadata_changes(
+    retirement_ready,
+) -> None:
+    config = retirement_ready
+    source = config.sources.paper_analysis / "analysis.json"
+    original = source.read_bytes()
+    source.write_bytes(b"[]\n" if original != b"[]\n" else b"{}\n")
+
+    with pytest.raises(RetirementError, match="metadata changed"):
+        plan_retirement(config)
 
 
 def test_retirement_plan_rejects_tampering_and_active_jobs(

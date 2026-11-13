@@ -11,6 +11,7 @@ import sys
 from typing import Sequence
 
 from .archive import ArchiveError, archive_copy, archive_preflight, archive_verify
+from .readiness import ReadinessError, prepare_retirement, readiness_status
 from .retirement import (
     RetirementConfirmations,
     RetirementError,
@@ -43,6 +44,8 @@ MODES = (
     "archive-copy",
     "archive-verify",
     "archive-checksum",
+    "prepare-retirement",
+    "readiness-status",
     "retire-plan",
     "retire-submit",
     "retire-status",
@@ -82,6 +85,7 @@ def _print_scope(config: DatasetConfig) -> None:
     print("  execution: login-node filesystem operations only")
     print("  jobs submitted: 0")
     print("  retirement default: plan only")
+    print("  automatic readiness: stops before deletion")
 
 
 def _plan_dict(plan: RetirementPlan) -> dict[str, object]:
@@ -156,6 +160,10 @@ def main(
             result = archive_verify(current, checksum=False)
         elif args.mode == "archive-checksum":
             result = archive_verify(current, checksum=True)
+        elif args.mode == "prepare-retirement":
+            result = prepare_retirement(current)
+        elif args.mode == "readiness-status":
+            result = readiness_status(current)
         elif args.mode == "retire-plan":
             result = _plan_dict(plan_retirement(current))
         elif args.mode == "retire-submit":
@@ -198,7 +206,14 @@ def main(
             )
         else:
             result = retirement_status(current)
-    except (ArchiveError, CliError, RetirementError, WorkflowError, ValueError) as exc:
+    except (
+        ArchiveError,
+        CliError,
+        ReadinessError,
+        RetirementError,
+        WorkflowError,
+        ValueError,
+    ) as exc:
         print(json.dumps({"status": "error", "error": str(exc)}), file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True, default=str, allow_nan=False))

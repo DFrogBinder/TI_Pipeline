@@ -11,6 +11,7 @@ import stat
 from .inventory import sha256_file
 from .planning import ConsolidationPlan, CopyItem
 from .settings import DatasetConfig, retirement_allowlist
+from .streaming_inventory import metadata_fingerprint
 
 
 class DispositionError(RuntimeError):
@@ -19,6 +20,53 @@ class DispositionError(RuntimeError):
 
 def disposition_path(config: DatasetConfig) -> Path:
     return config.output_root / "provenance/retirement/source_disposition.json"
+
+
+def retirement_root_metadata(config: DatasetConfig) -> dict[str, dict[str, object]]:
+    """Fingerprint live retirement roots without reading scientific file bodies."""
+    records: dict[str, dict[str, object]] = {}
+    for key, configured_root in retirement_allowlist(config).items():
+        if not configured_root.is_dir() or configured_root.is_symlink():
+            raise DispositionError(
+                f"Retirement metadata root is missing or unsafe: {configured_root}"
+            )
+        root = configured_root.resolve()
+        before = root.lstat()
+        try:
+            fingerprint = metadata_fingerprint(root, materialize_links=True)
+        except ValueError as exc:
+            raise DispositionError(
+                f"Retirement metadata cannot be fingerprinted: {root}"
+            ) from exc
+        after = root.lstat()
+        before_identity = (
+            int(before.st_dev),
+            int(before.st_ino),
+            int(before.st_size),
+            int(before.st_mtime_ns),
+            int(before.st_ctime_ns),
+        )
+        after_identity = (
+            int(after.st_dev),
+            int(after.st_ino),
+            int(after.st_size),
+            int(after.st_mtime_ns),
+            int(after.st_ctime_ns),
+        )
+        if before_identity != after_identity:
+            raise DispositionError(
+                f"Retirement metadata root changed while fingerprinting: {root}"
+            )
+        records[key] = {
+            "path": str(root),
+            "device": before_identity[0],
+            "inode": before_identity[1],
+            "size_bytes": before_identity[2],
+            "mtime_ns": before_identity[3],
+            "ctime_ns": before_identity[4],
+            "metadata_sha256": fingerprint,
+        }
+    return records
 
 
 def _destinations_for(

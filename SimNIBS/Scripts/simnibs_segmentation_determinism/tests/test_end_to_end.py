@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 import nibabel as nib
@@ -163,3 +162,9 @@ def test_operator_readme_contains_submission_and_interpretation_gates():
     assert "gzip" in readme.lower()
     assert "20 scientific segmentation tasks" in readme
     assert "23 scheduler tasks" in readme
+    assert "final_132_repeatability_combined_dataset_v1" in readme
+    assert "extensions/segmentation_determinism_v1" in readme
+    assert "retirement cleanup" in readme
+    assert "staged copies" in readme
+    assert "simnibs_segmentation_determinism_v1" not in readme
+    assert "ti_dataset_final_132_balanced_10_corrected" not in readme

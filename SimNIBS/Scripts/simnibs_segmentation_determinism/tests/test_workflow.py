@@ -10,7 +10,11 @@ import pytest
 
 import simnibs_segmentation_determinism.workflow as workflow
 from simnibs_segmentation_determinism.provenance import ProvenanceError
-from simnibs_segmentation_determinism.settings import scope_payload
+from simnibs_segmentation_determinism.settings import (
+    resolve_staged_subject_inputs,
+    resolve_subject_inputs,
+    scope_payload,
+)
 from simnibs_segmentation_determinism.workflow import (
     WorkflowError,
     collect,
@@ -134,6 +138,7 @@ def test_scope_and_preflight_are_exact_and_read_only(configured_experiment):
 
 def test_initialize_is_idempotent_only_for_identical_plan(configured_experiment):
     config = configured_experiment
+    origin = resolve_subject_inputs(config)
 
     created = initialize(config)
     reused = initialize(config)
@@ -143,9 +148,37 @@ def test_initialize_is_idempotent_only_for_identical_plan(configured_experiment)
     assert created["plan_sha256"] == reused["plan_sha256"]
     assert (config.output_root / "_pipeline/config.json").is_file()
     assert (config.output_root / "_pipeline/source_manifest.json").is_file()
+    staged = resolve_staged_subject_inputs(config)
+    assert staged.t1.parent == config.staged_input_root / config.subject / "anat"
+    assert staged.t1_sha256 == origin.t1_sha256
+    assert staged.t2_sha256 == origin.t2_sha256
+    source_manifest = json.loads(
+        (config.output_root / "_pipeline/source_manifest.json").read_text()
+    )
+    assert source_manifest["canonical_inputs"]["t1"]["path"] == str(origin.t1)
+    assert source_manifest["staged_inputs"]["t1"]["path"] == str(staged.t1)
+    assert source_manifest["dataset"]["root"] == str(config.dataset_root)
 
     with pytest.raises(WorkflowError, match="plan"):
         initialize(replace(config, repeats_per_arm=9))
+
+
+def test_initialize_cleans_temporary_root_when_input_staging_fails(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+
+    def fail_staging(*args, **kwargs):
+        del args, kwargs
+        raise OSError("synthetic staging failure")
+
+    monkeypatch.setattr(workflow, "_stage_subject_inputs", fail_staging, raising=False)
+
+    with pytest.raises(OSError, match="synthetic staging failure"):
+        initialize(config)
+
+    assert not config.output_root.exists()
+    assert not list(config.output_root.parent.glob(".segmentation_determinism_v1.tmp-*"))
 
 
 @pytest.mark.parametrize(
@@ -173,7 +206,33 @@ def test_run_repeat_maps_array_index_without_changing_subject(
 
     assert result["repeat_index"] == expected_repeat
     assert captured[0].inputs.subject == "sub-CC110174"
+    assert captured[0].inputs.t1.is_relative_to(config.staged_input_root)
+    assert captured[0].inputs.t2.is_relative_to(config.staged_input_root)
     assert captured[0].repeat_root.name == f"repeat_{expected_repeat:03d}"
+
+
+def test_staged_input_drift_blocks_repeat_execution(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+    initialize(config)
+    staged = resolve_staged_subject_inputs(config)
+    staged.t1.write_bytes(b"staged drift")
+
+    called = False
+
+    def fake_runner(request):
+        del request
+        nonlocal called
+        called = True
+        return {"status": "complete"}
+
+    monkeypatch.setattr(workflow, "run_headreco_repeat", fake_runner)
+
+    with pytest.raises(WorkflowError, match="staged input"):
+        run_repeat(config, arm="simnibs326_headreco", array_index=0)
+
+    assert called is False
 
 
 def test_collect_with_19_receipts_is_incomplete_and_has_no_terminal_receipt(
@@ -313,7 +372,7 @@ def test_collect_never_recovers_inside_protected_source_root(configured_experime
     terminal = pipeline / "complete.json"
     terminal.write_text('{"status":"complete"}\n', encoding="utf-8")
 
-    with pytest.raises(ProvenanceError, match="protected root"):
+    with pytest.raises(ProvenanceError, match="output root|protected root"):
         collect(config)
 
     assert terminal.is_file()

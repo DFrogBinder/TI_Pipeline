@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict
@@ -33,6 +34,7 @@ from .provenance import (
 from .settings import (
     ExperimentConfig,
     preflight,
+    resolve_staged_subject_inputs,
     resolve_subject_inputs,
     scope_payload,
     validate_output_isolation,
@@ -58,8 +60,10 @@ def workflow_preflight(config: ExperimentConfig) -> Dict[str, object]:
 def _config_payload(config: ExperimentConfig) -> Dict[str, object]:
     payload = asdict(config)
     for key in (
+        "dataset_root",
+        "dataset_manifest_file",
+        "dataset_completion_file",
         "cohort_file",
-        "selection_audit_file",
         "source_root",
         "output_root",
     ):
@@ -69,6 +73,8 @@ def _config_payload(config: ExperimentConfig) -> Dict[str, object]:
 
 
 def _plan_payload(config: ExperimentConfig, ready: Mapping[str, object]) -> Dict[str, object]:
+    canonical = resolve_subject_inputs(config)
+    staged = _planned_staged_inputs(config, canonical)
     return {
         "schema_version": 1,
         "workflow": "simnibs_segmentation_determinism",
@@ -76,15 +82,16 @@ def _plan_payload(config: ExperimentConfig, ready: Mapping[str, object]) -> Dict
         "scope": scope_payload(config),
         "source": {
             "subject": config.subject,
+            "dataset": ready["dataset"],
             "cohort": ready["cohort"],
-            "selection_audit": ready["selection_audit"],
-            "inputs": ready["inputs"],
+            "canonical_inputs": ready["inputs"],
+            "staged_inputs": _inputs_payload(staged),
         },
         "stage_contract": {
             "simnibs326_headreco": "preparevols --noclean",
             "simnibs401_charm": list(CharmRepeatRequest(
                 config=config,
-                inputs=resolve_subject_inputs(config),
+                inputs=staged,
                 repeat_index=1,
             ).flags),
             "surface_tasks": 0,
@@ -108,6 +115,57 @@ def _read_json(path: Path) -> Dict[str, object]:
     return payload
 
 
+def _inputs_payload(inputs) -> Dict[str, object]:
+    return {
+        "t1": {"path": str(inputs.t1), "sha256": inputs.t1_sha256},
+        "t2": {"path": str(inputs.t2), "sha256": inputs.t2_sha256},
+    }
+
+
+def _planned_staged_inputs(config: ExperimentConfig, canonical):
+    from .settings import SubjectInputs
+
+    anat = config.staged_input_root / config.subject / "anat"
+    return SubjectInputs(
+        subject=config.subject,
+        t1=anat / canonical.t1.name,
+        t2=anat / canonical.t2.name,
+        t1_sha256=canonical.t1_sha256,
+        t2_sha256=canonical.t2_sha256,
+    )
+
+
+def _stage_subject_inputs(config: ExperimentConfig, temporary_root: Path, canonical):
+    planned = _planned_staged_inputs(config, canonical)
+    temporary_anat = temporary_root / "inputs" / config.subject / "anat"
+    temporary_anat.mkdir(parents=True)
+    for source, final_destination, expected in (
+        (canonical.t1, planned.t1, canonical.t1_sha256),
+        (canonical.t2, planned.t2, canonical.t2_sha256),
+    ):
+        temporary_destination = temporary_anat / final_destination.name
+        shutil.copy2(source, temporary_destination, follow_symlinks=True)
+        if sha256_file(temporary_destination) != expected:
+            raise WorkflowError(
+                f"Staged input SHA-256 differs from canonical input: {source}"
+            )
+    return planned
+
+
+def _validate_staged_inputs(config: ExperimentConfig):
+    canonical = resolve_subject_inputs(config)
+    try:
+        staged = resolve_staged_subject_inputs(config)
+    except ProvenanceError as exc:
+        raise WorkflowError(f"Invalid staged input: {exc}") from exc
+    if (
+        staged.t1_sha256 != canonical.t1_sha256
+        or staged.t2_sha256 != canonical.t2_sha256
+    ):
+        raise WorkflowError("A staged input SHA-256 differs from its canonical input")
+    return staged
+
+
 def initialize(config: ExperimentConfig) -> Dict[str, object]:
     ready = workflow_preflight(config)
     plan = _plan_payload(config, ready)
@@ -125,6 +183,7 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
                 "Existing workflow plan differs from the requested plan: "
                 f"{existing.get('plan_sha256')} != {plan_sha256}"
             )
+        _validate_staged_inputs(config)
         return {
             "status": "prepared",
             "action": "reused",
@@ -132,27 +191,45 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
             "plan_sha256": plan_sha256,
         }
 
-    config.output_root.mkdir(parents=True, exist_ok=False)
-    pipeline.mkdir()
-    stored_config = {**plan, "status": "prepared", "plan_sha256": plan_sha256}
-    write_json_atomic(config_path, stored_config)
-    write_sha256_sidecar(config_path)
-    source_manifest = {
-        "schema_version": 1,
-        "status": "pinned",
-        "subject": config.subject,
-        "selection_seed": config.selection_seed,
-        "cohort": ready["cohort"],
-        "selection_audit": ready["selection_audit"],
-        "inputs": ready["inputs"],
-        "source_outputs_modified": False,
-    }
-    source_path = pipeline / "source_manifest.json"
-    write_json_atomic(source_path, source_manifest)
-    write_sha256_sidecar(source_path)
-    preflight_path = pipeline / "preflight.json"
-    write_json_atomic(preflight_path, ready)
-    write_sha256_sidecar(preflight_path)
+    config.output_root.parent.mkdir(parents=True, exist_ok=True)
+    temporary = config.output_root.parent / (
+        f".{config.output_root.name}.tmp-{os.getpid()}"
+    )
+    if temporary.exists() or temporary.is_symlink():
+        raise WorkflowError(f"Temporary initialization root already exists: {temporary}")
+    temporary.mkdir()
+    promoted = False
+    canonical = resolve_subject_inputs(config)
+    try:
+        staged = _stage_subject_inputs(config, temporary, canonical)
+        temporary_pipeline = temporary / "_pipeline"
+        temporary_pipeline.mkdir()
+        stored_config = {**plan, "status": "prepared", "plan_sha256": plan_sha256}
+        temporary_config = temporary_pipeline / "config.json"
+        write_json_atomic(temporary_config, stored_config)
+        write_sha256_sidecar(temporary_config)
+        source_manifest = {
+            "schema_version": 1,
+            "status": "pinned",
+            "subject": config.subject,
+            "selection_seed": config.selection_seed,
+            "dataset": ready["dataset"],
+            "cohort": ready["cohort"],
+            "canonical_inputs": _inputs_payload(canonical),
+            "staged_inputs": _inputs_payload(staged),
+            "source_outputs_modified": False,
+        }
+        source_path = temporary_pipeline / "source_manifest.json"
+        write_json_atomic(source_path, source_manifest)
+        write_sha256_sidecar(source_path)
+        preflight_path = temporary_pipeline / "preflight.json"
+        write_json_atomic(preflight_path, ready)
+        write_sha256_sidecar(preflight_path)
+        os.replace(temporary, config.output_root)
+        promoted = True
+    finally:
+        if not promoted and temporary.exists():
+            shutil.rmtree(temporary)
     return {
         "status": "prepared",
         "action": "created",
@@ -170,6 +247,7 @@ def _ensure_initialized(config: ExperimentConfig) -> Dict[str, object]:
     expected_hash = _plan_hash(_plan_payload(config, ready))
     if stored.get("plan_sha256") != expected_hash:
         raise WorkflowError("Initialized plan does not match the requested configuration")
+    _validate_staged_inputs(config)
     return stored
 
 
@@ -177,7 +255,7 @@ def _headreco_request(config: ExperimentConfig, repeat_index: int, attempt: int)
     scripts_root = Path(__file__).resolve().parents[1]
     return HeadrecoRepeatRequest(
         config=config,
-        inputs=resolve_subject_inputs(config),
+        inputs=resolve_staged_subject_inputs(config),
         repeat_index=repeat_index,
         attempt=attempt,
         compatibility_script=scripts_root / "simnibs_326_repeatability/cat12_compat.py",
@@ -188,7 +266,7 @@ def _headreco_request(config: ExperimentConfig, repeat_index: int, attempt: int)
 def _charm_request(config: ExperimentConfig, repeat_index: int, attempt: int):
     return CharmRepeatRequest(
         config=config,
-        inputs=resolve_subject_inputs(config),
+        inputs=resolve_staged_subject_inputs(config),
         repeat_index=repeat_index,
         attempt=attempt,
         charm_bin=os.environ.get("CHARM_BIN", "charm"),
@@ -446,12 +524,6 @@ def _write_analysis_outputs(
         "transition_counts",
         "dice_by_label",
     ]
-    outputs = {
-        "artifact_inventory.tsv": inventory_rows,
-        "repeat_comparisons.tsv": comparison_rows,
-        "tissue_summary.tsv": tissue_rows,
-        "changed_voxel_summary.tsv": changed_rows,
-    }
     _write_tsv(analysis_root / "artifact_inventory.tsv", inventory_rows, inventory_fields)
     _write_tsv(analysis_root / "repeat_comparisons.tsv", comparison_rows, comparison_fields)
     _write_tsv(

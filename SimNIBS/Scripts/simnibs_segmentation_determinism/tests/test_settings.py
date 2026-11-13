@@ -11,14 +11,27 @@ from simnibs_segmentation_determinism.settings import ExperimentConfig, scope_pa
 def test_defaults_pin_approved_scientific_and_hpc_scope():
     config = ExperimentConfig.defaults()
 
+    dataset_root = (
+        "/mnt/parscratch/users/cop23bi/"
+        "final_132_repeatability_combined_dataset_v1"
+    )
     assert config.subject == "sub-CC110174"
     assert config.selection_seed == 20261106
     assert config.repeats_per_arm == 10
+    assert config.dataset_root.as_posix() == dataset_root
+    assert config.cohort_file.as_posix() == f"{dataset_root}/subjects.txt"
+    assert config.dataset_manifest_file.as_posix() == (
+        f"{dataset_root}/dataset_manifest.json"
+    )
+    assert config.dataset_completion_file.as_posix() == (
+        f"{dataset_root}/_consolidation/complete.json"
+    )
     assert config.source_root.as_posix() == (
-        "/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected"
+        f"{dataset_root}/data/simnibs4/left_hippocampus/"
+        "sub-CC110174_repeatability/remesh/repeats/repeat_001"
     )
     assert config.output_root.as_posix() == (
-        "/mnt/parscratch/users/cop23bi/simnibs_segmentation_determinism_v1"
+        f"{dataset_root}/extensions/segmentation_determinism_v1"
     )
     assert config.simnibs326_module == "SimNIBS/3.2.6-foss-2023a"
     assert config.matlab_module == "MATLAB/2023b"
@@ -46,11 +59,14 @@ def test_seeded_selection_is_the_pinned_subject(configured_experiment):
 
 
 def test_from_env_only_changes_nonscientific_path_overrides(monkeypatch, tmp_path):
-    monkeypatch.setenv("SEGDET_OUTPUT_ROOT", str(tmp_path / "custom"))
+    dataset = tmp_path / "combined"
+    monkeypatch.setenv("SEGDET_DATASET_ROOT", str(dataset))
 
     config = ExperimentConfig.from_env()
 
-    assert config.output_root == tmp_path / "custom"
+    assert config.dataset_root == dataset
+    assert config.output_root == dataset / "extensions/segmentation_determinism_v1"
+    assert config.cohort_file == dataset / "subjects.txt"
     assert config.repeats_per_arm == 10
     assert config.subject == "sub-CC110174"
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -42,6 +44,16 @@ def test_static_slurm_scope_resources_modules_and_stage_boundaries():
     assert "afterok:$preflight326" in submitter
     assert "afterok:$preflight401" in submitter
     assert "scheduler tasks: 23" in submitter
+    assert (
+        'DATASET_ROOT="${SEGDET_DATASET_ROOT:-/mnt/parscratch/users/cop23bi/'
+        'final_132_repeatability_combined_dataset_v1}"'
+    ) in submitter
+    assert 'OUTPUT_ROOT="$DATASET_ROOT/extensions/segmentation_determinism_v1"' in submitter
+    assert (
+        'SOURCE_ROOT="$DATASET_ROOT/data/simnibs4/left_hippocampus/'
+        'sub-CC110174_repeatability/remesh/repeats/repeat_001"'
+    ) in submitter
+    assert 'export SEGDET_DATASET_ROOT="$DATASET_ROOT"' in submitter
     assert 'export SEGDET_OUTPUT_ROOT="$OUTPUT_ROOT"' in submitter
     assert "submission.lock" in submitter
 
@@ -69,25 +81,65 @@ def _fake_scheduler(tmp_path: Path):
     return fake, log, state
 
 
-def _source_tree(tmp_path: Path):
-    source = tmp_path / "source"
+def _dataset_tree(dataset: Path):
+    subjects = (
+        "sub-CC110174",
+        "sub-CC121144",
+        "sub-CC310407",
+        "sub-CC320616",
+        "sub-CC420071",
+        "sub-CC410432",
+        "sub-CC510415",
+        "sub-CC520127",
+        "sub-CC610631",
+        "sub-CC720941",
+    )
+    dataset.mkdir(parents=True, exist_ok=True)
+    (dataset / "subjects.txt").write_text("\n".join(subjects) + "\n")
+    plan_sha256 = "1ab5c604e4d965ae70a63ca9984c878db2631f89a1f99b5927196e25d696a32c"
+    scope = {"subjects": 10, "simulations": 3200}
+    manifest = {
+        "status": "complete",
+        "workflow": "repeatability_dataset_consolidation",
+        "output_root": str(dataset.resolve()),
+        "plan_sha256": plan_sha256,
+        "scope": scope,
+        "source_outputs_modified": False,
+    }
+    manifest_path = dataset / "dataset_manifest.json"
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    completion = {
+        **manifest,
+        "dataset_manifest": {
+            "path": "dataset_manifest.json",
+            "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        },
+    }
+    completion_path = dataset / "_consolidation/complete.json"
+    completion_path.parent.mkdir()
+    completion_path.write_text(json.dumps(completion) + "\n")
+    source = (
+        dataset
+        / "data/simnibs4/left_hippocampus/"
+        "sub-CC110174_repeatability/remesh/repeats/repeat_001"
+    )
     anat = source / "sub-CC110174/anat"
     anat.mkdir(parents=True)
     (anat / "sub-CC110174_T1w.nii").write_bytes(b"T1")
     (anat / "sub-CC110174_T2w.nii").write_bytes(b"T2")
-    return source
+    return dataset
 
 
 def _run_submitter(command, tmp_path, fake, log, state, output=None):
-    source = _source_tree(tmp_path) if not (tmp_path / "source").exists() else tmp_path / "source"
-    output = output or tmp_path / "output"
+    dataset = output or tmp_path / "dataset"
+    if not dataset.exists():
+        _dataset_tree(dataset)
     env = {
         **os.environ,
         "SBATCH_BIN": str(fake),
         "FAKE_SBATCH_LOG": str(log),
         "FAKE_SBATCH_STATE": str(state),
-        "SEGDET_SOURCE_ROOT": str(source),
-        "SEGDET_OUTPUT_ROOT": str(output),
+        "SEGDET_DATASET_ROOT": str(dataset),
         "PYTHON_BIN": "python3",
     }
     return subprocess.run(
@@ -132,7 +184,10 @@ def test_only_run_calls_sbatch_and_run_submits_guarded_dependency_graph(tmp_path
     assert "collect.slurm" in calls[4]
     assert "--dependency=afterany:910003:910004" in calls[4]
     assert all("--open-mode=append" in call for call in calls)
-    ledger = tmp_path / "run-output/_pipeline/job_ids.tsv"
+    ledger = (
+        tmp_path
+        / "run-output/extensions/segmentation_determinism_v1/_pipeline/job_ids.tsv"
+    )
     assert ledger.is_file()
     assert len(ledger.read_text(encoding="utf-8").splitlines()) == 6
 
@@ -171,14 +226,13 @@ def test_second_run_is_rejected_before_duplicate_submission(tmp_path):
 
 def test_repeat_scope_override_is_rejected_before_submission(tmp_path):
     fake, log, state = _fake_scheduler(tmp_path)
-    source = _source_tree(tmp_path)
+    dataset = _dataset_tree(tmp_path / "dataset")
     env = {
         **os.environ,
         "SBATCH_BIN": str(fake),
         "FAKE_SBATCH_LOG": str(log),
         "FAKE_SBATCH_STATE": str(state),
-        "SEGDET_SOURCE_ROOT": str(source),
-        "SEGDET_OUTPUT_ROOT": str(tmp_path / "output"),
+        "SEGDET_DATASET_ROOT": str(dataset),
         "SEGDET_REPEATS_PER_ARM": "7",
         "PYTHON_BIN": "python3",
     }

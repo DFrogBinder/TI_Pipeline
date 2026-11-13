@@ -13,24 +13,40 @@ segmentations. The full scope is **20 scientific segmentation tasks** and
 elements and one collector. There are no surface, tetrahedral-meshing,
 electrode-placement or FEM tasks.
 
-This implementation does not authorize HPC submission. The `run`
-command must not be used until the active multi-terabyte dataset checksum has
-finished, its state has been checked, and the user has explicitly approved
-this experiment's submission.
+This implementation does not authorize HPC submission. The `run` command must
+not be used until the combined dataset checksum, consolidation, and retirement
+cleanup have finished, their terminal receipts have been checked, and the user
+has explicitly approved this experiment's submission. Editing or testing this
+package locally does not modify the active HPC consolidation workflow.
 
 ## Scientific boundary
 
-Both arms read the same checksum-pinned T1w and T2w images from:
+The single parent for every scientific input and output is:
 
 ```text
-/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected
+/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1
 ```
 
-They write only below:
+Initialization validates that dataset's `subjects.txt`,
+`dataset_manifest.json`, and `_consolidation/complete.json`. It then reads the
+materialized T1w/T2w pair from the copied v4 left-hippocampus remesh repeat 001
+and atomically creates checksum-identical staged copies below:
 
 ```text
-/mnt/parscratch/users/cop23bi/simnibs_segmentation_determinism_v1
+/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1/extensions/segmentation_determinism_v1/inputs/sub-CC110174/anat
 ```
+
+Both arms read only those staged copies. All repeat artifacts, Slurm logs,
+retry state, workflow receipts, and analysis products are written below:
+
+```text
+/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1/extensions/segmentation_determinism_v1
+```
+
+The extension has its own terminal receipt. The original combined-dataset
+completion receipt continues to describe the initial consolidated package; it
+does not silently claim that this later experiment was present in its original
+inventory.
 
 The v3 arm runs only:
 
@@ -84,6 +100,8 @@ From `~/Repos/TI_Pipeline/SimNIBS/Scripts` on Stanage:
 
 ```bash
 SEGDET=simnibs_segmentation_determinism/hpc/submit.sh
+SEGDET_DATASET_ROOT=/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1
+export SEGDET_DATASET_ROOT
 
 bash "$SEGDET" scope
 bash "$SEGDET" preflight
@@ -95,9 +113,10 @@ These four commands do not call `sbatch`. `preflight` is read-only and leaves
 an absent output root absent; `init` creates configuration and source manifests
 but submits nothing.
 
-Before any submission, independently confirm that the dataset checksum is no
-longer running and obtain explicit approval. Only after both gates are met is
-the submission command:
+Before any submission, independently confirm that the dataset consolidation
+and retirement cleanup are complete, no readiness/copy/checksum process is
+running, and obtain explicit approval. Only after all gates are met is the
+submission command:
 
 ```bash
 bash "$SEGDET" run

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -13,8 +12,7 @@ from .workflow import collect, initialize, run_repeat, status, workflow_prefligh
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path)
-    parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--dataset-root", type=Path)
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in ("scope", "preflight", "init", "collect", "analyze", "status"):
         subparsers.add_parser(command)
@@ -27,16 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def load_config(args: argparse.Namespace) -> ExperimentConfig:
     config = ExperimentConfig.from_env()
-    changes = {}
-    if args.source_root is not None:
-        changes["source_root"] = args.source_root
-        changes["protected_roots"] = (
-            args.source_root,
-            *tuple(root for root in config.protected_roots if root != config.source_root),
-        )
-    if args.output_root is not None:
-        changes["output_root"] = args.output_root
-    return replace(config, **changes)
+    if args.dataset_root is not None:
+        config = config.with_dataset_root(args.dataset_root)
+    return config
 
 
 def _print(payload, *, stream=None) -> None:

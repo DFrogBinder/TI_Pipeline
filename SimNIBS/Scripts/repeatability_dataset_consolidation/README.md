@@ -22,6 +22,21 @@ The workflow does not launch simulations. Copy, verification, and Shared
 archival run on the login node. Retirement is a separate, receipt-gated Slurm
 maintenance operation and is never triggered automatically by copying.
 
+## Current production recovery point
+
+At the 12 November 2026 audit, the production dataset had all 215 copy-item
+receipts, a matched 215/215 size/mtime verification, and a matched 215/215
+checksum verification. `dataset_manifest.json`, `source_mapping.tsv`, and the
+exhaustive source disposition were present. The final streamed file inventory
+and `_consolidation/complete.json` were absent, so the dataset was verified but
+not yet retirement-ready.
+
+The `prepare-retirement` mode is the preferred recovery command for that
+state. It resumes finalization from per-item checkpoints, validates the
+completed dataset, copies and verifies the four obsolete v3 roots on Shared,
+audits the live Slurm queue, writes an external readiness receipt, and then
+stops. It cannot submit deletion jobs and never calls `retire-submit`.
+
 ## Start in tmux
 
 The physical copy and checksum pass may run for a long time. On the Stanage
@@ -38,6 +53,73 @@ ARCHIVE_ROOT=/shared/boyan/Shared/retired_repeatability_v3_sources_v1
 
 Detach with `Ctrl-b d`; reattach with
 `tmux attach -t repeatability-dataset`.
+
+For the current verified-copy recovery, use a dedicated session and log:
+
+```bash
+cd ~/Repos/TI_Pipeline/SimNIBS/Scripts
+DATASET=repeatability_dataset_consolidation/hpc/submit.sh
+LOG_DIR="$HOME/repeatability_dataset_readiness_logs"
+LOG="$LOG_DIR/prepare-retirement-$(date -u +%Y%m%dT%H%M%SZ).log"
+
+mkdir -p "$LOG_DIR"
+tmux new-session -d -s repeatability-dataset-readiness \
+    "cd '$PWD' && bash '$DATASET' prepare-retirement > '$LOG' 2>&1"
+
+printf 'Session: %s\nLog: %s\n' \
+    repeatability-dataset-readiness "$LOG"
+```
+
+Do not start a second instance. The command holds a non-blocking exclusive
+lock at:
+
+```text
+/mnt/parscratch/users/cop23bi/deletion_job_logs/repeatability_dataset_v1/retirement_readiness.lock
+```
+
+An accidental concurrent invocation fails without changing the active
+process's state.
+
+## Monitor the automatic recovery
+
+`readiness-status` is read-only and may be run from another SSH session:
+
+```bash
+cd ~/Repos/TI_Pipeline/SimNIBS/Scripts
+DATASET=repeatability_dataset_consolidation/hpc/submit.sh
+
+bash "$DATASET" readiness-status
+
+ps -u "$USER" -o pid,ppid,etime,stat,pcpu,pmem,wchan:24,args |
+    grep -E '[r]epeatability_dataset_consolidation prepare-retirement|[r]sync'
+```
+
+Long stages expose resumable receipts at:
+
+```text
+DATASET/_consolidation/finalization/items/*.json
+DATASET/_consolidation/finalization/items/*.jsonl
+SHARED/_archive/copy_items/*.json
+SHARED/_archive/verification/checksum/items/*/receipt.json
+/mnt/parscratch/users/cop23bi/deletion_job_logs/repeatability_dataset_v1/retirement_readiness_state.json
+```
+
+The status values are `not_started`, `running`, `interrupted`, `failed`, or
+`deletion_ready`. If the SSH or tmux session disappears, inspect status and
+processes before rerunning. A rerun reuses valid item checkpoints and refuses
+nonmatching completion or readiness receipts.
+
+Success creates the external gate:
+
+```text
+/mnt/parscratch/users/cop23bi/deletion_job_logs/repeatability_dataset_v1/retirement_ready.json
+```
+
+That receipt binds the dataset completion SHA-256, Shared archive completion
+SHA-256, source-disposition SHA-256, exact retirement plan and targets, and the
+live scheduler snapshot. It records `jobs_submitted: 0` and
+`deletion_performed: false`. It also records the literal confirmed
+`retire-submit` command for later review, but does not execute it.
 
 ## 1. Audit, prepare, and copy
 
@@ -57,7 +139,7 @@ bash "$DATASET" status
 
 Interrupted copies are resumable by running the same `copy` command again.
 
-## 2. Verify and complete the dataset
+## 2. Verify and complete the dataset manually
 
 The quick comparison uses size and modification time. The checksum command
 performs full-content comparison, builds the sorted per-file SHA-256 inventory,
@@ -74,7 +156,7 @@ bash "$DATASET" status
 
 Do not proceed to retirement unless `status` reports `complete: true`.
 
-## 3. Archive obsolete v3 references to Shared
+## 3. Archive obsolete v3 references to Shared manually
 
 Shared is login-node-only and must never replace parscratch in a worker-job
 configuration. This is a self-contained whole-tree logical archive. Hard links
@@ -96,7 +178,7 @@ The external archive completion receipt is:
 /shared/boyan/Shared/.repeatability_retirement_receipts/legacy_v3_archive_v1.complete.json
 ```
 
-## 4. Plan retirement without deleting
+## 4. Plan retirement without deleting manually
 
 The default is an exhaustive dry-run plan for the complete code-owned
 allowlist:
@@ -112,7 +194,7 @@ revalidation ambiguous.
 The global `CamCan_Corrected_v4_Scaffolds` root and all primary MRI, atlas,
 CHARM, corrected-label, MNI, and `ti_dataset` roots are not retirement targets.
 
-## 5. Explicitly submit guarded deletion
+## 5. Explicitly submit guarded deletion — separate next step
 
 Copy the exact receipt hashes printed by `retire-plan`. Submission requires all
 confirmations and still re-runs every gate. The example deliberately uses
@@ -151,4 +233,7 @@ bash "$DATASET" retire-status
 ```
 
 Only `retire-submit` can initiate deletion. No copy, verify, checksum, archive,
-status, or plan mode calls `rm` or submits simulation work.
+status, plan, `prepare-retirement`, or `readiness-status` mode calls `rm` or
+submits simulation work. After `prepare-retirement` reports
+`deletion_ready`, stop and inspect `retirement_ready.json`; deletion remains a
+new, explicit operator action.

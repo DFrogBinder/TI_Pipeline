@@ -8,6 +8,7 @@ import matplotlib.image as mpimg
 from matplotlib.collections import LineCollection
 import pytest
 
+import simnibs_segmentation_determinism.visualizations as visualizations
 from simnibs_segmentation_determinism.provenance import (
     sha256_file,
     write_json_atomic,
@@ -176,3 +177,21 @@ def test_changed_voxel_plot_only_marks_the_explained_median(configured_experimen
         if isinstance(collection, LineCollection)
     ]
     assert len(line_collections) == 1
+
+
+def test_rendering_error_removes_temporary_package(
+    configured_experiment, monkeypatch
+):
+    root = _completed_source(configured_experiment)
+
+    def fail_render(data):
+        del data
+        raise RuntimeError("synthetic rendering failure")
+
+    monkeypatch.setitem(visualizations.PLOTS, FIGURE_STEMS[0], fail_render)
+
+    with pytest.raises(RuntimeError, match="synthetic rendering failure"):
+        build_visualizations(configured_experiment)
+
+    assert not (root / "visualizations_v1").exists()
+    assert not tuple(root.glob(".visualizations_v1.tmp-*"))

@@ -445,7 +445,7 @@ def build_visualizations(config: ExperimentConfig) -> Dict[str, object]:
     try:
         _write_package(temporary, data, source)
         os.replace(str(temporary), str(destination))
-    except (OSError, ValueError, VisualizationDataError, VisualizationBuildError):
+    except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
     return {

@@ -118,7 +118,7 @@ def _spatial_disagreement(paths: Sequence[Path], slab_depth: int = 8):
     images = []
     for path in paths:
         try:
-            image = nib.load(str(path))
+            image = nib.load(str(path), keep_file_open=True)
         except (OSError, nib.filebasedimages.ImageFileError) as exc:
             raise VisualizationDataError(f"Could not load CHARM label map: {path}") from exc
         if not np.issubdtype(image.get_data_dtype(), np.integer):

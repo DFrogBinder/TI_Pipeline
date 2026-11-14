@@ -8,6 +8,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+import simnibs_segmentation_determinism.visualization_data as visualization_data
 from simnibs_segmentation_determinism.visualization_data import (
     VisualizationDataError,
     build_pairwise_matrix,
@@ -181,3 +182,22 @@ def test_load_visualization_data_rejects_duplicate_pair(tmp_path):
 
     with pytest.raises(VisualizationDataError, match="duplicate"):
         load_visualization_data(root)
+
+
+def test_compressed_label_maps_keep_file_handles_open_during_slab_reads(
+    tmp_path, monkeypatch
+):
+    root = _completed_analysis(tmp_path / "staging")
+    real_load = nib.load
+    options = []
+
+    def recording_load(path, **kwargs):
+        options.append(kwargs)
+        return real_load(path, **kwargs)
+
+    monkeypatch.setattr(visualization_data.nib, "load", recording_load)
+
+    load_visualization_data(root)
+
+    assert len(options) == 10
+    assert all(option.get("keep_file_open") is True for option in options)

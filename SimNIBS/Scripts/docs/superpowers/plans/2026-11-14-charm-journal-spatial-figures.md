@@ -104,5 +104,5 @@
 
 - [x] **Step 3: Re-render the local fixture, inspect both figures, and verify every `SHA256SUMS` entry.**
 
-- [ ] **Step 4: Commit the completed feature without merging or submitting an HPC job.**
+- [x] **Step 4: Commit the completed feature without merging or submitting an HPC job.**
 

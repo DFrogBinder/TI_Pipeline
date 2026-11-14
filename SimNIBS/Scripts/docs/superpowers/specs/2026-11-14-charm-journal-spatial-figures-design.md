@@ -113,4 +113,3 @@ The only operational delta is the new explicit CLI/launcher mode and new output
 directory. It reads 10 completed CHARM maps and one staged T1, creates two
 figures in three formats plus metadata, and submits no segmentation, meshing, or
 FEM tasks.
-

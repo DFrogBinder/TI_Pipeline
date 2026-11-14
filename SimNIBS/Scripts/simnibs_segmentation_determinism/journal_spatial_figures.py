@@ -414,6 +414,17 @@ def _validate_existing(
     }
     if not required.issubset(checked):
         raise JournalSpatialFigureError("Existing journal figure package is incomplete")
+    actual_entries = set()
+    for path in output.iterdir():
+        if path.is_symlink() or not path.is_file():
+            raise JournalSpatialFigureError(
+                f"Journal figure destination is foreign or incomplete: {output}"
+            )
+        actual_entries.add(path.name)
+    if actual_entries != checked | {"SHA256SUMS"}:
+        raise JournalSpatialFigureError(
+            f"Journal figure destination is foreign or incomplete: {output}"
+        )
     return manifest
 
 
@@ -438,6 +449,10 @@ def build_journal_spatial_figures(config: ExperimentConfig) -> Dict[str, object]
     )
     try:
         _write_package(temporary, data, source)
+        if _source_records(config) != source:
+            raise JournalSpatialFigureError(
+                "Journal figure sources changed while the package was rendered"
+            )
         os.replace(str(temporary), str(destination))
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)

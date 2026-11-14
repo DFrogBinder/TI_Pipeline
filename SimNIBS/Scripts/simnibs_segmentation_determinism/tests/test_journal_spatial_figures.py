@@ -144,6 +144,19 @@ def test_build_journal_spatial_figures_reuses_only_verified_package(
         build_journal_spatial_figures(configured_experiment)
 
 
+def test_build_journal_spatial_figures_rejects_unchecksummed_extra_file(
+    configured_experiment,
+):
+    root = _non_ras_spatial_fixture(configured_experiment)
+    assert build_journal_spatial_figures(configured_experiment)["action"] == "created"
+    (root / "journal_spatial_figures_v1/unexpected.txt").write_text(
+        "not part of the bound package\n", encoding="utf-8"
+    )
+
+    with pytest.raises(JournalSpatialFigureError, match="foreign or incomplete"):
+        build_journal_spatial_figures(configured_experiment)
+
+
 def test_build_journal_spatial_figures_refuses_foreign_destination(
     configured_experiment,
 ):
@@ -172,6 +185,33 @@ def test_render_failure_removes_temporary_journal_package(
     )
 
     with pytest.raises(RuntimeError, match="synthetic journal rendering failure"):
+        build_journal_spatial_figures(configured_experiment)
+
+    assert not (root / "journal_spatial_figures_v1").exists()
+    assert not tuple(root.glob(".journal_spatial_figures_v1.tmp-*"))
+
+
+def test_source_drift_during_render_prevents_publication(
+    configured_experiment, monkeypatch
+):
+    root = _non_ras_spatial_fixture(configured_experiment)
+    original_builder = journal_figures.FIGURE_BUILDERS[FIGURE_STEMS[0]]
+
+    def mutate_source_after_render(data):
+        figure = original_builder(data)
+        manifest = root / "analysis/determinism_manifest.json"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+        )
+        return figure
+
+    monkeypatch.setitem(
+        journal_figures.FIGURE_BUILDERS,
+        FIGURE_STEMS[0],
+        mutate_source_after_render,
+    )
+
+    with pytest.raises(JournalSpatialFigureError, match="analysis artifact mismatch"):
         build_journal_spatial_figures(configured_experiment)
 
     assert not (root / "journal_spatial_figures_v1").exists()

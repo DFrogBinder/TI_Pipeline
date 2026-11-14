@@ -75,7 +75,10 @@ def _validated_staged_t1(config: ExperimentConfig) -> tuple[Path, str]:
         receipt = Path(str(record.get("path", "")))
         if not receipt.is_file() or sha256_file(receipt) != record.get("sha256"):
             raise JournalSpatialDataError(f"CHARM repeat receipt is missing or changed: {receipt}")
-        receipt_t1 = _read_json(receipt).get("inputs", {}).get("t1", {})
+        receipt_inputs = _read_json(receipt).get("inputs")
+        if not isinstance(receipt_inputs, dict):
+            raise JournalSpatialDataError(f"CHARM repeat receipt lacks T1 provenance: {receipt}")
+        receipt_t1 = receipt_inputs.get("t1")
         if not isinstance(receipt_t1, dict):
             raise JournalSpatialDataError(f"CHARM repeat receipt lacks T1 provenance: {receipt}")
         try:
@@ -206,9 +209,16 @@ def _slice_selections(
     return main, atlas
 
 
-def _world_coordinate(affine: np.ndarray, orientation: str, index: int) -> float:
+def _world_coordinate(
+    affine: np.ndarray,
+    bounds: Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]],
+    orientation: str,
+    index: int,
+) -> float:
     axis = ORIENTATIONS.index(orientation)
-    voxel = np.zeros(3, dtype=np.float64)
+    voxel = np.asarray(
+        [(start + stop - 1) / 2.0 for start, stop in bounds], dtype=np.float64
+    )
     voxel[axis] = index
     world = nib.affines.apply_affine(affine, voxel)
     return float(world[axis])
@@ -251,7 +261,7 @@ def prepare_journal_spatial_data(config: ExperimentConfig) -> JournalSpatialData
         "crop_bounds_voxels": [list(bound) for bound in bounds],
         "main_slice_indices": dict(main),
         "main_slice_coordinates_mm": {
-            orientation: _world_coordinate(affine, orientation, index)
+            orientation: _world_coordinate(affine, bounds, orientation, index)
             for orientation, index in main.items()
         },
         "atlas_slice_indices": {
@@ -259,7 +269,8 @@ def prepare_journal_spatial_data(config: ExperimentConfig) -> JournalSpatialData
         },
         "atlas_slice_coordinates_mm": {
             orientation: [
-                _world_coordinate(affine, orientation, index) for index in indices
+                _world_coordinate(affine, bounds, orientation, index)
+                for index in indices
             ]
             for orientation, indices in atlas.items()
         },

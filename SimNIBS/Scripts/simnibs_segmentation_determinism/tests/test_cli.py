@@ -40,3 +40,48 @@ def test_cli_errors_are_machine_readable(configured_experiment, monkeypatch, cap
     assert cli.main(["run-repeat", "--arm", "bad", "--array-index", "0"]) == 2
     error = json.loads(capsys.readouterr().err)
     assert error["status"] == "error"
+
+
+def test_install_cli_requires_confirmation_and_exposes_read_only_preflight(
+    configured_experiment,
+    dataset_receipt_writer,
+    staging_completer,
+    monkeypatch,
+    capsys,
+):
+    config = configured_experiment
+    staging_completer(config)
+    dataset_receipt_writer(config)
+    monkeypatch.setattr(cli, "load_config", lambda args: config)
+
+    assert cli.main(["install-preflight"]) == 0
+    assert _payload(capsys)["status"] == "ready"
+    assert (
+        cli.main(
+            [
+                "install-extension",
+                "--confirm-dataset-root",
+                str(config.dataset_root.parent),
+            ]
+        )
+        == 2
+    )
+    assert "confirmation" in capsys.readouterr().err
+
+
+def test_cli_staging_root_override_is_independent(monkeypatch, tmp_path):
+    dataset = tmp_path / "dataset"
+    staging = tmp_path / "staging"
+    config = cli.load_config(
+        cli.build_parser().parse_args(
+            [
+                "--dataset-root",
+                str(dataset),
+                "--staging-root",
+                str(staging),
+                "scope",
+            ]
+        )
+    )
+    assert config.dataset_root == dataset
+    assert config.output_root == staging

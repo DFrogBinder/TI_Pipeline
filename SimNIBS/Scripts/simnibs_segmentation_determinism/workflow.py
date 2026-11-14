@@ -82,8 +82,8 @@ def _plan_payload(config: ExperimentConfig, ready: Mapping[str, object]) -> Dict
         "scope": scope_payload(config),
         "source": {
             "subject": config.subject,
-            "dataset": ready["dataset"],
             "cohort": ready["cohort"],
+            "future_extension_root": ready["future_extension_root"],
             "canonical_inputs": ready["inputs"],
             "staged_inputs": _inputs_payload(staged),
         },
@@ -152,18 +152,108 @@ def _stage_subject_inputs(config: ExperimentConfig, temporary_root: Path, canoni
     return planned
 
 
+def _stage_cohort(config: ExperimentConfig, temporary_root: Path) -> Path:
+    destination = temporary_root / "inputs/cohort/subjects.txt"
+    destination.parent.mkdir(parents=True)
+    shutil.copy2(config.cohort_file, destination, follow_symlinks=True)
+    if sha256_file(destination) != config.cohort_sha256:
+        raise WorkflowError("Staged cohort SHA-256 differs from pinned cohort")
+    return destination
+
+
 def _validate_staged_inputs(config: ExperimentConfig):
-    canonical = resolve_subject_inputs(config)
+    source_path = config.output_root / "_pipeline/source_manifest.json"
+    try:
+        validate_sha256_sidecar(source_path)
+    except ProvenanceError as exc:
+        raise WorkflowError("Invalid staged source-manifest sidecar") from exc
+    source = _read_json(source_path)
     try:
         staged = resolve_staged_subject_inputs(config)
     except ProvenanceError as exc:
         raise WorkflowError(f"Invalid staged input: {exc}") from exc
-    if (
-        staged.t1_sha256 != canonical.t1_sha256
-        or staged.t2_sha256 != canonical.t2_sha256
+    staged_records = source.get("staged_inputs")
+    if not isinstance(staged_records, dict):
+        raise WorkflowError("Staged source manifest has no input binding")
+    for label, path, observed_sha256 in (
+        ("t1", staged.t1, staged.t1_sha256),
+        ("t2", staged.t2, staged.t2_sha256),
     ):
-        raise WorkflowError("A staged input SHA-256 differs from its canonical input")
-    return staged
+        record = staged_records.get(label)
+        if (
+            not isinstance(record, dict)
+            or record.get("path") != str(path)
+            or record.get("sha256") != observed_sha256
+        ):
+            raise WorkflowError(
+                f"staged input {label.upper()} differs from its pinned source manifest"
+            )
+    staged_cohort = config.output_root / "inputs/cohort/subjects.txt"
+    cohort = source.get("cohort")
+    if (
+        not staged_cohort.is_file()
+        or staged_cohort.is_symlink()
+        or sha256_file(staged_cohort) != config.cohort_sha256
+        or not isinstance(cohort, dict)
+        or cohort.get("staged_path") != str(staged_cohort)
+        or cohort.get("staged_sha256") != config.cohort_sha256
+    ):
+        raise WorkflowError("Invalid staged cohort SHA-256")
+    return staged, source
+
+
+def _validate_initialized_state(config: ExperimentConfig):
+    config_path = config.output_root / "_pipeline/config.json"
+    if not config_path.is_file():
+        raise WorkflowError("Workflow is not initialized")
+    try:
+        validate_sha256_sidecar(config_path)
+    except ProvenanceError as exc:
+        raise WorkflowError("Initialized configuration sidecar is invalid") from exc
+    stored = _read_json(config_path)
+    if (
+        stored.get("workflow") != "simnibs_segmentation_determinism"
+        or stored.get("status") != "prepared"
+        or stored.get("config") != _config_payload(config)
+        or not isinstance(stored.get("plan_sha256"), str)
+    ):
+        raise WorkflowError("Initialized workflow ownership or configuration differs")
+    staged, source = _validate_staged_inputs(config)
+    return stored, staged, source
+
+
+def runtime_preflight(config: ExperimentConfig) -> Dict[str, object]:
+    """Validate only the initialized package and its staged scientific inputs."""
+    validate_output_isolation(config)
+    _, staged, source = _validate_initialized_state(config)
+    cohort = source["cohort"]
+    payload = scope_payload(config)
+    payload.update(
+        {
+            "status": "ready",
+            "selected_subject": config.subject,
+            "selection_seed": config.selection_seed,
+            "cohort": {
+                "path": cohort["staged_path"],
+                "sha256": cohort["staged_sha256"],
+                "subjects": cohort["subjects"],
+            },
+            "inputs": {
+                "t1": {
+                    "path": str(staged.t1),
+                    "size_bytes": staged.t1.stat().st_size,
+                    "sha256": staged.t1_sha256,
+                },
+                "t2": {
+                    "path": str(staged.t2),
+                    "size_bytes": staged.t2.stat().st_size,
+                    "sha256": staged.t2_sha256,
+                },
+            },
+            "output_root": str(config.output_root.resolve()),
+        }
+    )
+    return payload
 
 
 def initialize(config: ExperimentConfig) -> Dict[str, object]:
@@ -183,7 +273,7 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
                 "Existing workflow plan differs from the requested plan: "
                 f"{existing.get('plan_sha256')} != {plan_sha256}"
             )
-        _validate_staged_inputs(config)
+        _validate_initialized_state(config)
         return {
             "status": "prepared",
             "action": "reused",
@@ -202,6 +292,7 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
     canonical = resolve_subject_inputs(config)
     try:
         staged = _stage_subject_inputs(config, temporary, canonical)
+        staged_cohort = _stage_cohort(config, temporary)
         temporary_pipeline = temporary / "_pipeline"
         temporary_pipeline.mkdir()
         stored_config = {**plan, "status": "prepared", "plan_sha256": plan_sha256}
@@ -213,8 +304,14 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
             "status": "pinned",
             "subject": config.subject,
             "selection_seed": config.selection_seed,
-            "dataset": ready["dataset"],
-            "cohort": ready["cohort"],
+            "cohort": {
+                **ready["cohort"],
+                "staged_path": str(
+                    config.output_root / "inputs/cohort/subjects.txt"
+                ),
+                "staged_sha256": sha256_file(staged_cohort),
+            },
+            "future_extension_root": str(config.extension_root),
             "canonical_inputs": _inputs_payload(canonical),
             "staged_inputs": _inputs_payload(staged),
             "source_outputs_modified": False,
@@ -239,15 +336,7 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
 
 
 def _ensure_initialized(config: ExperimentConfig) -> Dict[str, object]:
-    config_path = config.output_root / "_pipeline/config.json"
-    if not config_path.is_file():
-        raise WorkflowError("Workflow is not initialized")
-    stored = _read_json(config_path)
-    ready = workflow_preflight(config)
-    expected_hash = _plan_hash(_plan_payload(config, ready))
-    if stored.get("plan_sha256") != expected_hash:
-        raise WorkflowError("Initialized plan does not match the requested configuration")
-    _validate_staged_inputs(config)
+    stored, _, _ = _validate_initialized_state(config)
     return stored
 
 
@@ -324,7 +413,7 @@ def _validate_receipts(config: ExperimentConfig):
 
 
 def _validate_workflow_evidence(config: ExperimentConfig) -> Dict[str, object]:
-    ready = workflow_preflight(config)
+    ready = runtime_preflight(config)
     root = config.output_root / "_pipeline/module_preflight"
     receipts = {}
     for name in PREFLIGHT_FILES:

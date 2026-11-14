@@ -19,7 +19,8 @@ def test_defaults_pin_approved_scientific_and_hpc_scope():
     assert config.selection_seed == 20261106
     assert config.repeats_per_arm == 10
     assert config.dataset_root.as_posix() == dataset_root
-    assert config.cohort_file.as_posix() == f"{dataset_root}/subjects.txt"
+    assert config.cohort_file.name == "cohort_subjects.txt"
+    assert config.cohort_file.parent.name == "simnibs_segmentation_determinism"
     assert config.dataset_manifest_file.as_posix() == (
         f"{dataset_root}/dataset_manifest.json"
     )
@@ -27,10 +28,13 @@ def test_defaults_pin_approved_scientific_and_hpc_scope():
         f"{dataset_root}/_consolidation/complete.json"
     )
     assert config.source_root.as_posix() == (
-        f"{dataset_root}/data/simnibs4/left_hippocampus/"
-        "sub-CC110174_repeatability/remesh/repeats/repeat_001"
+        "/mnt/parscratch/users/cop23bi/"
+        "ti_dataset_final_132_balanced_10_corrected"
     )
     assert config.output_root.as_posix() == (
+        "/mnt/parscratch/users/cop23bi/segmentation_determinism_staging_v1"
+    )
+    assert config.extension_root.as_posix() == (
         f"{dataset_root}/extensions/segmentation_determinism_v1"
     )
     assert config.simnibs326_module == "SimNIBS/3.2.6-foss-2023a"
@@ -60,13 +64,18 @@ def test_seeded_selection_is_the_pinned_subject(configured_experiment):
 
 def test_from_env_only_changes_nonscientific_path_overrides(monkeypatch, tmp_path):
     dataset = tmp_path / "combined"
+    staging = tmp_path / "staging"
     monkeypatch.setenv("SEGDET_DATASET_ROOT", str(dataset))
+    monkeypatch.setenv("SEGDET_STAGING_ROOT", str(staging))
 
     config = ExperimentConfig.from_env()
 
     assert config.dataset_root == dataset
-    assert config.output_root == dataset / "extensions/segmentation_determinism_v1"
-    assert config.cohort_file == dataset / "subjects.txt"
+    assert config.output_root == staging
+    assert config.extension_root == dataset / "extensions/segmentation_determinism_v1"
+    assert config.source_root.as_posix().endswith(
+        "/ti_dataset_final_132_balanced_10_corrected"
+    )
     assert config.repeats_per_arm == 10
     assert config.subject == "sub-CC110174"
 

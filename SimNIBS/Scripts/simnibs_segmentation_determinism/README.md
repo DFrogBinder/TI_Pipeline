@@ -13,40 +13,40 @@ segmentations. The full scope is **20 scientific segmentation tasks** and
 elements and one collector. There are no surface, tetrahedral-meshing,
 electrode-placement or FEM tasks.
 
-This implementation does not authorize HPC submission. The `run` command must
-not be used until the combined dataset checksum, consolidation, and retirement
-cleanup have finished, their terminal receipts have been checked, and the user
-has explicitly approved this experiment's submission. Editing or testing this
-package locally does not modify the active HPC consolidation workflow.
+This implementation does not authorize automatic HPC submission. The
+experiment may run while dataset consolidation continues because it uses a
+separate source and staging root. It does not read from or write to the active
+combined dataset. The `run` command remains an explicit operator action.
 
 ## Scientific boundary
 
-The single parent for every scientific input and output is:
+The canonical MRI pair is read once from:
 
 ```text
-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1
+/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected
 ```
 
-Initialization validates that dataset's `subjects.txt`,
-`dataset_manifest.json`, and `_consolidation/complete.json`. It then reads the
-materialized T1w/T2w pair from the copied v4 left-hippocampus remesh repeat 001
-and atomically creates checksum-identical staged copies below:
+Initialization verifies the tracked cohort and the selected subject, then
+atomically creates checksum-identical staged copies of the T1w, T2w, and cohort
+file below:
 
 ```text
-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1/extensions/segmentation_determinism_v1/inputs/sub-CC110174/anat
+/mnt/parscratch/users/cop23bi/segmentation_determinism_staging_v1/inputs
 ```
 
 Both arms read only those staged copies. All repeat artifacts, Slurm logs,
 retry state, workflow receipts, and analysis products are written below:
 
 ```text
-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1/extensions/segmentation_determinism_v1
+/mnt/parscratch/users/cop23bi/segmentation_determinism_staging_v1
 ```
 
-The extension has its own terminal receipt. The original combined-dataset
-completion receipt continues to describe the initial consolidated package; it
-does not silently claim that this later experiment was present in its original
-inventory.
+After both the experiment and consolidation have terminal receipts, a separate
+checksum-gated installer can materialize the staging package at
+`final_132_repeatability_combined_dataset_v1/extensions/segmentation_determinism_v1`.
+The installer has its own ownership and completion receipts. It does not alter
+the staging package, delete data, or rewrite the original combined-dataset
+completion receipt.
 
 The v3 arm runs only:
 
@@ -100,8 +100,9 @@ From `~/Repos/TI_Pipeline/SimNIBS/Scripts` on Stanage:
 
 ```bash
 SEGDET=simnibs_segmentation_determinism/hpc/submit.sh
+SEGDET_STAGING_ROOT=/mnt/parscratch/users/cop23bi/segmentation_determinism_staging_v1
 SEGDET_DATASET_ROOT=/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1
-export SEGDET_DATASET_ROOT
+export SEGDET_STAGING_ROOT SEGDET_DATASET_ROOT
 
 bash "$SEGDET" scope
 bash "$SEGDET" preflight
@@ -109,14 +110,12 @@ bash "$SEGDET" init
 bash "$SEGDET" status
 ```
 
-These four commands do not call `sbatch`. `preflight` is read-only and leaves
-an absent output root absent; `init` creates configuration and source manifests
-but submits nothing.
+These four commands do not call `sbatch`. `preflight` is read-only and does not
+require the combined dataset to be complete. `init` creates the staging root,
+copies and hashes the three pinned input files, and submits nothing.
 
-Before any submission, independently confirm that the dataset consolidation
-and retirement cleanup are complete, no readiness/copy/checksum process is
-running, and obtain explicit approval. Only after all gates are met is the
-submission command:
+After reviewing the preflight and obtaining explicit approval, submit the fixed
+two-arm experiment with:
 
 ```bash
 bash "$SEGDET" run
@@ -142,6 +141,30 @@ bash "$SEGDET" analyze
 If the login-node Python lacks NiBabel, set `ANALYSIS_PYTHON` to an approved
 analysis environment before this local re-analysis. The scheduled collector
 uses the SimNIBS 4.0.1 module environment.
+
+## Later installation into the combined dataset
+
+Do not install while consolidation is running. Once the staging terminal
+receipt and the combined dataset's `dataset_manifest.json` and
+`_consolidation/complete.json` all validate, run the read-only gate:
+
+```bash
+bash "$SEGDET" install-preflight
+```
+
+Only if it reports `status: ready`, install with the literal dataset-root
+confirmation:
+
+```bash
+bash "$SEGDET" install-extension \
+    --confirm-dataset-root="$SEGDET_DATASET_ROOT"
+```
+
+Both install commands submit zero Slurm jobs. The copy is resumable only when
+the destination's ownership receipt matches the staging and dataset receipts.
+A checksum dry-run with destination deletion detection must be empty before
+`extensions/segmentation_determinism_v1/_import/complete.json` is written.
+The installer never deletes the staging package or any prior campaign data.
 
 ## Outputs and interpretation
 

@@ -19,5 +19,5 @@ charm --help >/dev/null
 receipt_dir="$SEGDET_OUTPUT_ROOT/_pipeline/module_preflight"
 mkdir -p "$receipt_dir"
 receipt_tmp="$receipt_dir/.simnibs401.json.tmp-${SLURM_JOB_ID}"
-python3 -m simnibs_segmentation_determinism preflight > "$receipt_tmp"
+python3 -m simnibs_segmentation_determinism runtime-preflight > "$receipt_tmp"
 mv "$receipt_tmp" "$receipt_dir/simnibs401.json"

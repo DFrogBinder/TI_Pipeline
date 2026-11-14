@@ -8,13 +8,17 @@ import numpy as np
 
 import simnibs_segmentation_determinism.charm_runner as charm_runner
 import simnibs_segmentation_determinism.headreco_runner as headreco_runner
+from simnibs_segmentation_determinism.extension_import import (
+    install_extension,
+    install_preflight,
+)
 from simnibs_segmentation_determinism.headreco_runner import expected_headreco_artifacts
 from simnibs_segmentation_determinism.provenance import sha256_file
 from simnibs_segmentation_determinism.workflow import (
     collect,
     initialize,
     run_repeat,
-    workflow_preflight,
+    runtime_preflight,
 )
 
 
@@ -66,7 +70,7 @@ def _run_repeats(config, *, omit=None):
 
 
 def _install_workflow_evidence(config):
-    ready = workflow_preflight(config)
+    ready = runtime_preflight(config)
     receipt_root = config.output_root / "_pipeline/module_preflight"
     receipt_root.mkdir(parents=True, exist_ok=True)
     for name in ("simnibs326.json", "simnibs401.json"):
@@ -99,7 +103,7 @@ def _install_workflow_evidence(config):
 
 
 def test_synthetic_twenty_repeat_workflow_completes_with_verified_receipts(
-    configured_experiment, monkeypatch
+    configured_experiment, dataset_receipt_writer, monkeypatch
 ):
     config = configured_experiment
     source_hashes = {
@@ -137,6 +141,15 @@ def test_synthetic_twenty_repeat_workflow_completes_with_verified_receipts(
         for path in (config.source_root / config.subject / "anat").iterdir()
     } == source_hashes
 
+    dataset_receipt_writer(config)
+    assert install_preflight(config)["status"] == "ready"
+    installed = install_extension(
+        config,
+        confirm_dataset_root=config.dataset_root,
+    )
+    assert installed["status"] == "complete"
+    assert (config.extension_root / "_import/complete.json").is_file()
+
 
 def test_one_missing_repeat_cannot_create_terminal_receipt(configured_experiment, monkeypatch):
     config = configured_experiment
@@ -155,8 +168,8 @@ def test_one_missing_repeat_cannot_create_terminal_receipt(configured_experiment
 def test_operator_readme_contains_submission_and_interpretation_gates():
     readme = (PACKAGE / "README.md").read_text(encoding="utf-8")
 
-    assert "does not authorize HPC submission" in readme
-    assert "dataset checksum" in readme
+    assert "does not authorize automatic HPC submission" in readme
+    assert "may run while dataset consolidation continues" in readme
     assert "headreco preparevols --noclean" in readme
     assert "--registerT2 --initatlas --segment --forceqform" in readme
     assert "gzip" in readme.lower()
@@ -164,7 +177,8 @@ def test_operator_readme_contains_submission_and_interpretation_gates():
     assert "23 scheduler tasks" in readme
     assert "final_132_repeatability_combined_dataset_v1" in readme
     assert "extensions/segmentation_determinism_v1" in readme
-    assert "retirement cleanup" in readme
+    assert "segmentation_determinism_staging_v1" in readme
+    assert "--confirm-dataset-root" in readme
     assert "staged copies" in readme
     assert "simnibs_segmentation_determinism_v1" not in readme
-    assert "ti_dataset_final_132_balanced_10_corrected" not in readme
+    assert "ti_dataset_final_132_balanced_10_corrected" in readme

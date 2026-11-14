@@ -20,6 +20,7 @@ from simnibs_segmentation_determinism.workflow import (
     collect,
     initialize,
     run_repeat,
+    runtime_preflight,
     status,
 )
 
@@ -33,7 +34,7 @@ def _save_map(path: Path, value: int):
 
 
 def _install_workflow_evidence(config):
-    ready = workflow.workflow_preflight(config)
+    ready = runtime_preflight(config)
     receipt_root = config.output_root / "_pipeline/module_preflight"
     receipt_root.mkdir(parents=True, exist_ok=True)
     for name in ("simnibs326.json", "simnibs401.json"):
@@ -157,7 +158,10 @@ def test_initialize_is_idempotent_only_for_identical_plan(configured_experiment)
     )
     assert source_manifest["canonical_inputs"]["t1"]["path"] == str(origin.t1)
     assert source_manifest["staged_inputs"]["t1"]["path"] == str(staged.t1)
-    assert source_manifest["dataset"]["root"] == str(config.dataset_root)
+    staged_cohort = config.output_root / "inputs/cohort/subjects.txt"
+    assert staged_cohort.read_bytes() == config.cohort_file.read_bytes()
+    assert source_manifest["cohort"]["staged_path"] == str(staged_cohort)
+    assert source_manifest["future_extension_root"] == str(config.extension_root)
 
     with pytest.raises(WorkflowError, match="plan"):
         initialize(replace(config, repeats_per_arm=9))
@@ -178,7 +182,9 @@ def test_initialize_cleans_temporary_root_when_input_staging_fails(
         initialize(config)
 
     assert not config.output_root.exists()
-    assert not list(config.output_root.parent.glob(".segmentation_determinism_v1.tmp-*"))
+    assert not list(
+        config.output_root.parent.glob(f".{config.output_root.name}.tmp-*")
+    )
 
 
 @pytest.mark.parametrize(
@@ -233,6 +239,29 @@ def test_staged_input_drift_blocks_repeat_execution(
         run_repeat(config, arm="simnibs326_headreco", array_index=0)
 
     assert called is False
+
+
+def test_repeat_execution_no_longer_reads_canonical_source_after_init(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+    initialize(config)
+    for path in (config.source_root / config.subject / "anat").iterdir():
+        path.unlink()
+
+    monkeypatch.setattr(
+        workflow,
+        "run_headreco_repeat",
+        lambda request: {
+            "status": "complete",
+            "t1": str(request.inputs.t1),
+            "t2": str(request.inputs.t2),
+        },
+    )
+
+    result = run_repeat(config, arm="simnibs326_headreco", array_index=0)
+    assert result["status"] == "complete"
+    assert result["t1"].startswith(str(config.output_root))
 
 
 def test_collect_with_19_receipts_is_incomplete_and_has_no_terminal_receipt(
@@ -326,20 +355,20 @@ def test_incomplete_recollection_invalidates_stale_terminal(
     assert status(config)["state"] == "incomplete"
 
 
-def test_source_drift_invalidates_stale_terminal(configured_experiment, monkeypatch):
+def test_collection_uses_staged_provenance_after_source_is_removed(
+    configured_experiment, monkeypatch
+):
     config = configured_experiment
     initialize(config)
     _install_workflow_evidence(config)
     _install_synthetic_receipts(config, monkeypatch)
-    assert collect(config)["status"] == "complete"
+    for source in (config.source_root / config.subject / "anat").iterdir():
+        source.unlink()
 
-    source = config.source_root / config.subject / "anat" / f"{config.subject}_T1w.nii"
-    source.write_bytes(b"source drift")
     result = collect(config)
 
-    assert result["status"] == "incomplete"
-    assert result["failures"][0]["arm"] == "workflow_provenance"
-    assert not (config.output_root / "_pipeline/complete.json").exists()
+    assert result["status"] == "complete"
+    assert result["validated_repeats"] == 20
 
 
 def test_status_rejects_workflow_evidence_changed_after_completion(

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import re
 import subprocess
@@ -44,16 +42,23 @@ def test_static_slurm_scope_resources_modules_and_stage_boundaries():
     assert "afterok:$preflight326" in submitter
     assert "afterok:$preflight401" in submitter
     assert "scheduler tasks: 23" in submitter
+    assert "runtime-preflight" in preflight326
+    assert "runtime-preflight" in preflight401
     assert (
         'DATASET_ROOT="${SEGDET_DATASET_ROOT:-/mnt/parscratch/users/cop23bi/'
         'final_132_repeatability_combined_dataset_v1}"'
     ) in submitter
-    assert 'OUTPUT_ROOT="$DATASET_ROOT/extensions/segmentation_determinism_v1"' in submitter
     assert (
-        'SOURCE_ROOT="$DATASET_ROOT/data/simnibs4/left_hippocampus/'
-        'sub-CC110174_repeatability/remesh/repeats/repeat_001"'
+        'STAGING_ROOT="${SEGDET_STAGING_ROOT:-/mnt/parscratch/users/cop23bi/'
+        'segmentation_determinism_staging_v1}"'
+    ) in submitter
+    assert 'OUTPUT_ROOT="$STAGING_ROOT"' in submitter
+    assert (
+        'SOURCE_ROOT="/mnt/parscratch/users/cop23bi/'
+        'ti_dataset_final_132_balanced_10_corrected"'
     ) in submitter
     assert 'export SEGDET_DATASET_ROOT="$DATASET_ROOT"' in submitter
+    assert 'export SEGDET_STAGING_ROOT="$STAGING_ROOT"' in submitter
     assert 'export SEGDET_OUTPUT_ROOT="$OUTPUT_ROOT"' in submitter
     assert "submission.lock" in submitter
 
@@ -81,66 +86,30 @@ def _fake_scheduler(tmp_path: Path):
     return fake, log, state
 
 
-def _dataset_tree(dataset: Path):
-    subjects = (
-        "sub-CC110174",
-        "sub-CC121144",
-        "sub-CC310407",
-        "sub-CC320616",
-        "sub-CC420071",
-        "sub-CC410432",
-        "sub-CC510415",
-        "sub-CC520127",
-        "sub-CC610631",
-        "sub-CC720941",
+def _fake_python(tmp_path: Path) -> Path:
+    fake = tmp_path / "fake-python"
+    fake.write_text(
+        "#!/bin/bash\n"
+        "if [[ \"${1:-}\" == \"-\" ]]; then exec python3 \"$@\"; fi\n"
+        "cat >/dev/null || true\n"
+        "exit 0\n",
+        encoding="utf-8",
     )
-    dataset.mkdir(parents=True, exist_ok=True)
-    (dataset / "subjects.txt").write_text("\n".join(subjects) + "\n")
-    plan_sha256 = "1ab5c604e4d965ae70a63ca9984c878db2631f89a1f99b5927196e25d696a32c"
-    scope = {"subjects": 10, "simulations": 3200}
-    manifest = {
-        "status": "complete",
-        "workflow": "repeatability_dataset_consolidation",
-        "output_root": str(dataset.resolve()),
-        "plan_sha256": plan_sha256,
-        "scope": scope,
-        "source_outputs_modified": False,
-    }
-    manifest_path = dataset / "dataset_manifest.json"
-    manifest_path.write_text(json.dumps(manifest) + "\n")
-    completion = {
-        **manifest,
-        "dataset_manifest": {
-            "path": "dataset_manifest.json",
-            "sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-        },
-    }
-    completion_path = dataset / "_consolidation/complete.json"
-    completion_path.parent.mkdir()
-    completion_path.write_text(json.dumps(completion) + "\n")
-    source = (
-        dataset
-        / "data/simnibs4/left_hippocampus/"
-        "sub-CC110174_repeatability/remesh/repeats/repeat_001"
-    )
-    anat = source / "sub-CC110174/anat"
-    anat.mkdir(parents=True)
-    (anat / "sub-CC110174_T1w.nii").write_bytes(b"T1")
-    (anat / "sub-CC110174_T2w.nii").write_bytes(b"T2")
-    return dataset
+    fake.chmod(0o755)
+    return fake
 
 
 def _run_submitter(command, tmp_path, fake, log, state, output=None):
-    dataset = output or tmp_path / "dataset"
-    if not dataset.exists():
-        _dataset_tree(dataset)
+    staging = output or tmp_path / "staging"
+    dataset = tmp_path / "dataset"
     env = {
         **os.environ,
         "SBATCH_BIN": str(fake),
         "FAKE_SBATCH_LOG": str(log),
         "FAKE_SBATCH_STATE": str(state),
         "SEGDET_DATASET_ROOT": str(dataset),
-        "PYTHON_BIN": "python3",
+        "SEGDET_STAGING_ROOT": str(staging),
+        "PYTHON_BIN": str(_fake_python(tmp_path)),
     }
     return subprocess.run(
         ["bash", str(SUBMITTER), command],
@@ -186,7 +155,7 @@ def test_only_run_calls_sbatch_and_run_submits_guarded_dependency_graph(tmp_path
     assert all("--open-mode=append" in call for call in calls)
     ledger = (
         tmp_path
-        / "run-output/extensions/segmentation_determinism_v1/_pipeline/job_ids.tsv"
+        / "run-output/_pipeline/job_ids.tsv"
     )
     assert ledger.is_file()
     assert len(ledger.read_text(encoding="utf-8").splitlines()) == 6
@@ -226,7 +195,7 @@ def test_second_run_is_rejected_before_duplicate_submission(tmp_path):
 
 def test_repeat_scope_override_is_rejected_before_submission(tmp_path):
     fake, log, state = _fake_scheduler(tmp_path)
-    dataset = _dataset_tree(tmp_path / "dataset")
+    dataset = tmp_path / "dataset"
     env = {
         **os.environ,
         "SBATCH_BIN": str(fake),
@@ -234,7 +203,8 @@ def test_repeat_scope_override_is_rejected_before_submission(tmp_path):
         "FAKE_SBATCH_STATE": str(state),
         "SEGDET_DATASET_ROOT": str(dataset),
         "SEGDET_REPEATS_PER_ARM": "7",
-        "PYTHON_BIN": "python3",
+        "SEGDET_STAGING_ROOT": str(tmp_path / "staging"),
+        "PYTHON_BIN": str(_fake_python(tmp_path)),
     }
     result = subprocess.run(
         ["bash", str(SUBMITTER), "run"],
@@ -246,4 +216,56 @@ def test_repeat_scope_override_is_rejected_before_submission(tmp_path):
     )
 
     assert result.returncode != 0
+    assert not log.exists()
+
+
+def test_install_modes_never_submit_jobs_and_confirmation_is_exact(tmp_path):
+    fake, log, state = _fake_scheduler(tmp_path)
+    dataset = tmp_path / "dataset"
+
+    result = _run_submitter(
+        "install-preflight", tmp_path, fake, log, state, output=tmp_path / "staging"
+    )
+    assert result.returncode == 0
+
+    rejected = subprocess.run(
+        ["bash", str(SUBMITTER), "install-extension", "--confirm-dataset-root=/wrong"],
+        cwd=str(PACKAGE.parent),
+        env={
+            **os.environ,
+            "SBATCH_BIN": str(fake),
+            "FAKE_SBATCH_LOG": str(log),
+            "FAKE_SBATCH_STATE": str(state),
+            "SEGDET_DATASET_ROOT": str(dataset),
+            "SEGDET_STAGING_ROOT": str(tmp_path / "staging"),
+            "PYTHON_BIN": str(_fake_python(tmp_path)),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+
+    confirmed = subprocess.run(
+        [
+            "bash",
+            str(SUBMITTER),
+            "install-extension",
+            f"--confirm-dataset-root={dataset}",
+        ],
+        cwd=str(PACKAGE.parent),
+        env={
+            **os.environ,
+            "SBATCH_BIN": str(fake),
+            "FAKE_SBATCH_LOG": str(log),
+            "FAKE_SBATCH_STATE": str(state),
+            "SEGDET_DATASET_ROOT": str(dataset),
+            "SEGDET_STAGING_ROOT": str(tmp_path / "staging"),
+            "PYTHON_BIN": str(_fake_python(tmp_path)),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert confirmed.returncode == 0
     assert not log.exists()

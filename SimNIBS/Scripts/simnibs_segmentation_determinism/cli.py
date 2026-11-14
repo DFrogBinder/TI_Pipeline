@@ -25,6 +25,13 @@ def build_visualizations(config: ExperimentConfig):
     return build(config)
 
 
+def build_journal_spatial_figures(config: ExperimentConfig):
+    """Load the optional journal plotting stack only for its explicit command."""
+    from .journal_spatial_figures import build_journal_spatial_figures as build
+
+    return build(config)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path)
@@ -37,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         "collect",
         "analyze",
         "figures",
+        "journal-spatial-figures",
         "status",
         "runtime-preflight",
         "install-preflight",
@@ -90,6 +98,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             payload = collect(config)
         elif args.command == "figures":
             payload = build_visualizations(config)
+        elif args.command == "journal-spatial-figures":
+            payload = build_journal_spatial_figures(config)
         elif args.command == "install-preflight":
             payload = install_preflight(config)
         elif args.command == "install-extension":

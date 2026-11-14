@@ -110,3 +110,29 @@ def test_figures_cli_exports_a_separate_read_only_package(
     assert calls == [configured_experiment]
     assert payload["figure_count"] == 6
     assert payload["source_outputs_modified"] is False
+
+
+def test_journal_spatial_figures_cli_exports_versioned_read_only_package(
+    configured_experiment, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "load_config", lambda args: configured_experiment)
+    calls = []
+
+    def fake_build(config):
+        calls.append(config)
+        return {
+            "status": "complete",
+            "action": "created",
+            "output_root": str(config.output_root / "journal_spatial_figures_v1"),
+            "figure_count": 2,
+            "source_outputs_modified": False,
+        }
+
+    monkeypatch.setattr(cli, "build_journal_spatial_figures", fake_build)
+
+    assert cli.main(["journal-spatial-figures"]) == 0
+    payload = _payload(capsys)
+    assert calls == [configured_experiment]
+    assert payload["output_root"].endswith("journal_spatial_figures_v1")
+    assert payload["figure_count"] == 2
+    assert payload["source_outputs_modified"] is False

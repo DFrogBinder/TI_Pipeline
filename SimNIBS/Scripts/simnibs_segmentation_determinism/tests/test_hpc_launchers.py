@@ -308,3 +308,42 @@ def test_figures_uses_analysis_python_and_never_submits_jobs(tmp_path):
         "-m simnibs_segmentation_determinism figures"
     )
     assert not log.exists()
+
+
+def test_journal_spatial_figures_uses_analysis_python_and_never_submits_jobs(
+    tmp_path,
+):
+    fake, log, state = _fake_scheduler(tmp_path)
+    analysis_log = tmp_path / "analysis-python.log"
+    analysis_python = tmp_path / "analysis-python"
+    analysis_python.write_text(
+        "#!/bin/bash\n"
+        'printf "%s\\n" "$*" >> "$ANALYSIS_PYTHON_LOG"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    analysis_python.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(SUBMITTER), "journal-spatial-figures"],
+        cwd=str(PACKAGE.parent),
+        env={
+            **os.environ,
+            "SBATCH_BIN": str(fake),
+            "FAKE_SBATCH_LOG": str(log),
+            "FAKE_SBATCH_STATE": str(state),
+            "SEGDET_DATASET_ROOT": str(tmp_path / "dataset"),
+            "SEGDET_STAGING_ROOT": str(tmp_path / "staging"),
+            "PYTHON_BIN": str(_fake_python(tmp_path)),
+            "ANALYSIS_PYTHON": str(analysis_python),
+            "ANALYSIS_PYTHON_LOG": str(analysis_log),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert analysis_log.read_text(encoding="utf-8").strip() == (
+        "-m simnibs_segmentation_determinism journal-spatial-figures"
+    )
+    assert not log.exists()

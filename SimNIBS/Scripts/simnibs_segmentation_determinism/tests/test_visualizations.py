@@ -6,6 +6,8 @@ from pathlib import Path
 
 import matplotlib.image as mpimg
 from matplotlib.collections import LineCollection
+import nibabel as nib
+import numpy as np
 import pytest
 
 import simnibs_segmentation_determinism.visualizations as visualizations
@@ -34,8 +36,48 @@ FIGURE_STEMS = (
 )
 
 
-def _completed_source(config) -> Path:
+def _completed_source(
+    config,
+    *,
+    label_arrays=None,
+    label_affine=None,
+    t1_data=None,
+    t1_affine=None,
+) -> Path:
     root = _completed_analysis(config.output_root)
+    if label_arrays is not None:
+        if len(label_arrays) != 10:
+            raise ValueError("label_arrays must contain exactly ten repeats")
+        affine = np.asarray(label_affine if label_affine is not None else np.eye(4))
+        for repeat, labels in enumerate(label_arrays, start=1):
+            path = (
+                root
+                / "simnibs401_charm"
+                / f"repeat_{repeat:03d}"
+                / "tissue_labeling_upsampled.nii.gz"
+            )
+            nib.save(nib.Nifti1Image(np.asarray(labels, dtype=np.uint8), affine), path)
+
+    first_map = nib.load(
+        str(root / "simnibs401_charm/repeat_001/tissue_labeling_upsampled.nii.gz")
+    )
+    if t1_data is None:
+        t1_data = np.arange(np.prod(first_map.shape), dtype=np.float32).reshape(
+            first_map.shape
+        ) + 1.0
+    if t1_affine is None:
+        t1_affine = first_map.affine
+    anat = root / "inputs" / config.subject / "anat"
+    anat.mkdir(parents=True, exist_ok=True)
+    t1 = anat / f"{config.subject}_T1w.nii.gz"
+    t2 = anat / f"{config.subject}_T2w.nii.gz"
+    nib.save(nib.Nifti1Image(np.asarray(t1_data, dtype=np.float32), t1_affine), t1)
+    nib.save(nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.float32), np.eye(4)), t2)
+    inputs = {
+        "t1": {"path": str(t1), "sha256": sha256_file(t1)},
+        "t2": {"path": str(t2), "sha256": sha256_file(t2)},
+    }
+
     repeat_records = []
     for arm in ("simnibs326_headreco", "simnibs401_charm"):
         for repeat in range(1, 11):
@@ -46,6 +88,7 @@ def _completed_source(config) -> Path:
                 "status": "complete",
                 "arm": arm,
                 "repeat_index": repeat,
+                "inputs": inputs,
             }
             if arm == "simnibs401_charm":
                 label_map = repeat_root / "tissue_labeling_upsampled.nii.gz"

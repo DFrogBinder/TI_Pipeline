@@ -155,6 +155,27 @@ Matplotlib in that environment. It writes only to
 reuses the package only after verifying its source binding and checksums; a
 foreign, partial or stale destination is rejected.
 
+For the journal-ready three-dimensional CHARM comparison, use the separate
+versioned exporter:
+
+```bash
+bash "$SEGDET" journal-spatial-figures
+```
+
+This mode is read-only with respect to the completed experiment and submits no
+Slurm jobs. It reads the ten retained CHARM hard-label maps and the staged T1,
+then writes only to
+`segmentation_determinism_staging_v1/journal_spatial_figures_v1`. The output
+contains a global projection/focal-slice composite and a whole-head slice atlas,
+each as 600-dpi PNG, PDF and SVG, plus captions, a spatial summary, provenance
+manifest and `SHA256SUMS`. An existing package is reused only after its source
+binding and every checksum validate.
+
+If this renderer is wrapped in one explicit Stanage job, retain the already
+validated profile: `SimNIBS/4.0.1-foss-2023a`, `sheffield`, 4 CPU, 16G and
+02:00:00. That job performs no segmentation, surface reconstruction, meshing or
+FEM simulation.
+
 ## Later installation into the combined dataset
 
 Do not install while consolidation is running. Once the staging terminal
@@ -206,6 +227,13 @@ source-bound `figure_manifest.json`, and `SHA256SUMS`. Tissue labels remain
 numeric because the exporter does not infer an unverified lookup table. These
 are descriptive results for one participant and do not establish population
 variability or an electric-field effect.
+
+The separate `journal_spatial_figures_v1` directory focuses only on where the
+ten CHARM hard-label maps differ. Its discrete scale reports the number of runs
+not matching the modal tissue label at each voxel. This is a repeat-disagreement
+count, not segmentation error probability. Anatomical direction labels and RAS
+coordinates are shown, but the evidence remains one participant under one
+SimNIBS 4.0.1/HPC configuration.
 
 Determinism is assessed **within** each version. The package does not treat v3
 and v4 tissue taxonomies as voxel-equivalent and does not test electric-field

@@ -8,6 +8,10 @@ import numpy as np
 
 import simnibs_segmentation_determinism.charm_runner as charm_runner
 import simnibs_segmentation_determinism.headreco_runner as headreco_runner
+from simnibs_segmentation_determinism.extension_import import (
+    install_extension,
+    install_preflight,
+)
 from simnibs_segmentation_determinism.headreco_runner import expected_headreco_artifacts
 from simnibs_segmentation_determinism.provenance import sha256_file
 from simnibs_segmentation_determinism.workflow import (
@@ -99,7 +103,7 @@ def _install_workflow_evidence(config):
 
 
 def test_synthetic_twenty_repeat_workflow_completes_with_verified_receipts(
-    configured_experiment, monkeypatch
+    configured_experiment, dataset_receipt_writer, monkeypatch
 ):
     config = configured_experiment
     source_hashes = {
@@ -136,6 +140,15 @@ def test_synthetic_twenty_repeat_workflow_completes_with_verified_receipts(
         path: sha256_file(path)
         for path in (config.source_root / config.subject / "anat").iterdir()
     } == source_hashes
+
+    dataset_receipt_writer(config)
+    assert install_preflight(config)["status"] == "ready"
+    installed = install_extension(
+        config,
+        confirm_dataset_root=config.dataset_root,
+    )
+    assert installed["status"] == "complete"
+    assert (config.extension_root / "_import/complete.json").is_file()
 
 
 def test_one_missing_repeat_cannot_create_terminal_receipt(configured_experiment, monkeypatch):

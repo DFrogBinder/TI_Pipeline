@@ -12,49 +12,7 @@ from simnibs_segmentation_determinism.extension_import import (
     install_extension,
     install_preflight,
 )
-from simnibs_segmentation_determinism.provenance import (
-    sha256_file,
-    write_json_atomic,
-    write_sha256_sidecar,
-)
-from simnibs_segmentation_determinism.workflow import initialize
-
-def _complete_staging(config) -> Path:
-    initialized = initialize(config)
-    repeat_receipts = []
-    for index in range(20):
-        arm = "simnibs326_headreco" if index < 10 else "simnibs401_charm"
-        repeat_index = index % 10 + 1
-        path = config.output_root / arm / f"repeat_{repeat_index:03d}/complete.json"
-        write_json_atomic(path, {"status": "complete", "index": index})
-        repeat_receipts.append(
-            {"path": str(path), "sha256": sha256_file(path)}
-        )
-    analysis = config.output_root / "analysis/determinism_manifest.json"
-    write_json_atomic(analysis, {"status": "complete"})
-    terminal = config.output_root / "_pipeline/complete.json"
-    write_json_atomic(
-        terminal,
-        {
-            "schema_version": 1,
-            "status": "complete",
-            "workflow": "simnibs_segmentation_determinism",
-            "plan_sha256": initialized["plan_sha256"],
-            "scope": {
-                "staging_root": str(config.output_root.resolve()),
-                "future_extension_root": str(config.extension_root.resolve()),
-                "scientific_segmentation_tasks": 20,
-            },
-            "validated_repeats": 20,
-            "repeat_receipts": repeat_receipts,
-            "analysis_artifacts": {
-                "determinism_manifest.json": sha256_file(analysis)
-            },
-            "source_outputs_modified": False,
-        },
-    )
-    write_sha256_sidecar(terminal)
-    return terminal
+from simnibs_segmentation_determinism.provenance import sha256_file
 
 
 def _snapshot(root: Path) -> dict[str, str]:
@@ -66,7 +24,7 @@ def _snapshot(root: Path) -> dict[str, str]:
 
 
 def test_install_preflight_requires_completed_staging_and_dataset(
-    configured_experiment, dataset_receipt_writer
+    configured_experiment, dataset_receipt_writer, staging_completer
 ):
     config = configured_experiment
     dataset_receipt_writer(config)
@@ -74,17 +32,17 @@ def test_install_preflight_requires_completed_staging_and_dataset(
     with pytest.raises(ExtensionImportError, match="staging completion"):
         install_preflight(config)
 
-    _complete_staging(config)
+    staging_completer(config)
     config.dataset_completion_file.unlink()
     with pytest.raises(Exception, match="dataset completion"):
         install_preflight(config)
 
 
 def test_install_preflight_is_read_only_and_reports_exact_roots(
-    configured_experiment, dataset_receipt_writer
+    configured_experiment, dataset_receipt_writer, staging_completer
 ):
     config = configured_experiment
-    terminal = _complete_staging(config)
+    terminal = staging_completer(config)
     dataset_receipt_writer(config)
 
     payload = install_preflight(config)
@@ -98,10 +56,10 @@ def test_install_preflight_is_read_only_and_reports_exact_roots(
 
 
 def test_install_requires_exact_dataset_confirmation_without_writing(
-    configured_experiment, dataset_receipt_writer
+    configured_experiment, dataset_receipt_writer, staging_completer
 ):
     config = configured_experiment
-    _complete_staging(config)
+    staging_completer(config)
     dataset_receipt_writer(config)
 
     with pytest.raises(ExtensionImportError, match="confirmation"):
@@ -111,10 +69,10 @@ def test_install_requires_exact_dataset_confirmation_without_writing(
 
 
 def test_install_rejects_foreign_and_completed_destinations(
-    configured_experiment, dataset_receipt_writer
+    configured_experiment, dataset_receipt_writer, staging_completer
 ):
     config = configured_experiment
-    _complete_staging(config)
+    staging_completer(config)
     dataset_receipt_writer(config)
     config.extension_root.mkdir(parents=True)
     (config.extension_root / "foreign.txt").write_text("foreign", encoding="utf-8")
@@ -124,10 +82,10 @@ def test_install_rejects_foreign_and_completed_destinations(
 
 
 def test_interrupted_owned_install_resumes(
-    configured_experiment, dataset_receipt_writer, monkeypatch
+    configured_experiment, dataset_receipt_writer, staging_completer, monkeypatch
 ):
     config = configured_experiment
-    _complete_staging(config)
+    staging_completer(config)
     dataset_receipt_writer(config)
     original = extension_import._copy_with_rsync
     attempts = 0
@@ -154,10 +112,10 @@ def test_interrupted_owned_install_resumes(
 
 
 def test_checksum_verification_detects_destination_only_file(
-    configured_experiment, dataset_receipt_writer, monkeypatch
+    configured_experiment, dataset_receipt_writer, staging_completer, monkeypatch
 ):
     config = configured_experiment
-    _complete_staging(config)
+    staging_completer(config)
     dataset_receipt_writer(config)
     original = extension_import._copy_with_rsync
 
@@ -174,11 +132,31 @@ def test_checksum_verification_detects_destination_only_file(
     assert not (config.extension_root / "_import/complete.json").exists()
 
 
-def test_successful_install_is_checksum_verified_and_source_immutable(
-    configured_experiment, dataset_receipt_writer
+def test_install_revalidates_staging_receipt_bindings_after_copy(
+    configured_experiment, dataset_receipt_writer, staging_completer, monkeypatch
 ):
     config = configured_experiment
-    _complete_staging(config)
+    staging_completer(config)
+    dataset_receipt_writer(config)
+    original = extension_import._copy_with_rsync
+
+    def mutate_then_copy(*args, **kwargs):
+        analysis = config.output_root / "analysis/determinism_manifest.json"
+        analysis.write_text('{"status":"mutated"}\n', encoding="utf-8")
+        original(*args, **kwargs)
+
+    monkeypatch.setattr(extension_import, "_copy_with_rsync", mutate_then_copy)
+    with pytest.raises(ExtensionImportError, match="staging|artifact"):
+        install_extension(config, confirm_dataset_root=config.dataset_root)
+
+    assert not (config.extension_root / "_import/complete.json").exists()
+
+
+def test_successful_install_is_checksum_verified_and_source_immutable(
+    configured_experiment, dataset_receipt_writer, staging_completer
+):
+    config = configured_experiment
+    staging_completer(config)
     dataset_receipt_writer(config)
     before = _snapshot(config.output_root)
 

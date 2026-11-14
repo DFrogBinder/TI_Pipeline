@@ -36,7 +36,12 @@ def _read_json(path: Path, label: str) -> Dict[str, object]:
     return payload
 
 
-def _require_bound_file(root: Path, path: Path, expected_sha256: object) -> None:
+def _require_bound_file(
+    root: Path,
+    path: Path,
+    expected_sha256: object,
+    expected_size: object = None,
+) -> None:
     resolved = path.resolve(strict=False)
     if (
         not path_is_within(resolved, root)
@@ -44,11 +49,114 @@ def _require_bound_file(root: Path, path: Path, expected_sha256: object) -> None
         or not resolved.is_file()
         or not isinstance(expected_sha256, str)
         or sha256_file(resolved) != expected_sha256
+        or (
+            expected_size is not None
+            and (
+                not isinstance(expected_size, int)
+                or resolved.stat().st_size != expected_size
+            )
+        )
     ):
         raise ExtensionImportError(f"Staging receipt artifact is invalid: {path}")
 
 
+def _validate_repeat_receipt(
+    config: ExperimentConfig,
+    record: Mapping[str, object],
+) -> tuple[str, int]:
+    arm = record.get("arm")
+    repeat_index = record.get("repeat_index")
+    if arm not in {"simnibs326_headreco", "simnibs401_charm"} or not isinstance(
+        repeat_index, int
+    ):
+        raise ExtensionImportError("Staging repeat-receipt identity is invalid")
+    expected_path = (
+        config.output_root / str(arm) / f"repeat_{repeat_index:03d}/complete.json"
+    )
+    observed_path = Path(str(record.get("path", "")))
+    if observed_path != expected_path:
+        raise ExtensionImportError("Staging repeat-receipt path is noncanonical")
+    _require_bound_file(config.output_root, observed_path, record.get("sha256"))
+    try:
+        validate_sha256_sidecar(observed_path)
+    except ProvenanceError as exc:
+        raise ExtensionImportError(
+            f"Staging repeat-receipt sidecar is invalid: {observed_path}"
+        ) from exc
+    receipt = _read_json(observed_path, "staging repeat receipt")
+    if (
+        receipt.get("status") != "complete"
+        or receipt.get("arm") != arm
+        or receipt.get("repeat_index") != repeat_index
+        or receipt.get("source_outputs_modified") is not False
+    ):
+        raise ExtensionImportError("Staging repeat receipt binding is invalid")
+
+    for label, hash_label in (
+        ("artifact_manifest", "artifact_manifest_sha256"),
+        ("log", "log_sha256"),
+    ):
+        path = Path(str(receipt.get(label, "")))
+        _require_bound_file(config.output_root, path, receipt.get(hash_label))
+        if label == "artifact_manifest":
+            try:
+                validate_sha256_sidecar(path)
+            except ProvenanceError as exc:
+                raise ExtensionImportError(
+                    f"Staging artifact-manifest sidecar is invalid: {path}"
+                ) from exc
+
+    inputs = receipt.get("inputs")
+    if not isinstance(inputs, dict):
+        raise ExtensionImportError("Staging repeat input binding is invalid")
+    for modality in ("t1", "t2"):
+        input_record = inputs.get(modality)
+        if not isinstance(input_record, dict):
+            raise ExtensionImportError("Staging repeat input record is invalid")
+        _require_bound_file(
+            config.output_root,
+            Path(str(input_record.get("path", ""))),
+            input_record.get("sha256"),
+        )
+
+    artifacts = (
+        receipt.get("artifacts")
+        if arm == "simnibs326_headreco"
+        else [receipt.get("artifact")]
+    )
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ExtensionImportError("Staging repeat artifact inventory is invalid")
+    artifact_root = (
+        observed_path.parent / "artifacts"
+        if arm == "simnibs326_headreco"
+        else observed_path.parent
+    )
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise ExtensionImportError("Staging repeat artifact record is invalid")
+        relative = Path(str(artifact.get("relative_path", "")))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ExtensionImportError("Staging repeat artifact path is invalid")
+        _require_bound_file(
+            config.output_root,
+            artifact_root / relative,
+            artifact.get("sha256"),
+            artifact.get("size_bytes"),
+        )
+    return str(arm), repeat_index
+
+
 def _validate_staging_completion(config: ExperimentConfig) -> Dict[str, object]:
+    # Imported locally to keep the CLI module graph acyclic while reusing the
+    # same staged-input and ownership checks as compute tasks.
+    from .workflow import runtime_preflight
+
+    try:
+        runtime_preflight(config)
+    except (RuntimeError, OSError, ValueError) as exc:
+        raise ExtensionImportError(
+            f"Invalid staging completion state: {config.output_root}"
+        ) from exc
     terminal = config.output_root / "_pipeline/complete.json"
     try:
         terminal_sha256 = validate_sha256_sidecar(terminal)
@@ -90,14 +198,18 @@ def _validate_staging_completion(config: ExperimentConfig) -> Dict[str, object]:
     repeat_receipts = payload.get("repeat_receipts")
     if not isinstance(repeat_receipts, list) or len(repeat_receipts) != 20:
         raise ExtensionImportError("Staging repeat-receipt inventory is incomplete")
+    observed_repeats = set()
     for record in repeat_receipts:
         if not isinstance(record, dict):
             raise ExtensionImportError("Staging repeat-receipt record is invalid")
-        _require_bound_file(
-            config.output_root,
-            Path(str(record.get("path", ""))),
-            record.get("sha256"),
-        )
+        observed_repeats.add(_validate_repeat_receipt(config, record))
+    expected_repeats = {
+        (arm, repeat_index)
+        for arm in ("simnibs326_headreco", "simnibs401_charm")
+        for repeat_index in range(1, 11)
+    }
+    if observed_repeats != expected_repeats:
+        raise ExtensionImportError("Staging repeat-receipt identities are incomplete")
 
     artifacts = payload.get("analysis_artifacts")
     if not isinstance(artifacts, dict) or not artifacts:
@@ -273,8 +385,12 @@ def install_extension(
         raise ExtensionImportError(
             f"Extension checksum verification found changes: {preview}"
         )
-    if sha256_file(config.output_root / "_pipeline/complete.json") != staging_sha256:
-        raise ExtensionImportError("Staging completion receipt changed during import")
+    final_staging = _validate_staging_completion(config)
+    if final_staging != staging:
+        raise ExtensionImportError("Staging receipt binding changed during import")
+    final_dataset = validate_dataset_receipts(config)
+    if final_dataset != dataset:
+        raise ExtensionImportError("Dataset receipt binding changed during import")
 
     completion = {
         "schema_version": 1,

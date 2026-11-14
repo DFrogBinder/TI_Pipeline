@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .extension_import import install_extension, install_preflight
 from .settings import ExperimentConfig, scope_payload
 from .workflow import collect, initialize, run_repeat, status, workflow_preflight
 
@@ -13,9 +14,20 @@ from .workflow import collect, initialize, run_repeat, status, workflow_prefligh
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path)
+    parser.add_argument("--staging-root", type=Path)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("scope", "preflight", "init", "collect", "analyze", "status"):
+    for command in (
+        "scope",
+        "preflight",
+        "init",
+        "collect",
+        "analyze",
+        "status",
+        "install-preflight",
+    ):
         subparsers.add_parser(command)
+    install = subparsers.add_parser("install-extension")
+    install.add_argument("--confirm-dataset-root", type=Path, required=True)
     repeat = subparsers.add_parser("run-repeat")
     repeat.add_argument("--arm", required=True)
     repeat.add_argument("--array-index", required=True, type=int)
@@ -27,6 +39,8 @@ def load_config(args: argparse.Namespace) -> ExperimentConfig:
     config = ExperimentConfig.from_env()
     if args.dataset_root is not None:
         config = config.with_dataset_root(args.dataset_root)
+    if args.staging_root is not None:
+        config = config.with_staging_root(args.staging_root)
     return config
 
 
@@ -56,6 +70,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         elif args.command in {"collect", "analyze"}:
             payload = collect(config)
+        elif args.command == "install-preflight":
+            payload = install_preflight(config)
+        elif args.command == "install-extension":
+            payload = install_extension(
+                config,
+                confirm_dataset_root=args.confirm_dataset_root,
+            )
         else:
             payload = status(config)
     except Exception as exc:  # CLI boundary emits one stable machine-readable error.

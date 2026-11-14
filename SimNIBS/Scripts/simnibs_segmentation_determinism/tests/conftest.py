@@ -89,3 +89,8 @@ def write_dataset_receipts(config) -> None:
         + "\n",
         encoding="utf-8",
     )
+
+
+@pytest.fixture
+def dataset_receipt_writer():
+    return write_dataset_receipts

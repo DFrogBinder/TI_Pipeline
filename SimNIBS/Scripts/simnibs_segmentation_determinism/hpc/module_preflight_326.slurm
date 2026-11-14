@@ -25,5 +25,5 @@ receipt_tmp="$receipt_dir/.simnibs326.json.tmp-${SLURM_JOB_ID}"
 python3 "$PIPELINE_DIR/simnibs_326_repeatability/cat12_compat.py" \
     probe --matlab matlab > "$probe_tmp"
 mv "$probe_tmp" "$receipt_dir/simnibs326_cat12_probe.json"
-python3 -m simnibs_segmentation_determinism preflight > "$receipt_tmp"
+python3 -m simnibs_segmentation_determinism runtime-preflight > "$receipt_tmp"
 mv "$receipt_tmp" "$receipt_dir/simnibs326.json"

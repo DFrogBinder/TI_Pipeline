@@ -14,7 +14,7 @@ from simnibs_segmentation_determinism.workflow import (
     collect,
     initialize,
     run_repeat,
-    workflow_preflight,
+    runtime_preflight,
 )
 
 
@@ -66,7 +66,7 @@ def _run_repeats(config, *, omit=None):
 
 
 def _install_workflow_evidence(config):
-    ready = workflow_preflight(config)
+    ready = runtime_preflight(config)
     receipt_root = config.output_root / "_pipeline/module_preflight"
     receipt_root.mkdir(parents=True, exist_ok=True)
     for name in ("simnibs326.json", "simnibs401.json"):

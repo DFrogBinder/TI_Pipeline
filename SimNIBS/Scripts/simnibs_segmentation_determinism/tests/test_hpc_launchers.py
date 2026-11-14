@@ -42,6 +42,8 @@ def test_static_slurm_scope_resources_modules_and_stage_boundaries():
     assert "afterok:$preflight326" in submitter
     assert "afterok:$preflight401" in submitter
     assert "scheduler tasks: 23" in submitter
+    assert "runtime-preflight" in preflight326
+    assert "runtime-preflight" in preflight401
     assert (
         'DATASET_ROOT="${SEGDET_DATASET_ROOT:-/mnt/parscratch/users/cop23bi/'
         'final_132_repeatability_combined_dataset_v1}"'

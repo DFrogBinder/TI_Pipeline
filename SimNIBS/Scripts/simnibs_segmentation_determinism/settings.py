@@ -133,6 +133,15 @@ class ExperimentConfig:
 
     def with_dataset_root(self, dataset_root: Path) -> "ExperimentConfig":
         dataset_root = dataset_root.expanduser().resolve(strict=False)
+        old_boundaries = {
+            self.source_root.resolve(strict=False),
+            self.dataset_root.resolve(strict=False),
+        }
+        preserved = tuple(
+            root
+            for root in self.protected_roots
+            if root.resolve(strict=False) not in old_boundaries
+        )
         return replace(
             self,
             dataset_root=dataset_root,
@@ -141,7 +150,7 @@ class ExperimentConfig:
             protected_roots=(
                 self.source_root,
                 dataset_root,
-                *self.protected_roots[2:],
+                *preserved,
             ),
         )
 

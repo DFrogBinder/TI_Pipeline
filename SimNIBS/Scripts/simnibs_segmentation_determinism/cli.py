@@ -8,7 +8,14 @@ from typing import Optional, Sequence
 
 from .extension_import import install_extension, install_preflight
 from .settings import ExperimentConfig, scope_payload
-from .workflow import collect, initialize, run_repeat, status, workflow_preflight
+from .workflow import (
+    collect,
+    initialize,
+    run_repeat,
+    runtime_preflight,
+    status,
+    workflow_preflight,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         "collect",
         "analyze",
         "status",
+        "runtime-preflight",
         "install-preflight",
     ):
         subparsers.add_parser(command)
@@ -59,6 +67,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             payload = scope_payload(config)
         elif args.command == "preflight":
             payload = workflow_preflight(config)
+        elif args.command == "runtime-preflight":
+            payload = runtime_preflight(config)
         elif args.command == "init":
             payload = initialize(config)
         elif args.command == "run-repeat":

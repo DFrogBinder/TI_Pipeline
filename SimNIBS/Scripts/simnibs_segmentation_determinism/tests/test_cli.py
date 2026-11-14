@@ -85,3 +85,28 @@ def test_cli_staging_root_override_is_independent(monkeypatch, tmp_path):
     )
     assert config.dataset_root == dataset
     assert config.output_root == staging
+
+
+def test_figures_cli_exports_a_separate_read_only_package(
+    configured_experiment, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "load_config", lambda args: configured_experiment)
+    calls = []
+
+    def fake_build(config):
+        calls.append(config)
+        return {
+            "status": "complete",
+            "action": "created",
+            "output_root": str(config.output_root / "visualizations_v1"),
+            "figure_count": 6,
+            "source_outputs_modified": False,
+        }
+
+    monkeypatch.setattr(cli, "build_visualizations", fake_build)
+
+    assert cli.main(["figures"]) == 0
+    payload = _payload(capsys)
+    assert calls == [configured_experiment]
+    assert payload["figure_count"] == 6
+    assert payload["source_outputs_modified"] is False

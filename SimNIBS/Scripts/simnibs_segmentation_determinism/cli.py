@@ -18,6 +18,13 @@ from .workflow import (
 )
 
 
+def build_visualizations(config: ExperimentConfig):
+    """Load the optional plotting stack only for the explicit figures command."""
+    from .visualizations import build_visualizations as build
+
+    return build(config)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path)
@@ -29,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         "init",
         "collect",
         "analyze",
+        "figures",
         "status",
         "runtime-preflight",
         "install-preflight",
@@ -80,6 +88,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         elif args.command in {"collect", "analyze"}:
             payload = collect(config)
+        elif args.command == "figures":
+            payload = build_visualizations(config)
         elif args.command == "install-preflight":
             payload = install_preflight(config)
         elif args.command == "install-extension":

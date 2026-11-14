@@ -26,9 +26,9 @@ export SEGDET_DATASET_ROOT="$DATASET_ROOT"
 export SEGDET_STAGING_ROOT="$STAGING_ROOT"
 
 case "$MODE" in
-    scope|preflight|init|run|status|analyze|install-preflight|install-extension) ;;
+    scope|preflight|init|run|status|analyze|figures|install-preflight|install-extension) ;;
     *)
-        echo "Usage: $0 {scope|preflight|init|run|status|analyze|install-preflight|install-extension}" >&2
+        echo "Usage: $0 {scope|preflight|init|run|status|analyze|figures|install-preflight|install-extension}" >&2
         exit 2
         ;;
 esac
@@ -100,6 +100,9 @@ case "$MODE" in
         ;;
     analyze)
         exec "$ANALYSIS_PYTHON" -m simnibs_segmentation_determinism analyze
+        ;;
+    figures)
+        exec "$ANALYSIS_PYTHON" -m simnibs_segmentation_determinism figures
         ;;
     install-preflight)
         exec "$PYTHON_BIN" -m simnibs_segmentation_determinism install-preflight

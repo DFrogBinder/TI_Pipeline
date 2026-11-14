@@ -142,6 +142,19 @@ If the login-node Python lacks NiBabel, set `ANALYSIS_PYTHON` to an approved
 analysis environment before this local re-analysis. The scheduled collector
 uses the SimNIBS 4.0.1 module environment.
 
+After the terminal analysis receipt exists, generate the standalone figure
+package without submitting jobs or changing the completed analysis:
+
+```bash
+bash "$SEGDET" figures
+```
+
+`figures` uses `ANALYSIS_PYTHON` and therefore requires NumPy, NiBabel and
+Matplotlib in that environment. It writes only to
+`segmentation_determinism_staging_v1/visualizations_v1`. Re-running the command
+reuses the package only after verifying its source binding and checksums; a
+foreign, partial or stale destination is rejected.
+
 ## Later installation into the combined dataset
 
 Do not install while consolidation is running. Once the staging terminal
@@ -176,6 +189,23 @@ The analysis directory contains:
 - `tissue_summary.tsv`: discrete-label voxel counts and physical volumes;
 - `changed_voxel_summary.tsv`: comparisons with changed voxels; and
 - `report.md`: compact human-readable conclusions.
+
+The separate `visualizations_v1` directory contains six figures in both PNG
+and PDF format:
+
+- a two-arm determinism summary;
+- the complete pairwise changed-label heatmap;
+- the distribution of changed-voxel percentages across 45 CHARM pairs;
+- per-label Dice distributions;
+- per-label volume variation across the ten CHARM runs; and
+- orthogonal slices showing the spatial frequency of disagreement with the
+  modal label.
+
+It also contains `summary_statistics.json`, `figure_captions.md`, a
+source-bound `figure_manifest.json`, and `SHA256SUMS`. Tissue labels remain
+numeric because the exporter does not infer an unverified lookup table. These
+are descriptive results for one participant and do not establish population
+variability or an electric-field effect.
 
 Determinism is assessed **within** each version. The package does not treat v3
 and v4 tissue taxonomies as voxel-equivalent and does not test electric-field

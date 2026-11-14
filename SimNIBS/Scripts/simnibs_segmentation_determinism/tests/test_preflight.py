@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import json
 
 import pytest
 
@@ -19,13 +18,8 @@ def test_preflight_resolves_one_pair_and_is_read_only(configured_experiment):
     assert payload["subject"] == "sub-CC110174"
     assert payload["selected_subject"] == "sub-CC110174"
     assert payload["source_outputs_modified"] is False
-    assert payload["dataset"]["root"] == str(config.dataset_root)
-    assert payload["dataset"]["manifest"]["path"] == str(
-        config.dataset_manifest_file
-    )
-    assert payload["dataset"]["completion"]["path"] == str(
-        config.dataset_completion_file
-    )
+    assert payload["staging_root"] == str(config.output_root)
+    assert payload["future_extension_root"] == str(config.extension_root)
     assert payload["inputs"]["t1"]["path"].endswith("_T1w.nii")
     assert payload["inputs"]["t2"]["path"].endswith("_T2w.nii.gz")
     assert len(payload["inputs"]["t1"]["sha256"]) == 64
@@ -57,34 +51,11 @@ def test_cohort_hash_drift_fails(configured_experiment):
         preflight(config)
 
 
-def test_dataset_manifest_status_drift_fails(configured_experiment):
+def test_preflight_does_not_require_combined_dataset_receipts(configured_experiment):
     config = configured_experiment
-    payload = json.loads(config.dataset_manifest_file.read_text())
-    payload["status"] = "prepared"
-    config.dataset_manifest_file.write_text(json.dumps(payload))
-
-    with pytest.raises(ProvenanceError, match="dataset manifest"):
-        preflight(config)
-
-
-def test_dataset_completion_plan_drift_fails(configured_experiment):
-    config = configured_experiment
-    payload = json.loads(config.dataset_completion_file.read_text())
-    payload["plan_sha256"] = "b" * 64
-    config.dataset_completion_file.write_text(json.dumps(payload))
-
-    with pytest.raises(ProvenanceError, match="dataset completion"):
-        preflight(config)
-
-
-def test_dataset_completion_manifest_checksum_drift_fails(configured_experiment):
-    config = configured_experiment
-    payload = json.loads(config.dataset_completion_file.read_text())
-    payload["dataset_manifest"]["sha256"] = "b" * 64
-    config.dataset_completion_file.write_text(json.dumps(payload))
-
-    with pytest.raises(ProvenanceError, match="manifest binding"):
-        preflight(config)
+    assert not config.dataset_manifest_file.exists()
+    assert not config.dataset_completion_file.exists()
+    assert preflight(config)["status"] == "ready"
 
 
 @pytest.mark.parametrize("collision_kind", ["equal", "inside"])
@@ -110,12 +81,17 @@ def test_effective_source_root_is_always_protected(configured_experiment):
         preflight(config)
 
 
-def test_all_scientific_paths_must_remain_inside_dataset(configured_experiment, tmp_path):
-    config = replace(configured_experiment, output_root=tmp_path / "outside")
-
-    with pytest.raises(ProvenanceError, match="dataset root"):
+def test_staging_root_must_not_overlap_combined_dataset(configured_experiment):
+    config = replace(
+        configured_experiment,
+        output_root=configured_experiment.dataset_root / "extensions/forbidden",
+    )
+    with pytest.raises(ProvenanceError, match="combined dataset"):
         preflight(config)
 
-    config = replace(configured_experiment, source_root=tmp_path / "outside-source")
-    with pytest.raises(ProvenanceError, match="dataset root"):
+    config = replace(
+        configured_experiment,
+        output_root=configured_experiment.source_root / "forbidden",
+    )
+    with pytest.raises(ProvenanceError, match="source root|protected root"):
         preflight(config)

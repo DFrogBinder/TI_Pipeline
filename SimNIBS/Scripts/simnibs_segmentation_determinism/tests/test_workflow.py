@@ -157,7 +157,10 @@ def test_initialize_is_idempotent_only_for_identical_plan(configured_experiment)
     )
     assert source_manifest["canonical_inputs"]["t1"]["path"] == str(origin.t1)
     assert source_manifest["staged_inputs"]["t1"]["path"] == str(staged.t1)
-    assert source_manifest["dataset"]["root"] == str(config.dataset_root)
+    staged_cohort = config.output_root / "inputs/cohort/subjects.txt"
+    assert staged_cohort.read_bytes() == config.cohort_file.read_bytes()
+    assert source_manifest["cohort"]["staged_path"] == str(staged_cohort)
+    assert source_manifest["future_extension_root"] == str(config.extension_root)
 
     with pytest.raises(WorkflowError, match="plan"):
         initialize(replace(config, repeats_per_arm=9))
@@ -178,7 +181,9 @@ def test_initialize_cleans_temporary_root_when_input_staging_fails(
         initialize(config)
 
     assert not config.output_root.exists()
-    assert not list(config.output_root.parent.glob(".segmentation_determinism_v1.tmp-*"))
+    assert not list(
+        config.output_root.parent.glob(f".{config.output_root.name}.tmp-*")
+    )
 
 
 @pytest.mark.parametrize(

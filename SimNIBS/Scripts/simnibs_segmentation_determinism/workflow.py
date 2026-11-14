@@ -82,8 +82,8 @@ def _plan_payload(config: ExperimentConfig, ready: Mapping[str, object]) -> Dict
         "scope": scope_payload(config),
         "source": {
             "subject": config.subject,
-            "dataset": ready["dataset"],
             "cohort": ready["cohort"],
+            "future_extension_root": ready["future_extension_root"],
             "canonical_inputs": ready["inputs"],
             "staged_inputs": _inputs_payload(staged),
         },
@@ -152,6 +152,15 @@ def _stage_subject_inputs(config: ExperimentConfig, temporary_root: Path, canoni
     return planned
 
 
+def _stage_cohort(config: ExperimentConfig, temporary_root: Path) -> Path:
+    destination = temporary_root / "inputs/cohort/subjects.txt"
+    destination.parent.mkdir(parents=True)
+    shutil.copy2(config.cohort_file, destination, follow_symlinks=True)
+    if sha256_file(destination) != config.cohort_sha256:
+        raise WorkflowError("Staged cohort SHA-256 differs from pinned cohort")
+    return destination
+
+
 def _validate_staged_inputs(config: ExperimentConfig):
     canonical = resolve_subject_inputs(config)
     try:
@@ -163,6 +172,13 @@ def _validate_staged_inputs(config: ExperimentConfig):
         or staged.t2_sha256 != canonical.t2_sha256
     ):
         raise WorkflowError("A staged input SHA-256 differs from its canonical input")
+    staged_cohort = config.output_root / "inputs/cohort/subjects.txt"
+    if (
+        not staged_cohort.is_file()
+        or staged_cohort.is_symlink()
+        or sha256_file(staged_cohort) != config.cohort_sha256
+    ):
+        raise WorkflowError("Invalid staged cohort SHA-256")
     return staged
 
 
@@ -202,6 +218,7 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
     canonical = resolve_subject_inputs(config)
     try:
         staged = _stage_subject_inputs(config, temporary, canonical)
+        staged_cohort = _stage_cohort(config, temporary)
         temporary_pipeline = temporary / "_pipeline"
         temporary_pipeline.mkdir()
         stored_config = {**plan, "status": "prepared", "plan_sha256": plan_sha256}
@@ -213,8 +230,14 @@ def initialize(config: ExperimentConfig) -> Dict[str, object]:
             "status": "pinned",
             "subject": config.subject,
             "selection_seed": config.selection_seed,
-            "dataset": ready["dataset"],
-            "cohort": ready["cohort"],
+            "cohort": {
+                **ready["cohort"],
+                "staged_path": str(
+                    config.output_root / "inputs/cohort/subjects.txt"
+                ),
+                "staged_sha256": sha256_file(staged_cohort),
+            },
+            "future_extension_root": str(config.extension_root),
             "canonical_inputs": _inputs_payload(canonical),
             "staged_inputs": _inputs_payload(staged),
             "source_outputs_modified": False,

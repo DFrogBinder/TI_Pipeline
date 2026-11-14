@@ -45,18 +45,25 @@ class ExperimentConfig:
 
     @classmethod
     def defaults(cls, repo_scripts_root: Optional[Path] = None) -> "ExperimentConfig":
-        del repo_scripts_root
+        scripts_root = (
+            Path(repo_scripts_root).expanduser().resolve(strict=False)
+            if repo_scripts_root is not None
+            else Path(__file__).resolve().parents[1]
+        )
         dataset_root = Path(
             "/mnt/parscratch/users/cop23bi/"
             "final_132_repeatability_combined_dataset_v1"
         )
-        source_root = (
-            dataset_root
-            / "data/simnibs4/left_hippocampus/"
-            "sub-CC110174_repeatability/remesh/repeats/repeat_001"
+        source_root = Path(
+            "/mnt/parscratch/users/cop23bi/"
+            "ti_dataset_final_132_balanced_10_corrected"
+        )
+        output_root = Path(
+            "/mnt/parscratch/users/cop23bi/segmentation_determinism_staging_v1"
         )
         protected = (
             source_root,
+            dataset_root,
             Path("/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10"),
             Path("/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_right_m1"),
             Path("/mnt/parscratch/users/cop23bi/final_132_repeatability_balanced_10_spherical_fixed_v1"),
@@ -75,12 +82,15 @@ class ExperimentConfig:
             dataset_plan_sha256=(
                 "1ab5c604e4d965ae70a63ca9984c878db2631f89a1f99b5927196e25d696a32c"
             ),
-            cohort_file=dataset_root / "subjects.txt",
+            cohort_file=(
+                scripts_root
+                / "simnibs_segmentation_determinism/cohort_subjects.txt"
+            ),
             cohort_sha256=(
                 "a6df80c94e83d2eb5ff85809f789a13de75d53b05eb14918e1abceebc6ccf007"
             ),
             source_root=source_root,
-            output_root=dataset_root / "extensions/segmentation_determinism_v1",
+            output_root=output_root,
             protected_roots=protected,
             simnibs326_module="SimNIBS/3.2.6-foss-2023a",
             matlab_module="MATLAB/2023b",
@@ -99,6 +109,10 @@ class ExperimentConfig:
         if "SEGDET_DATASET_ROOT" in os.environ:
             config = config.with_dataset_root(
                 Path(os.environ["SEGDET_DATASET_ROOT"]).expanduser()
+            )
+        if "SEGDET_STAGING_ROOT" in os.environ:
+            config = config.with_staging_root(
+                Path(os.environ["SEGDET_STAGING_ROOT"]).expanduser()
             )
         changes = {}
         integer_fields = {
@@ -119,21 +133,27 @@ class ExperimentConfig:
 
     def with_dataset_root(self, dataset_root: Path) -> "ExperimentConfig":
         dataset_root = dataset_root.expanduser().resolve(strict=False)
-        source_root = (
-            dataset_root
-            / "data/simnibs4/left_hippocampus/"
-            "sub-CC110174_repeatability/remesh/repeats/repeat_001"
-        )
         return replace(
             self,
             dataset_root=dataset_root,
             dataset_manifest_file=dataset_root / "dataset_manifest.json",
             dataset_completion_file=dataset_root / "_consolidation/complete.json",
-            cohort_file=dataset_root / "subjects.txt",
-            source_root=source_root,
-            output_root=dataset_root / "extensions/segmentation_determinism_v1",
-            protected_roots=(source_root, *self.protected_roots[1:]),
+            protected_roots=(
+                self.source_root,
+                dataset_root,
+                *self.protected_roots[2:],
+            ),
         )
+
+    def with_staging_root(self, staging_root: Path) -> "ExperimentConfig":
+        return replace(
+            self,
+            output_root=staging_root.expanduser().resolve(strict=False),
+        )
+
+    @property
+    def extension_root(self) -> Path:
+        return self.dataset_root / "extensions/segmentation_determinism_v1"
 
     @property
     def staged_input_root(self) -> Path:
@@ -155,7 +175,8 @@ def scope_payload(config: ExperimentConfig) -> Dict[str, object]:
         "source_outputs_modified": False,
         "dataset_root": str(config.dataset_root.resolve(strict=False)),
         "source_root": str(config.source_root.resolve(strict=False)),
-        "output_root": str(config.output_root.resolve(strict=False)),
+        "staging_root": str(config.output_root.resolve(strict=False)),
+        "future_extension_root": str(config.extension_root.resolve(strict=False)),
         "resources": {
             "partition": config.partition,
             "cpus_per_task": config.cpus_per_task,
@@ -222,16 +243,7 @@ def _ordered_subjects(config: ExperimentConfig) -> list[str]:
 
 def validate_output_isolation(config: ExperimentConfig) -> None:
     dataset_root = config.dataset_root.resolve(strict=False)
-    expected_source = (
-        dataset_root
-        / "data/simnibs4/left_hippocampus/"
-        "sub-CC110174_repeatability/remesh/repeats/repeat_001"
-    )
-    expected_output = dataset_root / "extensions/segmentation_determinism_v1"
     expected_paths = {
-        "source root": (config.source_root, expected_source),
-        "output root": (config.output_root, expected_output),
-        "cohort": (config.cohort_file, dataset_root / "subjects.txt"),
         "dataset manifest": (
             config.dataset_manifest_file,
             dataset_root / "dataset_manifest.json",
@@ -247,14 +259,18 @@ def validate_output_isolation(config: ExperimentConfig) -> None:
                 f"{label} is outside the approved consolidated dataset root: "
                 f"{observed} != {expected}"
             )
-    if not path_is_within(config.output_root, dataset_root):
-        raise ProvenanceError("Output root is outside the consolidated dataset root")
-    if not path_is_within(config.source_root, dataset_root):
-        raise ProvenanceError("Source root is outside the consolidated dataset root")
-    for root in (config.source_root, *config.protected_roots):
-        if path_is_within(config.output_root, root):
+    output_root = config.output_root.resolve(strict=False)
+    for label, root in (
+        ("combined dataset", dataset_root),
+        ("source root", config.source_root.resolve(strict=False)),
+        *(
+            ("protected root", root.resolve(strict=False))
+            for root in config.protected_roots
+        ),
+    ):
+        if path_is_within(output_root, root) or path_is_within(root, output_root):
             raise ProvenanceError(
-                f"Output root collides with protected root: {config.output_root} within {root}"
+                f"Staging output root overlaps {label}: {output_root} and {root}"
             )
 
 
@@ -270,7 +286,7 @@ def _read_dataset_json(path: Path, label: str) -> Dict[str, object]:
     return payload
 
 
-def _dataset_receipts(config: ExperimentConfig) -> Dict[str, object]:
+def validate_dataset_receipts(config: ExperimentConfig) -> Dict[str, object]:
     expected_root = str(config.dataset_root.resolve())
     manifest = _read_dataset_json(config.dataset_manifest_file, "dataset manifest")
     completion = _read_dataset_json(
@@ -313,7 +329,6 @@ def _dataset_receipts(config: ExperimentConfig) -> Dict[str, object]:
 
 def preflight(config: ExperimentConfig) -> Dict[str, object]:
     validate_output_isolation(config)
-    dataset = _dataset_receipts(config)
     subjects = _ordered_subjects(config)
     if subjects[0] != config.subject:
         raise ProvenanceError(
@@ -336,7 +351,10 @@ def preflight(config: ExperimentConfig) -> Dict[str, object]:
                 "sha256": config.cohort_sha256,
                 "subjects": len(subjects),
             },
-            "dataset": dataset,
+            "staging_root": str(config.output_root.resolve(strict=False)),
+            "future_extension_root": str(
+                config.extension_root.resolve(strict=False)
+            ),
             "inputs": {
                 "t1": {
                     "path": str(inputs.t1),

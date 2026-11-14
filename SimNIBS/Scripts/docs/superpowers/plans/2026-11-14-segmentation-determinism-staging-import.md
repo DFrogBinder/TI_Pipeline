@@ -84,4 +84,3 @@
 - [ ] Update the launcher and README without changing resources or dependencies.
 - [ ] Run package tests, Ruff, Bash syntax, ShellCheck, compileall, and diff checks.
 - [ ] Commit the task and perform a whole-branch self-review.
-

@@ -85,4 +85,3 @@ inventory; the extension has its own receipt.
 - Installation fails closed before either terminal receipt exists.
 - A successful installation is checksum-identical apart from its importer
   metadata and leaves the staging package unchanged.
-

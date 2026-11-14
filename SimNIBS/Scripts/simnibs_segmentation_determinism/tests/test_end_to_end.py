@@ -14,6 +14,7 @@ from simnibs_segmentation_determinism.extension_import import (
 )
 from simnibs_segmentation_determinism.headreco_runner import expected_headreco_artifacts
 from simnibs_segmentation_determinism.provenance import sha256_file
+from simnibs_segmentation_determinism.visualizations import build_visualizations
 from simnibs_segmentation_determinism.workflow import (
     collect,
     initialize,
@@ -35,7 +36,7 @@ def _save(path: Path, *, discrete: bool):
     nib.save(nib.Nifti1Image(data, np.eye(4)), str(path))
 
 
-def _install_fake_tools(monkeypatch):
+def _install_fake_tools(monkeypatch, *, vary_charm=False):
     monkeypatch.setenv("SEGDET_GIT_COMMIT", "synthetic-test-commit")
 
     def fake_headreco(command, *, cwd, timeout_seconds, log_path):
@@ -50,10 +51,18 @@ def _install_fake_tools(monkeypatch):
     def fake_charm(command, *, cwd, timeout_seconds, log_path):
         del timeout_seconds
         subject = command[1]
-        _save(
-            Path(cwd) / f"m2m_{subject}/label_prep/tissue_labeling_upsampled.nii.gz",
-            discrete=True,
+        label_map = (
+            Path(cwd) / f"m2m_{subject}/label_prep/tissue_labeling_upsampled.nii.gz"
         )
+        if vary_charm:
+            repeat_index = int(Path(cwd).parent.name.split("_")[-1])
+            labels = np.array([*range(1, 11), 1, 1], dtype=np.uint8)
+            labels[:10] = np.roll(labels[:10], repeat_index - 1)
+            data = labels.reshape((3, 2, 2))
+            label_map.parent.mkdir(parents=True, exist_ok=True)
+            nib.save(nib.Nifti1Image(data, np.eye(4)), str(label_map))
+        else:
+            _save(label_map, discrete=True)
         Path(log_path).write_text("segmentation complete\n", encoding="utf-8")
         return "segmentation complete\n"
 
@@ -163,6 +172,33 @@ def test_one_missing_repeat_cannot_create_terminal_receipt(configured_experiment
     assert result["status"] == "incomplete"
     assert result["validated_repeats"] == 19
     assert not (config.output_root / "_pipeline/complete.json").exists()
+
+
+def test_complete_workflow_exports_a_verified_separate_figure_package(
+    configured_experiment, monkeypatch
+):
+    config = configured_experiment
+    initialize(config)
+    _install_workflow_evidence(config)
+    _install_fake_tools(monkeypatch, vary_charm=True)
+    _run_repeats(config)
+    collect(config)
+    terminal = config.output_root / "_pipeline/complete.json"
+    terminal_hash = sha256_file(terminal)
+
+    result = build_visualizations(config)
+
+    assert result["status"] == "complete"
+    assert result["action"] == "created"
+    assert result["figure_count"] == 6
+    assert sha256_file(terminal) == terminal_hash
+    output = config.output_root / "visualizations_v1"
+    assert len(tuple(output.glob("*.png"))) == 6
+    assert len(tuple(output.glob("*.pdf"))) == 6
+    for line in (output / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+        expected, relative = line.split("  ", 1)
+        assert sha256_file(output / relative) == expected
+    assert build_visualizations(config)["action"] == "reused"
 
 
 def test_operator_readme_contains_submission_and_interpretation_gates():

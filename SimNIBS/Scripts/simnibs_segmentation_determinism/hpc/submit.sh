@@ -10,8 +10,9 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 ANALYSIS_PYTHON="${ANALYSIS_PYTHON:-$PYTHON_BIN}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
 DATASET_ROOT="${SEGDET_DATASET_ROOT:-/mnt/parscratch/users/cop23bi/final_132_repeatability_combined_dataset_v1}"
-SOURCE_ROOT="$DATASET_ROOT/data/simnibs4/left_hippocampus/sub-CC110174_repeatability/remesh/repeats/repeat_001"
-OUTPUT_ROOT="$DATASET_ROOT/extensions/segmentation_determinism_v1"
+STAGING_ROOT="${SEGDET_STAGING_ROOT:-/mnt/parscratch/users/cop23bi/segmentation_determinism_staging_v1}"
+SOURCE_ROOT="/mnt/parscratch/users/cop23bi/ti_dataset_final_132_balanced_10_corrected"
+OUTPUT_ROOT="$STAGING_ROOT"
 PARTITION="${SEGDET_PARTITION:-sheffield}"
 CPUS="${SEGDET_CPUS:-8}"
 MEMORY="${SEGDET_MEMORY:-32G}"
@@ -22,11 +23,12 @@ MODE="${1:-scope}"
 export SEGDET_OUTPUT_ROOT="$OUTPUT_ROOT"
 export SEGDET_SOURCE_ROOT="$SOURCE_ROOT"
 export SEGDET_DATASET_ROOT="$DATASET_ROOT"
+export SEGDET_STAGING_ROOT="$STAGING_ROOT"
 
 case "$MODE" in
-    scope|preflight|init|run|status|analyze) ;;
+    scope|preflight|init|run|status|analyze|install-preflight|install-extension) ;;
     *)
-        echo "Usage: $0 {scope|preflight|init|run|status|analyze}" >&2
+        echo "Usage: $0 {scope|preflight|init|run|status|analyze|install-preflight|install-extension}" >&2
         exit 2
         ;;
 esac
@@ -41,6 +43,10 @@ if [[ "$MAX_CONCURRENT" != "10" ]]; then
 fi
 if ! [[ "$MAX_RETRIES" =~ ^[01]$ ]]; then
     echo "SEGDET_MAX_RETRIES must be 0 or 1." >&2
+    exit 2
+fi
+if [[ "${SEGDET_REPEATS_PER_ARM:-10}" != "10" ]]; then
+    echo "Segmentation repeat scope is pinned to 10 per arm." >&2
     exit 2
 fi
 
@@ -63,8 +69,9 @@ done
 printf '%s\n' \
     'Scope:' \
     '  workflow: single-subject segmentation determinism' \
-    "  consolidated dataset: $DATASET_ROOT" \
-    "  staged experiment root: $OUTPUT_ROOT" \
+    "  source dataset: $SOURCE_ROOT" \
+    "  staging root: $STAGING_ROOT" \
+    "  future combined-dataset extension: $DATASET_ROOT/extensions/segmentation_determinism_v1" \
     '  subject: sub-CC110174' \
     '  implementations: 2 (SimNIBS 3.2.6 headreco, SimNIBS 4.0.1 CHARM)' \
     '  repeats per implementation: 10' \
@@ -93,6 +100,19 @@ case "$MODE" in
         ;;
     analyze)
         exec "$ANALYSIS_PYTHON" -m simnibs_segmentation_determinism analyze
+        ;;
+    install-preflight)
+        exec "$PYTHON_BIN" -m simnibs_segmentation_determinism install-preflight
+        ;;
+    install-extension)
+        confirmation="${2:-}"
+        expected="--confirm-dataset-root=$DATASET_ROOT"
+        if [[ "$confirmation" != "$expected" ]]; then
+            echo "Exact confirmation required: $expected" >&2
+            exit 2
+        fi
+        exec "$PYTHON_BIN" -m simnibs_segmentation_determinism \
+            install-extension "$confirmation"
         ;;
 esac
 
@@ -136,7 +156,7 @@ record_job() {
         "$(date --iso-8601=seconds --utc)" "$stage" "$job_id" "$dependency" >> "$ledger"
 }
 
-common_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SEGDET_DATASET_ROOT=$DATASET_ROOT,SEGDET_OUTPUT_ROOT=$OUTPUT_ROOT,SEGDET_SOURCE_ROOT=$SOURCE_ROOT,SEGDET_MAX_RETRIES=$MAX_RETRIES"
+common_export="ALL,PIPELINE_DIR=$PIPELINE_DIR,SEGDET_DATASET_ROOT=$DATASET_ROOT,SEGDET_STAGING_ROOT=$STAGING_ROOT,SEGDET_OUTPUT_ROOT=$OUTPUT_ROOT,SEGDET_SOURCE_ROOT=$SOURCE_ROOT,SEGDET_MAX_RETRIES=$MAX_RETRIES"
 
 raw="$($SBATCH_BIN --parsable --partition="$PARTITION" --open-mode=append \
     --output="$log_root/module_preflight/simnibs326-%j.out" \

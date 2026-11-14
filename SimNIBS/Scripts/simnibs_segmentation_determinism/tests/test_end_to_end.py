@@ -155,8 +155,8 @@ def test_one_missing_repeat_cannot_create_terminal_receipt(configured_experiment
 def test_operator_readme_contains_submission_and_interpretation_gates():
     readme = (PACKAGE / "README.md").read_text(encoding="utf-8")
 
-    assert "does not authorize HPC submission" in readme
-    assert "dataset checksum" in readme
+    assert "does not authorize automatic HPC submission" in readme
+    assert "may run while dataset consolidation continues" in readme
     assert "headreco preparevols --noclean" in readme
     assert "--registerT2 --initatlas --segment --forceqform" in readme
     assert "gzip" in readme.lower()
@@ -164,7 +164,8 @@ def test_operator_readme_contains_submission_and_interpretation_gates():
     assert "23 scheduler tasks" in readme
     assert "final_132_repeatability_combined_dataset_v1" in readme
     assert "extensions/segmentation_determinism_v1" in readme
-    assert "retirement cleanup" in readme
+    assert "segmentation_determinism_staging_v1" in readme
+    assert "--confirm-dataset-root" in readme
     assert "staged copies" in readme
     assert "simnibs_segmentation_determinism_v1" not in readme
-    assert "ti_dataset_final_132_balanced_10_corrected" not in readme
+    assert "ti_dataset_final_132_balanced_10_corrected" in readme

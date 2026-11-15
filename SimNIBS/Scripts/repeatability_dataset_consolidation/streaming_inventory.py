@@ -47,7 +47,7 @@ def _destination_records(
         raise ValueError(f"Inventory root is missing: {root}")
 
     def visit(directory: Path, relative: Path) -> Iterator[tuple[str, Path]]:
-        children: list[tuple[str, Path, int]] = []
+        children: list[tuple[str, Path, bool]] = []
         for child in directory.iterdir():
             if child.resolve(strict=False) in excluded:
                 continue
@@ -56,17 +56,37 @@ def _destination_records(
             mode = child.lstat().st_mode
             if stat.S_ISDIR(mode):
                 key = f"{child.name}/"
+                is_directory = True
             elif stat.S_ISREG(mode):
                 key = child.name
+                is_directory = False
             else:
                 raise ValueError(
                     f"Destination inventory contains special file: {child}"
                 )
-            children.append((key, child, mode))
+            children.append((key, child, is_directory))
 
-        for _, child, mode in sorted(children, key=lambda record: record[0]):
-            logical = relative / child.name
+        for _, child, was_directory in sorted(
+            children,
+            key=lambda record: record[0],
+        ):
+            if child.is_symlink():
+                raise ValueError(f"Destination inventory contains symlink: {child}")
+            mode = child.lstat().st_mode
             if stat.S_ISDIR(mode):
+                is_directory = True
+            elif stat.S_ISREG(mode):
+                is_directory = False
+            else:
+                raise ValueError(
+                    f"Destination inventory contains special file: {child}"
+                )
+            if is_directory != was_directory:
+                raise ValueError(
+                    f"Destination inventory entry type changed during traversal: {child}"
+                )
+            logical = relative / child.name
+            if is_directory:
                 yield from visit(child, logical)
             else:
                 yield logical.as_posix(), child
@@ -114,12 +134,31 @@ def _materialized_records(root: Path) -> Iterator[tuple[str, Path]]:
                 raise ValueError(
                     f"Source contains unsupported special file: {logical_child}"
                 )
-            children.append((key, target, logical_child, is_directory))
+            children.append((key, child, logical_child, is_directory))
 
-        for _, target, logical_child, is_directory in sorted(
+        for _, child, logical_child, was_directory in sorted(
             children,
             key=lambda record: record[0],
         ):
+            try:
+                target = child.resolve(strict=True) if child.is_symlink() else child
+            except (FileNotFoundError, RuntimeError) as exc:
+                raise ValueError(
+                    f"Materialized inventory has a broken link: {logical_child}"
+                ) from exc
+            if target.is_dir():
+                is_directory = True
+            elif target.is_file():
+                is_directory = False
+            else:
+                raise ValueError(
+                    f"Source contains unsupported special file: {logical_child}"
+                )
+            if is_directory != was_directory:
+                raise ValueError(
+                    "Materialized inventory entry type changed during traversal: "
+                    f"{logical_child}"
+                )
             if is_directory:
                 yield from visit(target, logical_child, next_ancestors)
             else:

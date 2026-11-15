@@ -13,6 +13,8 @@ from repeatability_dataset_consolidation.inventory import (
 )
 from repeatability_dataset_consolidation.streaming_inventory import (
     InventoryStreamSummary,
+    _destination_records,
+    _materialized_records,
     merge_inventory_streams,
     metadata_fingerprint,
     validate_inventory_stream,
@@ -102,6 +104,50 @@ def test_materialized_stream_matches_legacy_order_when_directory_prefixes_file(
     ]
     assert entries == [entry.as_dict() for entry in legacy.entries]
     assert summary.inventory_sha256 == legacy.inventory_sha256
+
+
+@pytest.mark.parametrize("replacement", ["symlink", "fifo"])
+def test_destination_records_revalidate_a_pending_sibling(
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    root = tmp_path / "tree"
+    root.mkdir()
+    first = root / "a.txt"
+    pending = root / "b.txt"
+    first.write_text("first\n", encoding="utf-8")
+    pending.write_text("pending\n", encoding="utf-8")
+    external = tmp_path / "external.txt"
+    external.write_text("external\n", encoding="utf-8")
+    records = _destination_records(root, frozenset())
+
+    assert next(records) == ("a.txt", first)
+    pending.unlink()
+    if replacement == "symlink":
+        pending.symlink_to(external)
+    else:
+        os.mkfifo(pending)
+
+    with pytest.raises(ValueError, match="symlink|special file"):
+        next(records)
+
+
+def test_materialized_records_reresolve_a_pending_alias(tmp_path: Path) -> None:
+    root = tmp_path / "tree"
+    root.mkdir()
+    first = root / "a.txt"
+    first.write_text("first\n", encoding="utf-8")
+    external = tmp_path / "external.txt"
+    external.write_text("external\n", encoding="utf-8")
+    pending = root / "b.txt"
+    pending.symlink_to(external)
+    records = _materialized_records(root)
+
+    assert next(records) == ("a.txt", first)
+    external.unlink()
+
+    with pytest.raises(ValueError, match="broken link"):
+        next(records)
 
 
 def test_write_inventory_stream_atomically_replaces_an_existing_stream(

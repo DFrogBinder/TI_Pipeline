@@ -47,21 +47,29 @@ def _destination_records(
         raise ValueError(f"Inventory root is missing: {root}")
 
     def visit(directory: Path, relative: Path) -> Iterator[tuple[str, Path]]:
-        for child in sorted(directory.iterdir(), key=lambda path: path.name):
+        children: list[tuple[str, Path, int]] = []
+        for child in directory.iterdir():
             if child.resolve(strict=False) in excluded:
                 continue
             if child.is_symlink():
                 raise ValueError(f"Destination inventory contains symlink: {child}")
             mode = child.lstat().st_mode
-            logical = relative / child.name
             if stat.S_ISDIR(mode):
-                yield from visit(child, logical)
+                key = f"{child.name}/"
             elif stat.S_ISREG(mode):
-                yield logical.as_posix(), child
+                key = child.name
             else:
                 raise ValueError(
                     f"Destination inventory contains special file: {child}"
                 )
+            children.append((key, child, mode))
+
+        for _, child, mode in sorted(children, key=lambda record: record[0]):
+            logical = relative / child.name
+            if stat.S_ISDIR(mode):
+                yield from visit(child, logical)
+            else:
+                yield logical.as_posix(), child
 
     yield from visit(root, Path())
 
@@ -87,7 +95,8 @@ def _materialized_records(root: Path) -> Iterator[tuple[str, Path]]:
         if identity in ancestors:
             raise ValueError(f"Source link materialization cycle: {logical}")
         next_ancestors = ancestors | {identity}
-        for child in sorted(physical.iterdir(), key=lambda path: path.name):
+        children: list[tuple[str, Path, Path, bool]] = []
+        for child in physical.iterdir():
             logical_child = logical / child.name
             try:
                 target = child.resolve(strict=True) if child.is_symlink() else child
@@ -96,13 +105,25 @@ def _materialized_records(root: Path) -> Iterator[tuple[str, Path]]:
                     f"Materialized inventory has a broken link: {logical_child}"
                 ) from exc
             if target.is_dir():
-                yield from visit(target, logical_child, next_ancestors)
+                key = f"{child.name}/"
+                is_directory = True
             elif target.is_file():
-                yield logical_child.as_posix(), target
+                key = child.name
+                is_directory = False
             else:
                 raise ValueError(
                     f"Source contains unsupported special file: {logical_child}"
                 )
+            children.append((key, target, logical_child, is_directory))
+
+        for _, target, logical_child, is_directory in sorted(
+            children,
+            key=lambda record: record[0],
+        ):
+            if is_directory:
+                yield from visit(target, logical_child, next_ancestors)
+            else:
+                yield logical_child.as_posix(), target
 
     yield from visit(physical_root, Path(), frozenset())
 

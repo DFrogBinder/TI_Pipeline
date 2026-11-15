@@ -9,6 +9,7 @@ import pytest
 from repeatability_dataset_consolidation.inventory import (
     InventoryEntry,
     build_file_inventory,
+    build_materialized_inventory,
 )
 from repeatability_dataset_consolidation.streaming_inventory import (
     InventoryStreamSummary,
@@ -46,6 +47,61 @@ def test_write_inventory_stream_matches_legacy_inventory_without_returning_entri
     assert entries == [entry.as_dict() for entry in legacy.entries]
     assert len(summary.entries_sha256) == 64
     assert len(summary.metadata_sha256) == 64
+
+
+def test_destination_stream_matches_legacy_order_when_directory_prefixes_file(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "tree"
+    (root / "a").mkdir(parents=True)
+    (root / "a/inside.bin").write_bytes(b"inside")
+    (root / "a.txt").write_text("sibling\n", encoding="utf-8")
+    entries_path = tmp_path / "inventory.jsonl"
+
+    summary = write_inventory_stream(root, entries_path)
+    legacy = build_file_inventory(root)
+    entries = [
+        json.loads(line)
+        for line in entries_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert [entry["path"] for entry in entries] == [
+        "a.txt",
+        "a/inside.bin",
+    ]
+    assert entries == [entry.as_dict() for entry in legacy.entries]
+    assert summary.inventory_sha256 == legacy.inventory_sha256
+
+
+def test_materialized_stream_matches_legacy_order_when_directory_prefixes_file(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "tree"
+    root.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "inside.bin").write_bytes(b"inside")
+    (root / "a").symlink_to(external, target_is_directory=True)
+    (root / "a.txt").write_text("sibling\n", encoding="utf-8")
+    entries_path = tmp_path / "materialized.jsonl"
+
+    summary = write_inventory_stream(
+        root,
+        entries_path,
+        materialize_links=True,
+    )
+    legacy = build_materialized_inventory(root)
+    entries = [
+        json.loads(line)
+        for line in entries_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert [entry["path"] for entry in entries] == [
+        "a.txt",
+        "a/inside.bin",
+    ]
+    assert entries == [entry.as_dict() for entry in legacy.entries]
+    assert summary.inventory_sha256 == legacy.inventory_sha256
 
 
 def test_write_inventory_stream_atomically_replaces_an_existing_stream(

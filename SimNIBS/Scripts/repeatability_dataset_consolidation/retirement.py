@@ -83,6 +83,46 @@ class RetirementConfirmations:
     confirm_retirement: bool
 
 
+_FULL_SCOPE = "full"
+_COVERED_SCOPE = "covered"
+
+
+def _scope_allowlist(config: DatasetConfig, scope: str) -> dict[str, Path]:
+    if scope == _FULL_SCOPE:
+        return retirement_allowlist(config)
+    if scope == _COVERED_SCOPE:
+        return covered_retirement_allowlist(config)
+    raise RetirementError(f"Unknown retirement scope: {scope}")
+
+
+def _scope_workflow(scope: str) -> str:
+    if scope == _FULL_SCOPE:
+        return "repeatability_dataset_consolidation_retirement"
+    if scope == _COVERED_SCOPE:
+        return "repeatability_dataset_consolidation_covered_retirement"
+    raise RetirementError(f"Unknown retirement scope: {scope}")
+
+
+def _request_path(config: DatasetConfig, scope: str) -> Path:
+    filename = (
+        "retirement_request.json"
+        if scope == _FULL_SCOPE
+        else "covered_retirement_request.json"
+    )
+    _scope_workflow(scope)
+    return config.deletion_log_root / filename
+
+
+def _completion_path(config: DatasetConfig, scope: str) -> Path:
+    filename = (
+        "retirement_complete.json"
+        if scope == _FULL_SCOPE
+        else "covered_retirement_complete.json"
+    )
+    _scope_workflow(scope)
+    return config.deletion_log_root / filename
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -374,6 +414,10 @@ def _validate_confirmations(
         confirmations.archive_receipt_sha256 != plan.archive_receipt_sha256
     ):
         raise RetirementError("The archive receipt confirmation is not exact")
+    if not any(target.requires_archive_receipt for target in plan.targets) and (
+        confirmations.archive_receipt_sha256 is not None
+    ):
+        raise RetirementError("The retirement confirmation has an unexpected archive hash")
     if (
         confirmations.retirement_disposition_sha256
         != plan.retirement_disposition_sha256
@@ -390,7 +434,8 @@ def _request_payload(
     return {
         "schema_version": 1,
         "status": "submitted" if len(jobs) == len(plan.targets) else "submitting",
-        "workflow": "repeatability_dataset_consolidation_retirement",
+        "workflow": _scope_workflow(plan.scope),
+        "scope": plan.scope,
         "created_utc": created_utc or _utc_now(),
         "retirement_plan_sha256": plan.plan_sha256,
         "dataset_root": str(plan.config.output_root.resolve()),
@@ -409,8 +454,9 @@ def _request_payload(
 
 def _request_plan(
     config: DatasetConfig,
+    scope: str = _FULL_SCOPE,
 ) -> tuple[RetirementPlan, list[dict[str, object]], Path, str]:
-    request_path = config.deletion_log_root / "retirement_request.json"
+    request_path = _request_path(config, scope)
     if not request_path.is_file() or request_path.is_symlink():
         raise RetirementError("No safe retirement request exists to resume")
     try:
@@ -418,7 +464,8 @@ def _request_plan(
     except (OSError, json.JSONDecodeError) as exc:
         raise RetirementError("The retirement request receipt is unreadable") from exc
     if (
-        request.get("workflow") != "repeatability_dataset_consolidation_retirement"
+        request.get("workflow") != _scope_workflow(scope)
+        or request.get("scope") != scope
         or request.get("dataset_root") != str(config.output_root.resolve())
         or request.get("allowed_root") != str(config.output_root.parent.resolve())
     ):
@@ -432,16 +479,25 @@ def _request_plan(
         or sha256_file(dataset_receipt) != request.get("dataset_receipt_sha256")
     ):
         raise RetirementError("The bound dataset completion receipt changed")
-    archive_receipt = (
-        config.shared_receipt_root / "legacy_v3_archive_v1.complete.json"
-    )
-    if (
-        request.get("archive_receipt") != str(archive_receipt)
-        or not archive_receipt.is_file()
-        or archive_receipt.is_symlink()
-        or sha256_file(archive_receipt) != request.get("archive_receipt_sha256")
+    archive_receipt: Path | None = None
+    archive_sha: str | None = None
+    if scope == _FULL_SCOPE:
+        archive_receipt = (
+            config.shared_receipt_root / "legacy_v3_archive_v1.complete.json"
+        )
+        if (
+            request.get("archive_receipt") != str(archive_receipt)
+            or not archive_receipt.is_file()
+            or archive_receipt.is_symlink()
+            or sha256_file(archive_receipt) != request.get("archive_receipt_sha256")
+        ):
+            raise RetirementError("The bound archive completion receipt changed")
+        archive_sha = str(request["archive_receipt_sha256"])
+    elif (
+        request.get("archive_receipt") is not None
+        or request.get("archive_receipt_sha256") is not None
     ):
-        raise RetirementError("The bound archive completion receipt changed")
+        raise RetirementError("The covered retirement request has an archive receipt")
     saved_disposition = disposition_path(config)
     if (
         request.get("retirement_disposition") != str(saved_disposition)
@@ -457,7 +513,7 @@ def _request_plan(
 
     records = request.get("targets")
     jobs = request.get("jobs")
-    allowlist = retirement_allowlist(config)
+    allowlist = _scope_allowlist(config, scope)
     archive_keys = set(config.archive_sources)
     if not isinstance(records, list) or not isinstance(jobs, list):
         raise RetirementError("The retirement request scope is invalid")
@@ -465,6 +521,11 @@ def _request_plan(
         allowlist
     ) or len(records) != len(allowlist):
         raise RetirementError("The retirement request target scope is invalid")
+    _validate_disposition_summary(
+        disposition_summary,
+        tuple(allowlist),
+        covered=scope == _COVERED_SCOPE,
+    )
     targets: list[RetirementTarget] = []
     for record in records:
         if not isinstance(record, dict):
@@ -487,10 +548,10 @@ def _request_plan(
         )
     target_tuple = tuple(targets)
     expected_hash = _retirement_hash(
-        "full",
+        scope,
         target_tuple,
         str(request.get("dataset_receipt_sha256", "")),
-        str(request.get("archive_receipt_sha256", "")),
+        archive_sha,
         str(request.get("retirement_disposition_sha256", "")),
     )
     if expected_hash != request.get("retirement_plan_sha256"):
@@ -518,7 +579,7 @@ def _request_plan(
             dataset_receipt=dataset_receipt,
             dataset_receipt_sha256=str(request["dataset_receipt_sha256"]),
             archive_receipt=archive_receipt,
-            archive_receipt_sha256=str(request["archive_receipt_sha256"]),
+            archive_receipt_sha256=archive_sha,
             retirement_disposition=saved_disposition,
             retirement_disposition_sha256=str(
                 request["retirement_disposition_sha256"]
@@ -528,7 +589,7 @@ def _request_plan(
             },
             scheduler_snapshot_sha256="resume-from-immutable-request",
             deletion_launcher=launcher,
-            scope="full",
+            scope=scope,
         ),
         [dict(job) for job in jobs],
         request_path,
@@ -665,14 +726,25 @@ def _submit_missing_jobs(
     }
 
 
-def submit_retirement(
+def _live_plan(config: DatasetConfig, scope: str) -> RetirementPlan:
+    if scope == _FULL_SCOPE:
+        return plan_retirement(config)
+    if scope == _COVERED_SCOPE:
+        return plan_covered_retirement(config)
+    raise RetirementError(f"Unknown retirement scope: {scope}")
+
+
+def _submit_retirement(
     plan: RetirementPlan,
     confirmations: RetirementConfirmations,
+    *,
+    scope: str,
 ) -> dict[str, object]:
-    """Revalidate the plan and delegate one guarded deletion job per target."""
-    request_path = plan.config.deletion_log_root / "retirement_request.json"
+    if plan.scope != scope:
+        raise RetirementError("The retirement plan has another scope")
+    request_path = _request_path(plan.config, scope)
     if request_path.exists() or request_path.is_symlink():
-        stored, jobs, request_path, created = _request_plan(plan.config)
+        stored, jobs, request_path, created = _request_plan(plan.config, scope)
         if stored.plan_sha256 != plan.plan_sha256:
             raise RetirementError("The existing retirement request has another scope")
         _validate_confirmations(stored, confirmations)
@@ -680,9 +752,7 @@ def submit_retirement(
             stored, jobs, request_path, created_utc=created
         )
     _validate_confirmations(plan, confirmations)
-    fresh = plan_retirement(
-        plan.config, selected=tuple(target.key for target in plan.targets)
-    )
+    fresh = _live_plan(plan.config, scope)
     if fresh.plan_sha256 != plan.plan_sha256:
         raise RetirementError("The retirement plan changed during confirmation")
     config = plan.config
@@ -695,14 +765,55 @@ def submit_retirement(
     return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
 
 
+def submit_retirement(
+    plan: RetirementPlan,
+    confirmations: RetirementConfirmations,
+) -> dict[str, object]:
+    """Submit the full archive-gated retirement plan."""
+    return _submit_retirement(
+        plan,
+        confirmations,
+        scope=_FULL_SCOPE,
+    )
+
+
+def submit_covered_retirement(
+    plan: RetirementPlan,
+    confirmations: RetirementConfirmations,
+) -> dict[str, object]:
+    """Submit only the exact completed-dataset-covered retirement plan."""
+    return _submit_retirement(
+        plan,
+        confirmations,
+        scope=_COVERED_SCOPE,
+    )
+
+
+def _resume_retirement(
+    config: DatasetConfig,
+    confirmations: RetirementConfirmations,
+    *,
+    scope: str,
+) -> dict[str, object]:
+    plan, jobs, request_path, created = _request_plan(config, scope)
+    _validate_confirmations(plan, confirmations)
+    return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
+
+
 def resume_retirement(
     config: DatasetConfig,
     confirmations: RetirementConfirmations,
 ) -> dict[str, object]:
     """Resume only jobs absent from an immutable partial retirement request."""
-    plan, jobs, request_path, created = _request_plan(config)
-    _validate_confirmations(plan, confirmations)
-    return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
+    return _resume_retirement(config, confirmations, scope=_FULL_SCOPE)
+
+
+def resume_covered_retirement(
+    config: DatasetConfig,
+    confirmations: RetirementConfirmations,
+) -> dict[str, object]:
+    """Resume only covered jobs absent from the immutable covered request."""
+    return _resume_retirement(config, confirmations, scope=_COVERED_SCOPE)
 
 
 def _read_terminal_receipt(path: Path) -> dict[str, str] | None:
@@ -718,16 +829,19 @@ def _read_terminal_receipt(path: Path) -> dict[str, str] | None:
     return {str(key): str(value) for key, value in rows[0].items()}
 
 
-def retirement_status(config: DatasetConfig) -> dict[str, object]:
+def _retirement_status(config: DatasetConfig, scope: str) -> dict[str, object]:
     """Prove terminal deletion only from receipts plus independent absence."""
-    request_path = config.deletion_log_root / "retirement_request.json"
+    request_path = _request_path(config, scope)
     if not request_path.is_file() or request_path.is_symlink():
         return {"status": "not_submitted", "complete": False, "targets": []}
     try:
         request = json.loads(request_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RetirementError("The retirement request receipt is unreadable") from exc
-    if request.get("workflow") != "repeatability_dataset_consolidation_retirement":
+    if (
+        request.get("workflow") != _scope_workflow(scope)
+        or request.get("scope") != scope
+    ):
         raise RetirementError("The retirement request receipt is unowned")
     if request.get("dataset_root") != str(config.output_root.resolve()):
         raise RetirementError("The retirement request is bound to another dataset root")
@@ -744,13 +858,14 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
     ):
         raise RetirementError("The bound dataset completion receipt changed")
     bound_disposition = Path(str(request.get("retirement_disposition", "")))
+    disposition_summary = request.get("retirement_disposition_summary")
     if (
         bound_disposition != disposition_path(config)
         or not bound_disposition.is_file()
         or bound_disposition.is_symlink()
         or sha256_file(bound_disposition)
         != request.get("retirement_disposition_sha256")
-        or not isinstance(request.get("retirement_disposition_summary"), dict)
+        or not isinstance(disposition_summary, dict)
     ):
         raise RetirementError("The bound retirement disposition changed")
     archive_value = request.get("archive_receipt")
@@ -767,7 +882,7 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
     jobs = request.get("jobs")
     if not isinstance(target_records, list) or not isinstance(jobs, list):
         raise RetirementError("The retirement request scope is invalid")
-    allowlist = retirement_allowlist(config)
+    allowlist = _scope_allowlist(config, scope)
     archive_keys = set(config.archive_sources)
     record_keys: list[str] = []
     for record in target_records:
@@ -782,18 +897,23 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
             or bool(record.get("requires_archive_receipt")) != (key in archive_keys)
         ):
             raise RetirementError("The retirement request target binding is invalid")
-    if len(record_keys) != len(set(record_keys)) or not record_keys:
+    if record_keys != list(allowlist):
         raise RetirementError("The retirement request target binding is invalid")
+    _validate_disposition_summary(
+        disposition_summary,
+        tuple(allowlist),
+        covered=scope == _COVERED_SCOPE,
+    )
     expected_archive_receipt = (
         config.shared_receipt_root / "legacy_v3_archive_v1.complete.json"
     )
-    if any(key in archive_keys for key in record_keys):
+    if scope == _FULL_SCOPE:
         if not archive_value or Path(str(archive_value)) != expected_archive_receipt:
             raise RetirementError("The retirement request archive receipt path is invalid")
     elif archive_value is not None:
         raise RetirementError("The retirement request has an unexpected archive receipt")
     expected_hash = _retirement_hash(
-        "full",
+        scope,
         tuple(
             RetirementTarget(
                 key=str(record["key"]),
@@ -866,7 +986,7 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
         result["complete"] for result in results
     )
     if complete:
-        summary_path = config.deletion_log_root / "retirement_complete.json"
+        summary_path = _completion_path(config, scope)
         summary = {
             "schema_version": 1,
             "status": "complete",
@@ -891,3 +1011,13 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
         "complete": False,
         "targets": results,
     }
+
+
+def retirement_status(config: DatasetConfig) -> dict[str, object]:
+    """Report the full archive-gated retirement status."""
+    return _retirement_status(config, _FULL_SCOPE)
+
+
+def covered_retirement_status(config: DatasetConfig) -> dict[str, object]:
+    """Report the completed-dataset-covered retirement status."""
+    return _retirement_status(config, _COVERED_SCOPE)

@@ -13,10 +13,13 @@ from repeatability_dataset_consolidation.archive import archive_copy, archive_ve
 from repeatability_dataset_consolidation.retirement import (
     RetirementConfirmations,
     RetirementError,
+    covered_retirement_status,
     plan_covered_retirement,
     plan_retirement,
+    resume_covered_retirement,
     resume_retirement,
     retirement_status,
+    submit_covered_retirement,
     submit_retirement,
 )
 from repeatability_dataset_consolidation.settings import (
@@ -208,6 +211,161 @@ def _confirmations(plan, *, archive: bool = True) -> RetirementConfirmations:
         retirement_disposition_sha256=plan.retirement_disposition_sha256,
         confirm_retirement=True,
     )
+
+
+def test_covered_submission_uses_distinct_receipts_and_exact_ten_jobs(
+    dataset_retirement_ready, monkeypatch
+) -> None:
+    config = dataset_retirement_ready
+    plan = plan_covered_retirement(config)
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(list(command))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {6000 + len(commands)}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher", fake_run
+    )
+
+    unexpected_archive = RetirementConfirmations(
+        dataset_root=str(config.output_root.resolve()),
+        dataset_receipt_sha256=plan.dataset_receipt_sha256,
+        archive_receipt_sha256="a" * 64,
+        retirement_disposition_sha256=plan.retirement_disposition_sha256,
+        confirm_retirement=True,
+    )
+    with pytest.raises(RetirementError, match="unexpected archive"):
+        submit_covered_retirement(plan, unexpected_archive)
+
+    submitted = submit_covered_retirement(plan, _confirmations(plan))
+
+    assert submitted["status"] == "submitted"
+    assert len(commands) == 10
+    assert [command[command.index("--target") + 1] for command in commands] == [
+        str(target.path) for target in plan.targets
+    ]
+    covered_request = config.deletion_log_root / "covered_retirement_request.json"
+    assert covered_request.is_file()
+    assert not (config.deletion_log_root / "retirement_request.json").exists()
+    request = json.loads(covered_request.read_text(encoding="utf-8"))
+    assert request["scope"] == "covered"
+    assert request["archive_receipt"] is None
+    assert request["archive_receipt_sha256"] is None
+    assert covered_retirement_status(config)["status"] == "submitted"
+    with pytest.raises(RetirementError, match="No safe retirement request"):
+        resume_retirement(config, _confirmations(plan))
+
+    repeated = resume_covered_retirement(config, _confirmations(plan))
+    assert repeated["jobs"] == submitted["jobs"]
+    assert len(commands) == 10
+
+    for index, target in enumerate(plan.targets, start=1):
+        _write_terminal_receipt(
+            config.deletion_log_root
+            / f"delete-directory-{6000 + index}.receipt.tsv",
+            job_id=str(6000 + index),
+            target=target,
+            status="complete",
+        )
+        shutil.rmtree(target.path)
+
+    completed = covered_retirement_status(config)
+    assert completed["status"] == "complete"
+    assert (config.deletion_log_root / "covered_retirement_complete.json").is_file()
+    assert not (config.deletion_log_root / "retirement_complete.json").exists()
+
+
+def test_covered_resume_rejects_archive_key_forgery(
+    dataset_retirement_ready, monkeypatch
+) -> None:
+    config = dataset_retirement_ready
+    plan = plan_covered_retirement(config)
+    submitted = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal submitted
+        submitted += 1
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {6500 + submitted}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher", fake_run
+    )
+    submit_covered_retirement(plan, _confirmations(plan))
+    request_path = config.deletion_log_root / "covered_retirement_request.json"
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    archive_key, archive_path = next(iter(config.archive_sources.items()))
+    request["targets"][-1] = {
+        "key": archive_key,
+        "path": str(archive_path.resolve()),
+        "requires_archive_receipt": True,
+        "source_device": archive_path.lstat().st_dev,
+        "source_inode": archive_path.lstat().st_ino,
+    }
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    with pytest.raises(RetirementError, match="target scope"):
+        resume_covered_retirement(config, _confirmations(plan))
+    with pytest.raises(RetirementError, match="target binding"):
+        covered_retirement_status(config)
+
+
+def test_covered_partial_submission_resumes_only_missing_targets(
+    dataset_retirement_ready, monkeypatch
+) -> None:
+    config = dataset_retirement_ready
+    plan = plan_covered_retirement(config)
+    initial_calls: list[str] = []
+
+    def fail_second(command, **kwargs):
+        target = command[command.index("--target") + 1]
+        initial_calls.append(target)
+        if len(initial_calls) == 2:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="boom")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {6700 + len(initial_calls)}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher", fail_second
+    )
+    with pytest.raises(RetirementError, match="launcher failed"):
+        submit_covered_retirement(plan, _confirmations(plan))
+
+    first_target = plan.targets[0]
+    shutil.rmtree(first_target.path)
+    resumed_calls: list[str] = []
+
+    def succeed(command, **kwargs):
+        target = command[command.index("--target") + 1]
+        resumed_calls.append(target)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"[INFO] Submitted deletion job: {6800 + len(resumed_calls)}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "repeatability_dataset_consolidation.retirement._run_launcher", succeed
+    )
+    resumed = resume_covered_retirement(config, _confirmations(plan))
+
+    assert str(first_target.path) not in resumed_calls
+    assert len(resumed["jobs"]) == len(plan.targets)
 
 
 def test_submission_requires_exact_confirmations_and_delegates_one_job_each(

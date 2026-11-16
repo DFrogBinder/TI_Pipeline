@@ -169,6 +169,30 @@ def test_archive_rejects_protected_root_overlapping_retirement_target(
         archive_preflight(unsafe)
 
 
+def test_archive_rejects_directory_link_into_protected_root(
+    miniature_config,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    protected_root = miniature_config.protected_materialization_roots[0]
+    protected_directory = protected_root / "linked-directory"
+    protected_directory.mkdir()
+    outside = miniature_config.shared_archive_root.parent / "unapproved.bin"
+    outside.write_bytes(b"unapproved\n")
+    (protected_directory / "nested-escape.bin").symlink_to(outside.resolve())
+    source = next(iter(miniature_config.archive_sources.values()))
+    (source / "protected-directory-link").symlink_to(
+        protected_directory.resolve(),
+        target_is_directory=True,
+    )
+
+    with pytest.raises(
+        ArchiveError,
+        match="Protected materialization target must be a regular file",
+    ):
+        archive_preflight(miniature_config)
+    assert not miniature_config.shared_archive_root.exists()
+
+
 def test_archive_rejects_links_outside_archive_sources(miniature_config) -> None:
     _seed_archive_sources(miniature_config)
     outside = miniature_config.shared_archive_root.parent / "not-an-archive-source.bin"

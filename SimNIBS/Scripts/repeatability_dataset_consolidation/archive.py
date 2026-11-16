@@ -158,7 +158,7 @@ def _plan(
         )
     ordered = tuple(sorted(items, key=lambda item: item.key))
     protected_roots = _protected_materialization_roots(config)
-    approved_roots = tuple(item.source for item in ordered) + protected_roots
+    archive_source_roots = tuple(item.source for item in ordered)
     for item in ordered:
         for path in item.source.rglob("*"):
             if not path.is_symlink():
@@ -167,12 +167,18 @@ def _plan(
                 target = path.resolve(strict=True)
             except (FileNotFoundError, RuntimeError) as exc:
                 raise ArchiveError(f"Broken archive-source symlink: {path}") from exc
-            if not any(
-                target == root or root in target.parents for root in approved_roots
-            ):
-                raise ArchiveError(
-                    f"Symlink target is outside archive sources: {path} -> {target}"
-                )
+            if any(_inside(target, root) for root in archive_source_roots):
+                continue
+            if any(_inside(target, root) for root in protected_roots):
+                if not target.is_file():
+                    raise ArchiveError(
+                        "Protected materialization target must be a regular file: "
+                        f"{path} -> {target}"
+                    )
+                continue
+            raise ArchiveError(
+                f"Symlink target is outside archive sources: {path} -> {target}"
+            )
     item_payloads = [item.as_dict() for item in ordered]
     plan_payload: object = item_payloads
     if protected_roots:

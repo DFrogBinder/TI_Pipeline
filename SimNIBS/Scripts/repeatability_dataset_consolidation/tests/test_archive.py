@@ -117,6 +117,58 @@ def test_archive_materializes_absolute_links_between_archived_roots(
     assert archived.read_bytes() == target.read_bytes()
 
 
+def test_archive_materializes_links_from_protected_root(miniature_config) -> None:
+    _seed_archive_sources(miniature_config)
+    protected_root = miniature_config.protected_materialization_roots[0]
+    target = protected_root / "sub-CC520127_T1w.nii"
+    target.write_bytes(b"protected corrected input\n")
+    source = next(iter(miniature_config.archive_sources.values()))
+    link = source / "protected-input-link.nii"
+    link.symlink_to(target.resolve())
+
+    preflight = archive_preflight(miniature_config)
+    assert preflight["protected_materialization_roots"] == [
+        str(protected_root.resolve())
+    ]
+
+    archive_copy(miniature_config)
+    assert archive_verify(miniature_config, checksum=True)["status"] == "complete"
+
+    archived = miniature_config.shared_archive_root / source.name / link.name
+    assert archived.is_file()
+    assert not archived.is_symlink()
+    assert archived.read_bytes() == target.read_bytes()
+
+
+def test_archive_plan_binds_protected_materialization_roots(
+    miniature_config,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    without_protected_roots = replace(
+        miniature_config,
+        protected_materialization_roots=(),
+    )
+
+    with_hash = archive_preflight(miniature_config)["plan_sha256"]
+    without_hash = archive_preflight(without_protected_roots)["plan_sha256"]
+
+    assert with_hash != without_hash
+
+
+def test_archive_rejects_protected_root_overlapping_retirement_target(
+    miniature_config,
+) -> None:
+    _seed_archive_sources(miniature_config)
+    archive_source = next(iter(miniature_config.archive_sources.values()))
+    unsafe = replace(
+        miniature_config,
+        protected_materialization_roots=(archive_source,),
+    )
+
+    with pytest.raises(ArchiveError, match="Protected materialization root overlaps"):
+        archive_preflight(unsafe)
+
+
 def test_archive_rejects_links_outside_archive_sources(miniature_config) -> None:
     _seed_archive_sources(miniature_config)
     outside = miniature_config.shared_archive_root.parent / "not-an-archive-source.bin"

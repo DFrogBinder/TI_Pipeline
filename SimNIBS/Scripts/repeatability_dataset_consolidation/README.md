@@ -160,10 +160,12 @@ Do not proceed to retirement unless `status` reports `complete: true`.
 
 Shared is login-node-only and must never replace parscratch in a worker-job
 configuration. This is a self-contained whole-tree logical archive. Hard links
-are preserved, while every symlink whose target stays within the exact four
-archive roots is materialized as a regular file; broken or external links fail
-preflight. `archive-preflight` and the first `archive-copy` also fail before
-creating the Shared root when free space is below the materialized byte total.
+are preserved, while symlinks whose targets stay within the exact four archive
+roots or the configured protected corrected-input root are materialized as
+regular files. The protected root is never copied wholesale or retired. Broken
+or other external links fail preflight. `archive-preflight` and the first
+`archive-copy` also fail before creating the Shared root when free space is
+below the materialized byte total.
 
 ```bash
 bash "$DATASET" archive-preflight

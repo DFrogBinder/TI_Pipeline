@@ -15,7 +15,7 @@ import tempfile
 from .inventory import (
     estimate_materialized_bytes,
 )
-from .settings import DatasetConfig
+from .settings import DatasetConfig, retirement_allowlist
 from .streaming_inventory import (
     InventoryStreamSummary,
     metadata_fingerprint,
@@ -74,7 +74,51 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _plan(config: DatasetConfig) -> tuple[tuple[ArchiveItem, ...], str]:
+def _inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _overlap(left: Path, right: Path) -> bool:
+    return _inside(left, right) or _inside(right, left)
+
+
+def _protected_materialization_roots(config: DatasetConfig) -> tuple[Path, ...]:
+    roots: set[Path] = set()
+    retirement_roots = {
+        key: path.resolve(strict=False)
+        for key, path in retirement_allowlist(config).items()
+    }
+    output_root = config.output_root.resolve(strict=False)
+    archive_root = config.shared_archive_root.resolve(strict=False)
+    for configured in config.protected_materialization_roots:
+        if not configured.is_dir() or configured.is_symlink():
+            raise ArchiveError(
+                f"Protected materialization root is missing or unsafe: {configured}"
+            )
+        protected = configured.resolve()
+        if _overlap(protected, output_root):
+            raise ArchiveError(
+                "Protected materialization root overlaps the combined dataset: "
+                f"{protected} and {output_root}"
+            )
+        if _overlap(protected, archive_root):
+            raise ArchiveError(
+                "Protected materialization root overlaps the Shared archive: "
+                f"{protected} and {archive_root}"
+            )
+        for key, retirement_root in retirement_roots.items():
+            if _overlap(protected, retirement_root):
+                raise ArchiveError(
+                    "Protected materialization root overlaps retirement target "
+                    f"{key}: {protected} and {retirement_root}"
+                )
+        roots.add(protected)
+    return tuple(sorted(roots, key=str))
+
+
+def _plan(
+    config: DatasetConfig,
+) -> tuple[tuple[ArchiveItem, ...], str, tuple[Path, ...]]:
     root = config.shared_archive_root
     if root.is_symlink():
         raise ArchiveError(f"Refusing symbolic-link archive root: {root}")
@@ -113,7 +157,8 @@ def _plan(config: DatasetConfig) -> tuple[tuple[ArchiveItem, ...], str]:
             )
         )
     ordered = tuple(sorted(items, key=lambda item: item.key))
-    approved_roots = tuple(item.source for item in ordered)
+    protected_roots = _protected_materialization_roots(config)
+    approved_roots = tuple(item.source for item in ordered) + protected_roots
     for item in ordered:
         for path in item.source.rglob("*"):
             if not path.is_symlink():
@@ -128,13 +173,22 @@ def _plan(config: DatasetConfig) -> tuple[tuple[ArchiveItem, ...], str]:
                 raise ArchiveError(
                     f"Symlink target is outside archive sources: {path} -> {target}"
                 )
+    item_payloads = [item.as_dict() for item in ordered]
+    plan_payload: object = item_payloads
+    if protected_roots:
+        plan_payload = {
+            "items": item_payloads,
+            "protected_materialization_roots": [
+                str(path) for path in protected_roots
+            ],
+        }
     encoded = json.dumps(
-        [item.as_dict() for item in ordered],
+        plan_payload,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
-    return ordered, hashlib.sha256(encoded).hexdigest()
+    return ordered, hashlib.sha256(encoded).hexdigest(), protected_roots
 
 
 def _validate_identity(item: ArchiveItem) -> None:
@@ -188,7 +242,7 @@ def _archive_capacity(
 
 def archive_preflight(config: DatasetConfig) -> dict[str, object]:
     """Audit exact archive scope without creating either Shared destination."""
-    items, plan_hash = _plan(config)
+    items, plan_hash, protected_roots = _plan(config)
     capacity = _archive_capacity(config, items)
     return {
         "status": "ready",
@@ -197,6 +251,9 @@ def archive_preflight(config: DatasetConfig) -> dict[str, object]:
         "receipt_root": str(config.shared_receipt_root),
         "plan_sha256": plan_hash,
         "source_count": len(items),
+        "protected_materialization_roots": [
+            str(path) for path in protected_roots
+        ],
         **capacity,
         "mappings": [item.as_dict() for item in items],
         "source_outputs_modified": False,
@@ -207,6 +264,7 @@ def _ensure_owner(
     config: DatasetConfig,
     items: tuple[ArchiveItem, ...],
     plan_hash: str,
+    protected_roots: tuple[Path, ...],
 ) -> str:
     root = config.shared_archive_root
     if root.is_symlink():
@@ -228,6 +286,8 @@ def _ensure_owner(
             or owner.get("plan_sha256") != plan_hash
             or saved_plan.get("plan_sha256") != plan_hash
             or saved_plan.get("items") != [item.as_dict() for item in items]
+            or saved_plan.get("protected_materialization_roots", [])
+            != [str(path) for path in protected_roots]
         ):
             raise ArchiveError(f"Existing archive root has different ownership: {root}")
         return "reused"
@@ -261,6 +321,9 @@ def _ensure_owner(
                 "created_utc": created,
                 "plan_sha256": plan_hash,
                 "items": [item.as_dict() for item in items],
+                "protected_materialization_roots": [
+                    str(path) for path in protected_roots
+                ],
             },
         )
         os.replace(temporary, root)
@@ -323,9 +386,9 @@ def _copy(item: ArchiveItem) -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 def archive_copy(config: DatasetConfig) -> dict[str, object]:
     """Resume exact whole-tree archive copies without deleting any source."""
-    items, plan_hash = _plan(config)
+    items, plan_hash, protected_roots = _plan(config)
     capacity = _archive_capacity(config, items)
-    _ensure_owner(config, items, plan_hash)
+    _ensure_owner(config, items, plan_hash, protected_roots)
     copied = 0
     reused = 0
     for item in items:
@@ -549,8 +612,8 @@ def archive_verify(
     checksum: bool,
 ) -> dict[str, object]:
     """Compare archived roots, resuming per-root checksum checkpoints."""
-    items, plan_hash = _plan(config)
-    _ensure_owner(config, items, plan_hash)
+    items, plan_hash, protected_roots = _plan(config)
+    _ensure_owner(config, items, plan_hash, protected_roots)
     mode = "checksum" if checksum else "size_mtime"
     records: list[dict[str, object]] = []
     changes: list[str] = []
@@ -610,10 +673,10 @@ def archive_verify(
 
 def validate_archive_completion(config: DatasetConfig) -> dict[str, object]:
     """Validate immutable receipts and metadata without re-hashing file bodies."""
-    items, plan_hash = _plan(config)
+    items, plan_hash, protected_roots = _plan(config)
     if not config.shared_archive_root.is_dir():
         raise ArchiveError("The owned Shared archive root is missing")
-    _ensure_owner(config, items, plan_hash)
+    _ensure_owner(config, items, plan_hash, protected_roots)
     path = _completion_path(config)
     if not path.is_file() or path.is_symlink():
         raise ArchiveError("The archive completion receipt is missing or unsafe")

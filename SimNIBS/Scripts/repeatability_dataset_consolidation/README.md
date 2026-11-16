@@ -196,6 +196,53 @@ revalidation ambiguous.
 The global `CamCan_Corrected_v4_Scaffolds` root and all primary MRI, atlas,
 CHARM, corrected-label, MNI, and `ti_dataset` roots are not retirement targets.
 
+## Covered-only retirement when the Shared archive is unavailable
+
+The separately named covered workflow frees the ten source roots already bound
+to the completed combined dataset without weakening the full fourteen-root
+workflow. It preserves all four `archive_sources` roots:
+
+```text
+legacy_v3_left
+legacy_v3_right
+legacy_v3_headreco
+replacement_v3_scaffolds
+```
+
+First inspect the read-only ten-target plan:
+
+```bash
+bash "$DATASET" covered-retire-plan
+```
+
+Every selected root must have zero `shared_archive_files` and zero
+`shared_archive_bytes` in the checksum-bound disposition. Copy the exact two
+hashes printed by that plan and submit only after reviewing all ten paths:
+
+```bash
+DATASET_RECEIPT_SHA256=<64-lowercase-hex-from-covered-retire-plan>
+RETIREMENT_DISPOSITION_SHA256=<64-lowercase-hex-from-covered-retire-plan>
+
+bash "$DATASET" covered-retire-submit \
+    --confirm-output-root="$OUTPUT_ROOT" \
+    --dataset-receipt-sha256="$DATASET_RECEIPT_SHA256" \
+    --retirement-disposition-sha256="$RETIREMENT_DISPOSITION_SHA256" \
+    --confirm-covered-retirement
+```
+
+`covered-retire-submit` rejects an archive receipt hash. It writes a distinct
+`covered_retirement_request.json`, so it cannot resume or overwrite the full
+retirement request. If submission is interrupted, repeat the identical command;
+only missing or validly failed jobs are resubmitted. Prove terminal completion
+from worker receipts plus independent target absence with:
+
+```bash
+bash "$DATASET" covered-retire-status
+```
+
+The corrected-input root, v4 scaffold root, combined dataset, and segmentation
+experiment staging root are outside this covered retirement scope.
+
 ## 5. Explicitly submit guarded deletion — separate next step
 
 Copy the exact receipt hashes printed by `retire-plan`. Submission requires all
@@ -234,8 +281,9 @@ worker receipt is terminal and every target is independently absent:
 bash "$DATASET" retire-status
 ```
 
-Only `retire-submit` can initiate deletion. No copy, verify, checksum, archive,
-status, plan, `prepare-retirement`, or `readiness-status` mode calls `rm` or
-submits simulation work. After `prepare-retirement` reports
+Only `retire-submit` and `covered-retire-submit` can initiate deletion. No copy,
+verify, checksum, archive, status, plan, `prepare-retirement`, or
+`readiness-status` mode calls `rm` or submits simulation work. After
+`prepare-retirement` reports
 `deletion_ready`, stop and inspect `retirement_ready.json`; deletion remains a
 new, explicit operator action.

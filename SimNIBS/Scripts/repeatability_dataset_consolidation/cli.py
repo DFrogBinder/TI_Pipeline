@@ -15,9 +15,13 @@ from .retirement import (
     RetirementConfirmations,
     RetirementError,
     RetirementPlan,
+    covered_retirement_status,
+    plan_covered_retirement,
     plan_retirement,
+    resume_covered_retirement,
     resume_retirement,
     retirement_status,
+    submit_covered_retirement,
     submit_retirement,
 )
 from .settings import DatasetConfig, production_config
@@ -48,6 +52,9 @@ MODES = (
     "retire-plan",
     "retire-submit",
     "retire-status",
+    "covered-retire-plan",
+    "covered-retire-submit",
+    "covered-retire-status",
 )
 
 
@@ -66,6 +73,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive-receipt-sha256")
     parser.add_argument("--retirement-disposition-sha256")
     parser.add_argument("--confirm-retirement", action="store_true")
+    parser.add_argument("--confirm-covered-retirement", action="store_true")
     return parser
 
 
@@ -91,6 +99,7 @@ def _plan_dict(plan: RetirementPlan) -> dict[str, object]:
     return {
         "status": "ready",
         "dry_run": plan.dry_run,
+        "scope": plan.scope,
         "plan_sha256": plan.plan_sha256,
         "dataset_receipt": str(plan.dataset_receipt),
         "dataset_receipt_sha256": plan.dataset_receipt_sha256,
@@ -203,8 +212,48 @@ def main(
                 if request_exists
                 else submit_retirement(plan, confirmations)
             )
-        else:
+        elif args.mode == "retire-status":
             result = retirement_status(current)
+        elif args.mode == "covered-retire-plan":
+            result = _plan_dict(plan_covered_retirement(current))
+        elif args.mode == "covered-retire-submit":
+            _exact(
+                args.confirm_output_root,
+                current.output_root,
+                "--confirm-output-root",
+            )
+            if args.archive_receipt_sha256 is not None:
+                raise CliError(
+                    "covered-retire-submit does not accept --archive-receipt-sha256"
+                )
+            request_exists = (
+                current.deletion_log_root / "covered_retirement_request.json"
+            ).is_file()
+            plan = None if request_exists else plan_covered_retirement(current)
+            confirmations = RetirementConfirmations(
+                dataset_root=args.confirm_output_root,
+                dataset_receipt_sha256=_sha(
+                    args.dataset_receipt_sha256,
+                    "--dataset-receipt-sha256",
+                ),
+                archive_receipt_sha256=None,
+                retirement_disposition_sha256=_sha(
+                    args.retirement_disposition_sha256,
+                    "--retirement-disposition-sha256",
+                ),
+                confirm_retirement=args.confirm_covered_retirement,
+            )
+            if not args.confirm_covered_retirement:
+                raise CliError(
+                    "covered-retire-submit requires --confirm-covered-retirement"
+                )
+            result = (
+                resume_covered_retirement(current, confirmations)
+                if request_exists
+                else submit_covered_retirement(plan, confirmations)
+            )
+        else:
+            result = covered_retirement_status(current)
     except (
         ArchiveError,
         CliError,

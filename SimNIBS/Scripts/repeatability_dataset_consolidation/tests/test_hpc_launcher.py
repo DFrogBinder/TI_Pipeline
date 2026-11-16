@@ -66,7 +66,13 @@ def test_launcher_exposes_readiness_modes_without_submitting_jobs(
     env = os.environ.copy()
     env.update({"PYTHON_BIN": str(fake_python), "FAKE_ARGUMENTS": str(arguments)})
 
-    for mode in ("prepare-retirement", "readiness-status"):
+    for mode in (
+        "prepare-retirement",
+        "readiness-status",
+        "covered-retire-plan",
+        "covered-retire-submit",
+        "covered-retire-status",
+    ):
         completed = subprocess.run(
             ["bash", str(LAUNCHER), mode],
             env=env,

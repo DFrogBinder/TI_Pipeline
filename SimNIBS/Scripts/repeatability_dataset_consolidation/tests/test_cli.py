@@ -200,6 +200,78 @@ def test_cli_resumes_an_existing_retirement_request_without_replanning(
     assert len(calls) == 1
 
 
+def test_cli_covered_retirement_has_separate_plan_submit_and_status_gates(
+    miniature_config, monkeypatch, capsys
+) -> None:
+    fake_plan = RetirementPlan(
+        config=miniature_config,
+        targets=(),
+        dry_run=True,
+        plan_sha256="a" * 64,
+        dataset_receipt=miniature_config.output_root / "complete.json",
+        dataset_receipt_sha256="b" * 64,
+        archive_receipt=None,
+        archive_receipt_sha256=None,
+        retirement_disposition=miniature_config.output_root / "disposition.json",
+        retirement_disposition_sha256="d" * 64,
+        retirement_disposition_summary={},
+        scheduler_snapshot_sha256="c" * 64,
+        deletion_launcher=miniature_config.output_root / "delete.sh",
+        scope="covered",
+    )
+    submissions: list[object] = []
+    status_calls: list[object] = []
+    monkeypatch.setattr(cli, "plan_covered_retirement", lambda config: fake_plan)
+    monkeypatch.setattr(
+        cli,
+        "submit_covered_retirement",
+        lambda plan, confirmations: submissions.append(confirmations)
+        or {"status": "submitted"},
+    )
+    monkeypatch.setattr(
+        cli,
+        "covered_retirement_status",
+        lambda config: status_calls.append(config) or {"status": "not_submitted"},
+    )
+
+    assert cli.main(["covered-retire-plan"], config=miniature_config) == 0
+    assert submissions == []
+    assert cli.main(["covered-retire-status"], config=miniature_config) == 0
+    assert status_calls == [miniature_config]
+
+    base_submit = [
+        "covered-retire-submit",
+        f"--confirm-output-root={miniature_config.output_root}",
+        f"--dataset-receipt-sha256={'b' * 64}",
+        f"--retirement-disposition-sha256={'d' * 64}",
+    ]
+    assert cli.main(base_submit, config=miniature_config) == 2
+    assert submissions == []
+    assert (
+        cli.main(
+            base_submit
+            + [
+                f"--archive-receipt-sha256={'e' * 64}",
+                "--confirm-covered-retirement",
+            ],
+            config=miniature_config,
+        )
+        == 2
+    )
+    assert submissions == []
+    assert (
+        cli.main(
+            base_submit + ["--confirm-covered-retirement"],
+            config=miniature_config,
+        )
+        == 0
+    )
+    assert len(submissions) == 1
+    assert submissions[0].archive_receipt_sha256 is None
+    output = capsys.readouterr().out
+    assert '"scope": "covered"' in output
+
+
 def test_production_scope_block_reports_full_dataset(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "preflight", lambda config: {"status": "ready"})
     config = cli.production_config()

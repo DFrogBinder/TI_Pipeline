@@ -10,7 +10,7 @@ MODE="${1:-preflight}"
 [ "$#" -eq 0 ] || shift
 
 case "$MODE" in
-    preflight|prepare|copy|verify|checksum|status|archive-preflight|archive-copy|archive-verify|archive-checksum|prepare-retirement|readiness-status|retire-plan|retire-submit|retire-status) ;;
+    preflight|prepare|copy|verify|checksum|status|archive-preflight|archive-copy|archive-verify|archive-checksum|prepare-retirement|readiness-status|retire-plan|retire-submit|retire-status|covered-retire-plan|covered-retire-submit|covered-retire-status) ;;
     *) echo "[ERROR] Unsupported mode: $MODE" >&2; exit 2 ;;
 esac
 

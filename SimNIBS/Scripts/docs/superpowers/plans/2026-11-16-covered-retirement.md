@@ -111,4 +111,3 @@
 - [ ] Run `bash -n repeatability_dataset_consolidation/hpc/submit.sh` and inspect the production covered plan scope through unit assertions.
 - [ ] Run `git diff --check` and review changed paths for deletion or scope leakage.
 - [ ] Commit any TDD-driven fixes, then record final green evidence.
-

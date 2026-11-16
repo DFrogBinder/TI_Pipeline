@@ -72,4 +72,3 @@ the checksum, disposition, identity, scheduler, resume, and terminal-receipt
 gates. Weakening the existing fourteen-root mode was rejected because its four
 archive roots genuinely require the Shared copy. Deleting all fourteen now was
 rejected because the archive completion receipt does not exist.
-

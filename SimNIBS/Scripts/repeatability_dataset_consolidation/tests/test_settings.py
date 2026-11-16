@@ -3,6 +3,7 @@ from pathlib import Path
 from repeatability_dataset_consolidation.settings import (
     EXCLUDED_SUBJECT,
     SUBJECTS,
+    covered_retirement_allowlist,
     production_config,
     retirement_allowlist,
 )
@@ -83,3 +84,26 @@ def test_archive_and_retirement_scopes_are_exact() -> None:
         "legacy_v3_headreco",
         "replacement_v3_scaffolds",
     }
+
+
+def test_covered_retirement_scope_is_exactly_the_ten_nonarchive_roots() -> None:
+    config = production_config()
+
+    covered = covered_retirement_allowlist(config)
+
+    assert tuple(covered) == (
+        "v4_left_remesh",
+        "v4_right_remesh",
+        "v4_left_fixed",
+        "v4_right_fixed",
+        "v3_left",
+        "v3_right",
+        "v3_headmodels",
+        "replacement_subject",
+        "paper_analysis",
+        "nested_analysis",
+    )
+    assert not set(covered) & set(config.archive_sources)
+    assert config.output_root not in covered.values()
+    assert config.sources.v4_scaffolds not in covered.values()
+    assert not set(config.protected_materialization_roots) & set(covered.values())

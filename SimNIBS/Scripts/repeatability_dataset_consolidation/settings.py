@@ -165,3 +165,13 @@ def retirement_allowlist(config: DatasetConfig) -> dict[str, Path]:
         "nested_analysis": sources.nested_analysis,
         **config.archive_sources,
     }
+
+
+def covered_retirement_allowlist(config: DatasetConfig) -> dict[str, Path]:
+    """Return retirement roots already covered by the completed dataset."""
+    archive_keys = set(config.archive_sources)
+    return {
+        key: path
+        for key, path in retirement_allowlist(config).items()
+        if key not in archive_keys
+    }

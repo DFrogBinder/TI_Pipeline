@@ -13,12 +13,16 @@ from repeatability_dataset_consolidation.archive import archive_copy, archive_ve
 from repeatability_dataset_consolidation.retirement import (
     RetirementConfirmations,
     RetirementError,
+    plan_covered_retirement,
     plan_retirement,
     resume_retirement,
     retirement_status,
     submit_retirement,
 )
-from repeatability_dataset_consolidation.settings import retirement_allowlist
+from repeatability_dataset_consolidation.settings import (
+    covered_retirement_allowlist,
+    retirement_allowlist,
+)
 from repeatability_dataset_consolidation.workflow import (
     complete_dataset,
     copy_dataset,
@@ -28,20 +32,87 @@ from repeatability_dataset_consolidation.workflow import (
 
 
 @pytest.fixture
-def retirement_ready(miniature_config, monkeypatch):
+def dataset_retirement_ready(miniature_config, monkeypatch):
     for key, root in miniature_config.archive_sources.items():
         (root / f"{key}.txt").write_text(f"{key}\n", encoding="utf-8")
     prepare(miniature_config)
     copy_dataset(miniature_config)
     assert verify_dataset(miniature_config, checksum=True)["status"] == "matched"
     complete_dataset(miniature_config)
-    archive_copy(miniature_config)
-    assert archive_verify(miniature_config, checksum=True)["status"] == "complete"
     monkeypatch.setattr(
         "repeatability_dataset_consolidation.retirement._scheduler_snapshot",
         lambda: "",
     )
     return miniature_config
+
+
+@pytest.fixture
+def retirement_ready(dataset_retirement_ready):
+    config = dataset_retirement_ready
+    archive_copy(config)
+    assert archive_verify(config, checksum=True)["status"] == "complete"
+    return config
+
+
+def test_covered_plan_uses_only_dataset_covered_roots_without_archive_receipt(
+    dataset_retirement_ready,
+) -> None:
+    config = dataset_retirement_ready
+
+    plan = plan_covered_retirement(config)
+
+    assert plan.scope == "covered"
+    assert tuple(target.key for target in plan.targets) == tuple(
+        covered_retirement_allowlist(config)
+    )
+    assert len(plan.targets) == 10
+    assert all(not target.requires_archive_receipt for target in plan.targets)
+    assert plan.archive_receipt is None
+    assert plan.archive_receipt_sha256 is None
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        (lambda summary, key: summary.pop(key), "missing"),
+        (
+            lambda summary, key: summary[key].__setitem__(
+                "dataset_copy_files", True
+            ),
+            "counter",
+        ),
+        (
+            lambda summary, key: summary[key].__setitem__(
+                "intentional_retirement_bytes", -1
+            ),
+            "counter",
+        ),
+        (
+            lambda summary, key: summary[key].__setitem__(
+                "shared_archive_files", 1
+            ),
+            "Shared-archive",
+        ),
+    ),
+)
+def test_covered_plan_rejects_unsafe_disposition_summary(
+    dataset_retirement_ready, monkeypatch, mutation, message
+) -> None:
+    config = dataset_retirement_ready
+    loaded = list(retirement_module._load_dataset_completion(config))
+    loaded[5] = {
+        key: dict(value) for key, value in loaded[5].items()
+    }
+    first_key = next(iter(covered_retirement_allowlist(config)))
+    mutation(loaded[5], first_key)
+    monkeypatch.setattr(
+        retirement_module,
+        "_load_dataset_completion",
+        lambda unused_config: tuple(loaded),
+    )
+
+    with pytest.raises(RetirementError, match=message):
+        plan_covered_retirement(config)
 
 
 def test_retirement_plan_is_dry_run_exact_and_receipt_bound(retirement_ready) -> None:

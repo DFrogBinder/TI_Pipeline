@@ -21,7 +21,11 @@ from .disposition import (
 )
 from .inventory import sha256_file
 from .planning import ConsolidationPlan, build_copy_plan, plan_sha256
-from .settings import DatasetConfig, retirement_allowlist
+from .settings import (
+    DatasetConfig,
+    covered_retirement_allowlist,
+    retirement_allowlist,
+)
 from .validation import validate_scientific_scope
 from .workflow import (
     WorkflowError,
@@ -67,6 +71,7 @@ class RetirementPlan:
     retirement_disposition_summary: dict[str, object]
     scheduler_snapshot_sha256: str
     deletion_launcher: Path
+    scope: str = "full"
 
 
 @dataclass(frozen=True)
@@ -165,6 +170,7 @@ def _load_dataset_completion(
 
 
 def _retirement_hash(
+    scope: str,
     targets: Sequence[RetirementTarget],
     dataset_receipt_sha256: str,
     archive_receipt_sha256: str | None,
@@ -172,6 +178,7 @@ def _retirement_hash(
 ) -> str:
     encoded = json.dumps(
         {
+            "scope": scope,
             "targets": [target.as_dict() for target in targets],
             "dataset_receipt_sha256": dataset_receipt_sha256,
             "archive_receipt_sha256": archive_receipt_sha256,
@@ -184,6 +191,43 @@ def _retirement_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
+_DISPOSITION_COUNTERS = (
+    "dataset_copy_files",
+    "dataset_copy_bytes",
+    "shared_archive_files",
+    "shared_archive_bytes",
+    "intentional_retirement_files",
+    "intentional_retirement_bytes",
+)
+
+
+def _validate_disposition_summary(
+    summary: dict[str, object],
+    keys: Sequence[str],
+    *,
+    covered: bool,
+) -> None:
+    for key in keys:
+        record = summary.get(key)
+        if not isinstance(record, dict):
+            raise RetirementError(
+                f"Retirement disposition summary is missing for {key}"
+            )
+        for counter in _DISPOSITION_COUNTERS:
+            value = record.get(counter)
+            if type(value) is not int or value < 0:
+                raise RetirementError(
+                    f"Retirement disposition counter is invalid for {key}: {counter}"
+                )
+        if covered and (
+            record["shared_archive_files"] != 0
+            or record["shared_archive_bytes"] != 0
+        ):
+            raise RetirementError(
+                f"Covered retirement target has a Shared-archive disposition: {key}"
+            )
+
+
 def _validate_target(path: Path, allowed_root: Path) -> tuple[int, int]:
     if not path.is_dir() or path.is_symlink():
         raise RetirementError(f"Retirement target is missing or unsafe: {path}")
@@ -194,11 +238,13 @@ def _validate_target(path: Path, allowed_root: Path) -> tuple[int, int]:
     return int(info.st_dev), int(info.st_ino)
 
 
-def plan_retirement(
+def _plan_retirement(
     config: DatasetConfig,
+    *,
+    scope: str,
+    allowlist: dict[str, Path],
     selected: Sequence[str] | None = None,
 ) -> RetirementPlan:
-    """Build a read-only exact deletion plan; never submit or delete."""
     (
         dataset_plan,
         dataset_receipt,
@@ -207,7 +253,6 @@ def plan_retirement(
         retirement_disposition_sha,
         retirement_disposition_summary,
     ) = _load_dataset_completion(config)
-    allowlist = retirement_allowlist(config)
     keys = tuple(allowlist) if selected is None else tuple(selected)
     if not keys:
         raise RetirementError("At least one retirement key is required")
@@ -220,8 +265,18 @@ def plan_retirement(
         raise RetirementError(
             "Retirement must use the complete retirement allowlist in canonical order"
         )
+    covered = scope == "covered"
+    if scope not in {"full", "covered"}:
+        raise RetirementError(f"Unknown retirement scope: {scope}")
+    _validate_disposition_summary(
+        retirement_disposition_summary,
+        keys,
+        covered=covered,
+    )
     allowed_root = config.output_root.parent.resolve()
     archive_keys = set(config.archive_sources)
+    if covered and archive_keys.intersection(keys):
+        raise RetirementError("Covered retirement scope contains an archive source")
     targets: list[RetirementTarget] = []
     for key in keys:
         configured_path = allowlist[key]
@@ -264,6 +319,7 @@ def plan_retirement(
         targets=target_tuple,
         dry_run=True,
         plan_sha256=_retirement_hash(
+            scope,
             target_tuple,
             dataset_sha,
             archive_sha,
@@ -278,6 +334,29 @@ def plan_retirement(
         retirement_disposition_summary=retirement_disposition_summary,
         scheduler_snapshot_sha256=hashlib.sha256(scheduler.encode("utf-8")).hexdigest(),
         deletion_launcher=launcher,
+        scope=scope,
+    )
+
+
+def plan_retirement(
+    config: DatasetConfig,
+    selected: Sequence[str] | None = None,
+) -> RetirementPlan:
+    """Build the full read-only exact deletion plan; never submit or delete."""
+    return _plan_retirement(
+        config,
+        scope="full",
+        allowlist=retirement_allowlist(config),
+        selected=selected,
+    )
+
+
+def plan_covered_retirement(config: DatasetConfig) -> RetirementPlan:
+    """Build the exact nonarchive deletion plan; never submit or delete."""
+    return _plan_retirement(
+        config,
+        scope="covered",
+        allowlist=covered_retirement_allowlist(config),
     )
 
 
@@ -408,6 +487,7 @@ def _request_plan(
         )
     target_tuple = tuple(targets)
     expected_hash = _retirement_hash(
+        "full",
         target_tuple,
         str(request.get("dataset_receipt_sha256", "")),
         str(request.get("archive_receipt_sha256", "")),
@@ -448,6 +528,7 @@ def _request_plan(
             },
             scheduler_snapshot_sha256="resume-from-immutable-request",
             deletion_launcher=launcher,
+            scope="full",
         ),
         [dict(job) for job in jobs],
         request_path,
@@ -712,6 +793,7 @@ def retirement_status(config: DatasetConfig) -> dict[str, object]:
     elif archive_value is not None:
         raise RetirementError("The retirement request has an unexpected archive receipt")
     expected_hash = _retirement_hash(
+        "full",
         tuple(
             RetirementTarget(
                 key=str(record["key"]),

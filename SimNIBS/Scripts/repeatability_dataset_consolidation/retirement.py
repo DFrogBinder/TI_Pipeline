@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import csv
+import fcntl
 import hashlib
 import json
 import os
@@ -26,6 +28,7 @@ from .settings import (
     covered_retirement_allowlist,
     retirement_allowlist,
 )
+from .streaming_inventory import metadata_fingerprint
 from .validation import validate_scientific_scope
 from .workflow import (
     WorkflowError,
@@ -72,6 +75,7 @@ class RetirementPlan:
     scheduler_snapshot_sha256: str
     deletion_launcher: Path
     scope: str = "full"
+    retirement_root_metadata: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +127,59 @@ def _completion_path(config: DatasetConfig, scope: str) -> Path:
     return config.deletion_log_root / filename
 
 
+def _other_scope(scope: str) -> str:
+    if scope == _FULL_SCOPE:
+        return _COVERED_SCOPE
+    if scope == _COVERED_SCOPE:
+        return _FULL_SCOPE
+    raise RetirementError(f"Unknown retirement scope: {scope}")
+
+
+@contextmanager
+def _submission_lock(config: DatasetConfig):
+    config.deletion_log_root.mkdir(parents=True, exist_ok=True)
+    lock_path = config.deletion_log_root / "retirement_submission.lock"
+    with lock_path.open("a+", encoding="utf-8") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RetirementError("Another retirement submission is running") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def _reject_conflicting_request(config: DatasetConfig, scope: str) -> None:
+    conflicting = _request_path(config, _other_scope(scope))
+    if conflicting.exists() or conflicting.is_symlink():
+        raise RetirementError(
+            f"A conflicting retirement request already exists: {conflicting}"
+        )
+
+
+def _is_legacy_full_request(request: dict[str, object], scope: str) -> bool:
+    return bool(
+        scope == _FULL_SCOPE
+        and request.get("schema_version") == 1
+        and "scope" not in request
+        and request.get("workflow") == _scope_workflow(_FULL_SCOPE)
+    )
+
+
+def _validate_request_header(request: dict[str, object], scope: str) -> bool:
+    legacy = _is_legacy_full_request(request, scope)
+    if legacy:
+        return True
+    if (
+        request.get("schema_version") != 2
+        or request.get("workflow") != _scope_workflow(scope)
+        or request.get("scope") != scope
+    ):
+        raise RetirementError("The retirement request receipt binding is invalid")
+    return False
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -158,7 +215,15 @@ def _run_launcher(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 def _load_dataset_completion(
     config: DatasetConfig,
-) -> tuple[ConsolidationPlan, Path, str, Path, str, dict[str, object]]:
+) -> tuple[
+    ConsolidationPlan,
+    Path,
+    str,
+    Path,
+    str,
+    dict[str, object],
+    dict[str, object],
+]:
     try:
         plan = build_copy_plan(config)
         validation = validate_scientific_scope(plan)
@@ -206,6 +271,7 @@ def _load_dataset_completion(
         saved_disposition_path,
         sha256_file(saved_disposition_path),
         summary,
+        saved_metadata,
     )
 
 
@@ -219,6 +285,26 @@ def _retirement_hash(
     encoded = json.dumps(
         {
             "scope": scope,
+            "targets": [target.as_dict() for target in targets],
+            "dataset_receipt_sha256": dataset_receipt_sha256,
+            "archive_receipt_sha256": archive_receipt_sha256,
+            "retirement_disposition_sha256": retirement_disposition_sha256,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _legacy_full_retirement_hash(
+    targets: Sequence[RetirementTarget],
+    dataset_receipt_sha256: str,
+    archive_receipt_sha256: str | None,
+    retirement_disposition_sha256: str,
+) -> str:
+    encoded = json.dumps(
+        {
             "targets": [target.as_dict() for target in targets],
             "dataset_receipt_sha256": dataset_receipt_sha256,
             "archive_receipt_sha256": archive_receipt_sha256,
@@ -268,6 +354,77 @@ def _validate_disposition_summary(
             )
 
 
+def _authoritative_request_disposition(
+    config: DatasetConfig,
+    request: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    try:
+        completion = validate_dataset_completion(config)
+    except WorkflowError as exc:
+        raise RetirementError(
+            f"dataset completion receipt live validation failed: {exc}"
+        ) from exc
+    record = completion.get("retirement_disposition")
+    if not isinstance(record, dict):
+        raise RetirementError("The authoritative retirement disposition is missing")
+    summary = record.get("summary")
+    metadata = record.get("root_metadata")
+    if not isinstance(summary, dict) or not isinstance(metadata, dict):
+        raise RetirementError("The authoritative retirement disposition is invalid")
+    if request.get("retirement_disposition_summary") != summary:
+        raise RetirementError(
+            "The retirement request disposition summary differs from completion"
+        )
+    return summary, metadata
+
+
+def _validate_pending_target_metadata(
+    target: RetirementTarget,
+    root_metadata: dict[str, object],
+) -> None:
+    expected = root_metadata.get(target.key)
+    if not isinstance(expected, dict):
+        raise RetirementError(
+            f"Retirement source metadata binding is missing for {target.key}"
+        )
+    path = target.path
+    if not path.is_dir() or path.is_symlink():
+        raise RetirementError(f"Retirement source metadata changed for {target.key}")
+    before = path.lstat()
+    try:
+        fingerprint = metadata_fingerprint(path, materialize_links=True)
+    except (OSError, ValueError) as exc:
+        raise RetirementError(
+            f"Retirement source metadata changed for {target.key}"
+        ) from exc
+    after = path.lstat()
+    actual = {
+        "path": str(path.resolve()),
+        "device": int(after.st_dev),
+        "inode": int(after.st_ino),
+        "size_bytes": int(after.st_size),
+        "mtime_ns": int(after.st_mtime_ns),
+        "ctime_ns": int(after.st_ctime_ns),
+        "metadata_sha256": fingerprint,
+    }
+    before_identity = (
+        int(before.st_dev),
+        int(before.st_ino),
+        int(before.st_size),
+        int(before.st_mtime_ns),
+        int(before.st_ctime_ns),
+    )
+    after_identity = (
+        actual["device"],
+        actual["inode"],
+        actual["size_bytes"],
+        actual["mtime_ns"],
+        actual["ctime_ns"],
+    )
+    if before_identity != after_identity or actual != expected:
+        raise RetirementError(f"Retirement source metadata changed for {target.key}")
+
+
 def _validate_target(path: Path, allowed_root: Path) -> tuple[int, int]:
     if not path.is_dir() or path.is_symlink():
         raise RetirementError(f"Retirement target is missing or unsafe: {path}")
@@ -292,6 +449,7 @@ def _plan_retirement(
         retirement_disposition,
         retirement_disposition_sha,
         retirement_disposition_summary,
+        retirement_root_metadata,
     ) = _load_dataset_completion(config)
     keys = tuple(allowlist) if selected is None else tuple(selected)
     if not keys:
@@ -375,6 +533,7 @@ def _plan_retirement(
         scheduler_snapshot_sha256=hashlib.sha256(scheduler.encode("utf-8")).hexdigest(),
         deletion_launcher=launcher,
         scope=scope,
+        retirement_root_metadata=retirement_root_metadata,
     )
 
 
@@ -432,7 +591,7 @@ def _request_payload(
     created_utc: str | None = None,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "submitted" if len(jobs) == len(plan.targets) else "submitting",
         "workflow": _scope_workflow(plan.scope),
         "scope": plan.scope,
@@ -463,10 +622,11 @@ def _request_plan(
         request = json.loads(request_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RetirementError("The retirement request receipt is unreadable") from exc
+    if not isinstance(request, dict):
+        raise RetirementError("The retirement request receipt is unreadable")
+    legacy = _validate_request_header(request, scope)
     if (
-        request.get("workflow") != _scope_workflow(scope)
-        or request.get("scope") != scope
-        or request.get("dataset_root") != str(config.output_root.resolve())
+        request.get("dataset_root") != str(config.output_root.resolve())
         or request.get("allowed_root") != str(config.output_root.parent.resolve())
     ):
         raise RetirementError("The retirement request receipt binding is invalid")
@@ -510,6 +670,11 @@ def _request_plan(
     disposition_summary = request.get("retirement_disposition_summary")
     if not isinstance(disposition_summary, dict):
         raise RetirementError("The retirement disposition summary is invalid")
+    authoritative_summary, root_metadata = _authoritative_request_disposition(
+        config,
+        request,
+    )
+    disposition_summary = authoritative_summary
 
     records = request.get("targets")
     jobs = request.get("jobs")
@@ -547,12 +712,16 @@ def _request_plan(
             )
         )
     target_tuple = tuple(targets)
-    expected_hash = _retirement_hash(
-        scope,
+    hash_arguments = (
         target_tuple,
         str(request.get("dataset_receipt_sha256", "")),
         archive_sha,
         str(request.get("retirement_disposition_sha256", "")),
+    )
+    expected_hash = (
+        _legacy_full_retirement_hash(*hash_arguments)
+        if legacy
+        else _retirement_hash(scope, *hash_arguments)
     )
     if expected_hash != request.get("retirement_plan_sha256"):
         raise RetirementError("The retirement request plan binding is invalid")
@@ -590,6 +759,7 @@ def _request_plan(
             scheduler_snapshot_sha256="resume-from-immutable-request",
             deletion_launcher=launcher,
             scope=scope,
+            retirement_root_metadata=root_metadata,
         ),
         [dict(job) for job in jobs],
         request_path,
@@ -603,6 +773,7 @@ def _submit_missing_jobs(
     request_path: Path,
     *,
     created_utc: str,
+    validate_pending: bool,
 ) -> dict[str, object]:
     target_by_key = {target.key: target for target in plan.targets}
     retryable: dict[str, dict[str, object]] = {}
@@ -634,6 +805,12 @@ def _submit_missing_jobs(
     missing_targets = [
         target for target in plan.targets if target.key not in submitted_keys
     ]
+    if validate_pending:
+        root_metadata = plan.retirement_root_metadata
+        if not isinstance(root_metadata, dict):
+            raise RetirementError("Retirement source metadata binding is missing")
+        for target in missing_targets:
+            _validate_pending_target_metadata(target, root_metadata)
     scheduler = _scheduler_snapshot()
     for target in missing_targets:
         if str(target.path) in scheduler or target.path.name in scheduler:
@@ -734,7 +911,7 @@ def _live_plan(config: DatasetConfig, scope: str) -> RetirementPlan:
     raise RetirementError(f"Unknown retirement scope: {scope}")
 
 
-def _submit_retirement(
+def _submit_retirement_locked(
     plan: RetirementPlan,
     confirmations: RetirementConfirmations,
     *,
@@ -749,7 +926,11 @@ def _submit_retirement(
             raise RetirementError("The existing retirement request has another scope")
         _validate_confirmations(stored, confirmations)
         return _submit_missing_jobs(
-            stored, jobs, request_path, created_utc=created
+            stored,
+            jobs,
+            request_path,
+            created_utc=created,
+            validate_pending=True,
         )
     _validate_confirmations(plan, confirmations)
     fresh = _live_plan(plan.config, scope)
@@ -762,7 +943,28 @@ def _submit_retirement(
     _write_json(
         request_path, _request_payload(plan, jobs, created_utc=created)
     )
-    return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
+    return _submit_missing_jobs(
+        plan,
+        jobs,
+        request_path,
+        created_utc=created,
+        validate_pending=False,
+    )
+
+
+def _submit_retirement(
+    plan: RetirementPlan,
+    confirmations: RetirementConfirmations,
+    *,
+    scope: str,
+) -> dict[str, object]:
+    with _submission_lock(plan.config):
+        _reject_conflicting_request(plan.config, scope)
+        return _submit_retirement_locked(
+            plan,
+            confirmations,
+            scope=scope,
+        )
 
 
 def submit_retirement(
@@ -795,9 +997,17 @@ def _resume_retirement(
     *,
     scope: str,
 ) -> dict[str, object]:
-    plan, jobs, request_path, created = _request_plan(config, scope)
-    _validate_confirmations(plan, confirmations)
-    return _submit_missing_jobs(plan, jobs, request_path, created_utc=created)
+    with _submission_lock(config):
+        _reject_conflicting_request(config, scope)
+        plan, jobs, request_path, created = _request_plan(config, scope)
+        _validate_confirmations(plan, confirmations)
+        return _submit_missing_jobs(
+            plan,
+            jobs,
+            request_path,
+            created_utc=created,
+            validate_pending=True,
+        )
 
 
 def resume_retirement(
@@ -838,11 +1048,9 @@ def _retirement_status(config: DatasetConfig, scope: str) -> dict[str, object]:
         request = json.loads(request_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RetirementError("The retirement request receipt is unreadable") from exc
-    if (
-        request.get("workflow") != _scope_workflow(scope)
-        or request.get("scope") != scope
-    ):
-        raise RetirementError("The retirement request receipt is unowned")
+    if not isinstance(request, dict):
+        raise RetirementError("The retirement request receipt is unreadable")
+    legacy = _validate_request_header(request, scope)
     if request.get("dataset_root") != str(config.output_root.resolve()):
         raise RetirementError("The retirement request is bound to another dataset root")
     if request.get("allowed_root") != str(config.output_root.parent.resolve()):
@@ -868,6 +1076,8 @@ def _retirement_status(config: DatasetConfig, scope: str) -> dict[str, object]:
         or not isinstance(disposition_summary, dict)
     ):
         raise RetirementError("The bound retirement disposition changed")
+    authoritative_summary, _ = _authoritative_request_disposition(config, request)
+    disposition_summary = authoritative_summary
     archive_value = request.get("archive_receipt")
     if archive_value:
         archive_receipt = Path(str(archive_value))
@@ -912,18 +1122,18 @@ def _retirement_status(config: DatasetConfig, scope: str) -> dict[str, object]:
             raise RetirementError("The retirement request archive receipt path is invalid")
     elif archive_value is not None:
         raise RetirementError("The retirement request has an unexpected archive receipt")
-    expected_hash = _retirement_hash(
-        scope,
-        tuple(
-            RetirementTarget(
-                key=str(record["key"]),
-                path=Path(str(record["path"])),
-                requires_archive_receipt=bool(record["requires_archive_receipt"]),
-                source_device=int(record["source_device"]),
-                source_inode=int(record["source_inode"]),
-            )
-            for record in target_records
-        ),
+    target_tuple = tuple(
+        RetirementTarget(
+            key=str(record["key"]),
+            path=Path(str(record["path"])),
+            requires_archive_receipt=bool(record["requires_archive_receipt"]),
+            source_device=int(record["source_device"]),
+            source_inode=int(record["source_inode"]),
+        )
+        for record in target_records
+    )
+    hash_arguments = (
+        target_tuple,
         str(request["dataset_receipt_sha256"]),
         (
             str(request["archive_receipt_sha256"])
@@ -931,6 +1141,11 @@ def _retirement_status(config: DatasetConfig, scope: str) -> dict[str, object]:
             else None
         ),
         str(request.get("retirement_disposition_sha256", "")),
+    )
+    expected_hash = (
+        _legacy_full_retirement_hash(*hash_arguments)
+        if legacy
+        else _retirement_hash(scope, *hash_arguments)
     )
     if expected_hash != request.get("retirement_plan_sha256"):
         raise RetirementError("The retirement request plan binding is invalid")

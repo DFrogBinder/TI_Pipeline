@@ -231,10 +231,13 @@ bash "$DATASET" covered-retire-submit \
 ```
 
 `covered-retire-submit` rejects an archive receipt hash. It writes a distinct
-`covered_retirement_request.json`, so it cannot resume or overwrite the full
-retirement request. If submission is interrupted, repeat the identical command;
-only missing or validly failed jobs are resubmitted. Prove terminal completion
-from worker receipts plus independent target absence with:
+schema-versioned `covered_retirement_request.json`. Full and covered requests
+are mutually exclusive and submission is serialized with an external lock, so
+the two scopes cannot overlap. If submission is interrupted, repeat the
+identical command; resume first revalidates the live completed dataset and the
+checksum-bound metadata of every pending source, then resubmits only missing or
+validly failed jobs. Prove terminal completion from worker receipts plus
+independent target absence with:
 
 ```bash
 bash "$DATASET" covered-retire-status

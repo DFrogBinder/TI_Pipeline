@@ -29,6 +29,7 @@ class NativeMeshField:
     tetra_volumes: np.ndarray
     geometry_sha256: str
     stored_dtype: str
+    tetra_tags: np.ndarray | None = None
 
 
 def _provenance_sha256(provenance: Mapping[str, Any]) -> str:
@@ -88,6 +89,8 @@ def _row(
         "extraction_implementation": EXTRACTION_IMPLEMENTATION,
         "extraction_version": EXTRACTION_VERSION,
     }
+    if "electrode_name" in roi_provenance:
+        row["electrode_name"] = roi_provenance["electrode_name"]
     assert_authoritative_metric_row(row)
     return row
 

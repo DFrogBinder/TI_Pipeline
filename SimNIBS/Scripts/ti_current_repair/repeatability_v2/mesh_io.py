@@ -81,5 +81,34 @@ def load_native_element_field(
         tetra_volumes=np.ascontiguousarray(volumes, dtype=np.float64),
         geometry_sha256=geometry_fingerprint(nodes, tetrahedra, tags),
         stored_dtype=str(raw_values.dtype),
+        tetra_tags=np.ascontiguousarray(tags, dtype=np.int64),
+    )
+
+
+def load_tagged_surface(
+    path: Path,
+    surface_tag: int,
+    *,
+    mesh_reader: Callable[[str], object] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return compact nodes/triangles for one electrode stimulation surface."""
+
+    if path.suffix.lower() != ".msh" or not path.is_file() or path.is_symlink():
+        raise FileNotFoundError(f"Missing or unsafe electrode geometry mesh: {path}")
+    mesh = (mesh_reader or _simnibs_reader)(str(path))
+    nodes = require_float64(mesh.nodes.node_coord, "mesh nodes")
+    element_types = np.asarray(mesh.elm.elm_type)
+    tags = np.asarray(mesh.elm.tag1)
+    connectivity = np.asarray(mesh.elm.node_number_list)
+    selected = (element_types == 2) & (tags == int(surface_tag))
+    triangles_global = np.asarray(connectivity[selected, :3], dtype=np.int64) - 1
+    if len(triangles_global) == 0:
+        raise ValueError(f"No triangles carry electrode surface tag {surface_tag}")
+    used = np.unique(triangles_global)
+    remap = np.full(len(nodes), -1, dtype=np.int64)
+    remap[used] = np.arange(len(used), dtype=np.int64)
+    return (
+        np.ascontiguousarray(nodes[used], dtype=np.float64),
+        np.ascontiguousarray(remap[triangles_global], dtype=np.int64),
     )
 

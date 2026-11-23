@@ -11,6 +11,10 @@ from ti_current_repair.repeatability_v2.extraction import (
     write_extraction_tables,
 )
 from ti_current_repair.repeatability_v2.mesh_io import load_native_element_field
+from ti_current_repair.repeatability_v2.native_pipeline import (
+    parcel_mask_from_atlas,
+    under_anode_name,
+)
 from ti_current_repair.repeatability_v2.precision import read_metric_table
 from ti_current_repair.repeatability_v2.roi import (
     build_parcel_clipped_roi,
@@ -140,6 +144,21 @@ def test_extract_rejects_float32_or_geometry_mismatch(tmp_path: Path) -> None:
             common={},
         )
 
+    pair64 = _field(
+        tmp_path / "pair1b.msh", "E", np.ones((2, 3), dtype=np.float64)
+    )
+    pair64 = NativeMeshField(**{**pair64.__dict__, "geometry_sha256": "b" * 64})
+    with pytest.raises(ValueError, match="geometry"):
+        extract_three_outcomes(
+            ti_field=ti,
+            pair1_field=pair64,
+            matched_target_mask=np.asarray([True, False]),
+            matched_roi_provenance={"roi_id": "target"},
+            under_anode_mask=np.asarray([False, True]),
+            under_anode_provenance={"electrode_name": "F8"},
+            common={},
+        )
+
 
 class _Data:
     def __init__(self, value: np.ndarray) -> None:
@@ -242,17 +261,24 @@ def test_extraction_writer_creates_three_schema_compatible_tables(
     )
     assert loaded[0]["source_msh_path"].endswith("TI.msh")
 
-    pair64 = _field(
-        tmp_path / "pair1b.msh", "E", np.ones((2, 3), dtype=np.float64)
+
+def test_mesh_centres_map_to_integer_atlas_labels_without_field_resampling(
+    tmp_path: Path,
+) -> None:
+    import nibabel as nib
+
+    labels = np.zeros((3, 3, 3), dtype=np.int16)
+    labels[0, 0, 0] = 17
+    labels[1, 1, 1] = 17
+    path = tmp_path / "atlas.nii.gz"
+    nib.save(nib.Nifti1Image(labels, np.eye(4)), path)
+    centres = np.asarray(
+        [[0.1, 0.1, 0.1], [1.1, 1.0, 1.0], [2.0, 2.0, 2.0]],
+        dtype=np.float64,
     )
-    pair64 = NativeMeshField(**{**pair64.__dict__, "geometry_sha256": "b" * 64})
-    with pytest.raises(ValueError, match="geometry"):
-        extract_three_outcomes(
-            ti_field=ti,
-            pair1_field=pair64,
-            matched_target_mask=np.asarray([True, False]),
-            matched_roi_provenance={"roi_id": "target"},
-            under_anode_mask=np.asarray([False, True]),
-            under_anode_provenance={"electrode_name": "F8"},
-            common={},
-        )
+
+    mask = parcel_mask_from_atlas(centres, path, label_ids=(17,))
+
+    assert mask.tolist() == [True, True, False]
+    assert under_anode_name("left_hippocampus") == "F8"
+    assert under_anode_name("right_m1") == "Fp2"

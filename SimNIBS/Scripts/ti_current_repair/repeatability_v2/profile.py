@@ -8,6 +8,23 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .config import StudyConfigV2
+from .inventory import sha256_file
+
+
+def _required_path(payload: Mapping[str, Any], key: str) -> Path:
+    value = payload.get(key)
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError(f"Operational profile requires non-empty {key}")
+    return Path(str(value)).expanduser().resolve(strict=False)
+
+
+def _required_nested_path(
+    record: Mapping[str, Any], *, subject: str, key: str
+) -> Path:
+    value = record.get(key)
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError(f"subject_inputs[{subject}].{key} must be a non-empty path")
+    return Path(str(value)).expanduser().resolve(strict=False)
 
 
 @dataclass(frozen=True)
@@ -36,15 +53,9 @@ class OperationalProfile:
         if not isinstance(config_raw, Mapping):
             raise ValueError("Operational profile requires study_config")
         config = StudyConfigV2.from_mapping(config_raw)
-        output_root = Path(str(payload.get("output_root", ""))).expanduser().resolve(
-            strict=False
-        )
-        cache_root = Path(str(payload.get("cache_root", ""))).expanduser().resolve(
-            strict=False
-        )
-        targets_csv = Path(str(payload.get("targets_csv", ""))).expanduser().resolve(
-            strict=False
-        )
+        output_root = _required_path(payload, "output_root")
+        cache_root = _required_path(payload, "cache_root")
+        targets_csv = _required_path(payload, "targets_csv")
         historical = tuple(
             Path(str(value)).expanduser().resolve(strict=False)
             for value in payload.get("historical_read_only_roots", ())
@@ -74,14 +85,12 @@ class OperationalProfile:
             if not isinstance(record, Mapping):
                 raise ValueError(f"subject_inputs[{subject}] must be a mapping")
             subject_inputs[subject] = SubjectInputs(
-                t1=Path(str(record.get("t1", ""))).expanduser().resolve(strict=False),
-                t2=Path(str(record.get("t2", ""))).expanduser().resolve(strict=False),
-                corrected_segmentation=Path(
-                    str(record.get("corrected_segmentation", ""))
-                ).expanduser().resolve(strict=False),
-                atlas=Path(str(record.get("atlas", ""))).expanduser().resolve(
-                    strict=False
+                t1=_required_nested_path(record, subject=subject, key="t1"),
+                t2=_required_nested_path(record, subject=subject, key="t2"),
+                corrected_segmentation=_required_nested_path(
+                    record, subject=subject, key="corrected_segmentation"
                 ),
+                atlas=_required_nested_path(record, subject=subject, key="atlas"),
             )
         return cls(
             study_config=config,
@@ -101,4 +110,59 @@ def load_profile(path: Path) -> OperationalProfile:
     if not isinstance(payload, dict):
         raise ValueError(f"Operational profile must be a JSON object: {path}")
     return OperationalProfile.from_mapping(payload)
+
+
+def verify_profile_source_inputs(
+    profile: OperationalProfile,
+) -> dict[str, object]:
+    """Verify production inputs directly; never trust a caller-supplied hash flag."""
+
+    required_files = 0
+    hashed_inputs = 0
+    expected_targets = profile.study_config.targets_csv_sha256
+    if not profile.targets_csv.is_file() or profile.targets_csv.is_symlink():
+        raise FileNotFoundError(f"Missing or unsafe targets_csv: {profile.targets_csv}")
+    observed_targets = sha256_file(profile.targets_csv)
+    if observed_targets != expected_targets:
+        raise ValueError(
+            f"targets_csv hash mismatch: {observed_targets} != {expected_targets}"
+        )
+    required_files += 1
+    hashed_inputs += 1
+    for subject in profile.study_config.subjects:
+        inputs = profile.subject_inputs[subject]
+        for label, path in (("t1", inputs.t1), ("t2", inputs.t2)):
+            if not path.is_file() or path.is_symlink():
+                raise FileNotFoundError(
+                    f"Missing or unsafe subject_inputs[{subject}].{label}: {path}"
+                )
+            required_files += 1
+        for label, path, expected in (
+            (
+                "corrected_segmentation",
+                inputs.corrected_segmentation,
+                profile.study_config.corrected_segmentation_sha256[subject],
+            ),
+            ("atlas", inputs.atlas, profile.study_config.atlas_sha256[subject]),
+        ):
+            if not path.is_file() or path.is_symlink():
+                raise FileNotFoundError(
+                    f"Missing or unsafe subject_inputs[{subject}].{label}: {path}"
+                )
+            observed = sha256_file(path)
+            if observed != expected:
+                raise ValueError(
+                    f"subject_inputs[{subject}].{label} hash mismatch: "
+                    f"{observed} != {expected}"
+                )
+            required_files += 1
+            hashed_inputs += 1
+    return {
+        "schema_version": 2,
+        "status": "verified",
+        "required_files": required_files,
+        "hashed_inputs": hashed_inputs,
+        "subjects": len(profile.study_config.subjects),
+        "source_outputs_modified": False,
+    }
 

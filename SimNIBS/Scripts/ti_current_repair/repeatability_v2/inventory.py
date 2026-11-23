@@ -8,6 +8,14 @@ import hashlib
 from pathlib import Path
 from typing import Iterable
 
+from .config import CANONICAL_SUBJECTS, CONDITIONS, TARGETS
+
+
+SOURCE_GROUP_BY_SUBJECT = {
+    subject: "replacement" if subject == "sub-CC510415" else "base9"
+    for subject in CANONICAL_SUBJECTS
+}
+
 
 @dataclass(frozen=True)
 class HistoricalRun:
@@ -60,8 +68,23 @@ def inventory_historical_sources(
             )
     files: list[dict[str, object]] = []
     for run in sorted(records, key=lambda item: item.key):
-        if run.source_group not in {"base9", "replacement"}:
-            raise ValueError(f"Unsupported source_group: {run.source_group}")
+        if run.subject not in SOURCE_GROUP_BY_SUBJECT:
+            raise ValueError(
+                f"Historical inventory subject is outside the canonical 9+1 cohort: "
+                f"{run.subject}"
+            )
+        expected_group = SOURCE_GROUP_BY_SUBJECT[run.subject]
+        if run.source_group != expected_group:
+            raise ValueError(
+                f"Historical source_group for {run.subject} must be {expected_group}, "
+                f"observed {run.source_group}"
+            )
+        if run.target not in TARGETS or run.condition not in CONDITIONS:
+            raise ValueError(
+                f"Historical run has noncanonical target or condition: {run.key}"
+            )
+        if not 1 <= run.repeat <= 40:
+            raise ValueError(f"Historical run repeat is outside 1..40: {run.key}")
         for role, path in (
             ("pair1_msh", run.pair1_msh),
             ("pair2_msh", run.pair2_msh),

@@ -313,6 +313,7 @@ def test_remesh_adapter_places_each_pair_once_then_solves_existing_geometry(
             return electrode
 
         def _prepare(self):
+            assert Path(self.eeg_cap).name == "cap.csv"
             return None
 
         def _place_electrodes(self):
@@ -356,6 +357,7 @@ def test_remesh_adapter_places_each_pair_once_then_solves_existing_geometry(
         fem_module=Fem,
         mesh_io_module=MeshIO,
         sim_struct_module=SimStruct,
+        eeg_cap_path=_write(tmp_path / "cap.csv", "positions"),
         n_workers=8,
     )
     segmentation = _write(tmp_path / "corrected.nii.gz", "corrected")

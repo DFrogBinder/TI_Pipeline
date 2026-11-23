@@ -41,6 +41,15 @@ class CorrectedCharmHeadBuilder:
         self.workspace = workspace
         self.command_runner = command_runner
 
+    @property
+    def eeg_cap_path(self) -> Path:
+        return (
+            self.workspace
+            / f"m2m_{self.subject}"
+            / "eeg_positions"
+            / "EEG10-10_UI_Jurak_2007.csv"
+        )
+
     def __call__(self, corrected_segmentation: Path, output: Path) -> Path:
         import nibabel as nib
 
@@ -198,6 +207,7 @@ class SimNIBS46RemeshAdapter(SimNIBS46Adapter):
         fem_module: Any = None,
         mesh_io_module: Any = None,
         sim_struct_module: Any = None,
+        eeg_cap_path: Path | None = None,
         n_workers: int = 8,
     ) -> None:
         super().__init__(fem_module=fem_module, mesh_io_module=mesh_io_module)
@@ -209,6 +219,7 @@ class SimNIBS46RemeshAdapter(SimNIBS46Adapter):
         self.stimulation = stimulation
         self.head_builder = head_builder
         self.n_workers = int(n_workers)
+        self.eeg_cap_path = eeg_cap_path
         self._metadata_by_pair: dict[int, dict[str, object]] = {}
         self._pair_by_geometry: dict[str, int] = {}
 
@@ -239,6 +250,14 @@ class SimNIBS46RemeshAdapter(SimNIBS46Adapter):
         montage = self._pair(pair)
         tdcs = self.sim_struct.TDCSLIST()
         tdcs.mesh = self.mesh_io.read_msh(str(head_mesh))
+        if any(
+            isinstance(value, str) for value in (montage.anode, montage.cathode)
+        ):
+            if self.eeg_cap_path is None or not self.eeg_cap_path.is_file():
+                raise FileNotFoundError(
+                    "String electrode positions require the generated CHARM EEG cap"
+                )
+            tdcs.eeg_cap = str(self.eeg_cap_path)
         tdcs.currents = [float(montage.current_a), -float(montage.current_a)]
         for conductivity in tdcs.cond:
             if getattr(conductivity, "name", None) == "electrode":

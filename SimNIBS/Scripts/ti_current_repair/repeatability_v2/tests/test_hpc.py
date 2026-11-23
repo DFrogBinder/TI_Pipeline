@@ -72,6 +72,10 @@ def test_hpc_shell_scripts_parse_and_do_not_name_simnibs401() -> None:
     assert "4.0.1" not in worker.read_text(encoding="utf-8")
     assert "SIMNIBS_MODULE" in submit.read_text(encoding="utf-8")
     assert "EXPECTED_SIMNIBS_VERSION" in submit.read_text(encoding="utf-8")
+    assert "mkdir -p \"${V2_LOG_ROOT}\"" in submit.read_text(encoding="utf-8")
+    assert '"--output=${V2_LOG_ROOT}/%x-%A_%a.out"' in submit.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_worker_manifest_path_matches_condition_and_repeat_layout(tmp_path: Path) -> None:

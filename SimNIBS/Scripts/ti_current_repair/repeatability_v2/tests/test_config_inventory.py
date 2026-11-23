@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -148,5 +149,35 @@ def test_inventory_fails_closed_on_incomplete_or_duplicate_scope(tmp_path: Path)
     with pytest.raises(ValueError, match="Duplicate"):
         inventory_historical_sources(
             [run, run], expected_per_version=2, expected_versions=("3.2.6",)
+        )
+
+
+def test_inventory_rejects_noncanonical_or_misrouted_cohort(tmp_path: Path) -> None:
+    path = _write(tmp_path / "one.msh", "one")
+    receipt = _write(tmp_path / "complete.json", "complete")
+    replacement = HistoricalRun(
+        version="3.2.6",
+        subject="sub-CC510415",
+        target="left_hippocampus",
+        condition="remesh",
+        repeat=1,
+        pair1_msh=path,
+        pair2_msh=path,
+        ti_msh=path,
+        completion_receipt=receipt,
+        source_group="replacement",
+    )
+
+    with pytest.raises(ValueError, match="canonical 9\\+1"):
+        inventory_historical_sources(
+            [replace(replacement, subject="sub-CC520083")],
+            expected_per_version=1,
+            expected_versions=("3.2.6",),
+        )
+    with pytest.raises(ValueError, match="source_group"):
+        inventory_historical_sources(
+            [replace(replacement, source_group="base9")],
+            expected_per_version=1,
+            expected_versions=("3.2.6",),
         )
 

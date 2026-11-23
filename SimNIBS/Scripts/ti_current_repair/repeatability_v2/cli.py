@@ -13,7 +13,7 @@ from .orchestration import (
     preflight,
     production_release_gate,
 )
-from .profile import load_profile
+from .profile import load_profile, verify_profile_source_inputs
 
 
 def _json(path: str) -> dict:
@@ -48,11 +48,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         requested = Path(args.output_root).expanduser().resolve(strict=False)
         if requested != profile.output_root:
             raise ValueError("--output-root differs from the operational profile")
+        evidence = _json(args.evidence)
+        source_verification = verify_profile_source_inputs(profile)
+        evidence["input_hashes_valid"] = source_verification["status"] == "verified"
         result = preflight(
             config=profile.study_config,
-            evidence=_json(args.evidence),
+            evidence=evidence,
             output_root=requested,
         )
+        result["profile_source_verification"] = source_verification
     elif args.command == "release-gate":
         result = production_release_gate(
             local_validation=_json(args.local_validation),

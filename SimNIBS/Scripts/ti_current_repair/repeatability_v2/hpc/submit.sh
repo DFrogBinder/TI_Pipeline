@@ -6,6 +6,7 @@ PACKAGE_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 SCRIPTS_DIR=$(cd "${PACKAGE_DIR}/../.." && pwd)
 PYTHON_BIN=${PYTHON_BIN:-python}
 ACTION=${1:-preflight}
+V2_LOG_ROOT=${V2_LOG_ROOT:-${SCRIPTS_DIR}/logs}
 
 : "${V2_PROFILE:?Set V2_PROFILE to the isolated v2 operational profile JSON}"
 : "${V2_EVIDENCE:?Set V2_EVIDENCE to the preflight evidence JSON}"
@@ -43,6 +44,7 @@ fi
   --local-validation "${V2_LOCAL_VALIDATION}" \
   --hpc-pilot "${V2_HPC_PILOT}"
 run_preflight
+mkdir -p "${V2_LOG_ROOT}"
 
 worker="${SCRIPT_DIR}/worker.slurm"
 submit_stage() {
@@ -60,6 +62,8 @@ submit_stage() {
     "--mem=${memory}G"
     "--time=${walltime}"
     "--job-name=repv2-${stage}"
+    "--output=${V2_LOG_ROOT}/%x-%A_%a.out"
+    "--error=${V2_LOG_ROOT}/%x-%A_%a.err"
     "--export=ALL,V2_STAGE=${stage},V2_PROFILE=${V2_PROFILE}"
   )
   if [[ -n "${dependency}" ]]; then

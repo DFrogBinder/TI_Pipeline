@@ -75,7 +75,10 @@ def _run_remesh(profile: OperationalProfile, task: SimulationTask) -> dict[str, 
         workspace=workspace,
     )
     adapter = SimNIBS46RemeshAdapter(
-        stimulation=stimulation, head_builder=builder, n_workers=8
+        stimulation=stimulation,
+        head_builder=builder,
+        eeg_cap_path=builder.eeg_cap_path,
+        n_workers=8,
     )
     inputs = SourceInputs(
         corrected_segmentation=subject_inputs.corrected_segmentation,

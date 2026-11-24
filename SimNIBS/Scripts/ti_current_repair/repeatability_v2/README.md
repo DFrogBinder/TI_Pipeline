@@ -14,6 +14,10 @@ sources are not modified.
 - Fixed repeats solve the two immutable, pair-specific electrode-augmented
   caches directly through `fem.tdcs`; electrode placement is unavailable in
   that path.
+- TI combination first removes all electrode volumes from both component
+  meshes and requires byte-identical biological head-volume geometry. The
+  matched pair-1 ROI is then explicitly mapped onto the augmented component
+  support and geometry-checked.
 - The three outcomes are TI in the established target ROI, pair-1 E magnitude
   in that exact ROI, and pair-1 E magnitude in the 100 mm3 GM-only ROI under
   F8/Fp2.
@@ -41,10 +45,18 @@ ti_current_repair/repeatability_v2/hpc/submit.sh preflight
 submits the exact eight-stage, 1,600-simulation graph and permits one automatic
 retry. Preflight itself creates no output root and submits no job.
 
+Both release receipts must name the exact `sub-CC110174` left-hippocampus
+four-simulation scope and share the same campaign SHA-256, operational-profile
+SHA-256, Git commit, and SimNIBS 4.6.0 identity. The HPC receipt must also list
+completed zero-exit Slurm jobs and a finite 12-row comparison within its stated
+tolerance; status-only JSON cannot release production.
+
 ## Post-campaign entry points
 
 - `v3_audit.audit_v3_fixed_geometry` makes the retain/full-800-replacement
-  decision and `probe_existing_mesh_solver` fails closed on the v3 API.
+  decision, `probe_existing_mesh_solver` fails closed on the v3 API, and
+  `run_v3_fixed_replacement_task` executes the resulting 800-task array through
+  the signature-aware `SimNIBS326Adapter` without electrode placement.
 - `segmentation_propagation.run_charm45_propagation` executes the isolated
   five-map, ten-simulation CHARM 4.5 propagation with concrete correction,
   meshing, and simulation callbacks.

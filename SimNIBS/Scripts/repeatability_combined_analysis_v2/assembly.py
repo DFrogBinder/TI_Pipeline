@@ -90,6 +90,8 @@ def assemble_sources(
         ).astype("float64")
         frames.append(frame)
     combined = pd.concat(frames, ignore_index=True)
+    if "electrode_name" in combined:
+        combined["electrode_name"] = combined["electrode_name"].fillna("")
     if final:
         validate_final_matrix(combined)
     return combined

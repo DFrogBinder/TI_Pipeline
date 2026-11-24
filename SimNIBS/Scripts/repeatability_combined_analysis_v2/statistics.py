@@ -141,7 +141,9 @@ def validate_final_matrix(frame: pd.DataFrame) -> None:
             raise ValueError(f"Incomplete 40-repeat participant cell: {key}")
     fixed = frame.loc[frame["condition"] == "fixed_mesh"]
     fixed_groups = fixed.groupby(
-        ["subject", "version", "target"], sort=False, observed=True
+        ["subject", "version", "target", "outcome_mode"],
+        sort=False,
+        observed=True,
     )["geometry_sha256"].nunique()
     if not fixed_groups.eq(1).all():
         raise ValueError("Fixed geometry changed across repeats or outcome rows")

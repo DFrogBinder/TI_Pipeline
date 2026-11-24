@@ -16,6 +16,45 @@ from ti_current_repair.repeatability_v2.tests.test_config_inventory import valid
 from ti_current_repair.repeatability_v2.validation import validate_local_pilot
 
 
+PILOT_IDENTITY = {
+    "campaign_identity_sha256": "a" * 64,
+    "operational_profile_sha256": "b" * 64,
+    "code_commit": "c" * 40,
+    "simnibs_version": "4.6.0",
+}
+
+
+def _ready_local_receipt() -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "status": "ready",
+        **PILOT_IDENTITY,
+        "scope": {
+            "subject": "sub-CC110174",
+            "target": "left_hippocampus",
+            "remesh_simulations": 2,
+            "fixed_simulations": 2,
+            "outcome_rows": 12,
+        },
+        "source_outputs_modified": False,
+    }
+
+
+def _ready_hpc_receipt() -> dict[str, object]:
+    return {
+        **_ready_local_receipt(),
+        "slurm_jobs": [
+            {"job_id": "123456", "state": "COMPLETED", "exit_code": "0:0"}
+        ],
+        "local_hpc_comparison": {
+            "status": "passed",
+            "comparison_rows": 12,
+            "maximum_absolute_difference": 1e-12,
+            "atol": 1e-10,
+        },
+    }
+
+
 def _manifest(condition: str, repeat: int) -> dict[str, object]:
     if condition == "remesh":
         events = [
@@ -104,6 +143,7 @@ def test_local_pilot_requires_two_remesh_two_fixed_and_all_acceptance_gates() ->
             {"native": 1.00000001, "nifti": 1.0, "atol": 2e-7},
             {"native": 2.00000001, "nifti": 2.0, "atol": 2e-7},
         ],
+        provenance=PILOT_IDENTITY,
     )
 
     assert receipt["status"] == "ready"
@@ -133,6 +173,7 @@ def test_local_pilot_rejects_fixed_electrode_placement() -> None:
             },
             metric_rows=_metric_rows(),
             qc_comparisons=[{"native": 1.0, "nifti": 1.0, "atol": 1e-7}],
+            provenance=PILOT_IDENTITY,
         )
 
 
@@ -180,12 +221,17 @@ def test_preflight_is_read_only_and_release_requires_both_pilots(tmp_path: Path)
     assert result["scope"]["component_solves"] == 3200
     assert not output.exists()
     assert production_release_gate(
-        local_validation={"status": "ready"},
-        hpc_pilot={"status": "ready", "local_hpc_comparison": "passed"},
+        local_validation=_ready_local_receipt(),
+        hpc_pilot=_ready_hpc_receipt(),
     )["status"] == "ready_for_production"
+    with pytest.raises(ValueError, match="bound|identity|scope"):
+        production_release_gate(
+            local_validation={"status": "ready"},
+            hpc_pilot={"status": "ready", "local_hpc_comparison": "passed"},
+        )
     with pytest.raises(ValueError, match="HPC pilot"):
         production_release_gate(
-            local_validation={"status": "ready"}, hpc_pilot={"status": "pending"}
+            local_validation=_ready_local_receipt(), hpc_pilot={"status": "pending"}
         )
 
 

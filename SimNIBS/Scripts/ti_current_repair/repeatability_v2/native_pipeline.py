@@ -20,6 +20,7 @@ TARGET_LABEL_IDS = {
 }
 UNDER_ANODE = {"left_hippocampus": "F8", "right_m1": "Fp2"}
 CORTICAL_GM_TAG = 2
+HEAD_VOLUME_TAG_MAX_EXCLUSIVE = 100
 
 
 def under_anode_name(target: str) -> str:
@@ -27,6 +28,34 @@ def under_anode_name(target: str) -> str:
         return UNDER_ANODE[target]
     except KeyError as error:
         raise ValueError(f"Unsupported v2 target: {target}") from error
+
+
+def map_ti_target_mask_to_pair1(
+    *, ti: object, pair1: object, ti_target_mask: object
+) -> np.ndarray:
+    """Map one biological-tissue ROI from cropped TI support to augmented pair 1."""
+
+    if ti.tetra_tags is None or pair1.tetra_tags is None:
+        raise ValueError("TI and pair-1 meshes require tetrahedral tissue tags")
+    ti_tags = np.asarray(ti.tetra_tags, dtype=np.int64)
+    pair_tags = np.asarray(pair1.tetra_tags, dtype=np.int64)
+    ti_head = (ti_tags > 0) & (ti_tags < HEAD_VOLUME_TAG_MAX_EXCLUSIVE)
+    pair_head = (pair_tags > 0) & (pair_tags < HEAD_VOLUME_TAG_MAX_EXCLUSIVE)
+    selected = np.asarray(ti_target_mask, dtype=bool)
+    if selected.shape != ti_tags.shape or np.any(selected & ~ti_head):
+        raise ValueError("Target ROI contains support outside biological head tissues")
+    for label, left, right in (
+        ("tags", ti_tags[ti_head], pair_tags[pair_head]),
+        ("centres", ti.tetra_centres[ti_head], pair1.tetra_centres[pair_head]),
+        ("volumes", ti.tetra_volumes[ti_head], pair1.tetra_volumes[pair_head]),
+    ):
+        if not np.array_equal(left, right):
+            raise ValueError(
+                f"Cropped TI and augmented pair-1 biological geometry differ: {label}"
+            )
+    mapped = np.zeros(len(pair_tags), dtype=bool)
+    mapped[np.flatnonzero(pair_head)] = selected[ti_head]
+    return mapped
 
 
 def parcel_mask_from_atlas(
@@ -96,6 +125,9 @@ def extract_task_manifest(
         parcel_mask=parcel,
         target=target,
     )
+    pair1_target_mask = map_ti_target_mask_to_pair1(
+        ti=ti, pair1=pair1, ti_target_mask=target_roi.mask
+    )
     geometry_contract, geometry_paths = _geometry_contract(manifest)
     anode_name = str(geometry_contract["electrode_names"]["1"][0])
     expected_anode = under_anode_name(target)
@@ -130,6 +162,7 @@ def extract_task_manifest(
         ti_field=ti,
         pair1_field=pair1,
         matched_target_mask=target_roi.mask,
+        pair1_matched_target_mask=pair1_target_mask,
         matched_roi_provenance=target_roi.provenance,
         under_anode_mask=under_roi.mask,
         under_anode_provenance=under_roi.provenance,

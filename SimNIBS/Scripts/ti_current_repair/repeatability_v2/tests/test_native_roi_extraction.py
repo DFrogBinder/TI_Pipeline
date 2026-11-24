@@ -12,6 +12,7 @@ from ti_current_repair.repeatability_v2.extraction import (
 )
 from ti_current_repair.repeatability_v2.mesh_io import load_native_element_field
 from ti_current_repair.repeatability_v2.native_pipeline import (
+    map_ti_target_mask_to_pair1,
     parcel_mask_from_atlas,
     under_anode_name,
 )
@@ -128,6 +129,93 @@ def test_extract_three_outcomes_keeps_matched_roi_and_float64_provenance(
     assert rows[2]["roi_median_v_per_m"] == pytest.approx(2.0)
     assert all(row["analysis_dtype"] == "float64" for row in rows)
     assert all(str(row["source_msh_path"]).endswith(".msh") for row in rows)
+    assert [row["electrode_name"] for row in rows] == ["", "", "F8"]
+
+
+def test_extract_maps_same_target_roi_across_cropped_ti_and_augmented_pair_mesh(
+    tmp_path: Path,
+) -> None:
+    ti = _field(tmp_path / "TI.msh", "TImax", np.asarray([1.0, 2.0]))
+    pair_path = tmp_path / "pair1.msh"
+    pair_path.write_text("E", encoding="utf-8")
+    pair = NativeMeshField(
+        path=pair_path,
+        field_name="E",
+        values=np.asarray(
+            [[3.0, 4.0, 0.0], [0.0, 0.0, 2.0], [99.0, 0.0, 0.0]],
+            dtype=np.float64,
+        ),
+        tetra_centres=np.asarray(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+            dtype=np.float64,
+        ),
+        tetra_volumes=np.asarray([1.0, 1.0, 1.0], dtype=np.float64),
+        geometry_sha256="b" * 64,
+        stored_dtype="float64",
+        tetra_tags=np.asarray([2, 2, 100], dtype=np.int64),
+    )
+
+    rows = extract_three_outcomes(
+        ti_field=ti,
+        pair1_field=pair,
+        matched_target_mask=np.asarray([True, False]),
+        pair1_matched_target_mask=np.asarray([True, False, False]),
+        matched_roi_provenance={"roi_id": "same-target"},
+        under_anode_mask=np.asarray([False, True, False]),
+        under_anode_provenance={"electrode_name": "F8"},
+        common={},
+    )
+
+    assert rows[0]["roi_median_v_per_m"] == pytest.approx(1.0)
+    assert rows[1]["roi_median_v_per_m"] == pytest.approx(5.0)
+    assert rows[0]["roi_provenance_sha256"] == rows[1]["roi_provenance_sha256"]
+
+
+def test_target_mask_mapping_verifies_shared_biological_geometry(
+    tmp_path: Path,
+) -> None:
+    ti = NativeMeshField(
+        **{
+            **_field(
+                tmp_path / "TI-map.msh", "TImax", np.asarray([1.0, 2.0])
+            ).__dict__,
+            "tetra_tags": np.asarray([2, 3], dtype=np.int64),
+        }
+    )
+    pair = NativeMeshField(
+        path=_field(
+            tmp_path / "pair-map.msh",
+            "E",
+            np.ones((2, 3), dtype=np.float64),
+        ).path,
+        field_name="E",
+        values=np.ones((3, 3), dtype=np.float64),
+        tetra_centres=np.asarray(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+            dtype=np.float64,
+        ),
+        tetra_volumes=np.asarray([1.0, 1.0, 1.0], dtype=np.float64),
+        geometry_sha256="b" * 64,
+        stored_dtype="float64",
+        tetra_tags=np.asarray([2, 3, 100], dtype=np.int64),
+    )
+
+    mapped = map_ti_target_mask_to_pair1(
+        ti=ti, pair1=pair, ti_target_mask=np.asarray([True, False])
+    )
+    assert mapped.tolist() == [True, False, False]
+
+    shifted = NativeMeshField(
+        **{
+            **pair.__dict__,
+            "tetra_centres": pair.tetra_centres
+            + np.asarray([0.0, 0.0, 1.0], dtype=np.float64),
+        }
+    )
+    with pytest.raises(ValueError, match="biological geometry"):
+        map_ti_target_mask_to_pair1(
+            ti=ti, pair1=shifted, ti_target_mask=np.asarray([True, False])
+        )
 
 
 def test_extract_rejects_float32_or_geometry_mismatch(tmp_path: Path) -> None:

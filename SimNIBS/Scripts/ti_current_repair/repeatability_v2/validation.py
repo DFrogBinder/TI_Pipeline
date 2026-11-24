@@ -6,6 +6,34 @@ from collections import Counter
 from typing import Iterable, Mapping
 
 import math
+import re
+
+
+PILOT_SCOPE = {
+    "subject": "sub-CC110174",
+    "target": "left_hippocampus",
+    "remesh_simulations": 2,
+    "fixed_simulations": 2,
+    "outcome_rows": 12,
+}
+PILOT_IDENTITY_KEYS = (
+    "campaign_identity_sha256",
+    "operational_profile_sha256",
+    "code_commit",
+    "simnibs_version",
+)
+
+
+def _validated_pilot_identity(provenance: Mapping[str, object]) -> dict[str, str]:
+    identity = {key: str(provenance.get(key, "")) for key in PILOT_IDENTITY_KEYS}
+    for key in ("campaign_identity_sha256", "operational_profile_sha256"):
+        if re.fullmatch(r"[0-9a-f]{64}", identity[key]) is None:
+            raise ValueError(f"Pilot provenance {key} must bind a SHA-256 identity")
+    if re.fullmatch(r"[0-9a-f]{40,64}", identity["code_commit"]) is None:
+        raise ValueError("Pilot provenance code_commit must bind a Git commit")
+    if identity["simnibs_version"] != "4.6.0":
+        raise ValueError("Pilot provenance must bind SimNIBS 4.6.0")
+    return identity
 
 
 def _simulation_key(row: Mapping[str, object]) -> tuple[str, str, str, int]:
@@ -23,7 +51,9 @@ def validate_local_pilot(
     cache_manifest: Mapping[str, object],
     metric_rows: Iterable[Mapping[str, object]],
     qc_comparisons: Iterable[Mapping[str, object]],
+    provenance: Mapping[str, object],
 ) -> dict[str, object]:
+    identity = _validated_pilot_identity(provenance)
     simulations = [dict(value) for value in manifests]
     rows = [dict(value) for value in metric_rows]
     comparisons = [dict(value) for value in qc_comparisons]
@@ -110,13 +140,8 @@ def validate_local_pilot(
     return {
         "schema_version": 2,
         "status": "ready",
-        "scope": {
-            "subject": "sub-CC110174",
-            "target": "left_hippocampus",
-            "remesh_simulations": 2,
-            "fixed_simulations": 2,
-            "outcome_rows": len(rows),
-        },
+        **identity,
+        "scope": {**PILOT_SCOPE, "outcome_rows": len(rows)},
         "fixed_geometry_sha256": expected_geometry,
         "native_nifti_qc_comparisons": len(comparisons),
         "source_outputs_modified": False,

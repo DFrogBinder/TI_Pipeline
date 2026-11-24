@@ -255,6 +255,83 @@ def test_simnibs46_adapter_calls_existing_mesh_fem_tdcs_contract(tmp_path: Path)
     }
 
 
+def test_simnibs46_adapter_combines_only_aligned_head_tetrahedra(
+    tmp_path: Path,
+) -> None:
+    crop_tags: list[tuple[int, ...]] = []
+
+    class Nodes:
+        node_coord = np.asarray(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            dtype=np.float64,
+        )
+
+    class Elements:
+        elm_type = np.asarray([4], dtype=np.int64)
+        node_number_list = np.asarray([[1, 2, 3, 4]], dtype=np.int64)
+        tag1 = np.asarray([2], dtype=np.int64)
+        tag2 = np.asarray([2], dtype=np.int64)
+
+    class Data:
+        def __init__(self, values: np.ndarray) -> None:
+            self.value = values
+
+    class HeadMesh:
+        def __init__(self, values: np.ndarray) -> None:
+            self.nodes = Nodes()
+            self.elm = Elements()
+            self.field = {"E": Data(values)}
+            self.elmdata = [self.field["E"]]
+            self.nodedata = []
+
+        def add_element_field(self, values: np.ndarray, name: str) -> None:
+            self.field[name] = Data(np.asarray(values, dtype=np.float64))
+
+    class AugmentedMesh:
+        def __init__(self, head: HeadMesh) -> None:
+            self.head = head
+
+        def crop_mesh(self, *, tags):
+            crop_tags.append(tuple(int(value) for value in tags))
+            return self.head
+
+    first = AugmentedMesh(
+        HeadMesh(np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64))
+    )
+    second = AugmentedMesh(
+        HeadMesh(np.asarray([[0.0, 2.0, 0.0]], dtype=np.float64))
+    )
+
+    class MeshIO:
+        written = None
+
+        @staticmethod
+        def read_msh(path: str):
+            return first if path.endswith("pair1.msh") else second
+
+        @classmethod
+        def write_msh(cls, mesh, path: str) -> None:
+            cls.written = mesh
+            _write(Path(path), "ti")
+
+    adapter = SimNIBS46Adapter(
+        fem_module=SimpleNamespace(),
+        mesh_io_module=MeshIO,
+        ti_function=lambda e1, e2: np.linalg.norm(e1 + e2, axis=1),
+    )
+    output = tmp_path / "TI.msh"
+    adapter.combine_ti(
+        _write(tmp_path / "pair1.msh", "pair1-with-electrodes"),
+        _write(tmp_path / "pair2.msh", "pair2-with-different-electrodes"),
+        output,
+    )
+
+    assert output.is_file()
+    assert len(crop_tags) == 2
+    assert 2 in crop_tags[0] and 100 not in crop_tags[0]
+    assert MeshIO.written.field["TImax"].value == pytest.approx([np.sqrt(5.0)])
+
+
 def test_remesh_adapter_places_each_pair_once_then_solves_existing_geometry(
     tmp_path: Path,
 ) -> None:

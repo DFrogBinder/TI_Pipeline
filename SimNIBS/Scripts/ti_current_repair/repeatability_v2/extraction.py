@@ -89,8 +89,7 @@ def _row(
         "extraction_implementation": EXTRACTION_IMPLEMENTATION,
         "extraction_version": EXTRACTION_VERSION,
     }
-    if "electrode_name" in roi_provenance:
-        row["electrode_name"] = roi_provenance["electrode_name"]
+    row["electrode_name"] = str(roi_provenance.get("electrode_name", ""))
     assert_authoritative_metric_row(row)
     return row
 
@@ -100,20 +99,33 @@ def extract_three_outcomes(
     ti_field: NativeMeshField,
     pair1_field: NativeMeshField,
     matched_target_mask: object,
+    pair1_matched_target_mask: object | None = None,
     matched_roi_provenance: Mapping[str, Any],
     under_anode_mask: object,
     under_anode_provenance: Mapping[str, Any],
     common: Mapping[str, object],
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
-    if ti_field.geometry_sha256 != pair1_field.geometry_sha256:
+    if (
+        pair1_matched_target_mask is None
+        and ti_field.geometry_sha256 != pair1_field.geometry_sha256
+    ):
         raise ValueError("TI and pair-1 native meshes have different geometry")
     ti_values = _scalar_values(ti_field)
     pair_values = _scalar_values(pair1_field)
-    if ti_values.shape != pair_values.shape:
+    if pair1_matched_target_mask is None and ti_values.shape != pair_values.shape:
         raise ValueError("TI and pair-1 fields have different tetrahedral support")
     matched = np.asarray(matched_target_mask, dtype=bool)
+    pair_matched = (
+        matched
+        if pair1_matched_target_mask is None
+        else np.asarray(pair1_matched_target_mask, dtype=bool)
+    )
     under = np.asarray(under_anode_mask, dtype=bool)
-    if matched.shape != ti_values.shape or under.shape != ti_values.shape:
+    if (
+        matched.shape != ti_values.shape
+        or pair_matched.shape != pair_values.shape
+        or under.shape != pair_values.shape
+    ):
         raise ValueError("ROI mask and native field shapes differ")
     return (
         _row(
@@ -128,7 +140,7 @@ def extract_three_outcomes(
             field=pair1_field,
             scalar_values=pair_values,
             outcome_mode="tdcs_pair1_matched_target",
-            roi_mask=matched,
+            roi_mask=pair_matched,
             roi_provenance=matched_roi_provenance,
             common=common,
         ),

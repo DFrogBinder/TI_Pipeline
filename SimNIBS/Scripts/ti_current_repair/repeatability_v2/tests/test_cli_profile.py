@@ -11,6 +11,7 @@ from ti_current_repair.repeatability_v2.profile import (
     verify_profile_source_inputs,
 )
 from ti_current_repair.repeatability_v2.tests.test_config_inventory import valid_config
+from ti_current_repair.repeatability_v2.validation import PILOT_SCOPE
 
 
 def _profile(tmp_path: Path) -> dict[str, object]:
@@ -143,9 +144,36 @@ def test_cli_preflight_and_release_gate_are_read_only(
 
     local = tmp_path / "local.json"
     pilot = tmp_path / "pilot.json"
-    local.write_text(json.dumps({"status": "ready"}), encoding="utf-8")
+    identity = {
+        "schema_version": 2,
+        "status": "ready",
+        "campaign_identity_sha256": "a" * 64,
+        "operational_profile_sha256": "b" * 64,
+        "code_commit": "c" * 40,
+        "simnibs_version": "4.6.0",
+        "scope": PILOT_SCOPE,
+        "source_outputs_modified": False,
+    }
+    local.write_text(json.dumps(identity), encoding="utf-8")
     pilot.write_text(
-        json.dumps({"status": "ready", "local_hpc_comparison": "passed"}),
+        json.dumps(
+            {
+                **identity,
+                "slurm_jobs": [
+                    {
+                        "job_id": "123456",
+                        "state": "COMPLETED",
+                        "exit_code": "0:0",
+                    }
+                ],
+                "local_hpc_comparison": {
+                    "status": "passed",
+                    "comparison_rows": 12,
+                    "maximum_absolute_difference": 1e-12,
+                    "atol": 1e-10,
+                },
+            }
+        ),
         encoding="utf-8",
     )
     assert main(

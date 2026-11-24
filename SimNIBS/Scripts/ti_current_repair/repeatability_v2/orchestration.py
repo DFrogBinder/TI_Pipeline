@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
+import re
 from typing import Mapping
 
 from .config import StudyConfigV2
+from .validation import PILOT_IDENTITY_KEYS, PILOT_SCOPE
 
 
 @dataclass(frozen=True)
@@ -156,11 +159,51 @@ def production_release_gate(
         raise ValueError("Local validation receipt is not ready")
     if hpc_pilot.get("status") != "ready":
         raise ValueError("HPC pilot receipt is not ready")
-    if hpc_pilot.get("local_hpc_comparison") != "passed":
+    for label, receipt in (
+        ("Local validation", local_validation),
+        ("HPC pilot", hpc_pilot),
+    ):
+        if receipt.get("schema_version") != 2 or receipt.get("scope") != PILOT_SCOPE:
+            raise ValueError(f"{label} receipt is not bound to the exact pilot scope")
+        if receipt.get("source_outputs_modified") is not False:
+            raise ValueError(f"{label} receipt does not prove source preservation")
+        for key in PILOT_IDENTITY_KEYS:
+            if not str(receipt.get(key, "")):
+                raise ValueError(f"{label} receipt lacks bound identity field {key}")
+    local_identity = tuple(str(local_validation[key]) for key in PILOT_IDENTITY_KEYS)
+    hpc_identity = tuple(str(hpc_pilot[key]) for key in PILOT_IDENTITY_KEYS)
+    if local_identity != hpc_identity:
+        raise ValueError("Local and HPC pilot receipt identities disagree")
+    if re.fullmatch(r"[0-9a-f]{64}", local_identity[0]) is None or re.fullmatch(
+        r"[0-9a-f]{64}", local_identity[1]
+    ) is None:
+        raise ValueError("Pilot receipts are not bound to SHA-256 identities")
+    if re.fullmatch(r"[0-9a-f]{40,64}", local_identity[2]) is None:
+        raise ValueError("Pilot receipts are not bound to a Git commit")
+    if local_identity[3] != "4.6.0":
+        raise ValueError("Pilot receipts are not bound to SimNIBS 4.6.0")
+    jobs = hpc_pilot.get("slurm_jobs")
+    if not isinstance(jobs, list) or not jobs or any(
+        not isinstance(job, Mapping)
+        or not str(job.get("job_id", "")).isdigit()
+        or job.get("state") != "COMPLETED"
+        or job.get("exit_code") != "0:0"
+        for job in jobs
+    ):
+        raise ValueError("HPC pilot receipt lacks completed zero-exit Slurm jobs")
+    comparison = hpc_pilot.get("local_hpc_comparison")
+    if not isinstance(comparison, Mapping) or comparison.get("status") != "passed":
         raise ValueError("HPC pilot lacks a passed local-versus-HPC comparison")
+    if int(comparison.get("comparison_rows", -1)) != PILOT_SCOPE["outcome_rows"]:
+        raise ValueError("HPC pilot comparison does not cover all pilot outcome rows")
+    maximum = float(comparison.get("maximum_absolute_difference", math.nan))
+    tolerance = float(comparison.get("atol", math.nan))
+    if not math.isfinite(maximum) or not math.isfinite(tolerance) or not 0 <= maximum <= tolerance:
+        raise ValueError("HPC pilot comparison exceeds its finite tolerance")
     return {
         "status": "ready_for_production",
         "local_validation": "passed",
         "hpc_pilot": "passed",
         "local_hpc_comparison": "passed",
+        "campaign_identity_sha256": local_identity[0],
     }

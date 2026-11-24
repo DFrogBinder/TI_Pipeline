@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import inspect
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,6 +18,9 @@ from typing import Any, Callable
 import numpy as np
 
 from .precision import require_float64
+
+
+HEAD_VOLUME_TAGS = np.arange(1, 100, dtype=np.int64)
 
 
 def _run_command(command: list[str], cwd: Path) -> None:
@@ -109,7 +113,13 @@ class CorrectedCharmHeadBuilder:
 class SimNIBS46Adapter:
     version = "4.6.0"
 
-    def __init__(self, *, fem_module: Any = None, mesh_io_module: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        fem_module: Any = None,
+        mesh_io_module: Any = None,
+        ti_function: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
+    ) -> None:
         if fem_module is None or mesh_io_module is None:
             from simnibs import mesh_io  # type: ignore
             from simnibs.simulation import fem  # type: ignore
@@ -118,6 +128,7 @@ class SimNIBS46Adapter:
             mesh_io_module = mesh_io
         self.fem = fem_module
         self.mesh_io = mesh_io_module
+        self.ti_function = ti_function
 
     @staticmethod
     def _hash_array(digest: Any, label: str, value: object) -> None:
@@ -159,34 +170,59 @@ class SimNIBS46Adapter:
         cond = self.mesh_io.ElementData(
             conductivities, name="conductivity", mesh=mesh
         )
+        tdcs_parameters = inspect.signature(self.fem.tdcs).parameters
+        tdcs_var_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in tdcs_parameters.values()
+        )
+        tdcs_kwargs: dict[str, object] = {}
+        if "n_workers" in tdcs_parameters or tdcs_var_kwargs:
+            tdcs_kwargs["n_workers"] = int(metadata.get("n_workers", 1))
+        if "units" in tdcs_parameters or tdcs_var_kwargs:
+            tdcs_kwargs["units"] = "mm"
+        if "solver_options" in tdcs_parameters or tdcs_var_kwargs:
+            tdcs_kwargs["solver_options"] = metadata.get("solver_options")
         potential = self.fem.tdcs(
             mesh,
             cond,
             list(metadata["currents_a"]),
             list(metadata["electrode_surface_tags"]),
-            n_workers=int(metadata.get("n_workers", 1)),
-            units="mm",
-            solver_options=metadata.get("solver_options"),
+            **tdcs_kwargs,
         )
-        result = self.fem.calc_fields(
-            potential, "E", cond=cond, units="mm"
+        calc_parameters = inspect.signature(self.fem.calc_fields).parameters
+        calc_var_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in calc_parameters.values()
         )
+        calc_kwargs: dict[str, object] = {"cond": cond}
+        if "units" in calc_parameters or calc_var_kwargs:
+            calc_kwargs["units"] = "mm"
+        result = self.fem.calc_fields(potential, "E", **calc_kwargs)
         output.parent.mkdir(parents=True, exist_ok=True)
         self.mesh_io.write_msh(result, str(output))
         return output
 
     def combine_ti(self, pair1: Path, pair2: Path, output: Path) -> Path:
-        first = self.mesh_io.read_msh(str(pair1))
-        second = self.mesh_io.read_msh(str(pair2))
+        first = self.mesh_io.read_msh(str(pair1)).crop_mesh(tags=HEAD_VOLUME_TAGS)
+        second = self.mesh_io.read_msh(str(pair2)).crop_mesh(tags=HEAD_VOLUME_TAGS)
+        if not np.array_equal(first.nodes.node_coord, second.nodes.node_coord):
+            raise ValueError("Pair head-volume node geometry differs after electrode removal")
+        for label in ("elm_type", "node_number_list", "tag1", "tag2"):
+            if not np.array_equal(getattr(first.elm, label), getattr(second.elm, label)):
+                raise ValueError(
+                    f"Pair head-volume element geometry differs after electrode removal: {label}"
+                )
         e1 = require_float64(first.field["E"].value, "pair-1 E field")
         e2 = require_float64(second.field["E"].value, "pair-2 E field")
         if e1.shape != e2.shape or e1.ndim != 2 or e1.shape[1] != 3:
             raise ValueError("Pair E fields must have matching N x 3 float64 arrays")
-        try:
+        ti_function = self.ti_function
+        if ti_function is None:
             from simnibs.utils.TI_utils import get_maxTI  # type: ignore
-        except ImportError:
-            from simnibs.utils.TI_utils import get_maxTI  # type: ignore[no-redef]
-        ti_values = np.asarray(get_maxTI(e1, e2), dtype=np.float64)
+
+            ti_function = get_maxTI
+        ti_values = np.asarray(ti_function(e1, e2), dtype=np.float64)
+        require_float64(ti_values, "TImax field")
         result = deepcopy(first)
         result.elmdata = []
         result.nodedata = []
@@ -194,6 +230,12 @@ class SimNIBS46Adapter:
         output.parent.mkdir(parents=True, exist_ok=True)
         self.mesh_io.write_msh(result, str(output))
         return output
+
+
+class SimNIBS326Adapter(SimNIBS46Adapter):
+    """SimNIBS 3.2.6 existing-mesh adapter with signature-aware kwargs."""
+
+    version = "3.2.6"
 
 
 class SimNIBS46RemeshAdapter(SimNIBS46Adapter):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from ti_current_repair.repeatability_v2.v3_audit import (
     audit_v3_fixed_geometry,
     build_v3_replacement_plan,
     probe_existing_mesh_solver,
+    run_v3_fixed_replacement_task,
 )
 
 
@@ -78,6 +80,62 @@ def test_v3_existing_mesh_capability_probe_rejects_placement_only_api() -> None:
 
     with pytest.raises(ValueError, match="existing-mesh"):
         probe_existing_mesh_solver(BadFem)
+
+
+def test_v3_replacement_task_uses_real_v3_adapter_contract_and_isolated_root(
+    tmp_path: Path,
+) -> None:
+    subject = "sub-CC110174"
+    target = "left_hippocampus"
+    cache_root = tmp_path / "cache"
+    case = cache_root / subject / target
+    pair1 = _write(case / "pair1.msh", "pair1")
+    pair2 = _write(case / "pair2.msh", "pair2")
+
+    class Adapter:
+        version = "3.2.6"
+
+        @staticmethod
+        def geometry_sha256(path: Path) -> str:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        @staticmethod
+        def solve_existing_mesh(geometry: Path, output: Path, metadata: dict) -> Path:
+            return _write(output, f"solved:{geometry.read_text()}:{metadata['pair']}")
+
+        @staticmethod
+        def combine_ti(pair1_result: Path, pair2_result: Path, output: Path) -> Path:
+            return _write(output, f"ti:{pair1_result.read_text()}:{pair2_result.read_text()}")
+
+    manifest = {
+        "status": "ready",
+        "subject": subject,
+        "target": target,
+        "source_repeat": 7,
+        "pair_caches": {"1": str(pair1), "2": str(pair2)},
+        "geometry_sha256": {
+            "1": Adapter.geometry_sha256(pair1),
+            "2": Adapter.geometry_sha256(pair2),
+        },
+        "currents_a": {"1": [0.001, -0.001], "2": [0.001, -0.001]},
+        "conductivity_by_tag": {"2": 0.275, "100": 1.4},
+        "electrode_surface_tags": {"1": [1101, 1102], "2": [1103, 1104]},
+        "solver_options": None,
+        "n_workers": 8,
+    }
+    (case / "cache_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = run_v3_fixed_replacement_task(
+        task_index=0,
+        cache_root=cache_root,
+        output_root=tmp_path / "isolated-v3-replacement",
+        adapter=Adapter(),
+    )
+
+    assert result["status"] == "complete"
+    assert result["simnibs_version"] == "3.2.6"
+    assert result["subject"] == subject
+    assert result["target"] == target
 
 
 def _write(path: Path, value: str) -> Path:

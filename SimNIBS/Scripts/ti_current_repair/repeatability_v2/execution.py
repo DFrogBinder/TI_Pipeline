@@ -247,11 +247,14 @@ def run_fixed_task(
     cache_manifest: Path,
     output_root: Path,
     adapter: ExecutionAdapter,
+    expected_version: str = "4.6.0",
 ) -> dict[str, object]:
     if task.condition != "fixed_mesh":
         raise ValueError("run_fixed_task requires condition='fixed_mesh'")
-    if adapter.version != "4.6.0":
-        raise ValueError(f"Expected SimNIBS 4.6.0 adapter, observed {adapter.version}")
+    if adapter.version != expected_version:
+        raise ValueError(
+            f"Expected SimNIBS {expected_version} adapter, observed {adapter.version}"
+        )
     cache = json.loads(cache_manifest.read_text(encoding="utf-8"))
     if cache.get("status") != "ready":
         raise ValueError(f"Fixed cache is not ready: {cache_manifest}")

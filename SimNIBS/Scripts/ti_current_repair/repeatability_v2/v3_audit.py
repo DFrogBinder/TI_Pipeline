@@ -7,6 +7,10 @@ import inspect
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .config import CANONICAL_SUBJECTS
+from .execution import SimulationTask, run_fixed_task
+from .simnibs_adapter import SimNIBS326Adapter
+
 
 def probe_existing_mesh_solver(fem_module: object) -> dict[str, object]:
     tdcs = getattr(fem_module, "tdcs", None)
@@ -113,4 +117,34 @@ def build_v3_replacement_plan(
         "existing_mesh_capability_probe_required": True,
         "original_data_policy": "preserve",
     }
+
+
+def run_v3_fixed_replacement_task(
+    *,
+    task_index: int,
+    cache_root: Path,
+    output_root: Path,
+    adapter: object | None = None,
+) -> dict[str, object]:
+    """Execute one of the conditional 800 v3 fixed tasks without placement."""
+
+    if not 0 <= task_index < 800:
+        raise IndexError(f"V3 fixed replacement task index outside 0..799: {task_index}")
+    target_block, local_index = divmod(task_index, 400)
+    target = ("left_hippocampus", "right_m1")[target_block]
+    subject = CANONICAL_SUBJECTS[local_index // 40]
+    task = SimulationTask(
+        subject=subject,
+        target=target,
+        condition="fixed_mesh",
+        repeat=local_index % 40 + 1,
+    )
+    cache_manifest = cache_root / subject / target / "cache_manifest.json"
+    return run_fixed_task(
+        task=task,
+        cache_manifest=cache_manifest,
+        output_root=output_root,
+        adapter=adapter or SimNIBS326Adapter(),
+        expected_version="3.2.6",
+    )
 

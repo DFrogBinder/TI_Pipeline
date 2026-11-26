@@ -5,8 +5,14 @@ from pathlib import Path
 import pytest
 
 from repeatability_combined_analysis_v2.assembly import MetricSource, assemble_sources
-from repeatability_combined_analysis_v2.tests.test_analysis import final_matrix
-from repeatability_combined_analysis_v2.workflow import run_final_analysis
+from repeatability_combined_analysis_v2.tests.test_analysis import (
+    final_matrix,
+    preliminary_matrix,
+)
+from repeatability_combined_analysis_v2.workflow import (
+    run_final_analysis,
+    run_preliminary_analysis,
+)
 from ti_current_repair.repeatability_v2.precision import write_metric_table
 
 
@@ -73,3 +79,36 @@ def test_final_workflow_writes_all_outputs_without_modifying_sources(
     }
     assert all((output / name).is_file() for name in receipt["outputs"])
     assert {source.path: source.path.stat().st_mtime_ns for source in sources} == before
+
+
+def test_preliminary_workflow_is_separate_and_stamped_preliminary(
+    tmp_path: Path,
+) -> None:
+    frame = preliminary_matrix()
+    sources = []
+    for (version, target, condition, outcome), group in frame.groupby(
+        ["version", "target", "condition", "outcome_mode"], sort=False
+    ):
+        path = tmp_path / "sources" / version / target / condition / f"{outcome}.csv"
+        write_metric_table(path, group.to_dict(orient="records"))
+        sources.append(
+            MetricSource(
+                version=version,
+                target=target,
+                condition=condition,
+                outcome_mode=outcome,
+                path=path,
+                preliminary=True,
+            )
+        )
+
+    receipt = run_preliminary_analysis(
+        sources=sources,
+        output_root=tmp_path / "preliminary-analysis",
+    )
+
+    assert receipt["status"] == "complete"
+    assert receipt["preliminary"] is True
+    assert receipt["versions"] == ["simnibs326", "simnibs401"]
+    assert receipt["run_level_rows"] == 9600
+    assert receipt["participant_cells"] == 240

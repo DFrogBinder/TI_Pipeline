@@ -19,6 +19,7 @@ from repeatability_combined_analysis_v2.statistics import (
     summarize_participant_cells,
     summarize_under_anode,
     validate_final_matrix,
+    validate_preliminary_matrix,
 )
 
 
@@ -161,3 +162,29 @@ def test_under_anode_analysis_is_separate_application_facing_output() -> None:
     assert set(under["participant_count"]) == {10}
     assert under["interpretation"].eq("separate_application_facing_tdcs").all()
     assert under["location_matched_to_ti"].eq(False).all()
+
+
+def preliminary_matrix() -> pd.DataFrame:
+    frame = final_matrix()
+    frame.loc[frame["version"] == "simnibs46", "version"] = "simnibs401"
+    frame.loc[frame["version"] == "simnibs401", "simnibs_version"] = "4.0.1"
+    frame["preliminary"] = True
+    return frame
+
+
+def test_preliminary_matrix_accepts_exact_326_401_scope_only() -> None:
+    frame = preliminary_matrix()
+
+    validate_preliminary_matrix(frame)
+    summary = summarize_participant_cells(frame, final=False)
+    decomposition = build_matched_decomposition(
+        summary, versions=("simnibs326", "simnibs401")
+    )
+
+    assert len(frame) == 9600
+    assert len(summary) == 240 * 3
+    assert set(decomposition["version"]) == {"simnibs326", "simnibs401"}
+
+    frame.loc[0, "preliminary"] = False
+    with pytest.raises(ValueError, match="preliminary"):
+        validate_preliminary_matrix(frame)

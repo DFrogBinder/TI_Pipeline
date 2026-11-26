@@ -4,6 +4,34 @@ This package is the isolated implementation of the approved native-mesh
 repeatability rewrite. Existing v1 scripts and historical SimNIBS 3.2.6/4.0.1
 sources are not modified.
 
+## Historical component extraction for abstract pre-screening
+
+The historical launcher extracts existing native TI and pair-1 component
+fields from the completed consolidated SimNIBS 3.2.6 and 4.0.1 dataset. It
+performs no meshing and no FEM simulation. It is separate from the SimNIBS 4.6
+production launcher and creates an explicitly preliminary analysis package.
+
+After pulling the branch on the HPC, the user runs the read-only preflight:
+
+```bash
+cd /path/to/TI_Pipeline/SimNIBS/Scripts
+bash ti_current_repair/repeatability_v2/historical_hpc/submit.sh
+```
+
+This verifies the consolidation completion receipt, all 3,200 source records,
+both atlas contracts, native float64 mesh reading, and pair-1 anode surface tag
+2101. It creates nothing and submits nothing. Only after it passes, the user
+can explicitly submit both extraction arrays and their dependent collectors:
+
+```bash
+bash ti_current_repair/repeatability_v2/historical_hpc/submit.sh --submit
+```
+
+Defaults may be overridden with `DATASET_ROOT`, `OUTPUT_ROOT`, and
+`V4_ATLAS_DIR`. The expected v4 atlas default is
+`/mnt/parscratch/users/cop23bi/ZIPs/atlases`; a path mismatch fails during the
+read-only preflight. HPC execution remains user-only.
+
 ## Scientific contract
 
 - Production is exactly SimNIBS 4.6.0, the canonical 9+1 cohort, two targets,

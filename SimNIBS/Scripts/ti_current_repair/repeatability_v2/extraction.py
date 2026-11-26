@@ -58,6 +58,7 @@ def _row(
     roi_mask: np.ndarray,
     roi_provenance: Mapping[str, Any],
     common: Mapping[str, object],
+    source_msh_sha256: str | None = None,
 ) -> dict[str, object]:
     metrics = volume_weighted_metrics(
         values=scalar_values,
@@ -69,7 +70,7 @@ def _row(
         "schema_version": 2,
         "outcome_mode": outcome_mode,
         "source_msh_path": str(field.path.resolve()),
-        "source_msh_sha256": sha256_file(field.path),
+        "source_msh_sha256": source_msh_sha256 or sha256_file(field.path),
         "source_field_name": field.field_name,
         "stored_field_dtype": field.stored_dtype,
         "analysis_dtype": "float64",
@@ -127,6 +128,8 @@ def extract_three_outcomes(
         or under.shape != pair_values.shape
     ):
         raise ValueError("ROI mask and native field shapes differ")
+    ti_msh_sha256 = sha256_file(ti_field.path)
+    pair1_msh_sha256 = sha256_file(pair1_field.path)
     return (
         _row(
             field=ti_field,
@@ -135,6 +138,7 @@ def extract_three_outcomes(
             roi_mask=matched,
             roi_provenance=matched_roi_provenance,
             common=common,
+            source_msh_sha256=ti_msh_sha256,
         ),
         _row(
             field=pair1_field,
@@ -143,6 +147,7 @@ def extract_three_outcomes(
             roi_mask=pair_matched,
             roi_provenance=matched_roi_provenance,
             common=common,
+            source_msh_sha256=pair1_msh_sha256,
         ),
         _row(
             field=pair1_field,
@@ -151,6 +156,7 @@ def extract_three_outcomes(
             roi_mask=under,
             roi_provenance=under_anode_provenance,
             common=common,
+            source_msh_sha256=pair1_msh_sha256,
         ),
     )
 

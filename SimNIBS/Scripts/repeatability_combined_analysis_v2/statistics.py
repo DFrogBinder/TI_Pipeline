@@ -19,8 +19,6 @@ from .settings import (
     SUBJECTS,
     TARGETS,
     VERSIONS,
-    expected_participant_cells,
-    expected_run_rows,
 )
 
 
@@ -45,6 +43,7 @@ REQUIRED_COLUMNS = {
     "preliminary",
 }
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+PRELIMINARY_VERSIONS = ("simnibs326", "simnibs401")
 
 
 def _provenance_digest(value: object) -> str:
@@ -55,33 +54,49 @@ def _provenance_digest(value: object) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def validate_final_matrix(frame: pd.DataFrame) -> None:
+def _validate_matrix(
+    frame: pd.DataFrame,
+    *,
+    versions: tuple[str, ...],
+    expected_simnibs_versions: dict[str, str],
+    preliminary_required: bool,
+    enforce_fixed_geometry: bool,
+    matrix_label: str,
+) -> None:
     missing = sorted(REQUIRED_COLUMNS.difference(frame.columns))
     if missing:
-        raise ValueError(f"Final matrix is missing columns: {missing}")
-    if len(frame) != expected_run_rows():
+        raise ValueError(f"{matrix_label} matrix is missing columns: {missing}")
+    expected_cells = (
+        len(SUBJECTS) * len(versions) * len(TARGETS) * len(CONDITIONS) * len(OUTCOMES)
+    )
+    expected_rows = expected_cells * REPEAT_COUNT
+    if len(frame) != expected_rows:
         raise ValueError(
-            f"Expected {expected_run_rows()} final run rows, observed {len(frame)}"
+            f"Expected {expected_rows} {matrix_label.lower()} run rows, "
+            f"observed {len(frame)}"
         )
     for column, expected in (
         ("subject", SUBJECTS),
-        ("version", VERSIONS),
+        ("version", versions),
         ("target", TARGETS),
         ("condition", CONDITIONS),
         ("outcome_mode", OUTCOMES),
     ):
         if set(frame[column].astype(str)) != set(expected):
             if column == "version":
+                allowed = ", ".join(expected_simnibs_versions[value] for value in versions)
                 raise ValueError(
-                    "Final matrix must contain only SimNIBS 3.2.6 and 4.6; "
-                    "4.0.1/preliminary rows are excluded"
+                    f"{matrix_label} matrix must contain only SimNIBS {allowed}; "
+                    "unexpected or preliminary version labels are excluded"
                 )
-            raise ValueError(f"Final matrix has unexpected {column} values")
+            raise ValueError(f"{matrix_label} matrix has unexpected {column} values")
     preliminary = frame["preliminary"].astype(bool)
-    if preliminary.any():
+    if preliminary_required and not preliminary.all():
+        raise ValueError("Every preliminary analysis row must be marked preliminary")
+    if not preliminary_required and preliminary.any():
         raise ValueError("Preliminary rows cannot enter the final analysis matrix")
     if not frame["source_msh_path"].astype(str).str.lower().str.endswith(".msh").all():
-        raise ValueError("Every final metric must come from a native .msh source")
+        raise ValueError(f"Every {matrix_label.lower()} metric must come from native .msh")
     if not frame["analysis_dtype"].eq("float64").all() or not frame[
         "stored_field_dtype"
     ].eq("float64").all():
@@ -108,11 +123,11 @@ def validate_final_matrix(frame: pd.DataFrame) -> None:
         "repeatability_v2.native_mesh_extraction"
     ).all() or not frame["extraction_version"].astype(str).eq("2").all():
         raise ValueError("Final rows must use the approved native extraction implementation")
-    expected_simnibs = frame["version"].map(
-        {"simnibs326": "3.2.6", "simnibs46": "4.6.0"}
-    )
+    expected_simnibs = frame["version"].map(expected_simnibs_versions)
     if not frame["simnibs_version"].astype(str).eq(expected_simnibs).all():
-        raise ValueError("Metric SimNIBS provenance disagrees with final version labels")
+        raise ValueError(
+            f"Metric SimNIBS provenance disagrees with {matrix_label.lower()} version labels"
+        )
     expected_fields = frame["outcome_mode"].map(
         {
             "ti_target": "TImax",
@@ -134,23 +149,57 @@ def validate_final_matrix(frame: pd.DataFrame) -> None:
         raise ValueError("Final finite-volume fractions must be in (0, 1]")
     expected_tags = {f"repeat_{value:03d}" for value in range(1, REPEAT_COUNT + 1)}
     groups = frame.groupby(list(CELL_KEYS), sort=False, observed=True)
-    if len(groups) != expected_participant_cells():
-        raise ValueError("Final matrix does not contain 240 participant cells")
+    if len(groups) != expected_cells:
+        raise ValueError(
+            f"{matrix_label} matrix does not contain {expected_cells} participant cells"
+        )
     for key, group in groups:
         if len(group) != REPEAT_COUNT or set(group["repeat_tag"].astype(str)) != expected_tags:
             raise ValueError(f"Incomplete 40-repeat participant cell: {key}")
-    fixed = frame.loc[frame["condition"] == "fixed_mesh"]
-    fixed_groups = fixed.groupby(
-        ["subject", "version", "target", "outcome_mode"],
-        sort=False,
-        observed=True,
-    )["geometry_sha256"].nunique()
-    if not fixed_groups.eq(1).all():
-        raise ValueError("Fixed geometry changed across repeats or outcome rows")
+    if enforce_fixed_geometry:
+        fixed = frame.loc[frame["condition"] == "fixed_mesh"]
+        fixed_groups = fixed.groupby(
+            ["subject", "version", "target", "outcome_mode"],
+            sort=False,
+            observed=True,
+        )["geometry_sha256"].nunique()
+        if not fixed_groups.eq(1).all():
+            raise ValueError("Fixed geometry changed across repeats or outcome rows")
 
 
-def summarize_participant_cells(frame: pd.DataFrame) -> pd.DataFrame:
-    validate_final_matrix(frame)
+def validate_final_matrix(frame: pd.DataFrame) -> None:
+    _validate_matrix(
+        frame,
+        versions=VERSIONS,
+        expected_simnibs_versions={"simnibs326": "3.2.6", "simnibs46": "4.6.0"},
+        preliminary_required=False,
+        enforce_fixed_geometry=True,
+        matrix_label="Final",
+    )
+
+
+def validate_preliminary_matrix(frame: pd.DataFrame) -> None:
+    """Validate the exact historical 3.2.6/4.0.1 abstract matrix."""
+
+    _validate_matrix(
+        frame,
+        versions=PRELIMINARY_VERSIONS,
+        expected_simnibs_versions={"simnibs326": "3.2.6", "simnibs401": "4.0.1"},
+        preliminary_required=True,
+        # Historical fixed branches are audited, not silently promoted to the
+        # exact electrode-geometry control required by the final v2 package.
+        enforce_fixed_geometry=False,
+        matrix_label="Preliminary",
+    )
+
+
+def summarize_participant_cells(
+    frame: pd.DataFrame, *, final: bool = True
+) -> pd.DataFrame:
+    if final:
+        validate_final_matrix(frame)
+    else:
+        validate_preliminary_matrix(frame)
     rows: list[dict[str, object]] = []
     for key, group in frame.groupby(list(CELL_KEYS), sort=False, observed=True):
         common = dict(zip(CELL_KEYS, key))
@@ -193,14 +242,16 @@ def _exact_sign_flip(values: np.ndarray) -> float:
     return extreme / (2 ** len(values))
 
 
-def build_matched_decomposition(cell_summary: pd.DataFrame) -> pd.DataFrame:
+def build_matched_decomposition(
+    cell_summary: pd.DataFrame, *, versions: tuple[str, ...] = VERSIONS
+) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     matched = cell_summary.loc[
         cell_summary["outcome_mode"].isin(
             ("ti_target", "tdcs_pair1_matched_target")
         )
     ]
-    for version in VERSIONS:
+    for version in versions:
         for target in TARGETS:
             for condition in CONDITIONS:
                 for metric in METRICS:

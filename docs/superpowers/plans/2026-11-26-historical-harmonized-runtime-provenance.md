@@ -62,4 +62,3 @@ Run: `python3 -m pytest ti_current_repair/repeatability_v2/tests -q`
 Run: `python3 -m compileall -q ti_current_repair/repeatability_v2`
 
 - [ ] **Step 7: Review the diff and commit only the provenance repair, tests, design, and plan**
-

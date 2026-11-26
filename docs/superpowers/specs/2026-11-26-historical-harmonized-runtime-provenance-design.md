@@ -46,4 +46,3 @@ For every consolidated `simnibs326` task manifest, require a mapping at
 The already recorded hashes remain preserved as provenance but are not given
 new validation semantics in this minimal correction. Historical path strings
 are not dereferenced.
-

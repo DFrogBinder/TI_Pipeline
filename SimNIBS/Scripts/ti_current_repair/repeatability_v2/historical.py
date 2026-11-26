@@ -263,14 +263,14 @@ def discover_task_runs(
     for condition in CONDITIONS:
         for repeat in range(1, repeat_count + 1):
             repeat_tag = f"repeat_{repeat:03d}"
-            workspace = (
+            repeat_subject_root = (
                 subject_root
                 / condition
                 / "repeats"
                 / repeat_tag
                 / subject
-                / "anat/SimNIBS"
             )
+            workspace = repeat_subject_root / "anat/SimNIBS"
             output = workspace / "Output" / subject
             ti = _safe_file(output / "TI.msh", "native TI mesh")
             pair1 = _safe_file(
@@ -279,7 +279,7 @@ def discover_task_runs(
             pair2 = _safe_file(
                 output / f"{subject}_TDCS_2_scalar.msh", "native pair-2 mesh"
             )
-            manifest_path = workspace / "task_manifest.json"
+            manifest_path = repeat_subject_root / "task_manifest.json"
             manifest = _read_json(manifest_path, "historical task manifest")
             anode = _manifest_anode(
                 manifest,

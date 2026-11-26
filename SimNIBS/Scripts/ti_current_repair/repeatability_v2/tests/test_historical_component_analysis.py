@@ -60,7 +60,7 @@ def _seed_run(
     repeat: int,
     anode: str,
 ) -> None:
-    repeat_root = (
+    repeat_subject_root = (
         root
         / "data"
         / version
@@ -70,9 +70,8 @@ def _seed_run(
         / "repeats"
         / f"repeat_{repeat:03d}"
         / subject
-        / "anat/SimNIBS"
     )
-    output = repeat_root / "Output" / subject
+    output = repeat_subject_root / "anat/SimNIBS/Output" / subject
     for filename in (
         "TI.msh",
         f"{subject}_TDCS_1_scalar.msh",
@@ -93,7 +92,7 @@ def _seed_run(
     }
     if version == "simnibs326":
         manifest["simnibs_326_runtime"] = {"simnibs_version": "3.2.6"}
-    _write(repeat_root / "task_manifest.json", json.dumps(manifest))
+    _write(repeat_subject_root / "task_manifest.json", json.dumps(manifest))
 
 
 def test_consolidation_receipt_and_task_matrix_are_exact(tmp_path: Path) -> None:

@@ -19,18 +19,22 @@ bash ti_current_repair/repeatability_v2/historical_hpc/submit.sh
 ```
 
 This verifies the consolidation completion receipt, all 3,200 source records,
-both atlas contracts, native float64 mesh reading, and pair-1 anode surface tag
-2101. It creates nothing and submits nothing. Only after it passes, the user
-can explicitly submit both extraction arrays and their dependent collectors:
+the common optimizer-atlas contract for both versions, native float64 mesh
+reading, and pair-1 anode surface tag 2101. It creates nothing and submits
+nothing. Only after it passes, the user can explicitly submit both extraction
+arrays and their dependent collectors:
 
 ```bash
 bash ti_current_repair/repeatability_v2/historical_hpc/submit.sh --submit
 ```
 
 Defaults may be overridden with `DATASET_ROOT`, `OUTPUT_ROOT`, and
-`V4_ATLAS_DIR`. The expected v4 atlas default is
-`/mnt/parscratch/users/cop23bi/ZIPs/atlases`; a path mismatch fails during the
-read-only preflight. HPC execution remains user-only.
+`V4_ATLAS_DIR`. Despite that legacy variable name, it supplies the anatomical
+optimizer atlas for both SimNIBS 3.2.6 and 4.0.1. The expected default is
+`/mnt/parscratch/users/cop23bi/ZIPs/atlases`; the consolidated v3
+`harmonized_label.nii.gz` is a tissue map and is not used as a target atlas.
+A missing atlas or native target-support mismatch fails during the read-only
+preflight. HPC execution remains user-only.
 
 ## Scientific contract
 

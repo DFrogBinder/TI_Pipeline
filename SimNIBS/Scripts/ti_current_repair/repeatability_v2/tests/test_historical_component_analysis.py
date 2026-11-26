@@ -168,7 +168,9 @@ def test_discovery_resolves_native_meshes_and_requires_recorded_anode(
         )
 
 
-def test_v3_discovery_uses_consolidated_harmonized_atlas(tmp_path: Path) -> None:
+def test_v3_discovery_uses_configured_anatomical_atlas_not_tissue_labels(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "combined"
     subject = "sub-CC110174"
     for condition in ("remesh", "fixed_mesh"):
@@ -181,12 +183,13 @@ def test_v3_discovery_uses_consolidated_harmonized_atlas(tmp_path: Path) -> None
             repeat=1,
             anode="F8",
         )
-    atlas = _write(
+    tissue_labels = _write(
         root
         / "provenance/headmodels/simnibs326"
         / subject
         / "harmonized_label.nii.gz"
     )
+    atlas = _write(tmp_path / "atlases" / f"{subject}.nii.gz")
 
     runs = discover_task_runs(
         dataset_root=root,
@@ -194,10 +197,11 @@ def test_v3_discovery_uses_consolidated_harmonized_atlas(tmp_path: Path) -> None
         target="left_hippocampus",
         subject=subject,
         repeat_count=1,
-        v4_atlas_dir=tmp_path / "unused",
+        v4_atlas_dir=atlas.parent,
     )
 
     assert {run.atlas_path for run in runs} == {atlas}
+    assert all(run.atlas_path != tissue_labels for run in runs)
     assert {run.simnibs_version for run in runs} == {"3.2.6"}
 
 
@@ -224,12 +228,7 @@ def test_v3_discovery_rejects_legacy_only_runtime_provenance(
         payload.pop("simnibs_326_harmonized_runtime")
         payload["simnibs_326_runtime"] = {"simnibs_version": "3.2.6"}
         manifest_path.write_text(json.dumps(payload), encoding="utf-8")
-    _write(
-        root
-        / "provenance/headmodels/simnibs326"
-        / subject
-        / "harmonized_label.nii.gz"
-    )
+    atlas = _write(tmp_path / "atlases" / f"{subject}.nii.gz")
 
     with pytest.raises(ValueError, match="harmonized runtime provenance"):
         discover_task_runs(
@@ -238,7 +237,7 @@ def test_v3_discovery_rejects_legacy_only_runtime_provenance(
             target="left_hippocampus",
             subject=subject,
             repeat_count=1,
-            v4_atlas_dir=tmp_path / "unused",
+            v4_atlas_dir=atlas.parent,
         )
 
 
@@ -275,12 +274,7 @@ def test_v3_discovery_rejects_mismatched_harmonized_runtime_provenance(
         payload["simnibs_326_runtime"] = {"simnibs_version": "3.2.6"}
         payload["simnibs_326_harmonized_runtime"][field] = value
         manifest_path.write_text(json.dumps(payload), encoding="utf-8")
-    _write(
-        root
-        / "provenance/headmodels/simnibs326"
-        / subject
-        / "harmonized_label.nii.gz"
-    )
+    atlas = _write(tmp_path / "atlases" / f"{subject}.nii.gz")
 
     with pytest.raises(ValueError, match="harmonized runtime provenance"):
         discover_task_runs(
@@ -289,7 +283,7 @@ def test_v3_discovery_rejects_mismatched_harmonized_runtime_provenance(
             target="left_hippocampus",
             subject=subject,
             repeat_count=1,
-            v4_atlas_dir=tmp_path / "unused",
+            v4_atlas_dir=atlas.parent,
         )
 
 

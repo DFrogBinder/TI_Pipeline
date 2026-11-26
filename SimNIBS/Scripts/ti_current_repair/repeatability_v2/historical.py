@@ -166,24 +166,18 @@ def validate_consolidation_receipt(
 
 def _atlas_path(
     *,
-    dataset_root: Path,
     version: str,
     subject: str,
-    v4_atlas_dir: Path,
+    atlas_dir: Path,
 ) -> Path:
-    if version == "simnibs326":
-        path = (
-            dataset_root
-            / "provenance/headmodels/simnibs326"
-            / subject
-            / "harmonized_label.nii.gz"
-        )
-    else:
-        path = v4_atlas_dir / f"{subject}.nii.gz"
-        if not path.is_file():
-            alternate = v4_atlas_dir / f"{subject}.nii"
-            if alternate.is_file():
-                path = alternate
+    # Target parcels come from the common optimizer atlas for both versions.
+    # The consolidated v3 harmonized label is a head-model tissue map, not an
+    # anatomical target atlas.
+    path = atlas_dir / f"{subject}.nii.gz"
+    if not path.is_file():
+        alternate = atlas_dir / f"{subject}.nii"
+        if alternate.is_file():
+            path = alternate
     return _safe_file(path, f"{version} subject atlas")
 
 
@@ -263,10 +257,9 @@ def discover_task_runs(
     if target not in TARGETS:
         raise ValueError(f"Unsupported historical target: {target}")
     atlas = _atlas_path(
-        dataset_root=root,
         version=version,
         subject=subject,
-        v4_atlas_dir=v4_atlas_dir.expanduser().resolve(),
+        atlas_dir=v4_atlas_dir.expanduser().resolve(),
     )
     subject_root = root / "data" / version / target / f"{subject}_repeatability"
     runs: list[HistoricalSourceRun] = []

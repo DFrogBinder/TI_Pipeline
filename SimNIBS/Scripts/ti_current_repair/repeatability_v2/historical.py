@@ -30,6 +30,12 @@ from .roi import build_parcel_clipped_roi, build_under_anode_roi
 HISTORICAL_EXTRACTION_VERSION = 1
 PAIR1_ANODE_SURFACE_TAG = 2101
 REPEAT_COUNT = 40
+SIMNIBS326_HARMONIZED_RUNTIME_KEY = "simnibs_326_harmonized_runtime"
+SIMNIBS326_HARMONIZED_RUNTIME = {
+    "simnibs_version": "3.2.6",
+    "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
+    "backend": "simnibs-3.2.6-harmonized-corrected-label-v2",
+}
 VERSION_SPECS = {
     "simnibs326": "3.2.6",
     "simnibs4": "4.0.1",
@@ -205,10 +211,14 @@ def _manifest_anode(
                 f"{manifest.get(key)!r} != {value!r}"
             )
     if version == "simnibs326":
-        runtime = manifest.get("simnibs_326_runtime")
-        if not isinstance(runtime, dict) or runtime.get("simnibs_version") != "3.2.6":
+        runtime = manifest.get(SIMNIBS326_HARMONIZED_RUNTIME_KEY)
+        if not isinstance(runtime, dict) or any(
+            runtime.get(key) != value
+            for key, value in SIMNIBS326_HARMONIZED_RUNTIME.items()
+        ):
             raise ValueError(
-                f"Historical v3 task lacks SimNIBS 3.2.6 runtime provenance: {manifest_path}"
+                "Historical v3 task lacks exact harmonized runtime provenance: "
+                f"{manifest_path}"
             )
     stimulation = manifest.get("stimulation")
     pair1 = stimulation.get("pair1") if isinstance(stimulation, dict) else None

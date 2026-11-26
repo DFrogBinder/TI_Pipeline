@@ -59,7 +59,7 @@ def _seed_run(
     condition: str,
     repeat: int,
     anode: str,
-) -> None:
+) -> Path:
     repeat_subject_root = (
         root
         / "data"
@@ -91,8 +91,20 @@ def _seed_run(
         "stimulation": stimulation,
     }
     if version == "simnibs326":
-        manifest["simnibs_326_runtime"] = {"simnibs_version": "3.2.6"}
-    _write(repeat_subject_root / "task_manifest.json", json.dumps(manifest))
+        manifest["simnibs_326_harmonized_runtime"] = {
+            "backend": "simnibs-3.2.6-harmonized-corrected-label-v2",
+            "config": "/retired/source/_pipeline/configs/remesh_only.json",
+            "harmonized_map_sha256": "a" * 64,
+            "headmodel_manifest_sha256": "b" * 64,
+            "headmodel_marker_sha256": "c" * 64,
+            "headmodel_promotion_sha256": "d" * 64,
+            "headmodel_root": "/retired/headmodels",
+            "simnibs_module": "SimNIBS/3.2.6-foss-2023a",
+            "simnibs_version": "3.2.6",
+        }
+    manifest_path = repeat_subject_root / "task_manifest.json"
+    _write(manifest_path, json.dumps(manifest))
+    return manifest_path
 
 
 def test_consolidation_receipt_and_task_matrix_are_exact(tmp_path: Path) -> None:
@@ -187,6 +199,98 @@ def test_v3_discovery_uses_consolidated_harmonized_atlas(tmp_path: Path) -> None
 
     assert {run.atlas_path for run in runs} == {atlas}
     assert {run.simnibs_version for run in runs} == {"3.2.6"}
+
+
+def test_v3_discovery_rejects_legacy_only_runtime_provenance(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "combined"
+    subject = "sub-CC110174"
+    manifest_paths = []
+    for condition in ("remesh", "fixed_mesh"):
+        manifest_paths.append(
+            _seed_run(
+                root,
+                version="simnibs326",
+                target="left_hippocampus",
+                subject=subject,
+                condition=condition,
+                repeat=1,
+                anode="F8",
+            )
+        )
+    for manifest_path in manifest_paths:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload.pop("simnibs_326_harmonized_runtime")
+        payload["simnibs_326_runtime"] = {"simnibs_version": "3.2.6"}
+        manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    _write(
+        root
+        / "provenance/headmodels/simnibs326"
+        / subject
+        / "harmonized_label.nii.gz"
+    )
+
+    with pytest.raises(ValueError, match="harmonized runtime provenance"):
+        discover_task_runs(
+            dataset_root=root,
+            version="simnibs326",
+            target="left_hippocampus",
+            subject=subject,
+            repeat_count=1,
+            v4_atlas_dir=tmp_path / "unused",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("simnibs_version", "3.2.5"),
+        ("simnibs_module", "SimNIBS/4.0.1-foss-2023a"),
+        ("backend", "simnibs-3.2.6-headreco-volumemesh"),
+    ),
+)
+def test_v3_discovery_rejects_mismatched_harmonized_runtime_provenance(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    root = tmp_path / "combined"
+    subject = "sub-CC110174"
+    manifest_paths = []
+    for condition in ("remesh", "fixed_mesh"):
+        manifest_paths.append(
+            _seed_run(
+                root,
+                version="simnibs326",
+                target="left_hippocampus",
+                subject=subject,
+                condition=condition,
+                repeat=1,
+                anode="F8",
+            )
+        )
+    for manifest_path in manifest_paths:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload["simnibs_326_runtime"] = {"simnibs_version": "3.2.6"}
+        payload["simnibs_326_harmonized_runtime"][field] = value
+        manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    _write(
+        root
+        / "provenance/headmodels/simnibs326"
+        / subject
+        / "harmonized_label.nii.gz"
+    )
+
+    with pytest.raises(ValueError, match="harmonized runtime provenance"):
+        discover_task_runs(
+            dataset_root=root,
+            version="simnibs326",
+            target="left_hippocampus",
+            subject=subject,
+            repeat_count=1,
+            v4_atlas_dir=tmp_path / "unused",
+        )
 
 
 def test_preflight_is_read_only_and_reports_zero_simulation_work(

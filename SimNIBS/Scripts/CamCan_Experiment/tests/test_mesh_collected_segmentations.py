@@ -297,6 +297,9 @@ def test_run_task_directly_meshes_map_and_writes_provenance(tmp_path, monkeypatc
     assert payload["label_sha256_before"] == payload["label_sha256_after"]
     assert payload["segmentation_rerun"] is False
     assert payload["staging_mode"] == "node_local"
+    assert "expected_simnibs_version" not in payload
+    assert "settings_sha256" not in payload
+    assert "required_tissue_tags" not in payload
     assert json.loads(workflow.result_path_for_subject(mesh_root, subject).read_text())["status"] == "complete"
     assert not list(local_staging.glob(f"{subject}-*"))
 

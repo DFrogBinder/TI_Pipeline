@@ -277,3 +277,11 @@ After remeshing has succeeded, run the simulations through the existing
 mesh-reuse path (`--reuse-existing-mesh`). A separate array launcher should be
 used for the 7,000 remesh operations so completion can be validated before the
 simulation arrays are submitted.
+
+## Reusable campaign interface
+
+For new datasets, repeated segmentation realizations, explicit SimNIBS
+version/settings contracts, or non-default paths and resources, use the
+configuration-driven interface in `../charm_mesh_campaign/README.md`. The
+scripts in this directory remain the backward-compatible interface for the
+existing collected-map campaigns and retain their original defaults.

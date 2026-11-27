@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "campaign_id": "uncorrected-charm-v401-meshes",
+  "input": {
+    "manifest": "/mnt/parscratch/users/cop23bi/charm_segmentations/collection/charm_segmentation_manifest.tsv",
+    "delimiter": "tab",
+    "ready_status": "complete",
+    "columns": {
+      "subject_id": "subject",
+      "realization_id": null,
+      "label_path": "collected_map",
+      "label_sha256": "sha256",
+      "label_bytes": "bytes",
+      "status": "status"
+    },
+    "segmentation_version": "4.0.1",
+    "excluded_task_keys": []
+  },
+  "output": {
+    "root": "/mnt/parscratch/users/cop23bi/charm_segmentation_uncorrected_meshes_v1",
+    "task_manifest": "campaign/task_manifest.tsv",
+    "preflight_summary": "campaign/preflight.json",
+    "mesh_template": "subjects/{subject_id}/{realization_id}/anat/m2m_{subject_id}/{subject_id}.msh",
+    "result_template": "results/{task_key}.json"
+  },
+  "software": {
+    "backend": "direct_charm_create_mesh",
+    "expected_version": "4.0.1",
+    "module": "SimNIBS/4.0.1-foss-2023a",
+    "python": "python",
+    "settings_path": null,
+    "settings_policy": "installation_charm_ini"
+  },
+  "quality": {
+    "require_tetrahedra": true,
+    "required_tissue_tags": []
+  },
+  "execution": {
+    "expected_tasks": 652,
+    "partition": "sheffield",
+    "cpus_per_task": 8,
+    "memory": "32G",
+    "time_limit": "08:00:00",
+    "max_concurrent": 50,
+    "workers_per_array_task": 1,
+    "local_staging": false,
+    "max_retries": 2
+  },
+  "resume": {
+    "reuse_validated": true,
+    "overwrite": false
+  }
+}

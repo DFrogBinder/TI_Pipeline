@@ -402,6 +402,12 @@ def _completed_result_is_current(
         return None
 
 
+def _normalized_simnibs_version(value: object) -> str:
+    """Normalize a SimNIBS version while retaining release-level equality."""
+
+    return str(value).strip().split("+", 1)[0]
+
+
 def create_mesh_from_label(
     *,
     subject: str,
@@ -413,6 +419,10 @@ def create_mesh_from_label(
     settings_path: str | Path | None = None,
     staging_root: str | Path | None = None,
     provenance: Mapping[str, object] | None = None,
+    expected_simnibs_version: str | None = None,
+    required_tissue_tags: Sequence[int] = (),
+    reuse_validated: bool = True,
+    overwrite: bool = True,
 ) -> dict[str, object]:
     """Create one audited CHARM-equivalent mesh at an arbitrary output path."""
 
@@ -423,14 +433,40 @@ def create_mesh_from_label(
     if label_path.is_symlink() or mesh_path.is_symlink():
         raise ValueError("refusing symlinked label or mesh path")
 
-    previous = _completed_result_is_current(
-        result_path,
-        subject=subject,
-        label_path=label_path,
-        expected_label_hash=expected_label_hash,
-        mesh_path=mesh_path,
-        required_provenance=provenance,
-    )
+    api: dict[str, Any] | None = None
+    resolved_settings: Path | None = None
+    enforced_provenance: dict[str, object] = {}
+    if expected_simnibs_version is not None:
+        api = _load_meshing_api()
+        actual_version = getattr(api["simnibs"], "__version__", "unknown")
+        if _normalized_simnibs_version(actual_version) != _normalized_simnibs_version(
+            expected_simnibs_version
+        ):
+            raise RuntimeError(
+                "SimNIBS version mismatch: "
+                f"loaded {actual_version!r}, expected {expected_simnibs_version!r}"
+            )
+        resolved_settings = (
+            Path(settings_path).expanduser().resolve(strict=True)
+            if settings_path
+            else (Path(api["SIMNIBSDIR"]) / "charm.ini").resolve(strict=True)
+        )
+        enforced_provenance = {
+            "expected_simnibs_version": expected_simnibs_version,
+            "settings_sha256": sha256_file(resolved_settings),
+        }
+    effective_provenance = {**dict(provenance or {}), **enforced_provenance}
+
+    previous = None
+    if reuse_validated:
+        previous = _completed_result_is_current(
+            result_path,
+            subject=subject,
+            label_path=label_path,
+            expected_label_hash=expected_label_hash,
+            mesh_path=mesh_path,
+            required_provenance=effective_provenance,
+        )
     if previous is not None:
         print(
             json.dumps(
@@ -444,6 +480,11 @@ def create_mesh_from_label(
             flush=True,
         )
         return previous
+    if not overwrite and (mesh_path.exists() or result_path.exists()):
+        raise FileExistsError(
+            "existing mesh/result is not reusable and overwrite is disabled: "
+            f"{mesh_path}; {result_path}"
+        )
 
     label_hash_before = sha256_file(label_path)
     if label_hash_before != expected_label_hash:
@@ -451,18 +492,20 @@ def create_mesh_from_label(
             f"collected map SHA-256 changed: {label_hash_before} != {expected_label_hash}"
         )
 
-    api = _load_meshing_api()
+    if api is None:
+        api = _load_meshing_api()
     nib = api["nib"]
     np = api["np"]
     mesh_io = api["mesh_io"]
     create_mesh = api["create_mesh"]
     crop_vol = api["crop_vol"]
     settings_reader = api["settings_reader"]
-    resolved_settings = (
-        Path(settings_path).expanduser().resolve(strict=True)
-        if settings_path
-        else Path(api["SIMNIBSDIR"]) / "charm.ini"
-    )
+    if resolved_settings is None:
+        resolved_settings = (
+            Path(settings_path).expanduser().resolve(strict=True)
+            if settings_path
+            else Path(api["SIMNIBSDIR"]) / "charm.ini"
+        )
     settings = settings_reader.read_ini(str(resolved_settings))
     signature = inspect.signature(create_mesh)
     supports_arbitrary_keywords = any(
@@ -519,6 +562,12 @@ def create_mesh_from_label(
             **create_kwargs,
         )
         tetrahedra, tissue_tags = _validate_mesh_object(final_mesh)
+        missing_required_tags = sorted(set(required_tissue_tags) - set(tissue_tags))
+        if missing_required_tags:
+            raise ValueError(
+                "mesh is missing required tissue tags: "
+                + ", ".join(str(tag) for tag in missing_required_tags)
+            )
         mesh_io.write_msh(final_mesh, str(staged_mesh))
         if not staged_mesh.is_file() or staged_mesh.stat().st_size <= 0:
             raise IOError(f"mesher did not write a non-empty mesh: {staged_mesh}")
@@ -566,8 +615,12 @@ def create_mesh_from_label(
         "staging_mode": "node_local" if staging_root is not None else "mesh_root",
         "started_at": started_at,
         "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        **dict(provenance or {}),
+        **effective_provenance,
     }
+    if required_tissue_tags:
+        payload["required_tissue_tags"] = sorted(
+            set(int(tag) for tag in required_tissue_tags)
+        )
     write_json_atomic(result_path, payload)
     print(
         json.dumps({"event": "collected_charm_mesh_complete", **payload}),
